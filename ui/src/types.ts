@@ -375,6 +375,13 @@ export interface QrzPushResult {
   reason: string | null
 }
 
+/** Result of a ClubLog realtime push. `duplicate` is the benign "already on
+ *  ClubLog"; `authFail` means a 403 (auto-upload is then suppressed until creds change). */
+export interface ClubLogPushResult {
+  result: 'ok' | 'modified' | 'duplicate' | 'rejected' | 'authFail' | 'serverError' | 'unknown'
+  message: string | null
+}
+
 /** Liveness of one background live feed, for the Now-Bar connector pills. */
 export interface FeedStatus {
   /** The feed's daemon is running. Started once a real callsign (and, for the
@@ -616,6 +623,15 @@ export interface Settings {
   /** Auto-upload each logged QSO to the QRZ.com logbook. Needs the QRZ Logbook API
    *  key in the keychain (distinct from the lookup password). */
   qrzLogbookUpload: boolean
+  /** ClubLog account email (not a callsign); app-password is in the keychain. */
+  clublogEmail: string
+  /** ClubLog logbook callsign to upload into (empty → your callsign). */
+  clublogCallsign: string
+  /** ClubLog developer/app API key (non-secret; never committed). Empty → a
+   *  build-time default if the installer baked one in. */
+  clublogApiKey: string
+  /** Auto-upload each logged QSO to ClubLog (realtime push). */
+  clublogUpload: boolean
   /** Editable quick-reply macros, per context. */
   macros: {
     chat: string[]

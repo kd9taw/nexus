@@ -502,6 +502,36 @@ impl From<tempo_core::qrz::QrzPush> for QrzPushResultDto {
     }
 }
 
+/// Result of a ClubLog realtime push (one-QSO upload). `result` is a camelCase
+/// outcome tag the UI switches on; `duplicate` is the benign "already on ClubLog".
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClubLogPushResultDto {
+    /// "ok" | "modified" | "duplicate" | "rejected" | "authFail" | "serverError" | "unknown".
+    pub result: String,
+    pub message: Option<String>,
+}
+
+impl From<tempo_core::clublog::ClubLogPush> for ClubLogPushResultDto {
+    fn from(p: tempo_core::clublog::ClubLogPush) -> Self {
+        use tempo_core::clublog::ClubLogResult::*;
+        let result = match p.result {
+            Ok => "ok",
+            Modified => "modified",
+            Duplicate => "duplicate",
+            Rejected => "rejected",
+            AuthFail => "authFail",
+            ServerError => "serverError",
+            Unknown => "unknown",
+        }
+        .to_string();
+        ClubLogPushResultDto {
+            result,
+            message: p.message,
+        }
+    }
+}
+
 /// The full application snapshot the UI renders from.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

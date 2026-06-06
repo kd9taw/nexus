@@ -1,6 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { LoggedQso } from '../types'
-import { getLog, importAdif, logQso, qrzLookup, qrzPushQso, syncLotwReport } from '../api'
+import {
+  clublogPushQso,
+  getLog,
+  importAdif,
+  logQso,
+  qrzLookup,
+  qrzPushQso,
+  syncLotwReport,
+} from '../api'
 import { pushToast, withErrorToast } from '../toast'
 
 interface Props {
@@ -10,6 +18,8 @@ interface Props {
   defaultMode: string
   /** When true, push each logged QSO to QRZ.com (Settings → QRZ auto-upload). */
   qrzUpload?: boolean
+  /** When true, push each logged QSO to ClubLog (Settings → ClubLog auto-upload). */
+  clublogUpload?: boolean
 }
 
 interface DraftQso {
@@ -42,7 +52,7 @@ function parseReport(s: string): number | null {
   return Number.isNaN(n) ? null : n
 }
 
-export function Logbook({ defaultBand, defaultFreqMhz, defaultMode, qrzUpload }: Props) {
+export function Logbook({ defaultBand, defaultFreqMhz, defaultMode, qrzUpload, clublogUpload }: Props) {
   const [log, setLog] = useState<LoggedQso[]>([])
   const [showForm, setShowForm] = useState(false)
   const [draft, setDraft] = useState<DraftQso>(() => ({
@@ -163,6 +173,24 @@ export function Logbook({ defaultBand, defaultFreqMhz, defaultMode, qrzUpload }:
                     ? 'QRZ Logbook key invalid — check Settings'
                     : `QRZ upload: ${r.reason ?? 'failed'}`
           pushToast(msg, r.result === 'fail' || r.result === 'authFail' ? 'error' : 'success')
+        }
+      }
+      // Auto-upload to ClubLog (independent of QRZ; also best-effort).
+      if (clublogUpload) {
+        const c = await withErrorToast(() => clublogPushQso(record), 'ClubLog upload failed')
+        if (c) {
+          const msg =
+            c.result === 'ok' || c.result === 'modified'
+              ? `Uploaded ${record.call} to ClubLog`
+              : c.result === 'duplicate'
+                ? `${record.call} already on ClubLog`
+                : c.result === 'authFail'
+                  ? 'ClubLog credentials invalid — auto-upload paused; fix in Settings'
+                  : c.result === 'serverError'
+                    ? 'ClubLog busy — try again later'
+                    : `ClubLog: ${c.message ?? 'rejected'}`
+          const ok = c.result === 'ok' || c.result === 'modified' || c.result === 'duplicate'
+          pushToast(msg, ok ? 'success' : 'error')
         }
       }
     }

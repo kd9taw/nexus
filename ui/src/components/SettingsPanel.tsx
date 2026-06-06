@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { AudioDevices, BandChannel, CatTestResult, RadioStatus, Settings } from '../types'
 import {
+  clearClublogPassword,
   clearEqslPassword,
   clearLotwPassword,
   clearQrzLogbookKey,
@@ -12,6 +13,7 @@ import {
   getRigModels,
   getSerialPorts,
   getSettings,
+  setClublogPassword,
   setEqslPassword,
   setLotwPassword,
   setQrzLogbookKey,
@@ -114,6 +116,7 @@ export function SettingsPanel({
   const [eqslSyncing, setEqslSyncing] = useState(false)
   const [qrzPw, setQrzPw] = useState('')
   const [qrzKey, setQrzKey] = useState('')
+  const [clublogPw, setClublogPw] = useState('')
 
   useEffect(() => {
     let mounted = true
@@ -368,6 +371,29 @@ export function SettingsPanel({
     if (ok) {
       setQrzKey('')
       pushToast('QRZ Logbook key cleared from the keychain', 'success')
+    }
+  }
+
+  const onSaveClublogPassword = async () => {
+    if (!clublogPw) return
+    const ok = await withErrorToast(async () => {
+      await setClublogPassword(clublogPw)
+      return true
+    }, 'Could not save the ClubLog password')
+    if (ok) {
+      setClublogPw('')
+      pushToast('ClubLog app-password saved to the system keychain', 'success')
+    }
+  }
+
+  const onForgetClublogPassword = async () => {
+    const ok = await withErrorToast(async () => {
+      await clearClublogPassword()
+      return true
+    }, 'Could not clear the ClubLog password')
+    if (ok) {
+      setClublogPw('')
+      pushToast('ClubLog password cleared from the keychain', 'success')
     }
   }
 
@@ -1338,6 +1364,104 @@ export function SettingsPanel({
                 </label>
                 <span className="settings-hint">
                   Push each logged QSO to your QRZ logbook (needs the Logbook API key above).
+                </span>
+              </div>
+
+              <label className="settings-field">
+                <span className="settings-label">ClubLog email</span>
+                <input
+                  className="settings-input"
+                  type="text"
+                  value={form.clublogEmail}
+                  placeholder="your ClubLog account email (not a callsign)"
+                  onChange={(e) => update('clublogEmail', e.target.value)}
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                <span className="settings-hint">Your ClubLog login email. Save settings to apply.</span>
+              </label>
+
+              <label className="settings-field">
+                <span className="settings-label">ClubLog callsign</span>
+                <input
+                  className="settings-input"
+                  type="text"
+                  value={form.clublogCallsign}
+                  placeholder="defaults to your callsign"
+                  onChange={(e) => update('clublogCallsign', e.target.value)}
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                <span className="settings-hint">The ClubLog logbook to upload into (empty = your callsign).</span>
+              </label>
+
+              <label className="settings-field">
+                <span className="settings-label">ClubLog app-password</span>
+                <div className="settings-input-row">
+                  <input
+                    className="settings-input"
+                    type="password"
+                    value={clublogPw}
+                    placeholder="a ClubLog Application Password"
+                    onChange={(e) => setClublogPw(e.target.value)}
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                  <button
+                    type="button"
+                    className="settings-refresh"
+                    onClick={onSaveClublogPassword}
+                    disabled={!clublogPw}
+                  >
+                    Set
+                  </button>
+                  <button
+                    type="button"
+                    className="settings-refresh"
+                    onClick={onForgetClublogPassword}
+                    title="Remove the stored ClubLog password from the system keychain"
+                  >
+                    Forget
+                  </button>
+                </div>
+                <span className="settings-hint">
+                  Use a ClubLog <strong>Application Password</strong> (Settings → App Passwords), not your main
+                  password. Stored in the OS keychain.
+                </span>
+              </label>
+
+              <label className="settings-field">
+                <span className="settings-label">ClubLog API key</span>
+                <input
+                  className="settings-input"
+                  type="text"
+                  value={form.clublogApiKey}
+                  placeholder="get a free key at clublog.org/requestapikey.php"
+                  onChange={(e) => update('clublogApiKey', e.target.value)}
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                <span className="settings-hint">
+                  Nexus ships no ClubLog key (open-source — ClubLog auto-revokes published keys); request a free
+                  one and paste it here.
+                </span>
+              </label>
+
+              <div className="settings-field">
+                <label className="settings-toggle">
+                  <span className="settings-label">Auto-upload QSOs to ClubLog</span>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={form.clublogUpload}
+                    className={`toggle${form.clublogUpload ? ' on' : ''}`}
+                    onClick={() => updateBool('clublogUpload', !form.clublogUpload)}
+                  >
+                    <span className="toggle-knob" />
+                  </button>
+                </label>
+                <span className="settings-hint">
+                  Push each logged QSO to ClubLog in real time (needs the email, app-password, and API key above).
                 </span>
               </div>
             </div>

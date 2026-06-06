@@ -555,6 +555,7 @@ export default function App() {
             defaultFreqMhz={snap.radio.dialMhz}
             defaultMode={snap.link.tier}
             qrzUpload={settings?.qrzLogbookUpload ?? false}
+            clublogUpload={settings?.clublogUpload ?? false}
           />
         </main>
       )

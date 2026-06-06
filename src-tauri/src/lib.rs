@@ -461,6 +461,14 @@ fn set_settings(
         if eng.settings().eqsl_username.trim() != settings.eqsl_username.trim() {
             settings.eqsl_last_sync.clear();
         }
+        // A ClubLog credential change re-arms auto-push (clears the 403 suspend).
+        let cur = eng.settings();
+        if cur.clublog_email != settings.clublog_email
+            || cur.clublog_callsign != settings.clublog_callsign
+            || cur.clublog_api_key != settings.clublog_api_key
+        {
+            CLUBLOG_SUSPENDED.store(false, std::sync::atomic::Ordering::Relaxed);
+        }
         if let Err(e) = settings.save(&settings_path()) {
             eprintln!("tempo: failed to persist settings: {e}");
         }
@@ -855,6 +863,12 @@ const LOTW_KEYCHAIN_USER: &str = "lotw-password";
 const EQSL_KEYCHAIN_USER: &str = "eqsl-password";
 const QRZ_KEYCHAIN_USER: &str = "qrz-password";
 const QRZ_LOGBOOK_KEYCHAIN_USER: &str = "qrz-logbook-key";
+const CLUBLOG_KEYCHAIN_USER: &str = "clublog-password";
+
+/// Session-level kill-switch for ClubLog auto-push: set on a 403 (bad creds) so we
+/// stop re-POSTing every QSO (ClubLog IP-blocks repeated auth failures); reset when
+/// the operator changes a ClubLog credential.
+static CLUBLOG_SUSPENDED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 fn lotw_keychain() -> Result<keyring::Entry, String> {
     keyring::Entry::new(LOTW_KEYCHAIN_SERVICE, LOTW_KEYCHAIN_USER)
@@ -873,6 +887,11 @@ fn qrz_keychain() -> Result<keyring::Entry, String> {
 
 fn qrz_logbook_keychain() -> Result<keyring::Entry, String> {
     keyring::Entry::new(LOTW_KEYCHAIN_SERVICE, QRZ_LOGBOOK_KEYCHAIN_USER)
+        .map_err(|e| format!("couldn't open the system keychain: {e}"))
+}
+
+fn clublog_keychain() -> Result<keyring::Entry, String> {
+    keyring::Entry::new(LOTW_KEYCHAIN_SERVICE, CLUBLOG_KEYCHAIN_USER)
         .map_err(|e| format!("couldn't open the system keychain: {e}"))
 }
 
@@ -1216,6 +1235,101 @@ fn qrz_push_qso(record: LoggedQso) -> Result<tempo_app::dto::QrzPushResultDto, S
     Ok(tempo_core::qrz::parse_push_response(&resp).into())
 }
 
+// ----- ClubLog realtime QSO push --------------------------------------------
+
+/// Store (or, if empty, clear) the ClubLog **Application Password** in the OS
+/// keychain. Also re-arms ClubLog auto-push (a credential change clears the 403
+/// suspend latch). Write-only.
+#[tauri::command]
+fn set_clublog_password(password: String) -> Result<(), String> {
+    CLUBLOG_SUSPENDED.store(false, std::sync::atomic::Ordering::Relaxed);
+    let entry = clublog_keychain()?;
+    if password.is_empty() {
+        return clear_keychain_entry(&entry);
+    }
+    entry
+        .set_password(&password)
+        .map_err(|e| format!("couldn't save to the system keychain: {e}"))
+}
+
+/// Remove the stored ClubLog app-password from the OS keychain (idempotent); also
+/// re-arms auto-push.
+#[tauri::command]
+fn clear_clublog_password() -> Result<(), String> {
+    CLUBLOG_SUSPENDED.store(false, std::sync::atomic::Ordering::Relaxed);
+    clear_keychain_entry(&clublog_keychain()?)
+}
+
+/// Push one logged QSO to ClubLog (realtime). Resolves the 4 credentials (email +
+/// callsign∥mycall + api-key from Settings or the build-time `option_env!` + the
+/// keychain app-password), uploads, and classifies the HTTP-status response. A 403
+/// **suspends** further auto-pushes this session (ClubLog IP-blocks hammering)
+/// until a credential changes. No lock over the network.
+#[tauri::command]
+fn clublog_push_qso(
+    record: LoggedQso,
+    state: State<'_, SharedEngine>,
+) -> Result<tempo_app::dto::ClubLogPushResultDto, String> {
+    use std::sync::atomic::Ordering;
+    if CLUBLOG_SUSPENDED.load(Ordering::Relaxed) {
+        return Err(
+            "ClubLog auto-upload paused after an auth failure — fix your credentials in Settings."
+                .to_string(),
+        );
+    }
+    let (email, callsign_setting, api_setting, mycall) = {
+        let eng = state.lock().map_err(|e| e.to_string())?;
+        let s = eng.settings();
+        (
+            s.clublog_email.trim().to_string(),
+            s.clublog_callsign.trim().to_string(),
+            s.clublog_api_key.trim().to_string(),
+            s.mycall.trim().to_string(),
+        )
+    };
+    // API key: Settings first, else the build-time baked key (official installer).
+    let api_key = if !api_setting.is_empty() {
+        api_setting
+    } else {
+        option_env!("CLUBLOG_API_KEY").unwrap_or("").to_string()
+    };
+    if api_key.is_empty() {
+        return Err("No ClubLog API key set — Nexus ships none (open-source). Get a free key at clublog.org/requestapikey.php and add it in Settings.".to_string());
+    }
+    if email.is_empty() {
+        return Err("Set your ClubLog email in Settings first.".to_string());
+    }
+    let callsign = if callsign_setting.is_empty() {
+        mycall
+    } else {
+        callsign_setting
+    };
+    let password = clublog_keychain()?
+        .get_password()
+        .map_err(|_| "No ClubLog app-password stored — set it in Settings.".to_string())?;
+    let rec: tempo_core::logbook::QsoRecord = record.into();
+    let adif = tempo_core::logbook::adif_record(&rec);
+
+    let (status, resp) = {
+        let query = tempo_core::clublog::ClubLogQuery {
+            email,
+            password,
+            callsign,
+            api_key,
+            adif,
+        };
+        let body = tempo_core::clublog::build_realtime_body(&query);
+        propagation::live::clublog::push_realtime(tempo_core::clublog::CLUBLOG_REALTIME_URL, body)?
+    }; // `query` + `body` (both hold the secrets) dropped here
+
+    let push = tempo_core::clublog::classify_response(status, &resp);
+    if push.result == tempo_core::clublog::ClubLogResult::AuthFail {
+        // Halt further auto-pushes until a credential changes (IP-block guard).
+        CLUBLOG_SUSPENDED.store(true, Ordering::Relaxed);
+    }
+    Ok(push.into())
+}
+
 // ----- coordinated QSY ("move together") — a separate, opt-in feature ------
 //
 // All no-ops while disabled. Enabling/disabling + the channel set/cadence are
@@ -1400,6 +1514,9 @@ pub fn run() {
             set_qrz_logbook_key,
             clear_qrz_logbook_key,
             qrz_push_qso,
+            set_clublog_password,
+            clear_clublog_password,
+            clublog_push_qso,
             get_need_alerts,
             get_propagation,
             get_feed_health,

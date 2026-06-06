@@ -349,6 +349,10 @@ function defaultSettings(): Settings {
     eqslLastSync: '',
     qrzUsername: '',
     qrzLogbookUpload: false,
+    clublogEmail: '',
+    clublogCallsign: '',
+    clublogApiKey: '',
+    clublogUpload: false,
     macros: {
       chat: ['73', 'QSL', 'Name?', 'QTH?', 'CQ'],
       qso: ['R-09', 'RRR', 'RR73', '73'],

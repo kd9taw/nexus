@@ -149,6 +149,17 @@ pub struct Settings {
     /// Logbook **API key** in the keychain (distinct from the lookup password).
     /// Off by default.
     pub qrz_logbook_upload: bool,
+    /// ClubLog account email (NOT a callsign). The app-password lives in the OS
+    /// keychain; the api key + email are non-secret and live here.
+    pub clublog_email: String,
+    /// ClubLog logbook callsign to upload into (empty → use `mycall`).
+    pub clublog_callsign: String,
+    /// ClubLog developer/app API key. Non-secret per ClubLog, but NEVER committed
+    /// (GPLv3 public repo → auto-revoked); empty → fall back to a build-time
+    /// `option_env!("CLUBLOG_API_KEY")` default.
+    pub clublog_api_key: String,
+    /// Auto-upload each logged QSO to ClubLog (realtime push). Off by default.
+    pub clublog_upload: bool,
 
     /// Editable quick-reply macros per mode (the Composer chips).
     pub macros: Macros,
@@ -222,6 +233,10 @@ impl Default for Settings {
             eqsl_last_sync: String::new(),
             qrz_username: String::new(),
             qrz_logbook_upload: false,
+            clublog_email: String::new(),
+            clublog_callsign: String::new(),
+            clublog_api_key: String::new(),
+            clublog_upload: false,
             macros: Macros::default(),
         }
     }

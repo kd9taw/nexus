@@ -11,6 +11,7 @@ import type {
   AwardSummary,
   BandChannel,
   CatTestResult,
+  ClubLogPushResult,
   FeedHealth,
   ImportStats,
   LoggedQso,
@@ -278,6 +279,30 @@ export async function qrzPushQso(record: LoggedQso): Promise<QrzPushResult> {
   const invoke = tauriInvoke()
   if (invoke) return invoke<QrzPushResult>('qrz_push_qso', { record })
   return { result: 'ok', logid: '0', reason: null }
+}
+
+/** Store the ClubLog Application Password in the OS keychain (write-only; empty
+ *  clears). */
+export async function setClublogPassword(password: string): Promise<void> {
+  const invoke = tauriInvoke()
+  if (invoke) {
+    await invoke<void>('set_clublog_password', { password })
+  }
+}
+
+/** Remove the stored ClubLog app-password from the OS keychain (idempotent). */
+export async function clearClublogPassword(): Promise<void> {
+  const invoke = tauriInvoke()
+  if (invoke) {
+    await invoke<void>('clear_clublog_password')
+  }
+}
+
+/** Push one logged QSO to ClubLog (realtime). Outside Tauri returns a canned OK. */
+export async function clublogPushQso(record: LoggedQso): Promise<ClubLogPushResult> {
+  const invoke = tauriInvoke()
+  if (invoke) return invoke<ClubLogPushResult>('clublog_push_qso', { record })
+  return { result: 'ok', message: null }
 }
 
 /** Need-aware spotting: the stations heard now, ranked by award value. */
