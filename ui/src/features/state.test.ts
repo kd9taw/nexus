@@ -1,0 +1,104 @@
+import { describe, it, expect } from 'vitest'
+import { FEATURES, type FeatureId } from './registry'
+import {
+  applyProfile,
+  coerceEnabled,
+  defaultState,
+  landingFor,
+  normalizeState,
+  toggleFeature,
+  type FeatureState,
+} from './state'
+
+describe('feature state transitions', () => {
+  it('first-run default is Everything (never hide a feature from an upgrading user)', () => {
+    const s = defaultState()
+    expect(s.profile).toBe('everything')
+    for (const f of FEATURES) expect(s.enabled[f.id]).toBe(true)
+  })
+
+  it('coerceEnabled forces core on and defaults unknown/missing to on', () => {
+    const en = coerceEnabled({ operate: false, awards: false })
+    expect(en.operate).toBe(true) // core forced on despite stored false
+    expect(en.logbook).toBe(true) // core, not in input → on
+    expect(en.awards).toBe(false) // explicit optional off respected
+    expect(en.map).toBe(true) // missing optional → defaults on
+  })
+
+  it('toggling a core feature is a no-op', () => {
+    const s = applyProfile('everything')
+    const next = toggleFeature(s, 'operate')
+    expect(next).toBe(s) // unchanged reference
+    expect(next.profile).toBe('everything')
+  })
+
+  it('toggling an optional feature off marks the profile custom and flips it', () => {
+    const s = applyProfile('everything')
+    const off = toggleFeature(s, 'awards')
+    expect(off.profile).toBe('custom')
+    expect(off.enabled.awards).toBe(false)
+    expect(off.enabled.logbook).toBe(true) // core untouched
+    // toggling back on restores it (its dep, logbook, is present)
+    const on = toggleFeature(off, 'awards')
+    expect(on.enabled.awards).toBe(true)
+  })
+
+  it('toggling an unknown feature is a no-op', () => {
+    const s = applyProfile('dx')
+    expect(toggleFeature(s, 'bogus' as FeatureId)).toBe(s)
+  })
+
+  it('applyProfile resolves the right enabled-set and records the profile', () => {
+    const s = applyProfile('starter')
+    expect(s.profile).toBe('starter')
+    expect(s.enabled.awards).toBe(false)
+    expect(s.enabled.chat).toBe(true)
+    expect(s.enabled.band).toBe(true)
+    expect(s.enabled.roam).toBe(false) // niche QSY section — not in the starter bundle
+  })
+
+  it('normalizeState repairs garbage to the default', () => {
+    expect(normalizeState(null).profile).toBe('everything')
+    expect(normalizeState(42).profile).toBe('everything')
+    expect(normalizeState('nope').profile).toBe('everything')
+  })
+
+  it('normalizeState coerces core-on and keeps a valid profile tag', () => {
+    const stored: FeatureState = {
+      profile: 'dx',
+      // a corrupt store claiming a core feature is off
+      enabled: { operate: false } as Record<FeatureId, boolean>,
+    }
+    const n = normalizeState(stored)
+    expect(n.profile).toBe('dx')
+    expect(n.enabled.operate).toBe(true) // core repaired
+  })
+
+  it('normalizeState falls back to custom for an unknown profile tag', () => {
+    const n = normalizeState({ profile: 'wat', enabled: {} })
+    expect(n.profile).toBe('custom')
+  })
+
+  it('landingFor follows the profile, custom → operate', () => {
+    expect(landingFor(applyProfile('contest'))).toBe('fieldDay')
+    expect(landingFor(applyProfile('vhf'))).toBe('propagation')
+    expect(landingFor({ profile: 'custom', enabled: applyProfile('dx').enabled })).toBe('operate')
+  })
+
+  it('landingFor falls back to operate when the profile landing is disabled (corrupt store)', () => {
+    // A hand-edited/corrupt state: profile says contest but fieldDay is off.
+    const corrupt = {
+      profile: 'contest' as const,
+      enabled: { ...applyProfile('contest').enabled, fieldDay: false },
+    }
+    expect(landingFor(corrupt)).toBe('operate')
+  })
+
+  it('normalizeState restores dependency closure (enabled feature implies its deps)', () => {
+    // log dependsOn logbook; a store with log on but logbook off must repair to
+    // logbook on (logbook is core anyway, but this locks the closure behavior).
+    const n = normalizeState({ profile: 'custom', enabled: { log: true, logbook: false } } as never)
+    expect(n.enabled.log).toBe(true)
+    expect(n.enabled.logbook).toBe(true)
+  })
+})

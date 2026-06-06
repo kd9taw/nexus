@@ -2726,6 +2726,22 @@ body.resizing {
   gap: 16px;
   align-content: start;
 }
+/* Features section: profile chips wrap; each category group gets a subheading. */
+.settings-profiles {
+  flex-wrap: wrap;
+}
+.settings-featgroup {
+  margin-top: 14px;
+}
+.settings-featgroup-title {
+  display: block;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin-bottom: 8px;
+}
 .settings-field {
   display: flex;
   flex-direction: column;

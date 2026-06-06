@@ -40,7 +40,9 @@ function NeedList({ items, empty }: { items: EntityNeed[]; empty: string }) {
  * slot" (a band on an entity you already have). Online LoTW/eQSL sync (which
  * flips `confirmed`) is a later increment; this is all from the log.
  */
-export function AwardsView() {
+/** `showGamification` (the `gamification` feature) gates the celebratory badge
+ * grid; the award math + tables always render. */
+export function AwardsView({ showGamification = true }: { showGamification?: boolean }) {
   const [aw, setAw] = useState<AwardSummary | null>(null)
   const [err, setErr] = useState(false)
   useEffect(() => {
@@ -270,6 +272,7 @@ export function AwardsView() {
         </div>
       </div>
 
+      {showGamification && (
       <div className="aw-panel aw-achievements">
         <h3>
           <Trophy size={14} aria-hidden="true" /> Achievements (
@@ -307,6 +310,7 @@ export function AwardsView() {
           ))}
         </div>
       </div>
+      )}
     </section>
   )
 }

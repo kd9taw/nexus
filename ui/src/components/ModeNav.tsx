@@ -15,27 +15,19 @@ import {
   Settings,
 } from 'lucide-react'
 import { Tooltip, TooltipProvider } from './ui/Tooltip'
+import type { FeatureId, View } from '../features/registry'
 
-/** The view the user is looking at — modes plus the (non-mode) Band/Roam/Log/Settings screens. */
-export type View =
-  | 'operate'
-  | 'propagation'
-  | 'map'
-  | 'chat'
-  | 'qso'
-  | 'fieldDay'
-  | 'band'
-  | 'roam'
-  | 'logbook'
-  | 'awards'
-  | 'log'
-  | 'settings'
+// `View` now lives in the feature registry (features ARE the views); re-export so
+// existing `import { type View } from './ModeNav'` call-sites keep working.
+export type { View }
 
 interface Props {
   /** Current view selected in the UI. */
   view: View
   /** The operating mode reported by the snapshot (drives the live badge). */
   mode: OpMode
+  /** Enabled-set from the feature system — disabled sections are hidden. */
+  enabled: Record<FeatureId, boolean>
   onSelect: (view: View) => void
 }
 
@@ -66,12 +58,14 @@ const MODE_LABEL: Record<OpMode, string> = {
   fieldDay: 'FIELD DAY',
 }
 
-export function ModeNav({ view, mode, onSelect }: Props) {
+export function ModeNav({ view, mode, enabled, onSelect }: Props) {
+  // Only show enabled sections; core ones (Operate/Logbook) are always enabled.
+  const items = ITEMS.filter((it) => enabled[it.id] !== false)
   return (
     <TooltipProvider>
       <nav className="mode-nav" aria-label="Operating mode">
         <div className="mode-nav-top">
-          {ITEMS.map((it) => {
+          {items.map((it) => {
             const Icon = it.icon
             return (
               <Tooltip key={it.id} content={it.title}>

@@ -62,11 +62,14 @@ function writeSeen(seen: Set<string>): void {
  *  - Only `critical` milestones toast (first QSO, 1000 QSOs, DXCC, Challenge);
  *    everything else accrues quietly in the Awards view.
  *  - Reloads don't re-toast (the seen set is persisted).
- * Call once at the app root.
+ *
+ * Gated by the `gamification` feature: when off, no polling and no toasts (the
+ * award math still runs everywhere else). Call once at the app root.
  */
-export function useAchievements(): void {
+export function useAchievements(enabled = true): void {
   const seenRef = useRef<Set<string> | null>(null)
   useEffect(() => {
+    if (!enabled) return
     let live = true
 
     const check = async () => {
@@ -109,5 +112,5 @@ export function useAchievements(): void {
       live = false
       window.clearInterval(id)
     }
-  }, [])
+  }, [enabled])
 }

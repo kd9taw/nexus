@@ -14,6 +14,9 @@ import { LevelMeter } from './LevelMeter'
 import type { Layout } from '../useLayout'
 import type { Scale } from '../useScale'
 import { SCALE_STEPS } from '../useScale'
+import type { FeaturesApi } from '../useFeatures'
+import { FEATURES, featureById, type FeatureCategory, type FeatureDef, type FeatureId } from '../features/registry'
+import { PROFILE_LIST } from '../features/profiles'
 
 interface Props {
   /** Called after a successful save so the shell can refresh its snapshot. */
@@ -26,7 +29,20 @@ interface Props {
   scale: Scale
   onScaleChange: (s: Scale) => void
   onResetLayout: () => void
+  /** Modular-features API (toggles + profiles). */
+  features: FeaturesApi
 }
+
+/** Display order for the Features section's category groups. */
+const FEATURE_CATEGORY_ORDER: FeatureCategory[] = [
+  'Operate',
+  'DX & Awards',
+  'Propagation',
+  'Contesting',
+  'POTA/SOTA',
+  'Logging',
+  'System',
+]
 
 type FieldKey = keyof Settings
 
@@ -63,6 +79,7 @@ export function SettingsPanel({
   scale,
   onScaleChange,
   onResetLayout,
+  features,
 }: Props) {
   const [form, setForm] = useState<Settings | null>(null)
   const [status, setStatus] = useState<'idle' | 'loading' | 'saving' | 'saved'>('loading')
@@ -227,6 +244,37 @@ export function SettingsPanel({
     )
   }
 
+  // One feature toggle row (used by the Core group + each category group).
+  const featureRow = (f: FeatureDef) => {
+    const on = features.enabled[f.id] !== false
+    const depOff = f.dependsOn.find((d) => features.enabled[d] === false)
+    return (
+      <div className="settings-field" key={f.id}>
+        <label className="settings-toggle">
+          <span className="settings-label">
+            {f.label}
+            {f.core && <span className="settings-value"> always on</span>}
+          </span>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={on}
+            disabled={f.core}
+            className={`toggle${on ? ' on' : ''}`}
+            onClick={() => features.toggle(f.id)}
+            aria-label={`${on ? 'Disable' : 'Enable'} ${f.label}`}
+          >
+            <span className="toggle-knob" />
+          </button>
+        </label>
+        <span className="settings-hint">
+          {f.oneLine}
+          {depOff && !f.core && ` Turning on also enables ${featureById(depOff as FeatureId)?.label ?? depOff}.`}
+        </span>
+      </div>
+    )
+  }
+
   // serial-port options include the current value even if not in the enumerated
   // list (e.g. a port that has since disappeared), so it stays selectable.
   const portOptions = form.serialPort && !serialPorts.includes(form.serialPort)
@@ -301,6 +349,64 @@ export function SettingsPanel({
                 <span className="settings-hint">Restore the default left/right pane widths.</span>
               </div>
             </div>
+          </fieldset>
+
+          {/* ---- Features (modular toggles + goal profiles) ---- */}
+          <fieldset className="settings-section">
+            <legend>Features</legend>
+            <div className="settings-field">
+              <span className="settings-label">Profile</span>
+              <div className="theme-switcher settings-profiles" role="group" aria-label="Feature profile">
+                {PROFILE_LIST.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    className={`theme-chip${features.profile === p.id ? ' active' : ''}`}
+                    aria-pressed={features.profile === p.id}
+                    title={p.blurb}
+                    onClick={() => {
+                      // Switching from a hand-tuned set discards it — confirm first.
+                      if (
+                        features.profile !== 'custom' ||
+                        window.confirm(`Switch to “${p.label}”? This replaces your custom feature set.`)
+                      ) {
+                        features.applyProfile(p.id)
+                      }
+                    }}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+                {features.profile === 'custom' && (
+                  <span className="theme-chip active" aria-disabled="true" title="Custom — you've toggled individual features">
+                    Custom
+                  </span>
+                )}
+              </div>
+              <span className="settings-hint">
+                {features.profile === 'custom'
+                  ? "Custom — you've toggled individual features. Pick a goal above to reset to its defaults."
+                  : 'Pick a goal to set sensible defaults — every feature stays toggleable below. Switching profiles re-applies its set.'}
+              </span>
+            </div>
+
+            {/* Core spine first, as a locked group (spec §4.4). */}
+            <div className="settings-featgroup">
+              <span className="settings-featgroup-title">Core — always on</span>
+              <div className="settings-grid">{FEATURES.filter((f) => f.core).map(featureRow)}</div>
+            </div>
+
+            {/* Optional features, grouped by category. */}
+            {FEATURE_CATEGORY_ORDER.map((cat) => {
+              const inCat = FEATURES.filter((f) => f.category === cat && !f.core)
+              if (inCat.length === 0) return null
+              return (
+                <div className="settings-featgroup" key={cat}>
+                  <span className="settings-featgroup-title">{cat}</span>
+                  <div className="settings-grid">{inCat.map(featureRow)}</div>
+                </div>
+              )
+            })}
           </fieldset>
 
           {/* ---- Operator & radio ---- */}

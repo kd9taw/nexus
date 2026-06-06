@@ -31,6 +31,8 @@ import { useScale } from './useScale'
 import { useDensity } from './useDensity'
 import { useMotion } from './useMotion'
 import { useAchievements } from './useAchievements'
+import { useFeatures } from './useFeatures'
+import { sectionFeatures, type FeatureId } from './features/registry'
 import { usePaneWidths, clampLeft, clampRight } from './usePaneWidths'
 import { TopBar } from './components/TopBar'
 import { StationList } from './components/StationList'
@@ -79,14 +81,22 @@ export default function App() {
   // Activates + persists the density + motion attributes (control UI lands later).
   useDensity()
   useMotion()
-  useAchievements()
+  // Modular features (toggles + profiles). Drives nav, view-gating, and the
+  // gamification/achievements layer.
+  const features = useFeatures()
+  useAchievements(features.isOn('gamification'))
   const { commitLeft, commitRight, resetWidths } = usePaneWidths()
   const layoutRef = useRef<HTMLElement>(null)
   const [snap, setSnap] = useState<AppSnapshot | null>(null)
   const [view, setView] = useState<View>(() => {
     const h = typeof window !== 'undefined' ? window.location.hash.slice(1) : ''
-    const valid = ['operate', 'propagation', 'map', 'chat', 'qso', 'fieldDay', 'band', 'roam', 'logbook', 'awards', 'log', 'settings']
-    return (valid.includes(h) ? h : 'operate') as View
+    const sectionIds = sectionFeatures().map((f) => f.id) as string[]
+    // Honor a deeplink only if it's an enabled section; otherwise open at the
+    // active profile's landing view.
+    if (sectionIds.includes(h) && features.enabled[h as FeatureId] !== false) {
+      return h as View
+    }
+    return features.landing
   })
   const [prop, setProp] = useState<PropagationSnapshot | null>(null)
   useEffect(() => {
@@ -352,10 +362,15 @@ export default function App() {
   // displayed tier is the authoritative link tier from the snapshot
   const tier = snap.link.tier
 
+  // Defense in depth: if the current view's feature got disabled (e.g. toggled
+  // off in Settings while viewing it), fall back to the profile's landing view.
+  // The nav already hides disabled sections; this guards a stale selection.
+  const effectiveView: View = features.isOn(view as FeatureId) ? view : features.landing
+
   // First-run nudge: callsign unset / still the placeholder, and not dismissed.
   const needsOnboarding =
     !onboardDismissed &&
-    view !== 'settings' &&
+    effectiveView !== 'settings' &&
     (snap.mycall.trim() === '' || snap.mycall.trim().toUpperCase() === PLACEHOLDER_CALL)
 
   const stationsPanel = (
@@ -445,7 +460,7 @@ export default function App() {
   )
 
   let workspace: JSX.Element
-  switch (view) {
+  switch (effectiveView) {
     case 'qso':
       workspace = threePane(<QsoPanel qso={snap.qso} onSetMode={handleSetMode} />)
       break
@@ -478,7 +493,7 @@ export default function App() {
     case 'awards':
       workspace = (
         <main className="layout single">
-          <AwardsView />
+          <AwardsView showGamification={features.isOn('gamification')} />
         </main>
       )
       break
@@ -515,6 +530,7 @@ export default function App() {
             scale={scale}
             onScaleChange={setScale}
             onResetLayout={resetWidths}
+            features={features}
           />
         </main>
       )
@@ -600,10 +616,20 @@ export default function App() {
         />
       )}
 
-      <NowBar snap={snap} prop={prop} onNavigate={handleView} />
+      <NowBar
+        snap={snap}
+        prop={prop}
+        propEnabled={features.isOn('propagation')}
+        onNavigate={handleView}
+      />
 
       <div className="shell">
-        <ModeNav view={view} mode={snap.mode} onSelect={handleView} />
+        <ModeNav
+          view={effectiveView}
+          mode={snap.mode}
+          enabled={features.enabled}
+          onSelect={handleView}
+        />
         {workspace}
       </div>
 
