@@ -121,6 +121,10 @@ fn set_source(state: State<'_, SharedEngine>, kind: String) -> Result<AppSnapsho
         .map_err(|_| format!("invalid source {kind:?}: expected \"native\" or \"companion\""))?;
     let mut eng = state.lock().map_err(|e| e.to_string())?;
     eng.set_source(kind)?;
+    // Persist the choice so it survives restart (set_source recorded it in settings).
+    if let Err(e) = eng.settings().save(&settings_path()) {
+        eprintln!("tempo: failed to persist signal source: {e}");
+    }
     Ok(eng.snapshot())
 }
 
@@ -623,12 +627,21 @@ pub fn run() {
         tx_level: settings.tx_level,
     };
 
+    // The engine boots on the native source; restore a persisted Companion choice
+    // below (best-effort — a failed UDP bind falls back to native).
+    let persisted_source = settings.source;
     let engine: SharedEngine = Arc::new(Mutex::new(Engine::with_settings(settings)));
 
     // Point the logbook at its ADIF file and load prior contacts (so worked-
-    // before highlighting and the log view reflect previous sessions).
+    // before highlighting and the log view reflect previous sessions), and
+    // restore the persisted signal source.
     if let Ok(mut eng) = engine.lock() {
         eng.set_log_path(logbook_path());
+        if persisted_source == SourceKind::Companion {
+            if let Err(e) = eng.set_source(SourceKind::Companion) {
+                eprintln!("tempo: could not restore Companion source ({e}); using native");
+            }
+        }
     }
 
     // With the `radio` feature, drive the real sound card + rig (and the WSJT-X

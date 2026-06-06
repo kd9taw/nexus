@@ -4,6 +4,7 @@
 //! `#[serde(default)]` makes every field optional on load, so older settings
 //! files (and UI forms that don't yet send every field) still deserialize.
 
+use crate::dto::SourceKind;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -57,6 +58,9 @@ pub struct Settings {
     /// when the signal source is Companion (the sink those apps transmit to;
     /// WSJT-X default 127.0.0.1:2237).
     pub companion_addr: String,
+    /// Persisted RX signal source — native decode vs a WSJT-X/JTDX/MSHV companion
+    /// stream. Restored at startup so the operator's choice survives restart.
+    pub source: SourceKind,
     /// Upload heard stations to PSK Reporter.
     pub pskreporter: bool,
 
@@ -161,6 +165,7 @@ impl Default for Settings {
             wsjtx_udp: false,
             wsjtx_udp_addr: "127.0.0.1:2237".to_string(),
             companion_addr: "127.0.0.1:2237".to_string(),
+            source: SourceKind::Native,
             pskreporter: false,
             audio_in: String::new(),
             audio_out: String::new(),

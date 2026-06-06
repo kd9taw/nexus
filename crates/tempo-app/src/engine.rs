@@ -236,7 +236,12 @@ impl Engine {
             self.app = AppState::new(&s.mycall, &s.mygrid);
         }
         self.app.set_radio(s.dial_mhz, &s.band, &s.sideband);
+        // The signal source is owned by `set_source` (which binds the socket), not
+        // the settings form — preserve the live choice so a stale form save can't
+        // silently flip it.
+        let live_source = self.source_kind;
         self.settings = s;
+        self.settings.source = live_source;
         // Re-derive the live timing/tuning state from the saved settings.
         self.tx_parity = if self.settings.tx_even { 0 } else { 1 };
         self.tx_offset_hz = self.settings.tx_offset_hz;
@@ -586,6 +591,8 @@ impl Engine {
             }
         }
         self.source_kind = kind;
+        // Record the choice so the shell can persist it (restored at startup).
+        self.settings.source = kind;
         Ok(())
     }
 
@@ -1394,6 +1401,38 @@ mod tests {
         assert_eq!(e.source_kind(), SourceKind::Native);
         e.set_tier(Tier::Ft4);
         assert_eq!(e.snapshot().radio.source_label, "Native (FT4)");
+    }
+
+    #[test]
+    fn source_choice_is_recorded_in_settings_and_survives_a_form_save() {
+        let mut e = Engine::with_settings(Settings {
+            companion_addr: "127.0.0.1:0".to_string(),
+            ..Settings::default()
+        });
+        assert_eq!(e.settings().source, SourceKind::Native);
+
+        e.set_source(SourceKind::Companion)
+            .expect("bind ephemeral companion socket");
+        // Recorded into settings so the shell can persist it across restart.
+        assert_eq!(e.settings().source, SourceKind::Companion);
+
+        // A settings-form save (whose payload carries the default Native source)
+        // must NOT silently flip the live source — only set_source owns it.
+        e.apply_settings(Settings {
+            mycall: "K9ABC".to_string(),
+            ..Settings::default()
+        });
+        assert_eq!(
+            e.source_kind(),
+            SourceKind::Companion,
+            "form save preserves the live signal source"
+        );
+        assert_eq!(e.settings().source, SourceKind::Companion);
+        assert_eq!(
+            e.settings().mycall,
+            "K9ABC",
+            "other form fields still applied"
+        );
     }
 
     #[test]
