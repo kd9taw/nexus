@@ -582,6 +582,12 @@ export interface Settings {
   /** Incremental-sync high-water cursor (APP_LoTW_LASTQSL). Managed by the app;
    *  not user-edited. Empty = next sync is a full pull. */
   lotwLastQsl: string
+  /** eQSL account username (callsign or login). Password is in the OS keychain
+   *  (set via setEqslPassword). */
+  eqslUsername: string
+  /** eQSL incremental-sync cursor (YYYYMMDDHHMM). Managed by the app; not
+   *  user-edited. Empty = next sync is a full pull. */
+  eqslLastSync: string
   /** Editable quick-reply macros, per context. */
   macros: {
     chat: string[]

@@ -1,13 +1,16 @@
 import { useEffect, useState } from 'react'
 import type { AudioDevices, BandChannel, CatTestResult, RadioStatus, Settings } from '../types'
 import {
+  clearEqslPassword,
   clearLotwPassword,
+  downloadEqslReport,
   downloadLotwReport,
   getAudioDevices,
   getBandPlan,
   getRigModels,
   getSerialPorts,
   getSettings,
+  setEqslPassword,
   setLotwPassword,
   setSettings,
   testCat,
@@ -99,10 +102,12 @@ export function SettingsPanel({
   const [audioLoading, setAudioLoading] = useState(false)
   const [catTesting, setCatTesting] = useState(false)
   const [catResult, setCatResult] = useState<CatTestResult | null>(null)
-  // LoTW password is write-only (kept in the OS keychain, never read back), so it
-  // lives in local state — not in `form`/Settings.
+  // LoTW/eQSL passwords are write-only (kept in the OS keychain, never read back),
+  // so they live in local state — not in `form`/Settings.
   const [lotwPw, setLotwPw] = useState('')
   const [lotwSyncing, setLotwSyncing] = useState(false)
+  const [eqslPw, setEqslPw] = useState('')
+  const [eqslSyncing, setEqslSyncing] = useState(false)
 
   useEffect(() => {
     let mounted = true
@@ -263,6 +268,51 @@ export function SettingsPanel({
       const orphans = r.orphans.length ? ` · ${r.orphans.length} unmatched` : ''
       pushToast(
         `LoTW: ${r.newlyConfirmed} newly confirmed, ${r.newlyCredited} credited${orphans}`,
+        r.orphans.length ? 'info' : 'success',
+      )
+      onSaved?.()
+    }
+  }
+
+  const onSaveEqslPassword = async () => {
+    if (!eqslPw) return
+    const ok = await withErrorToast(async () => {
+      await setEqslPassword(eqslPw)
+      return true
+    }, 'Could not save the eQSL password')
+    if (ok) {
+      setEqslPw('')
+      pushToast('eQSL password saved to the system keychain', 'success')
+    }
+  }
+
+  const onForgetEqslPassword = async () => {
+    const ok = await withErrorToast(async () => {
+      await clearEqslPassword()
+      return true
+    }, 'Could not clear the eQSL password')
+    if (ok) {
+      setEqslPw('')
+      pushToast('eQSL password cleared from the keychain', 'success')
+    }
+  }
+
+  const onSyncEqsl = async () => {
+    if (!form) return
+    setEqslSyncing(true)
+    // Save the form first so the download uses the username the user sees (the
+    // backend reads SAVED settings; a username change resets the cursor).
+    const r = await withErrorToast(async () => {
+      await setSettings({ ...form, mycall: form.mycall.trim().toUpperCase() })
+      return downloadEqslReport()
+    }, 'eQSL sync failed')
+    setEqslSyncing(false)
+    if (r) {
+      const orphans = r.orphans.length ? ` · ${r.orphans.length} unmatched` : ''
+      // eQSL is non-award-grade, so report newlyConfirmedAny (newlyConfirmed is
+      // award-only and always 0 for eQSL).
+      pushToast(
+        `eQSL: ${r.newlyConfirmedAny} newly confirmed (not DXCC/WAS credit)${orphans}`,
         r.orphans.length ? 'info' : 'success',
       )
       onSaved?.()
@@ -1064,6 +1114,74 @@ export function SettingsPanel({
                 <span className="settings-hint">
                   Download new confirmations into your log. The first sync pulls your whole history (can be
                   slow); later syncs are incremental.
+                </span>
+              </div>
+
+              <label className="settings-field">
+                <span className="settings-label">eQSL username</span>
+                <input
+                  className="settings-input"
+                  type="text"
+                  value={form.eqslUsername}
+                  placeholder="your eQSL.cc account login"
+                  onChange={(e) => update('eqslUsername', e.target.value)}
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                <span className="settings-hint">
+                  Your eQSL.cc login (often your callsign). Save settings to apply.
+                </span>
+              </label>
+
+              <label className="settings-field">
+                <span className="settings-label">eQSL password</span>
+                <div className="settings-input-row">
+                  <input
+                    className="settings-input"
+                    type="password"
+                    value={eqslPw}
+                    placeholder="eQSL.cc account password"
+                    onChange={(e) => setEqslPw(e.target.value)}
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                  <button
+                    type="button"
+                    className="settings-refresh"
+                    onClick={onSaveEqslPassword}
+                    disabled={!eqslPw}
+                  >
+                    Set
+                  </button>
+                  <button
+                    type="button"
+                    className="settings-refresh"
+                    onClick={onForgetEqslPassword}
+                    title="Remove the stored password from the system keychain"
+                  >
+                    Forget
+                  </button>
+                </div>
+                <span className="settings-hint">
+                  Stored in the OS keychain, never on disk; not shown again after you click Set.
+                </span>
+              </label>
+
+              <div className="settings-field">
+                <span className="settings-label">eQSL confirmations</span>
+                <div className="settings-input-row">
+                  <button
+                    type="button"
+                    className="settings-refresh"
+                    onClick={onSyncEqsl}
+                    disabled={eqslSyncing || !form.eqslUsername.trim()}
+                  >
+                    {eqslSyncing ? 'Syncing…' : 'Sync eQSL now'}
+                  </button>
+                </div>
+                <span className="settings-hint">
+                  Download eQSL confirmations into your log. These count as confirmations but{' '}
+                  <strong>not</strong> for DXCC/WAS (ARRL doesn't accept eQSL) — a separate tier.
                 </span>
               </div>
             </div>

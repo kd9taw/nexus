@@ -188,6 +188,37 @@ export async function downloadLotwReport(): Promise<LotwSyncResult> {
   }
 }
 
+/** Store the eQSL password in the OS keychain (write-only; empty clears it). */
+export async function setEqslPassword(password: string): Promise<void> {
+  const invoke = tauriInvoke()
+  if (invoke) {
+    await invoke<void>('set_eqsl_password', { password })
+  }
+}
+
+/** Remove the stored eQSL password from the OS keychain (idempotent). */
+export async function clearEqslPassword(): Promise<void> {
+  const invoke = tauriInvoke()
+  if (invoke) {
+    await invoke<void>('clear_eqsl_password')
+  }
+}
+
+/** Download new eQSL confirmations and reconcile them into the log (uses the
+ *  stored username + keychain password). Outside Tauri returns an empty result. */
+export async function downloadEqslReport(): Promise<LotwSyncResult> {
+  const invoke = tauriInvoke()
+  if (invoke) return invoke<LotwSyncResult>('download_eqsl_report')
+  return {
+    matched: 0,
+    newlyConfirmed: 0,
+    newlyConfirmedAny: 0,
+    newlyCredited: 0,
+    newlySubmitted: 0,
+    orphans: [],
+  }
+}
+
 /** Need-aware spotting: the stations heard now, ranked by award value. */
 export async function getNeedAlerts(): Promise<NeedAlert[]> {
   const invoke = tauriInvoke()
