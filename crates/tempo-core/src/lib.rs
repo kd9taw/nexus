@@ -12,6 +12,7 @@
 //! frame-in/frame-out boundary later (see task #10).
 
 pub mod channel;
+pub mod eqsl;
 pub mod fieldday;
 pub mod inbox;
 pub mod logbook;
