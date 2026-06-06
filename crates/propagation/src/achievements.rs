@@ -38,6 +38,8 @@ pub struct AchievementStats {
     /// Most-wanted (DXpedition-grade) entities worked — entities you essentially
     /// only get via a DXpedition (Bouvet, P5, Scarborough Reef, …).
     pub rare_worked: u32,
+    /// CQ zones confirmed (toward Worked All Zones — 40 zones).
+    pub zones_confirmed: u32,
 }
 
 fn mk(
@@ -69,6 +71,7 @@ pub fn evaluate(s: &AchievementStats) -> Vec<Achievement> {
     let dc = s.dxcc_confirmed;
     let sl = s.slots_confirmed;
     let rw = s.rare_worked;
+    let zc = s.zones_confirmed;
     vec![
         // --- QSOs ---
         mk(
@@ -201,6 +204,25 @@ pub fn evaluate(s: &AchievementStats) -> Vec<Achievement> {
             1000,
             true,
         ),
+        // --- CQ WAZ (confirmed CQ zones, out of 40) ---
+        mk(
+            "waz-half",
+            "Zone Collector",
+            "Confirm 20 CQ zones",
+            "WAZ",
+            zc,
+            20,
+            false,
+        ),
+        mk(
+            "waz-40",
+            "Worked All Zones",
+            "Confirm all 40 CQ zones — the WAZ award!",
+            "WAZ",
+            zc,
+            40,
+            true,
+        ),
     ]
 }
 
@@ -217,6 +239,7 @@ mod tests {
             dxcc_confirmed: 45,
             slots_confirmed: 150,
             rare_worked: 3,
+            zones_confirmed: 22,
         };
         let a = evaluate(&s);
         let by = |id: &str| a.iter().find(|x| x.id == id).unwrap();
@@ -226,6 +249,8 @@ mod tests {
         assert!(by("dx-50").unlocked && !by("dxcc-100").unlocked);
         assert!(by("chal-100").unlocked && !by("chal-500").unlocked);
         assert!(by("rare-1").unlocked && by("rare-1").critical && !by("rare-5").unlocked);
+        assert!(by("waz-half").unlocked && !by("waz-40").unlocked);
+        assert!(by("waz-40").critical && !by("waz-half").critical);
 
         // critical flags = the big moments only
         assert!(by("qso-1").critical && by("dxcc-100").critical && by("chal-1000").critical);
@@ -245,6 +270,7 @@ mod tests {
             dxcc_confirmed: 0,
             slots_confirmed: 0,
             rare_worked: 0,
+            zones_confirmed: 0,
         });
         assert!(a.iter().all(|x| !x.unlocked));
         assert!(!a.is_empty(), "catalog still lists locked achievements");

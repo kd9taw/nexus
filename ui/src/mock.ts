@@ -1012,9 +1012,13 @@ class MockEngine {
         { id: 'chal-100', title: 'Slot Collector', detail: '100 confirmed band slots', category: 'Challenge', unlocked: true, current: 392, target: 100, critical: false },
         { id: 'chal-500', title: 'Slot Hunter', detail: '500 confirmed band slots', category: 'Challenge', unlocked: false, current: 392, target: 500, critical: false },
         { id: 'chal-1000', title: 'DXCC Challenge', detail: '1,000 confirmed slots — the Challenge!', category: 'Challenge', unlocked: false, current: 392, target: 1000, critical: true },
+        { id: 'waz-half', title: 'Zone Collector', detail: 'Confirm 20 CQ zones', category: 'WAZ', unlocked: true, current: 37, target: 20, critical: false },
+        { id: 'waz-40', title: 'Worked All Zones', detail: 'Confirm all 40 CQ zones — the WAZ award!', category: 'WAZ', unlocked: false, current: 37, target: 40, critical: true },
       ],
       fiveBandWorked: 78,
       fiveBandConfirmed: 64,
+      wazWorked: 39,
+      wazConfirmed: 37,
       bandTargets: [
         { entity: 'Chad', bands: ['10m'] },
         { entity: 'Nepal', bands: ['80m'] },

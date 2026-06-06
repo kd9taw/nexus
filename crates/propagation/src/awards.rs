@@ -117,6 +117,9 @@ pub struct AwardSummary {
     /// classic 5 bands (80/40/20/15/10m). 100 confirmed = 5BDXCC.
     pub five_band_worked: usize,
     pub five_band_confirmed: usize,
+    /// Worked All Zones (CQ WAZ): distinct CQ zones worked / confirmed, out of 40.
+    pub waz_worked: usize,
+    pub waz_confirmed: usize,
     /// The WORK chase (elite "every-band" tracker): entities already worked on
     /// most award bands but NOT yet on a few — the bands listed are ones to WORK
     /// (a new contact, not just a confirmation). Closest-to-complete first.
@@ -137,6 +140,9 @@ pub struct Awards {
     per_band: HashMap<Band, (HashSet<&'static str>, HashSet<&'static str>)>,
     /// mode class → (worked entities, confirmed entities)
     per_mode: HashMap<ModeClass, (HashSet<&'static str>, HashSet<&'static str>)>,
+    /// CQ zones worked / confirmed (WAZ — 40 zones).
+    worked_zones: HashSet<u8>,
+    confirmed_zones: HashSet<u8>,
 }
 
 impl Awards {
@@ -161,6 +167,13 @@ impl Awards {
         self.worked_entity.insert(entity);
         if confirmed {
             self.confirmed_entity.insert(entity);
+        }
+        // WAZ: CQ zones 1..=40 (0 = cty.dat couldn't supply a zone — skip it).
+        if (1..=40).contains(&info.cq_zone) {
+            self.worked_zones.insert(info.cq_zone);
+            if confirmed {
+                self.confirmed_zones.insert(info.cq_zone);
+            }
         }
         // Per-mode DXCC (CW/Phone/Digital are separate awards).
         let pm = self.per_mode.entry(ModeClass::from_adif(mode)).or_default();
@@ -320,6 +333,7 @@ impl Awards {
             dxcc_confirmed: self.confirmed_entity.len() as u32,
             slots_confirmed: self.confirmed_slot.len() as u32,
             rare_worked: rare_worked as u32,
+            zones_confirmed: self.confirmed_zones.len() as u32,
         });
 
         AwardSummary {
@@ -336,6 +350,8 @@ impl Awards {
             achievements,
             five_band_worked,
             five_band_confirmed,
+            waz_worked: self.worked_zones.len(),
+            waz_confirmed: self.confirmed_zones.len(),
             band_targets,
         }
     }
@@ -367,6 +383,11 @@ mod tests {
         assert_eq!(s.dxcc_confirmed, 2, "USA + Germany confirmed");
         assert_eq!(s.slots_worked, 4, "(USA,20),(USA,40),(JA,20),(DL,20)");
         assert_eq!(s.slots_confirmed, 2, "(USA,20),(DL,20)");
+
+        // WAZ: W1/K1 → CQ 5, JA → CQ 25, DL → CQ 14 ⇒ 3 zones worked; only the
+        // confirmed contacts (W1AW=5, DL1ABC=14) count as confirmed zones.
+        assert_eq!(s.waz_worked, 3, "zones 5 (US), 25 (JA), 14 (DL)");
+        assert_eq!(s.waz_confirmed, 2, "zones 5 + 14 confirmed");
 
         // Only Japan is a "new one" chase — USA is already confirmed even though
         // its 40m slot is unconfirmed (that's a Challenge need, not a new entity).

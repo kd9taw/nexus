@@ -335,6 +335,9 @@ export interface AwardSummary {
   /** 5-Band DXCC: entities worked / confirmed on all of 80/40/20/15/10m. */
   fiveBandWorked: number
   fiveBandConfirmed: number
+  /** Worked All Zones (CQ WAZ): distinct CQ zones worked / confirmed, out of 40. */
+  wazWorked: number
+  wazConfirmed: number
   /** WORK chase: entities worked on most award bands but missing a few — the
    * listed bands are ones to WORK (a new contact). Closest-to-complete first. */
   bandTargets: EntityNeed[]

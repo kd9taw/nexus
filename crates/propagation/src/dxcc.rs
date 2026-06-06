@@ -17,26 +17,31 @@
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-/// A resolved DXCC entity with a representative location (entity centroid).
+/// A resolved DXCC entity with a representative location (entity centroid) and
+/// CQ zone (for WAZ). The zone is the prefix's `(cq)` override when cty.dat gives
+/// one (multi-zone entities like W/VE/UA), else the entity's default zone.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DxccInfo {
     pub entity: &'static str,
     pub lat: f64,
     pub lon: f64,
+    pub cq_zone: u8,
 }
 
 struct Entity {
     name: String,
     lat: f64,
     lon: f64,
+    /// Default CQ zone (cty.dat header field 2); 0 if unparsed.
+    cq_zone: u8,
 }
 
 struct Resolver {
     entities: Vec<Entity>,
-    /// Full uppercased call → entity index (cty.dat `=CALL` exceptions).
-    exact: HashMap<String, u32>,
-    /// Prefix → entity index.
-    prefixes: HashMap<String, u32>,
+    /// Full uppercased call → (entity index, optional per-call CQ-zone override).
+    exact: HashMap<String, (u32, Option<u8>)>,
+    /// Prefix → (entity index, optional per-prefix CQ-zone override).
+    prefixes: HashMap<String, (u32, Option<u8>)>,
 }
 
 static CTY: &str = include_str!("../data/cty.dat");
@@ -53,8 +58,8 @@ fn resolver() -> &'static Resolver {
 /// other bracketed) annotations which we strip.
 fn parse_cty(text: &str) -> Resolver {
     let mut entities: Vec<Entity> = Vec::new();
-    let mut exact: HashMap<String, u32> = HashMap::new();
-    let mut prefixes: HashMap<String, u32> = HashMap::new();
+    let mut exact: HashMap<String, (u32, Option<u8>)> = HashMap::new();
+    let mut prefixes: HashMap<String, (u32, Option<u8>)> = HashMap::new();
     let mut cur: Option<u32> = None;
     let mut buf = String::new();
 
@@ -69,10 +74,16 @@ fn parse_cty(text: &str) -> Resolver {
                 continue;
             }
             let name = parts[0].trim().to_string();
+            let cq_zone = parts[1].trim().parse::<u8>().unwrap_or(0);
             let lat = parts[4].trim().parse::<f64>().unwrap_or(0.0);
             // cty.dat longitude is West-positive → negate to East-positive.
             let lon = -parts[5].trim().parse::<f64>().unwrap_or(0.0);
-            entities.push(Entity { name, lat, lon });
+            entities.push(Entity {
+                name,
+                lat,
+                lon,
+                cq_zone,
+            });
             cur = Some((entities.len() - 1) as u32);
             buf.clear();
         } else if let Some(idx) = cur {
@@ -94,10 +105,16 @@ fn parse_cty(text: &str) -> Resolver {
                     if key.is_empty() {
                         continue;
                     }
+                    // Per-prefix CQ-zone override `(N)`, when present.
+                    let zone = body.find('(').and_then(|p| {
+                        body[p + 1..]
+                            .find(')')
+                            .and_then(|q| body[p + 1..p + 1 + q].trim().parse::<u8>().ok())
+                    });
                     if is_exact {
-                        exact.insert(key, idx);
+                        exact.insert(key, (idx, zone));
                     } else {
-                        prefixes.insert(key, idx);
+                        prefixes.insert(key, (idx, zone));
                     }
                 }
                 buf.clear();
@@ -138,27 +155,30 @@ pub fn resolve(call: &str) -> Option<DxccInfo> {
         return None;
     }
     // Exact-call exceptions win (full call, before affix stripping).
-    if let Some(&i) = r.exact.get(&full) {
-        return Some(info(r, i));
+    if let Some(&(i, zone)) = r.exact.get(&full) {
+        return Some(info(r, i, zone));
     }
     // Longest-prefix on the base call.
     let base = base_call(&full);
     let mut n = base.len();
     while n > 0 {
-        if let Some(&i) = r.prefixes.get(&base[..n]) {
-            return Some(info(r, i));
+        if let Some(&(i, zone)) = r.prefixes.get(&base[..n]) {
+            return Some(info(r, i, zone));
         }
         n -= 1;
     }
     None
 }
 
-fn info(r: &'static Resolver, i: u32) -> DxccInfo {
+/// Build a [`DxccInfo`], using the per-prefix CQ-zone override when present, else
+/// the entity's default zone.
+fn info(r: &'static Resolver, i: u32, zone_override: Option<u8>) -> DxccInfo {
     let e = &r.entities[i as usize];
     DxccInfo {
         entity: e.name.as_str(),
         lat: e.lat,
         lon: e.lon,
+        cq_zone: zone_override.unwrap_or(e.cq_zone),
     }
 }
 
@@ -210,5 +230,22 @@ mod tests {
         assert_eq!(resolve("DL1ABC/P").unwrap().entity, "Fed. Rep. of Germany");
         assert_eq!(resolve("KH8/N0CALL").unwrap().entity, "American Samoa");
         assert!(resolve("").is_none());
+    }
+}
+
+#[cfg(test)]
+mod zone_tests {
+    use super::*;
+    #[test]
+    fn resolves_cq_zone() {
+        // W = multi-zone (3/4/5); W1 (New England) is CQ zone 5 via prefix override.
+        assert_eq!(resolve("W1AW").unwrap().cq_zone, 5, "W1 → CQ 5");
+        assert_eq!(resolve("JA1XYZ").unwrap().cq_zone, 25, "Japan → CQ 25");
+        assert_eq!(resolve("G3XYZ").unwrap().cq_zone, 14, "England → CQ 14");
+        // every resolvable major call yields a valid zone 1..=40
+        for c in ["DL1AA", "VK2AA", "PY2AA", "UA3AA", "ZL1AA"] {
+            let z = resolve(c).unwrap().cq_zone;
+            assert!((1..=40).contains(&z), "{c} → zone {z} out of range");
+        }
     }
 }

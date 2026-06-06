@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Trophy, CheckCircle2, Radio, Target, Layers, Send } from 'lucide-react'
+import { Trophy, CheckCircle2, Radio, Target, Layers, Send, Globe2 } from 'lucide-react'
 import type { AwardSummary, EntityNeed } from '../types'
 import { getAwards } from '../api'
 import { StateBlock } from './StateBlock'
@@ -8,6 +8,8 @@ import { StateBlock } from './StateBlock'
 const DXCC_BASIC = 100
 /** Confirmed entity×band slots for the DXCC Challenge award. */
 const CHALLENGE_AWARD = 1000
+/** CQ zones for the Worked All Zones (WAZ) award. */
+const WAZ_ZONES = 40
 
 /** Render a chase list (entity + the bands to confirm), or an empty note. */
 function NeedList({ items, empty }: { items: EntityNeed[]; empty: string }) {
@@ -151,6 +153,28 @@ export function AwardsView() {
             <div className="aw-fill good" style={{ width: `${Math.min(100, aw.fiveBandConfirmed)}%` }} />
           </div>
           <span className="aw-note">{aw.fiveBandWorked} worked on all 5 bands</span>
+        </div>
+
+        <div className="aw-card">
+          <span className="aw-k">
+            <Globe2 size={13} aria-hidden="true" /> WAZ
+          </span>
+          <span className="aw-v">
+            {aw.wazConfirmed}
+            <span className="aw-of"> / {WAZ_ZONES}</span>
+          </span>
+          <div className="aw-bar">
+            <div
+              className="aw-fill good"
+              style={{ width: `${Math.min(100, (aw.wazConfirmed / WAZ_ZONES) * 100)}%` }}
+            />
+          </div>
+          <span className="aw-note">
+            {aw.wazConfirmed >= WAZ_ZONES
+              ? 'Worked All Zones ✓'
+              : `${WAZ_ZONES - aw.wazConfirmed} zones to go`}{' '}
+            · {aw.wazWorked} worked
+          </span>
         </div>
       </div>
 
