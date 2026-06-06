@@ -6,6 +6,7 @@
 //! unit-testable offline.
 
 pub mod dxped;
+pub mod eqsl;
 pub mod lotw;
 pub mod pskreporter;
 pub mod swpc;
