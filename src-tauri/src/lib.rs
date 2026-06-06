@@ -77,6 +77,11 @@ struct FeedHealthState {
 }
 type SharedHealth = Arc<FeedHealthState>;
 
+/// Cached QRZ XML session key (in-memory only — it's IP-bound, short-lived, and
+/// re-derivable from the keychain password, so it never persists). `None` = not
+/// logged in yet / expired.
+type SharedQrzSession = Arc<Mutex<Option<String>>>;
+
 /// A feed counts as "live" if it parsed an event within this window; older ⇒
 /// "idle" (a lull on a quiet band, or a feed problem — the UI tooltip says so).
 /// Generous so a normal band lull doesn't flip the pill.
@@ -848,6 +853,7 @@ fn sync_lotw_report(
 const LOTW_KEYCHAIN_SERVICE: &str = "tempo";
 const LOTW_KEYCHAIN_USER: &str = "lotw-password";
 const EQSL_KEYCHAIN_USER: &str = "eqsl-password";
+const QRZ_KEYCHAIN_USER: &str = "qrz-password";
 
 fn lotw_keychain() -> Result<keyring::Entry, String> {
     keyring::Entry::new(LOTW_KEYCHAIN_SERVICE, LOTW_KEYCHAIN_USER)
@@ -856,6 +862,11 @@ fn lotw_keychain() -> Result<keyring::Entry, String> {
 
 fn eqsl_keychain() -> Result<keyring::Entry, String> {
     keyring::Entry::new(LOTW_KEYCHAIN_SERVICE, EQSL_KEYCHAIN_USER)
+        .map_err(|e| format!("couldn't open the system keychain: {e}"))
+}
+
+fn qrz_keychain() -> Result<keyring::Entry, String> {
+    keyring::Entry::new(LOTW_KEYCHAIN_SERVICE, QRZ_KEYCHAIN_USER)
         .map_err(|e| format!("couldn't open the system keychain: {e}"))
 }
 
@@ -904,6 +915,25 @@ fn set_eqsl_password(password: String) -> Result<(), String> {
 #[tauri::command]
 fn clear_eqsl_password() -> Result<(), String> {
     clear_keychain_entry(&eqsl_keychain()?)
+}
+
+/// Store (or, if empty, clear) the QRZ.com account password in the OS keychain.
+/// Write-only, like the LoTW/eQSL counterparts.
+#[tauri::command]
+fn set_qrz_password(password: String) -> Result<(), String> {
+    let entry = qrz_keychain()?;
+    if password.is_empty() {
+        return clear_keychain_entry(&entry);
+    }
+    entry
+        .set_password(&password)
+        .map_err(|e| format!("couldn't save to the system keychain: {e}"))
+}
+
+/// Remove the stored QRZ password from the OS keychain (idempotent).
+#[tauri::command]
+fn clear_qrz_password() -> Result<(), String> {
+    clear_keychain_entry(&qrz_keychain()?)
 }
 
 /// `RcvdSince` safety margin: eQSL does not document the timezone of this filter,
@@ -1046,6 +1076,104 @@ fn download_eqsl_report(state: State<'_, SharedEngine>) -> Result<LotwSyncResult
     Ok(summary)
 }
 
+// ----- QRZ.com callsign lookup (session-key XML API) ------------------------
+
+/// Outcome of one lookup attempt with a given session key.
+enum QrzOutcome {
+    Found(tempo_app::dto::QrzLookupDto),
+    NotFound,
+    NeedLogin, // the session key is expired/invalid → (re)login
+}
+
+/// One QRZ lookup with an existing session key (no login). Network only; holds no
+/// lock. Errors are already redacted by the transport.
+fn qrz_try_lookup(session_key: &str, callsign: &str) -> Result<QrzOutcome, String> {
+    let url = tempo_core::qrz::build_lookup_url(session_key, callsign);
+    let body = propagation::live::qrz::fetch(&url)?;
+    if !tempo_core::qrz::is_qrz_xml(&body) {
+        return Err("QRZ returned an unexpected response.".to_string());
+    }
+    if tempo_core::qrz::parse_session(&body).needs_login() {
+        return Ok(QrzOutcome::NeedLogin);
+    }
+    Ok(match tempo_core::qrz::parse_callsign(&body) {
+        Some(rec) => QrzOutcome::Found(rec.into()),
+        None => QrzOutcome::NotFound,
+    })
+}
+
+/// Log in to QRZ and return a fresh session key. The URL carries the password but
+/// is local (dropped here); errors are redacted by the transport.
+fn qrz_login(username: &str, password: &str) -> Result<String, String> {
+    let url = tempo_core::qrz::build_login_url(&tempo_core::qrz::QrzLogin {
+        username: username.to_string(),
+        password: password.to_string(),
+        agent: "nexus/0.1".to_string(),
+    });
+    let body = propagation::live::qrz::fetch(&url)?;
+    if !tempo_core::qrz::is_qrz_xml(&body) {
+        return Err("QRZ returned an unexpected response — check your credentials.".to_string());
+    }
+    let session = tempo_core::qrz::parse_session(&body);
+    session.key.ok_or_else(|| {
+        // QRZ's <Error> on a bad login (e.g. "Username/password incorrect") carries
+        // no secret — surface it; else a generic message.
+        session
+            .error
+            .map(|e| format!("QRZ login failed: {e}"))
+            .unwrap_or_else(|| "QRZ login failed — check your username/password.".to_string())
+    })
+}
+
+/// Look up a callsign on QRZ, enriching with name / (subscriber) grid / QTH /
+/// state. Uses the cached session key if valid; on expiry logs in **once** and
+/// retries (bounded — never loops). Network runs without any lock held.
+#[tauri::command]
+fn qrz_lookup(
+    callsign: String,
+    state: State<'_, SharedEngine>,
+    qrz_session: State<'_, SharedQrzSession>,
+) -> Result<tempo_app::dto::QrzLookupDto, String> {
+    let call = callsign.trim().to_string();
+    if call.is_empty() {
+        return Err("Enter a callsign to look up.".to_string());
+    }
+    let username = {
+        let eng = state.lock().map_err(|e| e.to_string())?;
+        eng.settings().qrz_username.trim().to_string()
+    };
+    if username.is_empty() {
+        return Err("Set your QRZ username in Settings first.".to_string());
+    }
+    let password = qrz_keychain()?
+        .get_password()
+        .map_err(|_| "No QRZ password stored — set it in Settings.".to_string())?;
+
+    let not_found = || format!("{} is not in the QRZ database.", call.to_uppercase());
+
+    // 1) Try the cached key, if any.
+    let cached = qrz_session.lock().ok().and_then(|g| g.clone());
+    if let Some(key) = cached {
+        match qrz_try_lookup(&key, &call)? {
+            QrzOutcome::Found(dto) => return Ok(dto),
+            QrzOutcome::NotFound => return Err(not_found()),
+            QrzOutcome::NeedLogin => {} // fall through to a single re-login
+        }
+    }
+
+    // 2) Log in once, cache the new key, retry the lookup once (bounded).
+    let key = qrz_login(&username, &password)?;
+    if let Ok(mut g) = qrz_session.lock() {
+        *g = Some(key.clone());
+    }
+    match qrz_try_lookup(&key, &call)? {
+        QrzOutcome::Found(dto) => Ok(dto),
+        QrzOutcome::NotFound => Err(not_found()),
+        // A fresh key still reporting expiry is anomalous — fail without looping.
+        QrzOutcome::NeedLogin => Err("QRZ session error — please try again.".to_string()),
+    }
+}
+
 // ----- coordinated QSY ("move together") — a separate, opt-in feature ------
 //
 // All no-ops while disabled. Enabling/disabling + the channel set/cadence are
@@ -1185,6 +1313,7 @@ pub fn run() {
         .manage(spots)
         .manage(live_paths)
         .manage(health)
+        .manage(SharedQrzSession::default())
         .invoke_handler(tauri::generate_handler![
             get_snapshot,
             send_message,
@@ -1223,6 +1352,9 @@ pub fn run() {
             set_eqsl_password,
             clear_eqsl_password,
             download_eqsl_report,
+            set_qrz_password,
+            clear_qrz_password,
+            qrz_lookup,
             get_need_alerts,
             get_propagation,
             get_feed_health,

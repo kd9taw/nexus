@@ -141,6 +141,10 @@ pub struct Settings {
     /// rolled back by a safety margin) sent as `RcvdSince`. Empty = full pull.
     /// Reset to empty when `eqsl_username` changes (the cursor is account-bound).
     pub eqsl_last_sync: String,
+    /// QRZ.com account username for callsign lookup. The password lives in the OS
+    /// keychain (set via `set_qrz_password`), never here; the session key is cached
+    /// in memory only. Empty = QRZ lookup not configured.
+    pub qrz_username: String,
 
     /// Editable quick-reply macros per mode (the Composer chips).
     pub macros: Macros,
@@ -212,6 +216,7 @@ impl Default for Settings {
             lotw_last_qsl: String::new(),
             eqsl_username: String::new(),
             eqsl_last_sync: String::new(),
+            qrz_username: String::new(),
             macros: Macros::default(),
         }
     }

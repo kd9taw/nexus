@@ -439,6 +439,39 @@ impl From<tempo_core::reconcile::ReconcileSummary> for LotwSyncResult {
     }
 }
 
+/// A QRZ.com callsign-lookup result (the serde DTO over the pure
+/// [`tempo_core::qrz::QrzLookup`]). `grid`/`state` are subscriber-only and are
+/// routinely `None` for free QRZ accounts.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QrzLookupDto {
+    pub call: String,
+    pub name: Option<String>,
+    pub qth: Option<String>,
+    pub grid: Option<String>,
+    pub state: Option<String>,
+    pub country: Option<String>,
+    pub dxcc: Option<u32>,
+    pub cq_zone: Option<u32>,
+    pub itu_zone: Option<u32>,
+}
+
+impl From<tempo_core::qrz::QrzLookup> for QrzLookupDto {
+    fn from(r: tempo_core::qrz::QrzLookup) -> Self {
+        QrzLookupDto {
+            call: r.call,
+            name: r.name,
+            qth: r.qth,
+            grid: r.grid,
+            state: r.state,
+            country: r.country,
+            dxcc: r.dxcc,
+            cq_zone: r.cq_zone,
+            itu_zone: r.itu_zone,
+        }
+    }
+}
+
 /// The full application snapshot the UI renders from.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
