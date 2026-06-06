@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { LoggedQso } from '../types'
-import { getLog, importAdif, logQso, qrzLookup, syncLotwReport } from '../api'
+import { getLog, importAdif, logQso, qrzLookup, qrzPushQso, syncLotwReport } from '../api'
 import { pushToast, withErrorToast } from '../toast'
 
 interface Props {
@@ -8,6 +8,8 @@ interface Props {
   defaultBand: string
   defaultFreqMhz: number
   defaultMode: string
+  /** When true, push each logged QSO to QRZ.com (Settings → QRZ auto-upload). */
+  qrzUpload?: boolean
 }
 
 interface DraftQso {
@@ -40,7 +42,7 @@ function parseReport(s: string): number | null {
   return Number.isNaN(n) ? null : n
 }
 
-export function Logbook({ defaultBand, defaultFreqMhz, defaultMode }: Props) {
+export function Logbook({ defaultBand, defaultFreqMhz, defaultMode, qrzUpload }: Props) {
   const [log, setLog] = useState<LoggedQso[]>([])
   const [showForm, setShowForm] = useState(false)
   const [draft, setDraft] = useState<DraftQso>(() => ({
@@ -146,6 +148,23 @@ export function Logbook({ defaultBand, defaultFreqMhz, defaultMode }: Props) {
       load()
       setShowForm(false)
       setDraft((prev) => ({ ...prev, call: '', grid: '', rstSent: '', rstRcvd: '' }))
+      // Auto-upload to QRZ (best-effort; the QSO is already logged locally).
+      if (qrzUpload) {
+        const r = await withErrorToast(() => qrzPushQso(record), 'QRZ upload failed')
+        if (r) {
+          const msg =
+            r.result === 'ok'
+              ? `Uploaded ${record.call} to QRZ`
+              : r.result === 'replace'
+                ? `Updated existing ${record.call} in your QRZ logbook`
+                : r.result === 'duplicate'
+                  ? `${record.call} already in your QRZ logbook`
+                  : r.result === 'authFail'
+                    ? 'QRZ Logbook key invalid — check Settings'
+                    : `QRZ upload: ${r.reason ?? 'failed'}`
+          pushToast(msg, r.result === 'fail' || r.result === 'authFail' ? 'error' : 'success')
+        }
+      }
     }
   }
 

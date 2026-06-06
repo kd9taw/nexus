@@ -145,6 +145,10 @@ pub struct Settings {
     /// keychain (set via `set_qrz_password`), never here; the session key is cached
     /// in memory only. Empty = QRZ lookup not configured.
     pub qrz_username: String,
+    /// Auto-upload each logged QSO to the QRZ.com logbook (push). Needs the QRZ
+    /// Logbook **API key** in the keychain (distinct from the lookup password).
+    /// Off by default.
+    pub qrz_logbook_upload: bool,
 
     /// Editable quick-reply macros per mode (the Composer chips).
     pub macros: Macros,
@@ -217,6 +221,7 @@ impl Default for Settings {
             eqsl_username: String::new(),
             eqsl_last_sync: String::new(),
             qrz_username: String::new(),
+            qrz_logbook_upload: false,
             macros: Macros::default(),
         }
     }

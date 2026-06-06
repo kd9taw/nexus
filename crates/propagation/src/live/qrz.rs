@@ -22,15 +22,38 @@ const UA: &str = "nexus-propagation/0.1 (+ham radio propagation nowcast)";
 /// On any failure returns a **redacted** message that never contains the URL, the
 /// password, the session key, or the raw transport error.
 pub fn fetch(url: &str) -> Result<String, String> {
-    let client = reqwest::blocking::Client::builder()
+    let resp = client()?.get(url).send().map_err(redact)?;
+    read_body(resp)
+}
+
+/// POST a `name=value` form body — the QRZ Logbook push (`ACTION=INSERT`). Same
+/// HTTPS + redacted discipline as [`fetch`]. ⚠️ The `body` carries the per-logbook
+/// API key, so it must NEVER be logged; transport errors echo the URL (no secret)
+/// only, and are redacted regardless.
+pub fn post_form(url: &str, body: String) -> Result<String, String> {
+    let resp = client()?
+        .post(url)
+        .header(
+            reqwest::header::CONTENT_TYPE,
+            "application/x-www-form-urlencoded",
+        )
+        .body(body)
+        .send()
+        .map_err(redact)?;
+    read_body(resp)
+}
+
+fn client() -> Result<reqwest::blocking::Client, String> {
+    reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(20))
         .user_agent(UA)
         .https_only(true)
         .redirect(reqwest::redirect::Policy::none())
         .build()
-        .map_err(|_| "QRZ: HTTP client initialization failed".to_string())?;
+        .map_err(|_| "QRZ: HTTP client initialization failed".to_string())
+}
 
-    let resp = client.get(url).send().map_err(redact)?;
+fn read_body(resp: reqwest::blocking::Response) -> Result<String, String> {
     let status = resp.status();
     if !status.is_success() {
         return Err(format!("QRZ: server returned HTTP {}", status.as_u16()));
@@ -70,6 +93,23 @@ mod tests {
         assert!(!err.contains("Sup3r"), "password leaked: {err}");
         assert!(
             !err.contains("xmldata.qrz.example"),
+            "host/URL leaked: {err}"
+        );
+        assert!(err.starts_with("QRZ: "), "unexpected message: {err}");
+    }
+
+    #[test]
+    fn post_form_rejects_http_without_leaking_the_api_key() {
+        // The POST body carries the per-logbook API key; a redacted error must not
+        // surface it (nor the URL).
+        let err = post_form(
+            "http://logbook.qrz.example/api",
+            "KEY=SECRETKEY-1234&ACTION=INSERT&ADIF=%3Ceor%3E".to_string(),
+        )
+        .unwrap_err();
+        assert!(!err.contains("SECRETKEY-1234"), "API key leaked: {err}");
+        assert!(
+            !err.contains("logbook.qrz.example"),
             "host/URL leaked: {err}"
         );
         assert!(err.starts_with("QRZ: "), "unexpected message: {err}");

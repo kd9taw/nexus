@@ -348,6 +348,7 @@ function defaultSettings(): Settings {
     eqslUsername: '',
     eqslLastSync: '',
     qrzUsername: '',
+    qrzLogbookUpload: false,
     macros: {
       chat: ['73', 'QSL', 'Name?', 'QTH?', 'CQ'],
       qso: ['R-09', 'RRR', 'RR73', '73'],

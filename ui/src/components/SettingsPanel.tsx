@@ -3,6 +3,7 @@ import type { AudioDevices, BandChannel, CatTestResult, RadioStatus, Settings } 
 import {
   clearEqslPassword,
   clearLotwPassword,
+  clearQrzLogbookKey,
   clearQrzPassword,
   downloadEqslReport,
   downloadLotwReport,
@@ -13,6 +14,7 @@ import {
   getSettings,
   setEqslPassword,
   setLotwPassword,
+  setQrzLogbookKey,
   setQrzPassword,
   setSettings,
   testCat,
@@ -111,6 +113,7 @@ export function SettingsPanel({
   const [eqslPw, setEqslPw] = useState('')
   const [eqslSyncing, setEqslSyncing] = useState(false)
   const [qrzPw, setQrzPw] = useState('')
+  const [qrzKey, setQrzKey] = useState('')
 
   useEffect(() => {
     let mounted = true
@@ -342,6 +345,29 @@ export function SettingsPanel({
     if (ok) {
       setQrzPw('')
       pushToast('QRZ password cleared from the keychain', 'success')
+    }
+  }
+
+  const onSaveQrzLogbookKey = async () => {
+    if (!qrzKey) return
+    const ok = await withErrorToast(async () => {
+      await setQrzLogbookKey(qrzKey)
+      return true
+    }, 'Could not save the QRZ Logbook key')
+    if (ok) {
+      setQrzKey('')
+      pushToast('QRZ Logbook key saved to the system keychain', 'success')
+    }
+  }
+
+  const onForgetQrzLogbookKey = async () => {
+    const ok = await withErrorToast(async () => {
+      await clearQrzLogbookKey()
+      return true
+    }, 'Could not clear the QRZ Logbook key')
+    if (ok) {
+      setQrzKey('')
+      pushToast('QRZ Logbook key cleared from the keychain', 'success')
     }
   }
 
@@ -1261,6 +1287,59 @@ export function SettingsPanel({
                   subscription</strong> — free accounts return only name/address/country.
                 </span>
               </label>
+
+              <label className="settings-field">
+                <span className="settings-label">QRZ Logbook API key</span>
+                <div className="settings-input-row">
+                  <input
+                    className="settings-input"
+                    type="password"
+                    value={qrzKey}
+                    placeholder="from your QRZ logbook settings page"
+                    onChange={(e) => setQrzKey(e.target.value)}
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                  <button
+                    type="button"
+                    className="settings-refresh"
+                    onClick={onSaveQrzLogbookKey}
+                    disabled={!qrzKey}
+                  >
+                    Set
+                  </button>
+                  <button
+                    type="button"
+                    className="settings-refresh"
+                    onClick={onForgetQrzLogbookKey}
+                    title="Remove the stored Logbook key from the system keychain"
+                  >
+                    Forget
+                  </button>
+                </div>
+                <span className="settings-hint">
+                  A <strong>separate</strong> key (not the login password) from your QRZ logbook's settings
+                  page — used to upload logged QSOs.
+                </span>
+              </label>
+
+              <div className="settings-field">
+                <label className="settings-toggle">
+                  <span className="settings-label">Auto-upload QSOs to QRZ</span>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={form.qrzLogbookUpload}
+                    className={`toggle${form.qrzLogbookUpload ? ' on' : ''}`}
+                    onClick={() => updateBool('qrzLogbookUpload', !form.qrzLogbookUpload)}
+                  >
+                    <span className="toggle-knob" />
+                  </button>
+                </label>
+                <span className="settings-hint">
+                  Push each logged QSO to your QRZ logbook (needs the Logbook API key above).
+                </span>
+              </div>
             </div>
           </fieldset>
         </div>

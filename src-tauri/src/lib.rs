@@ -854,6 +854,7 @@ const LOTW_KEYCHAIN_SERVICE: &str = "tempo";
 const LOTW_KEYCHAIN_USER: &str = "lotw-password";
 const EQSL_KEYCHAIN_USER: &str = "eqsl-password";
 const QRZ_KEYCHAIN_USER: &str = "qrz-password";
+const QRZ_LOGBOOK_KEYCHAIN_USER: &str = "qrz-logbook-key";
 
 fn lotw_keychain() -> Result<keyring::Entry, String> {
     keyring::Entry::new(LOTW_KEYCHAIN_SERVICE, LOTW_KEYCHAIN_USER)
@@ -867,6 +868,11 @@ fn eqsl_keychain() -> Result<keyring::Entry, String> {
 
 fn qrz_keychain() -> Result<keyring::Entry, String> {
     keyring::Entry::new(LOTW_KEYCHAIN_SERVICE, QRZ_KEYCHAIN_USER)
+        .map_err(|e| format!("couldn't open the system keychain: {e}"))
+}
+
+fn qrz_logbook_keychain() -> Result<keyring::Entry, String> {
+    keyring::Entry::new(LOTW_KEYCHAIN_SERVICE, QRZ_LOGBOOK_KEYCHAIN_USER)
         .map_err(|e| format!("couldn't open the system keychain: {e}"))
 }
 
@@ -934,6 +940,25 @@ fn set_qrz_password(password: String) -> Result<(), String> {
 #[tauri::command]
 fn clear_qrz_password() -> Result<(), String> {
     clear_keychain_entry(&qrz_keychain()?)
+}
+
+/// Store (or, if empty, clear) the QRZ **Logbook API key** (distinct from the XML
+/// password) in the OS keychain. Write-only.
+#[tauri::command]
+fn set_qrz_logbook_key(key: String) -> Result<(), String> {
+    let entry = qrz_logbook_keychain()?;
+    if key.is_empty() {
+        return clear_keychain_entry(&entry);
+    }
+    entry
+        .set_password(&key)
+        .map_err(|e| format!("couldn't save to the system keychain: {e}"))
+}
+
+/// Remove the stored QRZ Logbook API key from the OS keychain (idempotent).
+#[tauri::command]
+fn clear_qrz_logbook_key() -> Result<(), String> {
+    clear_keychain_entry(&qrz_logbook_keychain()?)
 }
 
 /// `RcvdSince` safety margin: eQSL does not document the timezone of this filter,
@@ -1174,6 +1199,23 @@ fn qrz_lookup(
     }
 }
 
+/// Push one logged QSO to the operator's QRZ.com logbook (the Logbook API, a
+/// separate per-logbook API key). Builds the one-record ADIF, POSTs an INSERT, and
+/// returns the outcome (a duplicate is the benign "already logged"). The UI fires
+/// this after a successful `log_qso` when auto-upload is on. No lock held over the
+/// network call.
+#[tauri::command]
+fn qrz_push_qso(record: LoggedQso) -> Result<tempo_app::dto::QrzPushResultDto, String> {
+    let key = qrz_logbook_keychain()?
+        .get_password()
+        .map_err(|_| "No QRZ Logbook API key stored — set it in Settings.".to_string())?;
+    let rec: tempo_core::logbook::QsoRecord = record.into();
+    let adif = tempo_core::logbook::adif_record(&rec);
+    let body = tempo_core::qrz::build_insert_body(&key, &adif, false);
+    let resp = propagation::live::qrz::post_form(tempo_core::qrz::QRZ_LOGBOOK_URL, body)?;
+    Ok(tempo_core::qrz::parse_push_response(&resp).into())
+}
+
 // ----- coordinated QSY ("move together") — a separate, opt-in feature ------
 //
 // All no-ops while disabled. Enabling/disabling + the channel set/cadence are
@@ -1355,6 +1397,9 @@ pub fn run() {
             set_qrz_password,
             clear_qrz_password,
             qrz_lookup,
+            set_qrz_logbook_key,
+            clear_qrz_logbook_key,
+            qrz_push_qso,
             get_need_alerts,
             get_propagation,
             get_feed_health,

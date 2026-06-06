@@ -196,7 +196,9 @@ fn field(name: &str, val: &str) -> String {
     format!("<{}:{}>{}", name, val.len(), val)
 }
 
-fn adif_record(r: &QsoRecord) -> String {
+/// Serialize a single QSO as one ADIF record (ending in `<eor>`) — used by the
+/// full-log export and the QRZ Logbook push (one-record INSERT).
+pub fn adif_record(r: &QsoRecord) -> String {
     let (y, mo, d, h, mi, s) = datetime_utc(r.when_unix);
     let mut out = String::new();
     out.push_str(&field("CALL", &r.call));

@@ -18,6 +18,7 @@ import type {
   ModeRequest,
   NeedAlert,
   QrzLookup,
+  QrzPushResult,
   Settings,
   SourceKind,
   Spectrum,
@@ -253,6 +254,30 @@ export async function qrzLookup(callsign: string): Promise<QrzLookup> {
     cqZone: 5,
     ituZone: 8,
   }
+}
+
+/** Store the QRZ Logbook API key in the OS keychain (write-only; empty clears). */
+export async function setQrzLogbookKey(key: string): Promise<void> {
+  const invoke = tauriInvoke()
+  if (invoke) {
+    await invoke<void>('set_qrz_logbook_key', { key })
+  }
+}
+
+/** Remove the stored QRZ Logbook API key from the OS keychain (idempotent). */
+export async function clearQrzLogbookKey(): Promise<void> {
+  const invoke = tauriInvoke()
+  if (invoke) {
+    await invoke<void>('clear_qrz_logbook_key')
+  }
+}
+
+/** Push one logged QSO to the operator's QRZ logbook. Outside Tauri returns a
+ *  canned OK. */
+export async function qrzPushQso(record: LoggedQso): Promise<QrzPushResult> {
+  const invoke = tauriInvoke()
+  if (invoke) return invoke<QrzPushResult>('qrz_push_qso', { record })
+  return { result: 'ok', logid: '0', reason: null }
 }
 
 /** Need-aware spotting: the stations heard now, ranked by award value. */

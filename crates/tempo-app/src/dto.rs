@@ -472,6 +472,36 @@ impl From<tempo_core::qrz::QrzLookup> for QrzLookupDto {
     }
 }
 
+/// Result of a QRZ Logbook push (one-QSO INSERT). `result` is a camelCase tag the
+/// UI switches on; a `duplicate` is the benign "already in your QRZ logbook".
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QrzPushResultDto {
+    /// "ok" | "replace" | "duplicate" | "authFail" | "fail".
+    pub result: String,
+    pub logid: Option<String>,
+    pub reason: Option<String>,
+}
+
+impl From<tempo_core::qrz::QrzPush> for QrzPushResultDto {
+    fn from(p: tempo_core::qrz::QrzPush) -> Self {
+        use tempo_core::qrz::QrzPushResult::*;
+        let result = match p.result {
+            Ok => "ok",
+            Replace => "replace",
+            Duplicate => "duplicate",
+            AuthFail => "authFail",
+            Fail => "fail",
+        }
+        .to_string();
+        QrzPushResultDto {
+            result,
+            logid: p.logid,
+            reason: p.reason,
+        }
+    }
+}
+
 /// The full application snapshot the UI renders from.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

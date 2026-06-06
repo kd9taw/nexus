@@ -367,6 +367,14 @@ export interface QrzLookup {
   ituZone: number | null
 }
 
+/** Result of a QRZ Logbook push (one-QSO upload). `result` is the outcome tag;
+ *  `duplicate` is the benign "already in your QRZ logbook". */
+export interface QrzPushResult {
+  result: 'ok' | 'replace' | 'duplicate' | 'authFail' | 'fail'
+  logid: string | null
+  reason: string | null
+}
+
 /** Liveness of one background live feed, for the Now-Bar connector pills. */
 export interface FeedStatus {
   /** The feed's daemon is running. Started once a real callsign (and, for the
@@ -605,6 +613,9 @@ export interface Settings {
   /** QRZ.com account username for callsign lookup. Password is in the OS keychain
    *  (set via setQrzPassword); the session key is cached in memory only. */
   qrzUsername: string
+  /** Auto-upload each logged QSO to the QRZ.com logbook. Needs the QRZ Logbook API
+   *  key in the keychain (distinct from the lookup password). */
+  qrzLogbookUpload: boolean
   /** Editable quick-reply macros, per context. */
   macros: {
     chat: string[]

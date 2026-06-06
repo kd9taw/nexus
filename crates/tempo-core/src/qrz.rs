@@ -207,6 +207,127 @@ fn unescape_xml(s: &str) -> String {
         .replace("&amp;", "&")
 }
 
+// ----- QRZ Logbook PUSH (a separate per-logbook API key; see `qrz-push.md`) -----
+
+/// The QRZ Logbook API endpoint (POST, `name=value` form). Hard-coded https.
+pub const QRZ_LOGBOOK_URL: &str = "https://logbook.qrz.com/api";
+
+/// Outcome of a QRZ Logbook INSERT.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QrzPushResult {
+    /// Inserted (new `logid`).
+    Ok,
+    /// Overwrote a duplicate (only when `OPTION=REPLACE` was sent).
+    Replace,
+    /// A duplicate that was rejected — benign ("already in your QRZ logbook").
+    Duplicate,
+    /// The API key was missing/invalid/insufficient.
+    AuthFail,
+    /// Any other failure (see `reason`).
+    Fail,
+}
+
+/// Parsed QRZ Logbook INSERT response.
+#[derive(Debug, Clone, PartialEq)]
+pub struct QrzPush {
+    pub result: QrzPushResult,
+    pub logid: Option<String>,
+    pub count: u32,
+    pub reason: Option<String>,
+}
+
+/// Build the `name=value` POST body for an INSERT. The ADIF tags (`<…>`) and the
+/// key are percent-encoded so they survive form-encoding. The body carries the API
+/// key — never log it.
+pub fn build_insert_body(api_key: &str, adif_record: &str, replace: bool) -> String {
+    let mut body = format!(
+        "KEY={}&ACTION=INSERT&ADIF={}",
+        pct(api_key.trim()),
+        pct(adif_record),
+    );
+    if replace {
+        body.push_str("&OPTION=REPLACE");
+    }
+    body
+}
+
+/// Parse a QRZ Logbook `name=value` response. A `RESULT=FAIL` whose `REASON`
+/// mentions "duplicate" maps to [`QrzPushResult::Duplicate`] (benign).
+pub fn parse_push_response(body: &str) -> QrzPush {
+    let mut result_raw: Option<String> = None;
+    let mut logid = None;
+    let mut count = 0u32;
+    let mut reason = None;
+    for pair in body.split('&') {
+        let Some((k, v)) = pair.split_once('=') else {
+            continue;
+        };
+        let val = urldecode(v.trim());
+        match k.trim().to_ascii_uppercase().as_str() {
+            "RESULT" => result_raw = Some(val.to_ascii_uppercase()),
+            "LOGID" if !val.is_empty() => logid = Some(val),
+            "COUNT" => count = val.parse().unwrap_or(0),
+            "REASON" if !val.is_empty() => reason = Some(val),
+            _ => {}
+        }
+    }
+    let is_dup = reason
+        .as_deref()
+        .is_some_and(|r| r.to_ascii_lowercase().contains("duplicate"));
+    let result = match result_raw.as_deref() {
+        Some("OK") => QrzPushResult::Ok,
+        Some("REPLACE") => QrzPushResult::Replace,
+        Some("AUTH") => QrzPushResult::AuthFail,
+        Some("FAIL") if is_dup => QrzPushResult::Duplicate,
+        _ => QrzPushResult::Fail,
+    };
+    QrzPush {
+        result,
+        logid,
+        count,
+        reason,
+    }
+}
+
+/// Minimal `application/x-www-form-urlencoded` value decoder (`+`→space, `%XX`).
+fn urldecode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'+' => {
+                out.push(b' ');
+                i += 1;
+            }
+            b'%' if i + 2 < bytes.len() => {
+                // Parse the two raw bytes as ASCII hex — NEVER slice `s` (a `%`
+                // followed by a multibyte UTF-8 byte would split a char boundary
+                // and panic). `from_utf8` rejects non-ASCII hex bytes safely.
+                let hex = [bytes[i + 1], bytes[i + 2]];
+                match std::str::from_utf8(&hex)
+                    .ok()
+                    .and_then(|h| u8::from_str_radix(h, 16).ok())
+                {
+                    Some(b) => {
+                        out.push(b);
+                        i += 3;
+                    }
+                    None => {
+                        out.push(b'%');
+                        i += 1;
+                    }
+                }
+            }
+            b => {
+                out.push(b);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -362,5 +483,58 @@ mod tests {
         let xml = "<QRZDatabase><Callsign><call>X</call>\
 <grid id=\"a>b\">DM43</grid></Callsign></QRZDatabase>";
         assert!(parse_callsign(xml).unwrap().grid.is_none());
+    }
+
+    #[test]
+    fn insert_body_encodes_adif_and_key() {
+        let body = build_insert_body("AB-12-CD", "<call:4>W1AW<eor>", false);
+        assert!(body.starts_with("KEY=AB-12-CD&ACTION=INSERT&ADIF="));
+        // ADIF tag delimiters must be percent-encoded into the form value.
+        assert!(body.contains("ADIF=%3Ccall%3A4%3EW1AW%3Ceor%3E"));
+        assert!(!body.contains("&OPTION="));
+        assert!(build_insert_body("k", "<eor>", true).ends_with("&OPTION=REPLACE"));
+    }
+
+    #[test]
+    fn push_response_ok_with_logid() {
+        let p = parse_push_response("RESULT=OK&COUNT=1&LOGID=123456");
+        assert_eq!(p.result, QrzPushResult::Ok);
+        assert_eq!(p.logid.as_deref(), Some("123456"));
+        assert_eq!(p.count, 1);
+    }
+
+    #[test]
+    fn push_response_duplicate_is_benign() {
+        // A duplicate is RESULT=FAIL + a "duplicate" reason + COUNT=0 → Duplicate.
+        let p = parse_push_response("RESULT=FAIL&COUNT=0&REASON=Unable+to+add+QSO%3A+duplicate");
+        assert_eq!(p.result, QrzPushResult::Duplicate);
+        assert_eq!(p.count, 0);
+        assert!(p.reason.as_deref().unwrap().contains("duplicate"));
+    }
+
+    #[test]
+    fn push_response_auth_and_plain_fail() {
+        assert_eq!(
+            parse_push_response("RESULT=AUTH").result,
+            QrzPushResult::AuthFail
+        );
+        assert_eq!(
+            parse_push_response("RESULT=FAIL&REASON=bad+ADIF").result,
+            QrzPushResult::Fail
+        );
+    }
+
+    #[test]
+    fn push_response_urldecode_does_not_panic_on_multibyte_after_percent() {
+        // A network REASON with '%' before a multibyte UTF-8 byte must not panic
+        // (the old str-slice decoder split a char boundary).
+        let p = parse_push_response("RESULT=FAIL&REASON=oops %€ at end");
+        assert_eq!(p.result, QrzPushResult::Fail);
+        assert!(p.reason.is_some());
+        // A trailing bare '%' is also safe.
+        assert_eq!(
+            parse_push_response("RESULT=OK&REASON=100%").result,
+            QrzPushResult::Ok
+        );
     }
 }
