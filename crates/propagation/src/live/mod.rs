@@ -9,6 +9,7 @@ pub mod dxped;
 pub mod eqsl;
 pub mod lotw;
 pub mod pskreporter;
+pub mod qrz;
 pub mod swpc;
 
 use std::time::{SystemTime, UNIX_EPOCH};
