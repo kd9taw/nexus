@@ -51,6 +51,24 @@ type SharedSpots = Arc<Mutex<tempo_net::cluster::SpotBuffer>>;
 /// this stop flag exists only so `cluster::run`'s signature is satisfied.
 static CLUSTER_STOP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// Recent live PSK Reporter MQTT reception reports (the "getting out" firehose),
+/// fed by the background MQTT thread and merged into the propagation nowcast.
+type SharedLivePaths = Arc<Mutex<propagation::LiveSpots>>;
+
+/// Lifetime stop flag for the PSK Reporter MQTT daemon thread (see CLUSTER_STOP).
+static PSKR_STOP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// PSK Reporter MQTT broker (plain MQTT over TCP).
+const PSKR_MQTT_ADDR: &str = "mqtt.pskreporter.info:1883";
+
+/// Current Unix time in seconds.
+fn now_unix() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
 /// How long a live propagation nowcast is reused before refetching (seconds).
 const PROP_TTL_SECS: u64 = 300;
 
@@ -144,6 +162,7 @@ fn set_source(state: State<'_, SharedEngine>, kind: String) -> Result<AppSnapsho
 fn get_propagation(
     state: State<'_, SharedEngine>,
     cache: State<'_, PropCache>,
+    live_paths: State<'_, SharedLivePaths>,
 ) -> Result<propagation::PropagationSnapshot, String> {
     let (mycall, mygrid, needs) = {
         let eng = state.lock().map_err(|e| e.to_string())?;
@@ -174,8 +193,16 @@ fn get_propagation(
         return Ok(propagation::demo());
     }
 
+    // Live PSK Reporter MQTT spots accumulated since the last rebuild — merged
+    // with the rate-limited XML query so "who hears me / who I hear" reflects the
+    // firehose, not just one query.
+    let extra = live_paths
+        .lock()
+        .map(|b| b.recent(now_unix(), 1800))
+        .unwrap_or_default();
+
     // Refetch live (blocking HTTP); on failure keep the last good snapshot, else demo.
-    match propagation::live::snapshot(&mycall, &mygrid, 1800, &needs) {
+    match propagation::live::snapshot_with_spots(&mycall, &mygrid, 1800, &needs, &extra) {
         Ok(snap) => {
             if let Ok(mut guard) = cache.lock() {
                 *guard = Some((std::time::Instant::now(), snap.clone()));
@@ -680,6 +707,7 @@ pub fn run() {
     // onboarding nudge); that would key an RBN session as a third party.
     let real_call = !cluster_call.trim().is_empty()
         && !cluster_call.trim().eq_ignore_ascii_case("KD9TAW");
+    let pskr_call = cluster_call.clone(); // before cluster_call moves into the thread
     if cluster_enabled && real_call {
         let buf = spots.clone();
         std::thread::spawn(move || {
@@ -692,6 +720,32 @@ pub fn run() {
                     }
                 },
                 &CLUSTER_STOP,
+            );
+        });
+    }
+
+    // PSK Reporter MQTT firehose — live "who hears me / who I hear" merged into
+    // the propagation nowcast. The nowcast already consumes PSK Reporter (XML)
+    // when a callsign is set, so this just upgrades that to the live stream — same
+    // real-call gate (never the KD9TAW placeholder), no extra toggle.
+    let live_paths: SharedLivePaths = Arc::new(Mutex::new(propagation::LiveSpots::default()));
+    if real_call {
+        let buf = live_paths.clone();
+        std::thread::spawn(move || {
+            let topics = propagation::pskr_mqtt_topics(&pskr_call);
+            let topic_refs: Vec<&str> = topics.iter().map(|s| s.as_str()).collect();
+            tempo_net::mqtt::subscribe(
+                PSKR_MQTT_ADDR,
+                &format!("nexus-{}", pskr_call.trim()),
+                &topic_refs,
+                |topic, _payload| {
+                    if let Some(spot) = propagation::parse_pskr_mqtt(topic, now_unix()) {
+                        if let Ok(mut b) = buf.lock() {
+                            b.push(spot);
+                        }
+                    }
+                },
+                &PSKR_STOP,
             );
         });
     }
@@ -727,6 +781,7 @@ pub fn run() {
         .manage(engine)
         .manage(prop_cache)
         .manage(spots)
+        .manage(live_paths)
         .invoke_handler(tauri::generate_handler![
             get_snapshot,
             send_message,

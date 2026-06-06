@@ -48,5 +48,7 @@ pub use model::{
     SpaceWx,
 };
 pub use needalert::{heard_from_freq, rank as rank_needs, Heard, NeedAlert, NeedTag};
-pub use pskr_mqtt::{mqtt_topics as pskr_mqtt_topics, parse_mqtt_report as parse_pskr_mqtt};
+pub use pskr_mqtt::{
+    mqtt_topics as pskr_mqtt_topics, parse_mqtt_report as parse_pskr_mqtt, LiveSpots,
+};
 pub use spot::Spot;

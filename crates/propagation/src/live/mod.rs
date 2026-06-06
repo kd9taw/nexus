@@ -13,6 +13,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::dxped::OperatorNeeds;
 use crate::engine::{PropagationEngine, PropagationSnapshot};
+use crate::model::PathSpot;
 
 fn now_unix() -> i64 {
     SystemTime::now()
@@ -39,8 +40,23 @@ pub fn snapshot(
     window_secs: i64,
     needs: &dyn OperatorNeeds,
 ) -> Result<PropagationSnapshot, String> {
+    snapshot_with_spots(mycall, mygrid, window_secs, needs, &[])
+}
+
+/// As [`snapshot`], merging `extra_spots` (e.g. the live PSK Reporter MQTT
+/// firehose) with the rate-limited XML query before scoring. The advisor dedupes
+/// paths by callsign, so overlap between the two sources is harmless — the
+/// firehose just makes "who hears me / who I hear" richer and more current.
+pub fn snapshot_with_spots(
+    mycall: &str,
+    mygrid: &str,
+    window_secs: i64,
+    needs: &dyn OperatorNeeds,
+    extra_spots: &[PathSpot],
+) -> Result<PropagationSnapshot, String> {
     let wx = swpc::fetch_space_wx()?;
-    let spots = pskreporter::fetch_paths(mycall, window_secs)?;
+    let mut spots = pskreporter::fetch_paths(mycall, window_secs)?;
+    spots.extend_from_slice(extra_spots);
     let plans = dxped::fetch_plans().unwrap_or_default();
     Ok(PropagationEngine::new(mycall, mygrid).snapshot(now_unix(), &spots, &wx, &plans, needs))
 }

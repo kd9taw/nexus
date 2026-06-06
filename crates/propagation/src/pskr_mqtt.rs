@@ -13,6 +13,60 @@
 //! `pskr/filter/v2/{band}/{mode}/{txCall}/{rxCall}/{txGrid}/{rxGrid}/{txDxcc}/{rxDxcc}`
 
 use crate::model::{Band, PathSpot};
+use std::collections::VecDeque;
+
+/// A bounded buffer of recent live PSK Reporter [`PathSpot`]s (from the MQTT
+/// firehose), merged into the propagation advisory. No dedup — the advisor
+/// dedupes "who hears me / who I hear" by callsign via sets.
+///
+/// Eviction is by COUNT (oldest-first), but [`Self::recent`] reads by TIME. The
+/// cap is sized so that the read window stays fully covered even for a very
+/// well-heard station during a contest/opening: the firehose only carries the
+/// operator's OWN two topic filters (who-hears-me + who-I-hear), so a worst-case
+/// of a few thousand reports per 30 min fits inside the cap with margin. At
+/// ~100 B/spot the buffer is well under ~3 MB, so we keep it generous rather
+/// than letting a count cap silently truncate the requested time window.
+#[derive(Debug, Clone)]
+pub struct LiveSpots {
+    spots: VecDeque<PathSpot>,
+    cap: usize,
+}
+
+impl Default for LiveSpots {
+    fn default() -> Self {
+        Self::new(20_000)
+    }
+}
+
+impl LiveSpots {
+    pub fn new(cap: usize) -> Self {
+        Self {
+            spots: VecDeque::new(),
+            cap: cap.max(1),
+        }
+    }
+    pub fn push(&mut self, spot: PathSpot) {
+        self.spots.push_back(spot);
+        while self.spots.len() > self.cap {
+            self.spots.pop_front();
+        }
+    }
+    /// Spots no older than `window_secs` as of `now` (Unix secs).
+    pub fn recent(&self, now: i64, window_secs: i64) -> Vec<PathSpot> {
+        let cutoff = now - window_secs;
+        self.spots
+            .iter()
+            .filter(|s| s.time >= cutoff)
+            .cloned()
+            .collect()
+    }
+    pub fn len(&self) -> usize {
+        self.spots.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.spots.is_empty()
+    }
+}
 
 /// MQTT topic filters for the operator's own paths: "who hears me" (we're the
 /// sender) and "who I hear" (we're the receiver). `#` matches the trailing topic
@@ -101,6 +155,32 @@ mod tests {
         assert!(
             parse_mqtt_report("pskr/filter/v2/zz/FT8/W1AW/JA1XYZ/FN31/PM95/291/339", 0).is_none()
         );
+    }
+
+    #[test]
+    fn live_spots_keeps_recent_and_caps() {
+        let mut b = LiveSpots::new(3);
+        let mk = |call: &str, t: i64| PathSpot {
+            time: t,
+            tx_call: call.into(),
+            tx_grid: None,
+            rx_call: "ME".into(),
+            rx_grid: None,
+            band: Band::B20,
+            mode: Some("FT8".into()),
+            snr: None,
+        };
+        b.push(mk("A", 1000)); // old
+        b.push(mk("B", 5000));
+        b.push(mk("C", 5001));
+        // window: as of t=5500, keep within 1000s → drops A(1000).
+        let recent = b.recent(5500, 1000);
+        let calls: Vec<&str> = recent.iter().map(|s| s.tx_call.as_str()).collect();
+        assert_eq!(calls, vec!["B", "C"]);
+        // cap 3: a 4th push evicts the oldest (A).
+        b.push(mk("D", 5002));
+        assert_eq!(b.len(), 3);
+        assert!(b.recent(0, i64::MAX).iter().all(|s| s.tx_call != "A"));
     }
 
     #[test]

@@ -361,8 +361,11 @@ mod tests {
         let reader = ScriptReader {
             chunks: vec![
                 vec![0x20, 0x02, 0x00, 0x00], // CONNACK accepted
+                // Real mqtt.pskreporter.info v2 layout (verified against the
+                // official broker): 11 segments, trailing fields are ADIF DXCC
+                // numbers (291=USA, 339=Japan), NO frequency in the topic.
                 publish_packet(
-                    "pskr/filter/v2/20m/FT8/W1AW/JA1XYZ/FN31/PM95//1/14074000",
+                    "pskr/filter/v2/20m/FT8/W1AW/JA1XYZ/FN31/PM95/291/339",
                     b"{}",
                 ),
             ]
