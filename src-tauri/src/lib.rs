@@ -496,6 +496,31 @@ fn get_awards(state: State<'_, SharedEngine>) -> Result<propagation::AwardSummar
     Ok(awards.summary())
 }
 
+/// Need-aware spotting: rank the stations the operator is hearing right now (the
+/// roster, on the current band) by award value — new DXCC entity / CQ zone / band
+/// slot / mode — so "new ones" surface from the live decodes. Offline (native
+/// roster); a telnet-cluster / RBN / PSK-Reporter feed is a later increment.
+#[tauri::command]
+fn get_need_alerts(state: State<'_, SharedEngine>) -> Result<Vec<propagation::NeedAlert>, String> {
+    let eng = state.lock().map_err(|e| e.to_string())?;
+    let mut needs = propagation::LogNeeds::new();
+    for q in eng.get_log() {
+        needs.add(&q.call, &q.band, &q.mode, q.award_confirmed);
+    }
+    let snap = eng.snapshot();
+    let band = snap.radio.band.clone();
+    let spots: Vec<propagation::Heard> = snap
+        .stations
+        .iter()
+        .map(|s| propagation::Heard {
+            call: s.call.clone(),
+            band: band.clone(),
+            mode: "FT8".to_string(), // FT-family → Digital class; the band is what varies
+        })
+        .collect();
+    Ok(propagation::rank_needs(&spots, &needs, needs.worked_zones()))
+}
+
 /// Import an external ADIF logbook (deduped merge → real "needs"). Takes the
 /// file's text; the UI reads the file so no fs/dialog plugin is needed.
 #[tauri::command]
@@ -656,6 +681,7 @@ pub fn run() {
             get_awards,
             import_adif,
             sync_lotw_report,
+            get_need_alerts,
             get_propagation,
             qsy_set_enabled,
             qsy_configure,

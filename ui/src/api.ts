@@ -15,6 +15,7 @@ import type {
   LoggedQso,
   LotwSyncResult,
   ModeRequest,
+  NeedAlert,
   Settings,
   SourceKind,
   Spectrum,
@@ -152,6 +153,13 @@ export async function syncLotwReport(text: string): Promise<LotwSyncResult> {
   const invoke = tauriInvoke()
   if (invoke) return invoke<LotwSyncResult>('sync_lotw_report', { text })
   return mockEngine.syncLotwReport(text)
+}
+
+/** Need-aware spotting: the stations heard now, ranked by award value. */
+export async function getNeedAlerts(): Promise<NeedAlert[]> {
+  const invoke = tauriInvoke()
+  if (invoke) return invoke<NeedAlert[]>('get_need_alerts')
+  return mockEngine.getNeedAlerts()
 }
 
 /** Export the general logbook as ADIF or CSV text. */

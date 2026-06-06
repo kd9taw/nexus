@@ -139,6 +139,8 @@ pub struct LogNeeds {
     worked_band: HashSet<(String, Band)>,
     worked_mode: HashSet<(String, ModeClass)>,
     confirmed_band: HashSet<(String, Band)>,
+    /// CQ zones worked (for WAZ "new zone" need-aware spotting).
+    worked_zones: HashSet<u8>,
 }
 
 impl LogNeeds {
@@ -154,6 +156,11 @@ impl LogNeeds {
         let Some(info) = dxcc::resolve(call) else {
             return;
         };
+        // WAZ zone is valid even on a WAE/CQ-only entity, so track it BEFORE the
+        // DXCC gate (need-aware spotting flags a new CQ zone independently).
+        if (1..=40).contains(&info.cq_zone) {
+            self.worked_zones.insert(info.cq_zone);
+        }
         // The needs model is DXCC-oriented (a "new one" = a new DXCC entity), and
         // DXpeditions are never to WAE/CQ-only entities — skip them so this bucket
         // stays consistent with the awards engine.
@@ -175,6 +182,11 @@ impl LogNeeds {
     /// Number of distinct worked entities (for diagnostics / UI).
     pub fn worked_entities(&self) -> usize {
         self.worked_entity.len()
+    }
+
+    /// CQ zones the operator has worked (for need-aware spotting's "new zone").
+    pub fn worked_zones(&self) -> &HashSet<u8> {
+        &self.worked_zones
     }
 }
 

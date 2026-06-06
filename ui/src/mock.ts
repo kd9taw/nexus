@@ -23,6 +23,7 @@ import type {
   LotwOrphan,
   LotwSyncResult,
   ModeRequest,
+  NeedAlert,
   OpMode,
   QsoStatus,
   QsyStatus,
@@ -1101,6 +1102,15 @@ class MockEngine {
       }
     }
     return Promise.resolve({ matched, newlyConfirmed, newlyCredited, newlySubmitted: 0, orphans })
+  }
+
+  getNeedAlerts(): Promise<NeedAlert[]> {
+    // Demo: a few ranked opportunities so the "Needs heard now" panel renders.
+    return Promise.resolve([
+      { call: '3Y0J', entity: 'Bouvet', band: '20m', zone: 38, tags: ['NewEntity', 'NewZone'], priority: 100, headline: 'New one — Bouvet' },
+      { call: 'UA9XYZ', entity: 'Asiatic Russia', band: '20m', zone: 17, tags: ['NewZone'], priority: 70, headline: 'New CQ zone 17 — Asiatic Russia' },
+      { call: 'JA3ABC', entity: 'Japan', band: '40m', zone: 25, tags: ['NewBand'], priority: 50, headline: 'New band — Japan 40m' },
+    ])
   }
 
   // -- internals ----------------------------------------------------------

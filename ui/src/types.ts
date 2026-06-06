@@ -336,6 +336,20 @@ export interface Achievement {
 }
 
 /** DXCC-first award progress, computed from the logbook (cty.dat-resolved). */
+/** Why a heard station is worth working (need-aware spotting). */
+export type NeedTag = 'NewEntity' | 'NewZone' | 'NewBand' | 'NewMode' | 'Confirm'
+
+/** A scored need opportunity for a station heard right now. */
+export interface NeedAlert {
+  call: string
+  entity: string
+  band: string
+  zone: number
+  tags: NeedTag[]
+  priority: number
+  headline: string
+}
+
 /** Worked All States progress (50 US states; LoTW/paper confirmed). */
 export interface WasProgress {
   worked: number

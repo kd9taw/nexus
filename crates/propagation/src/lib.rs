@@ -23,6 +23,7 @@ pub mod engine;
 pub mod geo;
 pub mod likelihood;
 pub mod model;
+pub mod needalert;
 pub mod rarity;
 pub mod space_wx;
 pub mod spot;
@@ -45,4 +46,5 @@ pub use model::{
     classify_vhf_mode, ActivityTier, Band, Confidence, ModeClass, PathSpot, PropMode, Region, Side,
     SpaceWx,
 };
+pub use needalert::{rank as rank_needs, Heard, NeedAlert, NeedTag};
 pub use spot::Spot;
