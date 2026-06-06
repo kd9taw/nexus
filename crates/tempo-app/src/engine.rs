@@ -1168,6 +1168,7 @@ impl Engine {
         QsoRecord {
             call: dxcall,
             grid: None,
+            state: None,
             band: self.settings.band.clone(),
             freq_mhz: self.settings.dial_mhz,
             mode,

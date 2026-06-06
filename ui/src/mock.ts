@@ -1020,6 +1020,8 @@ class MockEngine {
         { id: 'chal-1000', title: 'DXCC Challenge', detail: '1,000 confirmed slots — the Challenge!', category: 'Challenge', unlocked: false, current: 392, target: 1000, critical: true },
         { id: 'waz-half', title: 'Zone Collector', detail: 'Confirm 20 CQ zones', category: 'WAZ', unlocked: true, current: 37, target: 20, critical: false },
         { id: 'waz-40', title: 'Worked All Zones', detail: 'Confirm all 40 CQ zones — the WAZ award!', category: 'WAZ', unlocked: false, current: 37, target: 40, critical: true },
+        { id: 'was-half', title: 'Halfway to WAS', detail: 'Confirm 25 US states', category: 'WAS', unlocked: true, current: 46, target: 25, critical: false },
+        { id: 'was-50', title: 'Worked All States', detail: 'Confirm all 50 US states — the WAS award!', category: 'WAS', unlocked: false, current: 46, target: 50, critical: true },
       ],
       fiveBandWorked: 78,
       fiveBandConfirmed: 64,
@@ -1033,6 +1035,13 @@ class MockEngine {
         needed: 213,
         numberOne: false,
         numberOneNeeded: 222,
+      },
+      was: {
+        worked: 50,
+        confirmed: 46,
+        needed: ['AK', 'HI', 'ND', 'WY'],
+        fiveBandWorked: 28,
+        fiveBandConfirmed: 19,
       },
       bandTargets: [
         { entity: 'Chad', bands: ['10m'] },

@@ -27,6 +27,23 @@ const AWARD_BANDS: [Band; 5] = [Band::B80, Band::B40, Band::B20, Band::B15, Band
 /// WORK chase (so it surfaces "almost-complete" entities, not every partial).
 const WORK_CHASE_MIN_BANDS: usize = 3;
 
+/// The 50 US states (ADIF `STATE` postal codes) for Worked All States. WAS keys
+/// on these codes directly — Hawaii/Alaska count even though they're separate
+/// DXCC entities; DC and territories are not WAS states.
+const WAS_STATES: [&str; 50] = [
+    "AK", "AL", "AR", "AZ", "CA", "CO", "CT", "DE", "FL", "GA", "HI", "IA", "ID", "IL", "IN", "KS",
+    "KY", "LA", "MA", "MD", "ME", "MI", "MN", "MO", "MS", "MT", "NC", "ND", "NE", "NH", "NJ", "NM",
+    "NV", "NY", "OH", "OK", "OR", "PA", "RI", "SC", "SD", "TN", "TX", "UT", "VA", "VT", "WA", "WI",
+    "WV", "WY",
+];
+
+/// Canonicalize an ADIF state code to one of the 50 WAS states, or `None` for a
+/// junk/territory/empty code (which never advances WAS).
+fn valid_state(s: &str) -> Option<&'static str> {
+    let up = s.trim().to_ascii_uppercase();
+    WAS_STATES.iter().copied().find(|st| *st == up)
+}
+
 /// Representative callsigns for famously-rare, DXpedition-only DXCC entities —
 /// resolved through cty.dat so names match the log side exactly (unresolvable
 /// ones are simply skipped). Working one is a DXpedition-grade contact. A live
@@ -111,6 +128,20 @@ pub struct HonorRollProgress {
     pub number_one_needed: usize,
 }
 
+/// Worked All States progress (50 US states; LoTW/paper confirmed, eQSL excluded).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct WasProgress {
+    /// Distinct states worked / confirmed (50 confirmed = WAS).
+    pub worked: usize,
+    pub confirmed: usize,
+    /// The states still to confirm (postal codes, sorted) — the WAS chase.
+    pub needed: Vec<String>,
+    /// 5-Band WAS: states worked / confirmed on ALL of 80/40/20/15/10m.
+    pub five_band_worked: usize,
+    pub five_band_confirmed: usize,
+}
+
 /// DXCC-first award summary for the dashboard.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -152,6 +183,8 @@ pub struct AwardSummary {
     pub waz_confirmed: usize,
     /// DXCC Honor Roll standing (current-entity, confirmed).
     pub honor_roll: HonorRollProgress,
+    /// Worked All States (50 US states) + 5-Band WAS.
+    pub was: WasProgress,
     /// The WORK chase (elite "every-band" tracker): entities already worked on
     /// most award bands but NOT yet on a few — the bands listed are ones to WORK
     /// (a new contact, not just a confirmation). Closest-to-complete first.
@@ -178,6 +211,11 @@ pub struct Awards {
     /// CQ zones worked / confirmed (WAZ — 40 zones).
     worked_zones: HashSet<u8>,
     confirmed_zones: HashSet<u8>,
+    /// US states worked / confirmed (WAS — 50 states), and per-award-band for 5BWAS.
+    worked_states: HashSet<&'static str>,
+    confirmed_states: HashSet<&'static str>,
+    worked_state_band: HashSet<(&'static str, Band)>,
+    confirmed_state_band: HashSet<(&'static str, Band)>,
 }
 
 impl Awards {
@@ -191,12 +229,13 @@ impl Awards {
     /// still counts toward total QSOs but not DXCC; a band label that doesn't
     /// parse counts the entity but no slot.
     pub fn add(&mut self, call: &str, band: &str, mode: &str, confirmed: bool) {
-        self.add_with_credit(call, band, mode, confirmed, false)
+        self.add_with_credit(call, band, mode, confirmed, false, None)
     }
 
     /// As [`add`](Self::add), plus `credited` — whether ARRL has **granted** DXCC
-    /// credit for this QSO (its `credit_granted` contains `DXCC`). Drives the
-    /// "confirmed vs officially credited" gap on the dashboard.
+    /// credit for this QSO (its `credit_granted` contains a `DXCC` code) — and the
+    /// contact's US `state` (ADIF STATE) for WAS. Drives the "confirmed vs
+    /// officially credited" gap and the Worked-All-States tier.
     pub fn add_with_credit(
         &mut self,
         call: &str,
@@ -204,12 +243,36 @@ impl Awards {
         mode: &str,
         confirmed: bool,
         credited: bool,
+        state: Option<&str>,
     ) {
         self.qsos += 1;
         if confirmed {
             self.confirmed_qsos += 1;
         }
-        let Some(info) = dxcc::resolve(call) else {
+        let resolved = dxcc::resolve(call);
+        // WAS — keyed on the STATE code, but GATED on a US-family DXCC entity
+        // (United States / Alaska / Hawaii). The entity gate keeps HI/AK counting
+        // while rejecting non-US subdivision codes that collide with US postal
+        // codes (e.g. Australian "WA" = Western Australia vs Washington). eQSL
+        // excluded: WAS uses award-eligible `confirmed`.
+        let is_us_state = resolved
+            .as_ref()
+            .is_some_and(|i| matches!(i.entity, "United States" | "Alaska" | "Hawaii"));
+        if is_us_state {
+            if let Some(code) = state.and_then(valid_state) {
+                self.worked_states.insert(code);
+                if confirmed {
+                    self.confirmed_states.insert(code);
+                }
+                if let Some(b) = Band::from_label(band).filter(|b| AWARD_BANDS.contains(b)) {
+                    self.worked_state_band.insert((code, b));
+                    if confirmed {
+                        self.confirmed_state_band.insert((code, b));
+                    }
+                }
+            }
+        }
+        let Some(info) = resolved else {
             return;
         };
         // WAZ: CQ zones 1..=40 (0 = cty.dat couldn't supply a zone — skip it).
@@ -416,7 +479,38 @@ impl Awards {
             rare_worked: rare_worked as u32,
             zones_confirmed: self.confirmed_zones.len() as u32,
             dxcc_current_total: current_total as u32,
+            states_confirmed: self.confirmed_states.len() as u32,
         });
+
+        // Worked All States + 5-Band WAS.
+        let was_needed: Vec<String> = WAS_STATES
+            .iter()
+            .filter(|s| !self.confirmed_states.contains(*s))
+            .map(|s| s.to_string())
+            .collect();
+        let mut was_worked_aw: HashMap<&'static str, std::collections::HashSet<Band>> =
+            HashMap::new();
+        let mut was_conf_aw: HashMap<&'static str, std::collections::HashSet<Band>> =
+            HashMap::new();
+        for (st, b) in &self.worked_state_band {
+            was_worked_aw.entry(st).or_default().insert(*b);
+        }
+        for (st, b) in &self.confirmed_state_band {
+            was_conf_aw.entry(st).or_default().insert(*b);
+        }
+        let was = WasProgress {
+            worked: self.worked_states.len(),
+            confirmed: self.confirmed_states.len(),
+            needed: was_needed,
+            five_band_worked: was_worked_aw
+                .values()
+                .filter(|s| s.len() == AWARD_BANDS.len())
+                .count(),
+            five_band_confirmed: was_conf_aw
+                .values()
+                .filter(|s| s.len() == AWARD_BANDS.len())
+                .count(),
+        };
 
         // Credited (granted) entities + the confirmed-but-not-credited gap.
         let dxcc_credited = self.credited_entity.len();
@@ -445,6 +539,7 @@ impl Awards {
             waz_worked: self.worked_zones.len(),
             waz_confirmed: self.confirmed_zones.len(),
             honor_roll,
+            was,
             band_targets,
         }
     }
@@ -564,9 +659,9 @@ mod tests {
     #[test]
     fn credited_tier_and_ready_to_submit() {
         let mut a = Awards::new();
-        a.add_with_credit("W1AW", "20m", "CW", true, true); // confirmed + DXCC credited
-        a.add_with_credit("JA1XYZ", "20m", "FT8", true, false); // confirmed, not credited
-        a.add_with_credit("DL1ABC", "20m", "CW", false, false); // worked only
+        a.add_with_credit("W1AW", "20m", "CW", true, true, None); // confirmed + DXCC credited
+        a.add_with_credit("JA1XYZ", "20m", "FT8", true, false, None); // confirmed, not credited
+        a.add_with_credit("DL1ABC", "20m", "CW", false, false, None); // worked only
         let s = a.summary();
         assert_eq!(s.dxcc_worked, 3);
         assert_eq!(s.dxcc_confirmed, 2, "USA + Japan confirmed");
@@ -581,10 +676,43 @@ mod tests {
         // credited without a confirmation must NOT inflate credited (credited ≤
         // confirmed always holds — a malformed credit-only report row).
         let mut c = Awards::new();
-        c.add_with_credit("W1AW", "20m", "CW", false, true);
+        c.add_with_credit("W1AW", "20m", "CW", false, true, None);
         let s = c.summary();
         assert_eq!(s.dxcc_confirmed, 0);
         assert_eq!(s.dxcc_credited, 0, "credit without confirmation is ignored");
+    }
+
+    #[test]
+    fn was_states_confirmed_needed_and_five_band() {
+        let mut a = Awards::new();
+        // 3 states confirmed (incl. Hawaii/Alaska — separate DXCC entities), one
+        // worked-but-unconfirmed, plus a junk STATE that must be ignored.
+        a.add_with_credit("KH6AA", "20m", "FT8", true, false, Some("HI"));
+        a.add_with_credit("KL7AA", "20m", "FT8", true, false, Some("ak")); // lowercase ok
+        a.add_with_credit("W1AW", "20m", "CW", true, false, Some("CT"));
+        a.add_with_credit("K5XYZ", "20m", "FT8", false, false, Some("TX")); // worked, unconf
+        a.add_with_credit("DL1ABC", "20m", "FT8", true, false, Some("ZZ")); // junk → ignored
+                                                                            // Australian "WA" (Western Australia) must NOT credit Washington — WAS is
+                                                                            // gated on a US-family entity, so a VK6 contact never advances WA.
+        a.add_with_credit("VK6AA", "20m", "FT8", true, false, Some("WA"));
+        let s = a.summary();
+        assert_eq!(s.was.confirmed, 3, "HI, AK, CT confirmed (VK6/WA rejected)");
+        assert_eq!(s.was.worked, 4, "+ TX worked");
+        assert_eq!(s.was.needed.len(), 47, "50 − 3 confirmed");
+        assert!(!s.was.needed.contains(&"HI".to_string()));
+        assert!(s.was.needed.contains(&"TX".to_string()));
+        assert!(
+            s.was.needed.contains(&"WA".to_string()),
+            "Washington still needed"
+        );
+
+        // 5BWAS: Rhode Island confirmed on all 5 award bands.
+        let mut b = Awards::new();
+        for band in ["80m", "40m", "20m", "15m", "10m"] {
+            b.add_with_credit("W1RI", band, "FT8", true, false, Some("RI"));
+        }
+        let s = b.summary();
+        assert_eq!(s.was.five_band_confirmed, 1, "RI on all 5 bands");
     }
 
     #[test]

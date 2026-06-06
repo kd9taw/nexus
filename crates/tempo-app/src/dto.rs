@@ -316,6 +316,9 @@ pub struct FieldDayStatus {
 pub struct LoggedQso {
     pub call: String,
     pub grid: Option<String>,
+    /// US state (ADIF STATE, 2-letter) for WAS, when known.
+    #[serde(default)]
+    pub state: Option<String>,
     pub band: String,
     pub freq_mhz: f64,
     /// Tempo tier / mode label ("FT1" | "DX1").
@@ -344,6 +347,7 @@ impl From<tempo_core::logbook::QsoRecord> for LoggedQso {
         LoggedQso {
             call: r.call,
             grid: r.grid,
+            state: r.state,
             band: r.band,
             freq_mhz: r.freq_mhz,
             mode: r.mode,
@@ -363,6 +367,7 @@ impl From<LoggedQso> for tempo_core::logbook::QsoRecord {
         tempo_core::logbook::QsoRecord {
             call: q.call,
             grid: q.grid,
+            state: q.state,
             band: q.band,
             freq_mhz: q.freq_mhz,
             mode: q.mode,

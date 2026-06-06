@@ -17,7 +17,7 @@ pub struct Achievement {
     pub id: String,
     pub title: String,
     pub detail: String,
-    /// Grouping label: "QSOs" | "DXCC" | "Challenge".
+    /// Grouping label, e.g. QSOs / DXCC / DXpeditions / Challenge / WAZ / WAS.
     pub category: String,
     pub unlocked: bool,
     /// Progress toward `target` (the live stat, e.g. 87 confirmed entities).
@@ -43,6 +43,8 @@ pub struct AchievementStats {
     /// Current ARRL DXCC entities (the Honor Roll denominator; derived from
     /// cty.dat). Honor Roll entry = confirm `dxcc_current_total − 9`.
     pub dxcc_current_total: u32,
+    /// US states confirmed (toward Worked All States — 50 states).
+    pub states_confirmed: u32,
 }
 
 fn mk(
@@ -77,6 +79,7 @@ pub fn evaluate(s: &AchievementStats) -> Vec<Achievement> {
     let sl = s.slots_confirmed;
     let rw = s.rare_worked;
     let zc = s.zones_confirmed;
+    let sc = s.states_confirmed;
     // Honor Roll thresholds, derived from the live current-entity total.
     let hr_total = s.dxcc_current_total;
     let hr_entry = hr_total.saturating_sub(9);
@@ -249,6 +252,25 @@ pub fn evaluate(s: &AchievementStats) -> Vec<Achievement> {
             40,
             true,
         ),
+        // --- WAS (confirmed US states, out of 50) ---
+        mk(
+            "was-half",
+            "Halfway to WAS",
+            "Confirm 25 US states",
+            "WAS",
+            sc,
+            25,
+            false,
+        ),
+        mk(
+            "was-50",
+            "Worked All States",
+            "Confirm all 50 US states — the WAS award!",
+            "WAS",
+            sc,
+            50,
+            true,
+        ),
     ]
 }
 
@@ -267,6 +289,7 @@ mod tests {
             rare_worked: 3,
             zones_confirmed: 22,
             dxcc_current_total: 340,
+            states_confirmed: 30,
         };
         let a = evaluate(&s);
         let by = |id: &str| a.iter().find(|x| x.id == id).unwrap();
@@ -278,6 +301,9 @@ mod tests {
         assert!(by("rare-1").unlocked && by("rare-1").critical && !by("rare-5").unlocked);
         assert!(by("waz-half").unlocked && !by("waz-40").unlocked);
         assert!(by("waz-40").critical && !by("waz-half").critical);
+        // WAS: 30 confirmed → halfway unlocked, full locked; full is critical.
+        assert!(by("was-half").unlocked && !by("was-50").unlocked);
+        assert!(by("was-50").critical && !by("was-half").critical);
         // Honor Roll: 45 confirmed is far from 331 entry / 340 #1 → both locked.
         assert_eq!(by("honor-roll").target, 331, "340 − 9");
         assert_eq!(by("honor-roll-1").target, 340);
@@ -304,6 +330,7 @@ mod tests {
             rare_worked: 0,
             zones_confirmed: 0,
             dxcc_current_total: 0,
+            states_confirmed: 0,
         });
         assert!(a.iter().all(|x| !x.unlocked));
         assert!(!a.is_empty(), "catalog still lists locked achievements");
@@ -320,6 +347,7 @@ mod tests {
             rare_worked: 0,
             zones_confirmed: 0,
             dxcc_current_total: 340,
+            states_confirmed: 0,
         };
         let by = |a: &[Achievement], id: &str| a.iter().find(|x| x.id == id).unwrap().unlocked;
         // 330 confirmed: not yet Honor Roll (needs 331).

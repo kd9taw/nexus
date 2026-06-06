@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Trophy, CheckCircle2, Radio, Target, Layers, Send, Globe2, Award } from 'lucide-react'
+import { Trophy, CheckCircle2, Radio, Target, Layers, Send, Globe2, Award, Flag } from 'lucide-react'
 import type { AwardSummary, EntityNeed } from '../types'
 import { getAwards } from '../api'
 import { StateBlock } from './StateBlock'
@@ -10,6 +10,8 @@ const DXCC_BASIC = 100
 const CHALLENGE_AWARD = 1000
 /** CQ zones for the Worked All Zones (WAZ) award. */
 const WAZ_ZONES = 40
+/** US states for the Worked All States (WAS) award. */
+const WAS_STATES = 50
 
 /** Render a chase list (entity + the bands to confirm), or an empty note. */
 function NeedList({ items, empty }: { items: EntityNeed[]; empty: string }) {
@@ -200,6 +202,28 @@ export function AwardsView({ showGamification = true }: { showGamification?: boo
             · {aw.wazWorked} worked
           </span>
         </div>
+
+        <div className={`aw-card${aw.was.confirmed >= WAS_STATES ? ' aw-card-elite' : ''}`}>
+          <span className="aw-k">
+            <Flag size={13} aria-hidden="true" /> WAS
+          </span>
+          <span className="aw-v">
+            {aw.was.confirmed}
+            <span className="aw-of"> / {WAS_STATES}</span>
+          </span>
+          <div className="aw-bar">
+            <div
+              className="aw-fill good"
+              style={{ width: `${Math.min(100, (aw.was.confirmed / WAS_STATES) * 100)}%` }}
+            />
+          </div>
+          <span className="aw-note">
+            {aw.was.confirmed >= WAS_STATES
+              ? 'Worked All States ✓'
+              : `${WAS_STATES - aw.was.confirmed} states to go`}{' '}
+            · {aw.was.worked} worked · {aw.was.fiveBandConfirmed} on 5 bands (5BWAS)
+          </span>
+        </div>
       </div>
 
       <div className="awards-body">
@@ -269,6 +293,22 @@ export function AwardsView({ showGamification = true }: { showGamification?: boo
               <Send size={14} aria-hidden="true" /> Work for a band slot ({aw.bandTargets.length})
             </h3>
             <NeedList items={aw.bandTargets} empty="No almost-complete entities to chase." />
+          </div>
+          <div className="aw-panel">
+            <h3>
+              <Flag size={14} aria-hidden="true" /> WAS — states needed ({aw.was.needed.length})
+            </h3>
+            {aw.was.needed.length === 0 ? (
+              <p className="aw-empty">All 50 states confirmed. 🎉</p>
+            ) : (
+              <span className="aw-needbands">
+                {aw.was.needed.map((s) => (
+                  <span className="aw-chip" key={s}>
+                    {s}
+                  </span>
+                ))}
+              </span>
+            )}
           </div>
         </div>
       </div>

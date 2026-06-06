@@ -137,6 +137,14 @@ pub fn reconcile(local: &mut [QsoRecord], incoming: &[QsoRecord]) -> ReconcileSu
                     let granted = rec.credit_granted.clone();
                     rec.credit_submitted.retain(|c| !granted.contains(c));
                 }
+                // Location enrich: a report (e.g. LoTW) often carries STATE the
+                // logged QSO lacked — fill it so WAS can credit it. Monotonic:
+                // never overwrites an existing state.
+                if rec.state.is_none() {
+                    if let Some(st) = &inc.state {
+                        rec.state = Some(st.clone());
+                    }
+                }
             }
             // Only a row that actually carries a confirmation/credit is a
             // meaningful "missing" diagnostic; a plain unconfirmed QSO row is not.
@@ -172,6 +180,7 @@ mod tests {
         QsoRecord {
             call: call.into(),
             grid: None,
+            state: None,
             band: band.into(),
             freq_mhz: 14.074,
             mode: mode.into(),
@@ -265,6 +274,29 @@ mod tests {
         assert!(
             log[0].credit_submitted.is_empty(),
             "granted ⇒ no longer applied"
+        );
+    }
+
+    #[test]
+    fn report_fills_missing_state_but_never_overwrites() {
+        let a = rec("W1AW", "20m", "FT8", 20_000); // logged without state
+        let mut b = rec("K5XYZ", "20m", "FT8", 20_000);
+        b.state = Some("TX".into()); // logged WITH state
+        let mut log = vec![a, b];
+
+        let mut r1 = rec("W1AW", "20m", "FT8", 20_000);
+        r1.award_confirmed = true;
+        r1.state = Some("CT".into()); // report supplies the missing state
+        let mut r2 = rec("K5XYZ", "20m", "FT8", 20_000);
+        r2.award_confirmed = true;
+        r2.state = Some("OK".into()); // report DISAGREES — must not overwrite
+
+        reconcile(&mut log, &[r1, r2]);
+        assert_eq!(log[0].state.as_deref(), Some("CT"), "missing state filled");
+        assert_eq!(
+            log[1].state.as_deref(),
+            Some("TX"),
+            "existing state preserved"
         );
     }
 

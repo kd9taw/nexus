@@ -261,6 +261,8 @@ export interface DecodeRow {
 export interface LoggedQso {
   call: string
   grid: string | null
+  /** US state (ADIF STATE, 2-letter) for WAS, when known. */
+  state?: string | null
   band: string
   freqMhz: number
   mode: string
@@ -323,7 +325,7 @@ export interface Achievement {
   id: string
   title: string
   detail: string
-  /** Grouping label: "QSOs" | "DXCC" | "Challenge". */
+  /** Grouping label, e.g. QSOs / DXCC / DXpeditions / Challenge / WAZ / WAS. */
   category: string
   unlocked: boolean
   /** Progress toward `target` (the live stat). */
@@ -334,6 +336,17 @@ export interface Achievement {
 }
 
 /** DXCC-first award progress, computed from the logbook (cty.dat-resolved). */
+/** Worked All States progress (50 US states; LoTW/paper confirmed). */
+export interface WasProgress {
+  worked: number
+  confirmed: number
+  /** States still to confirm (postal codes, sorted) — the WAS chase. */
+  needed: string[]
+  /** 5-Band WAS: states worked / confirmed on all of 80/40/20/15/10m. */
+  fiveBandWorked: number
+  fiveBandConfirmed: number
+}
+
 /** DXCC Honor Roll standing — current-entity, confirmed. (ARRL: confirmed ≥
  * currentTotal − 9 = Honor Roll; all current entities = #1 Honor Roll.) */
 export interface HonorRollProgress {
@@ -385,6 +398,8 @@ export interface AwardSummary {
   wazConfirmed: number
   /** DXCC Honor Roll standing (current-entity, confirmed). */
   honorRoll: HonorRollProgress
+  /** Worked All States (50 US states) + 5-Band WAS. */
+  was: WasProgress
   /** WORK chase: entities worked on most award bands but missing a few — the
    * listed bands are ones to WORK (a new contact). Closest-to-complete first. */
   bandTargets: EntityNeed[]

@@ -13,6 +13,9 @@ use std::path::Path;
 pub struct QsoRecord {
     pub call: String,
     pub grid: Option<String>,
+    /// US state (ADIF `STATE`, 2-letter postal code, uppercased) — drives WAS.
+    /// `None` for non-US contacts or when the report didn't carry it.
+    pub state: Option<String>,
     pub band: String,
     pub freq_mhz: f64,
     /// Tempo tier / mode label ("FT1" | "DX1").
@@ -200,6 +203,9 @@ fn adif_record(r: &QsoRecord) -> String {
     if let Some(g) = &r.grid {
         out.push_str(&field("GRIDSQUARE", g));
     }
+    if let Some(st) = &r.state {
+        out.push_str(&field("STATE", st));
+    }
     out.push_str(&field("BAND", &r.band));
     out.push_str(&field("FREQ", &format!("{:.6}", r.freq_mhz)));
     out.push_str(&field("MODE", &r.mode));
@@ -335,6 +341,10 @@ fn record_from(f: &std::collections::HashMap<String, String>) -> Option<QsoRecor
     Some(QsoRecord {
         call,
         grid: f.get("GRIDSQUARE").cloned(),
+        state: f
+            .get("STATE")
+            .map(|s| s.trim().to_ascii_uppercase())
+            .filter(|s| !s.is_empty()),
         band: f.get("BAND").cloned().unwrap_or_default(),
         freq_mhz: f.get("FREQ").and_then(|s| s.parse().ok()).unwrap_or(0.0),
         mode: f.get("MODE").cloned().unwrap_or_default(),
@@ -413,6 +423,7 @@ mod tests {
         QsoRecord {
             call: call.into(),
             grid: Some("EN37".into()),
+            state: None,
             band: band.into(),
             freq_mhz: 14.0905,
             mode: "FT1".into(),
@@ -502,6 +513,23 @@ mod tests {
         assert!(t2.contains("<EQSL_QSL_RCVD:1>Y"));
         let b2 = parse_adif(&t2);
         assert!(b2[0].confirmed && !b2[0].award_confirmed);
+    }
+
+    #[test]
+    fn state_parses_uppercased_and_round_trips() {
+        // Parse uppercases + trims; serialize re-emits <STATE>; re-parse preserves.
+        let recs = parse_adif("<EOH>\n<CALL:5>W9XYZ<BAND:3>20m<MODE:3>FT8<STATE:2>ny<EOR>\n");
+        assert_eq!(recs[0].state.as_deref(), Some("NY"));
+        let mut lb = Logbook::new();
+        lb.add(recs[0].clone());
+        let text = lb.adif();
+        assert!(text.contains("<STATE:2>NY"), "emits the state field");
+        assert_eq!(parse_adif(&text)[0].state.as_deref(), Some("NY"));
+        // No STATE → no field emitted, parses back None.
+        let none = rec("K2DEF", "40m", 1_700_000_000);
+        let mut lb2 = Logbook::new();
+        lb2.add(none);
+        assert!(!lb2.adif().contains("<STATE"));
     }
 
     #[test]

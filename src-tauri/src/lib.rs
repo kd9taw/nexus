@@ -484,7 +484,14 @@ fn get_awards(state: State<'_, SharedEngine>) -> Result<propagation::AwardSummar
         // whether ARRL has granted DXCC-family credit (DXCC / DXCC_BAND /
         // DXCC_MODE / … — real LoTW exports use the granular codes).
         let credited = q.credit_granted.iter().any(|c| c.starts_with("DXCC"));
-        awards.add_with_credit(&q.call, &q.band, &q.mode, q.award_confirmed, credited);
+        awards.add_with_credit(
+            &q.call,
+            &q.band,
+            &q.mode,
+            q.award_confirmed,
+            credited,
+            q.state.as_deref(),
+        );
     }
     Ok(awards.summary())
 }

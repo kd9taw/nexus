@@ -4609,6 +4609,7 @@ select.settings-input {
 }
 .aw-needbands {
   display: inline-flex;
+  flex-wrap: wrap;
   gap: 4px;
 }
 .aw-chip {
