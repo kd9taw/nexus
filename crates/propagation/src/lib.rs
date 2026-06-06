@@ -46,5 +46,5 @@ pub use model::{
     classify_vhf_mode, ActivityTier, Band, Confidence, ModeClass, PathSpot, PropMode, Region, Side,
     SpaceWx,
 };
-pub use needalert::{rank as rank_needs, Heard, NeedAlert, NeedTag};
+pub use needalert::{heard_from_freq, rank as rank_needs, Heard, NeedAlert, NeedTag};
 pub use spot::Spot;

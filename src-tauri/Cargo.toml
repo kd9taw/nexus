@@ -44,6 +44,8 @@ serde_json = "1"
 tempo-app = { path = "../crates/tempo-app" }
 # Propagation & opening intelligence with LIVE feeds (NOAA SWPC + PSK Reporter).
 propagation = { path = "../crates/propagation", features = ["live"] }
+# DX-cluster / RBN spot feed for need-aware spotting.
+tempo-net = { path = "../crates/tempo-net" }
 # Real sound-card + rig transport (optional; enabled by the `radio` feature).
 tempo-audio = { path = "../crates/tempo-audio", optional = true }
 

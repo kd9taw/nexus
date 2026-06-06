@@ -525,6 +525,8 @@ export interface Settings {
   wsjtxUdpAddr: string
   /** Upload spots to PSK Reporter's global map. */
   pskreporter: boolean
+  /** Connect to a DX cluster / RBN for need-aware spots (opt-in; needs restart). */
+  clusterEnabled?: boolean
   /**
    * Periodically call CQ to announce presence. OFF = passive (hunt & pounce):
    * Tempo only transmits when the operator acts. This is the ONLY auto-TX path.

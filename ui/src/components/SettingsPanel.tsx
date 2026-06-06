@@ -926,6 +926,25 @@ export function SettingsPanel({
                 </label>
                 <span className="settings-hint">upload spots to the global map</span>
               </div>
+
+              <div className="settings-field">
+                <label className="settings-toggle">
+                  <span className="settings-label">DX Cluster / RBN spots</span>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={!!form.clusterEnabled}
+                    className={`toggle${form.clusterEnabled ? ' on' : ''}`}
+                    onClick={() => updateBool('clusterEnabled', !form.clusterEnabled)}
+                  >
+                    <span className="toggle-knob" />
+                  </button>
+                </label>
+                <span className="settings-hint">
+                  Surface "new ones" from the Reverse Beacon Network in Propagation → Needs heard now.
+                  Takes effect on restart.
+                </span>
+              </div>
             </div>
           </fieldset>
         </div>

@@ -43,6 +43,14 @@ type SharedEngine = Arc<Mutex<Engine>>;
 /// Reporter's ≥5-minute-per-dataset query limit across UI polls.
 type PropCache = Arc<Mutex<Option<(std::time::Instant, propagation::PropagationSnapshot)>>>;
 
+/// Recent DX-cluster / RBN spots, fed by the background cluster thread and read
+/// by `get_need_alerts`.
+type SharedSpots = Arc<Mutex<tempo_net::cluster::SpotBuffer>>;
+
+/// The cluster thread runs for the process lifetime (a desktop daemon thread);
+/// this stop flag exists only so `cluster::run`'s signature is satisfied.
+static CLUSTER_STOP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// How long a live propagation nowcast is reused before refetching (seconds).
 const PROP_TTL_SECS: u64 = 300;
 
@@ -505,15 +513,20 @@ fn get_awards(state: State<'_, SharedEngine>) -> Result<propagation::AwardSummar
 /// slot / mode — so "new ones" surface from the live decodes. Offline (native
 /// roster); a telnet-cluster / RBN / PSK-Reporter feed is a later increment.
 #[tauri::command]
-fn get_need_alerts(state: State<'_, SharedEngine>) -> Result<Vec<propagation::NeedAlert>, String> {
+fn get_need_alerts(
+    state: State<'_, SharedEngine>,
+    spots: State<'_, SharedSpots>,
+) -> Result<Vec<propagation::NeedAlert>, String> {
     let eng = state.lock().map_err(|e| e.to_string())?;
     let mut needs = propagation::LogNeeds::new();
     for q in eng.get_log() {
         needs.add(&q.call, &q.band, &q.mode, q.award_confirmed);
     }
     let snap = eng.snapshot();
+    drop(eng); // nothing below needs the engine — don't hold the hot lock across spots
     let band = snap.radio.band.clone();
-    let spots: Vec<propagation::Heard> = snap
+    // Stations heard natively on the current band...
+    let mut heard: Vec<propagation::Heard> = snap
         .stations
         .iter()
         .map(|s| propagation::Heard {
@@ -522,7 +535,29 @@ fn get_need_alerts(state: State<'_, SharedEngine>) -> Result<Vec<propagation::Ne
             mode: "FT8".to_string(), // FT-family → Digital class; the band is what varies
         })
         .collect();
-    Ok(propagation::rank_needs(&spots, &needs, needs.worked_zones()))
+    // ...plus recent DX-cluster / RBN spots (each on its own band, derived from
+    // freq). Only the last 15 min — "heard now" must mean recent.
+    if let Ok(buf) = spots.lock() {
+        for cs in buf.recent_within(std::time::Instant::now(), std::time::Duration::from_secs(900)) {
+            // Pick a real mode keyword out of the comment (RBN leads with it;
+            // human spots may lead with "up 2" etc.) rather than the first token.
+            let mode = cs
+                .comment
+                .split_whitespace()
+                .find(|t| {
+                    matches!(
+                        t.to_ascii_uppercase().as_str(),
+                        "CW" | "SSB" | "USB" | "LSB" | "AM" | "FM" | "RTTY" | "PSK" | "FT8" | "FT4"
+                            | "JT65" | "JT9" | "MFSK"
+                    )
+                })
+                .unwrap_or("FT8");
+            if let Some(h) = propagation::heard_from_freq(&cs.dx_call, cs.freq_mhz(), mode) {
+                heard.push(h);
+            }
+        }
+    }
+    Ok(propagation::rank_needs(&heard, &needs, needs.worked_zones()))
 }
 
 /// Import an external ADIF logbook (deduped merge → real "needs"). Takes the
@@ -630,7 +665,36 @@ pub fn run() {
     // The engine boots on the native source; restore a persisted Companion choice
     // below (best-effort — a failed UDP bind falls back to native).
     let persisted_source = settings.source;
+    // Cluster/RBN feed config (captured before `settings` moves into the engine).
+    let cluster_enabled = settings.cluster_enabled;
+    let cluster_host = settings.cluster_host.clone();
+    let cluster_call = settings.mycall.clone();
     let engine: SharedEngine = Arc::new(Mutex::new(Engine::with_settings(settings)));
+
+    // Recent DX-cluster / RBN spots for need-aware spotting. When enabled (and a
+    // callsign is set), a background daemon thread connects, logs in, and pushes
+    // parsed spots into this buffer; `get_need_alerts` reads it. Opt-in network.
+    let spots: SharedSpots = Arc::new(Mutex::new(tempo_net::cluster::SpotBuffer::default()));
+    // Gate on a REAL callsign — never log in to a public service under the shipped
+    // placeholder (`KD9TAW` = "operator hasn't set their call yet", per the UI
+    // onboarding nudge); that would key an RBN session as a third party.
+    let real_call = !cluster_call.trim().is_empty()
+        && !cluster_call.trim().eq_ignore_ascii_case("KD9TAW");
+    if cluster_enabled && real_call {
+        let buf = spots.clone();
+        std::thread::spawn(move || {
+            tempo_net::cluster::run(
+                &cluster_host,
+                &cluster_call,
+                |sp| {
+                    if let Ok(mut b) = buf.lock() {
+                        b.push(sp.clone());
+                    }
+                },
+                &CLUSTER_STOP,
+            );
+        });
+    }
 
     // Point the logbook at its ADIF file and load prior contacts (so worked-
     // before highlighting and the log view reflect previous sessions), and
@@ -662,6 +726,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(engine)
         .manage(prop_cache)
+        .manage(spots)
         .invoke_handler(tauri::generate_handler![
             get_snapshot,
             send_message,

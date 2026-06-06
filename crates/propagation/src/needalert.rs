@@ -75,6 +75,18 @@ pub struct NeedAlert {
     pub headline: String,
 }
 
+/// Build a [`Heard`] from a spot frequency (MHz) — maps the frequency to a band
+/// label so cluster/RBN spots (which carry a frequency, not a band) can be
+/// scored. `None` if the frequency isn't on a known band.
+pub fn heard_from_freq(call: &str, freq_mhz: f64, mode: &str) -> Option<Heard> {
+    let band = Band::from_mhz(freq_mhz)?;
+    Some(Heard {
+        call: call.to_string(),
+        band: band.label().to_string(),
+        mode: mode.to_string(),
+    })
+}
+
 /// Score one heard station. Returns `None` for an unresolvable call or a fully
 /// satisfied one (nothing worth alerting).
 pub fn score(
@@ -225,6 +237,15 @@ mod tests {
         assert_eq!(ranked.len(), 2, "duplicate (call,band) collapsed");
         assert_eq!(ranked[0].call, "3Y0J"); // highest priority first
         assert!(ranked[0].priority >= ranked[1].priority);
+    }
+
+    #[test]
+    fn heard_from_freq_maps_frequency_to_band() {
+        let h = heard_from_freq("3Y0J", 14.074, "FT8").unwrap();
+        assert_eq!(h.band, "20m");
+        assert_eq!(h.call, "3Y0J");
+        // A frequency on no known band → None.
+        assert!(heard_from_freq("X", 0.5, "FT8").is_none());
     }
 
     #[test]

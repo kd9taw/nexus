@@ -63,6 +63,11 @@ pub struct Settings {
     pub source: SourceKind,
     /// Upload heard stations to PSK Reporter.
     pub pskreporter: bool,
+    /// Connect to a DX cluster / RBN for need-aware spots (opt-in network; takes
+    /// effect at startup). Off by default.
+    pub cluster_enabled: bool,
+    /// DX cluster / RBN telnet endpoint ("host:port").
+    pub cluster_host: String,
 
     // --- audio I/O ---
     /// Input (capture) device name. Empty = system default input.
@@ -167,6 +172,8 @@ impl Default for Settings {
             companion_addr: "127.0.0.1:2237".to_string(),
             source: SourceKind::Native,
             pskreporter: false,
+            cluster_enabled: false,
+            cluster_host: "telnet.reversebeacon.net:7001".to_string(),
             audio_in: String::new(),
             audio_out: String::new(),
             tx_level: 0.9,
