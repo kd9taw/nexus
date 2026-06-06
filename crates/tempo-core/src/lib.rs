@@ -18,6 +18,7 @@ pub mod inbox;
 pub mod logbook;
 pub mod lotw;
 pub mod message;
+pub mod qrz;
 pub mod qso;
 pub mod qsy;
 pub mod reconcile;
