@@ -19,6 +19,7 @@
 //! datagram layouts are exhaustively unit-tested (build-bytes / loopback only —
 //! no test ever touches the real network).
 
+pub mod cluster;
 pub mod pskreporter;
 pub mod qds;
 pub mod server;
@@ -26,6 +27,7 @@ pub mod sntp;
 pub mod wsjtx;
 
 // Convenience re-exports for the common entry points.
+pub use cluster::{parse_dx_spot, ClusterSpot};
 pub use pskreporter::{PskReporter, Spot};
 pub use server::{WsjtxServer, APP_ID};
 pub use wsjtx::{Decode, Inbound, QsoLogged, Status};
