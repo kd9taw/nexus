@@ -601,6 +601,11 @@ export interface QsoStatus {
   dxcall: string | null
   rxReport: number | null
   running: boolean
+  /** On-air text of the message queued for the next TX slot ("Now sending"). */
+  txNow?: string | null
+  /** True when the sequencer has retransmitted to its limit without the partner
+   * advancing — withholding further TX until Resend or a new decode. */
+  stalled?: boolean
 }
 
 /**
@@ -714,6 +719,12 @@ export interface Settings {
   // --- logbook & alerts ---
   /** Automatically log completed QSOs to the ADIF logbook. */
   autoLog: boolean
+  /** Prompt to confirm/edit a completed QSO before logging (WSJT-X "Prompt me
+   * to log QSO"). No effect unless autoLog. */
+  promptToLog?: boolean
+  /** Roger the final report with a bare RRR (partner still owes a 73) instead of
+   * the combined RR73. Off by default (RR73 — modern FT8 practice). */
+  preferRrr?: boolean
   // --- coordinated QSY ("move together") — separate, opt-in, off by default ---
   /** Master opt-in for coordinated QSY (announced-in-the-clear roaming). */
   qsyEnabled: boolean

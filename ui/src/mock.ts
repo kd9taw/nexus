@@ -347,6 +347,8 @@ function defaultSettings(): Settings {
     harqEnabled: true,
     // logbook & alerts
     autoLog: true,
+    promptToLog: false,
+    preferRrr: false,
     // coordinated QSY — separate, opt-in, off by default
     qsyEnabled: false,
     qsySet: ['20m', '40m', '30m'],
@@ -487,8 +489,8 @@ const QSO_SP_STATES = ['Listening', 'Answering CQ', 'Awaiting Report', 'Sending 
 
 function seedQso(running: boolean): QsoStatus {
   return running
-    ? { state: 'Calling CQ', dxcall: null, rxReport: null, running: true }
-    : { state: 'Listening', dxcall: 'K2DEF', rxReport: -11, running: false }
+    ? { state: 'Calling CQ', dxcall: null, rxReport: null, running: true, txNow: 'CQ AB1CD EN52', stalled: false }
+    : { state: 'Listening', dxcall: 'K2DEF', rxReport: -11, running: false, txNow: null, stalled: false }
 }
 
 const FD_BANDS = ['20m', '40m', '15m', '80m', '10m']
@@ -1019,10 +1021,33 @@ class MockEngine {
         dxcall: call,
         rxReport: station ? station.snr : -13,
         running: false,
+        txNow: `${call} ${this.settings.mycall} ${this.settings.mygrid}`,
+        stalled: false,
       },
       fieldDay: null,
     }
     this.emit()
+    return this.snap
+  }
+
+  /** Operator "Resend": re-arm the current QSO message (mock no-op beyond echo). */
+  qsoResend(): AppSnapshot {
+    if (this.snap.qso) {
+      this.snap = { ...this.snap, qso: { ...this.snap.qso, stalled: false } }
+      this.emit()
+    }
+    return this.snap
+  }
+
+  /** Operator in-QSO free text (Tx5): set it as the next message. */
+  qsoFreetext(text: string): AppSnapshot {
+    const t = text.trim()
+    if (this.snap.qso && t) {
+      const dx = this.snap.qso.dxcall
+      const txNow = dx ? `${dx} ${this.settings.mycall} ${t}` : t
+      this.snap = { ...this.snap, qso: { ...this.snap.qso, txNow, stalled: false } }
+      this.emit()
+    }
     return this.snap
   }
 
@@ -1547,7 +1572,14 @@ class MockEngine {
       rxReport = -1 * (6 + Math.floor(Math.random() * 16))
     }
 
-    return { state, dxcall, rxReport, running: this.qsoRunning }
+    // Plausible "Now sending" text for the demo, tracking the state.
+    const me = this.settings.mycall
+    const grid = this.settings.mygrid
+    let txNow: string | null = qso.txNow ?? null
+    if (this.qsoRunning && !dxcall) txNow = `CQ ${me} ${grid}`
+    else if (dxcall && rxReport === null) txNow = `${dxcall} ${me} ${grid}`
+    else if (dxcall) txNow = `${dxcall} ${me} R${rxReport}`
+    return { state, dxcall, rxReport, running: this.qsoRunning, txNow, stalled: false }
   }
 
   /** Grow the Field Day log + scoreboard a contact at a time (no dupes). */

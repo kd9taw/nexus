@@ -60,6 +60,10 @@ pub struct Station {
     pub rv_count: u8,
     /// Transmissions of the current step so far (resets when the step advances).
     pub tx_count: u32,
+    /// Operator preference: roger the final report with `RRR` (acknowledge only,
+    /// partner still owes a 73) instead of the combined `RR73`. Default `false`
+    /// (RR73 — modern FT8 practice). Mirrors WSJT-X's "Settings ▸ behaviour".
+    pub confirm_with_rrr: bool,
     /// Human-readable event log.
     pub transcript: Vec<String>,
 }
@@ -79,6 +83,7 @@ impl Station {
             rx_report: None,
             rv_count: 0,
             tx_count: 0,
+            confirm_with_rrr: false,
             transcript: Vec::new(),
         }
     }
@@ -94,6 +99,7 @@ impl Station {
             rx_report: None,
             rv_count: 0,
             tx_count: 0,
+            confirm_with_rrr: false,
             transcript: Vec::new(),
         }
     }
@@ -116,6 +122,7 @@ impl Station {
             rx_report: None,
             rv_count: 0,
             tx_count: 0,
+            confirm_with_rrr: false,
             transcript: vec![format!("calling {dxcall} with grid")],
         }
     }
@@ -145,6 +152,36 @@ impl Station {
     /// is withholding it. The app may time out the QSO at this point.
     pub fn stalled(&self) -> bool {
         self.pending.is_some() && self.tx_count >= MAX_TX_PER_STEP
+    }
+
+    /// The current outgoing message as on-air text (the "Now sending" readout),
+    /// regardless of whether it is currently being withheld by a stall. `None`
+    /// when there is nothing queued (listening, or the QSO is complete).
+    pub fn pending_text(&self) -> Option<String> {
+        self.pending.as_ref().map(|m| m.to_text())
+    }
+
+    /// Operator "Resend": re-arm the current step. Clears the retransmission
+    /// counter (and HARQ escalation) so a stalled step transmits again on the
+    /// next TX slot — the partner did not copy and we want another round.
+    /// No-op when there is nothing pending.
+    pub fn resend(&mut self) {
+        if self.pending.is_some() {
+            self.tx_count = 0;
+            self.rv_count = 0;
+            self.log("operator resend → re-arming current message".into());
+        }
+    }
+
+    /// Operator override: replace the next transmission with `msg` (e.g. an
+    /// in-QSO free-text Tx5, or forcing a specific standard message), starting a
+    /// fresh HARQ cycle. The auto-sequencer's [`observe`] still advances on the
+    /// matching reply, so a forced resend rejoins the normal flow.
+    pub fn override_next(&mut self, msg: Msg) {
+        self.log(format!("operator override → {}", msg.to_text()));
+        self.pending = Some(msg);
+        self.tx_count = 0;
+        self.rv_count = 0;
     }
 
     /// Called after I transmit `pending`. Escalates the IR-HARQ redundancy
@@ -206,12 +243,24 @@ impl Station {
                 }
                 (State::AwaitRoger, Msg::RReport { to, de, snr }) if to == &self.mycall => {
                     self.rx_report = Some(*snr);
-                    self.pending = Some(Msg::Rr73 {
-                        to: de.clone(),
-                        de: self.mycall.clone(),
+                    // RR73 (combined roger+73, modern default) unless the operator
+                    // prefers a bare RRR (roger only; partner still owes a 73).
+                    self.pending = Some(if self.confirm_with_rrr {
+                        Msg::Rrr {
+                            to: de.clone(),
+                            de: self.mycall.clone(),
+                        }
+                    } else {
+                        Msg::Rr73 {
+                            to: de.clone(),
+                            de: self.mycall.clone(),
+                        }
                     });
                     self.state = State::Confirming;
-                    self.log("got R-report → sending RR73".into());
+                    self.log(format!(
+                        "got R-report → sending {}",
+                        if self.confirm_with_rrr { "RRR" } else { "RR73" }
+                    ));
                 }
                 (State::AwaitRr73, Msg::Rr73 { to, de })
                 | (State::AwaitRr73, Msg::Rrr { to, de })
@@ -385,6 +434,58 @@ mod harq_seq_tests {
             "step exhausted -> withhold further TX"
         );
         assert!(s.stalled(), "stalled() true once the step hits the TX cap");
+    }
+
+    #[test]
+    fn resend_clears_a_stall_and_re_arms() {
+        let mut s = Station::calling_cq("W9XYZ", "EN37");
+        for _ in 0..MAX_TX_PER_STEP {
+            s.after_tx();
+        }
+        assert!(s.stalled(), "step exhausted");
+        assert!(s.outgoing_rv().is_none(), "withheld while stalled");
+        s.resend();
+        assert!(!s.stalled(), "resend clears the stall");
+        assert_eq!(
+            s.outgoing_rv().map(|(_, rv)| rv),
+            Some(0),
+            "resend re-arms at RV0"
+        );
+        assert_eq!(s.pending_text().as_deref(), Some("CQ W9XYZ EN37"));
+    }
+
+    #[test]
+    fn override_next_swaps_message_and_resets_cycle() {
+        let mut s = Station::calling_cq("W9XYZ", "EN37");
+        s.after_tx();
+        s.after_tx(); // escalate
+        let free = Msg::Other("K2DEF W9XYZ GL OM".into());
+        s.override_next(free.clone());
+        assert_eq!(s.pending_text().as_deref(), Some("K2DEF W9XYZ GL OM"));
+        assert_eq!(s.outgoing_rv().unwrap().1, 0, "override starts fresh HARQ");
+        assert_eq!(s.tx_count, 0);
+    }
+
+    #[test]
+    fn confirm_with_rrr_sends_rrr_not_rr73() {
+        // Initiator who prefers a bare RRR: after CQ → grid → report → R-report,
+        // the roger message is RRR instead of RR73.
+        let mut s = Station::calling_cq("W9XYZ", "EN37");
+        s.confirm_with_rrr = true;
+        s.observe(&[decode("W9XYZ K2DEF FN31")]); // grid reply → sends report
+        assert_eq!(s.state, State::AwaitRoger);
+        s.observe(&[decode("W9XYZ K2DEF R-12")]); // R-report → roger
+        assert_eq!(s.state, State::Confirming);
+        assert!(
+            matches!(s.pending, Some(Msg::Rrr { .. })),
+            "prefers RRR, got {:?}",
+            s.pending
+        );
+        // Default (RR73) for contrast.
+        let mut d = Station::calling_cq("W9XYZ", "EN37");
+        d.observe(&[decode("W9XYZ K2DEF FN31")]);
+        d.observe(&[decode("W9XYZ K2DEF R-12")]);
+        assert!(matches!(d.pending, Some(Msg::Rr73 { .. })), "default RR73");
     }
 
     #[test]

@@ -935,6 +935,24 @@ fn call_station(state: State<'_, SharedEngine>, call: String) -> Result<AppSnaps
     Ok(eng.snapshot())
 }
 
+/// Operator "Resend": re-arm the current QSO message so a stalled/uncopied step
+/// transmits again on the next TX slot. No-op outside a QSO.
+#[tauri::command]
+fn qso_resend(state: State<'_, SharedEngine>) -> Result<AppSnapshot, String> {
+    let mut eng = state.lock().map_err(|e| e.to_string())?;
+    eng.qso_resend();
+    Ok(eng.snapshot())
+}
+
+/// Operator in-QSO free text (WSJT-X Tx5): override the next transmission with
+/// `text`, directed to the current DX station when known. No-op outside a QSO.
+#[tauri::command]
+fn qso_freetext(state: State<'_, SharedEngine>, text: String) -> Result<AppSnapshot, String> {
+    let mut eng = state.lock().map_err(|e| e.to_string())?;
+    eng.qso_freetext(&text);
+    Ok(eng.snapshot())
+}
+
 /// Manually log a contact to the ADIF logbook (the UI "Log QSO" button). Adds in
 /// memory and persists to the log file. Returns the refreshed snapshot.
 #[tauri::command]
@@ -2133,6 +2151,8 @@ pub fn run() {
             set_tx_offset,
             set_hold_tx_freq,
             call_station,
+            qso_resend,
+            qso_freetext,
             log_qso,
             get_log,
             edit_qso,

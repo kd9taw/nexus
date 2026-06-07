@@ -2413,6 +2413,94 @@ body.resizing {
   font-family: var(--font-mono);
 }
 
+.qso-now {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-elev-2);
+}
+.qso-now.stalled {
+  border-color: var(--state-bad, #e5484d);
+  background: color-mix(in srgb, var(--state-bad, #e5484d) 10%, var(--bg-elev-2));
+}
+.qso-now-label {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+.qso-now.stalled .qso-now-label {
+  color: var(--state-bad, #e5484d);
+}
+.qso-now-msg {
+  flex: 1;
+  min-width: 0;
+  font-weight: 700;
+  color: var(--tx);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.qso-resend {
+  flex: none;
+  padding: 5px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-elev-1);
+  color: var(--text-dim);
+  font-weight: 700;
+  font-size: 12px;
+  transition: var(--transition);
+}
+.qso-resend:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--text);
+}
+.qso-resend:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.qso-freetext {
+  display: flex;
+  gap: 8px;
+}
+.qso-freetext input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-elev-1);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  letter-spacing: 0.02em;
+}
+.qso-freetext input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.qso-freetext button {
+  flex: none;
+  padding: 8px 16px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 800;
+  font-size: 13px;
+  transition: var(--transition);
+}
+.qso-freetext button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 .qso-actions {
   display: flex;
   gap: 10px;

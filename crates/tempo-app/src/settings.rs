@@ -108,6 +108,18 @@ pub struct Settings {
     /// Auto-log a contact to the ADIF logbook when a QSO completes. On by
     /// default — every completed auto-sequenced QSO is recorded once.
     pub auto_log: bool,
+    /// Prompt the operator to confirm/edit the QSO before logging (WSJT-X
+    /// "Prompt me to log QSO"). When true the snapshot exposes a pending log
+    /// record instead of silently writing it; the UI shows a confirm popup.
+    /// Off by default (silent auto-log). Has no effect unless `auto_log`.
+    #[serde(default)]
+    pub prompt_to_log: bool,
+
+    // --- QSO behaviour ---
+    /// Roger the final report with a bare `RRR` (partner still owes a 73) instead
+    /// of the combined `RR73`. Off by default (RR73 — modern FT8 practice).
+    #[serde(default)]
+    pub prefer_rrr: bool,
 
     // --- coordinated QSY ("move together") — a SEPARATE, opt-in function ---
     /// Master opt-in for coordinated QSY. **Off by default** and fully isolated:
@@ -242,6 +254,8 @@ impl Default for Settings {
             hold_tx_freq: false,
             clock_check: true,
             auto_log: true,
+            prompt_to_log: false,
+            prefer_rrr: false,
             qsy_enabled: false,
             qsy_set: vec!["20m".to_string(), "40m".to_string(), "30m".to_string()],
             qsy_cadence: tempo_core::qsy::DEFAULT_CADENCE,

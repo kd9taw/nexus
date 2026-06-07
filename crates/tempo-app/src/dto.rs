@@ -263,6 +263,15 @@ pub struct QsoStatus {
     pub rx_report: Option<i32>,
     /// True if this station is calling CQ (running) vs answering (S&P).
     pub running: bool,
+    /// On-air text of the message queued for the next TX slot (the "Now sending"
+    /// readout), or `None` when listening / the QSO is complete.
+    #[serde(default)]
+    pub tx_now: Option<String>,
+    /// True when the current step has been retransmitted to its limit without the
+    /// partner advancing — the sequencer is withholding further TX (operator may
+    /// Resend or move on).
+    #[serde(default)]
+    pub stalled: bool,
 }
 
 /// Status of the coordinated-QSY ("move together") feature — a SEPARATE, opt-in

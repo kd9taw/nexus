@@ -3,6 +3,8 @@ import type { AppSnapshot, BandChannel, ModeRequest, Settings, SourceKind, Tier 
 import {
   broadcast as apiBroadcast,
   callStation as apiCallStation,
+  qsoResend as apiQsoResend,
+  qsoFreetext as apiQsoFreetext,
   getBandPlan,
   getSettings,
   getSnapshot,
@@ -418,6 +420,18 @@ export default function App() {
     })
   }, [])
 
+  const handleQsoResend = useCallback(() => {
+    void withErrorToast(() => apiQsoResend(), 'Could not resend').then((s) => {
+      if (s) setSnap(s)
+    })
+  }, [])
+
+  const handleQsoFreetext = useCallback((text: string) => {
+    void withErrorToast(() => apiQsoFreetext(text), 'Could not send free text').then((s) => {
+      if (s) setSnap(s)
+    })
+  }, [])
+
   // Selecting a view from the nav. QSO / Field Day also request the backend mode
   // (defaulting to the "run" / "chat" role); Band / Log / Settings are pure UI
   // screens that leave the operating mode unchanged.
@@ -595,7 +609,14 @@ export default function App() {
   let workspace: JSX.Element
   switch (effectiveView) {
     case 'qso':
-      workspace = threePane(<QsoPanel qso={snap.qso} onSetMode={handleSetMode} />)
+      workspace = threePane(
+        <QsoPanel
+          qso={snap.qso}
+          onSetMode={handleSetMode}
+          onResend={handleQsoResend}
+          onFreetext={handleQsoFreetext}
+        />,
+      )
       break
     case 'fieldDay':
       workspace = threePane(

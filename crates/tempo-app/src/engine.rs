@@ -804,6 +804,10 @@ impl Engine {
             },
             other => return Err(format!("unknown mode {other:?}")),
         };
+        // Carry the operator's RR73/RRR preference into a fresh QSO sequencer.
+        if let Mode::Qso { station, .. } = &mut self.mode {
+            station.confirm_with_rrr = self.settings.prefer_rrr;
+        }
         self.reset_tx_watchdog();
         self.tx_queue.clear();
         self.broadcast_queue.clear();
@@ -824,8 +828,10 @@ impl Engine {
     pub fn call_station(&mut self, dxcall: &str) {
         let mycall = self.settings.mycall.clone();
         let mygrid = self.settings.mygrid.clone();
+        let mut station = QsoStation::answering(&mycall, &mygrid, dxcall);
+        station.confirm_with_rrr = self.settings.prefer_rrr;
         self.mode = Mode::Qso {
-            station: Box::new(QsoStation::answering(&mycall, &mygrid, dxcall)),
+            station: Box::new(station),
             running: true,
         };
         self.reset_tx_watchdog();
@@ -834,6 +840,35 @@ impl Engine {
         self.qso_logged = false;
         self.qso_report_sent = None;
         ft1::harq_reset(); // fresh exchange: drop stale receive-side IR-HARQ state
+    }
+
+    /// Operator "Resend": re-arm the current QSO message so a stalled (or just
+    /// not-yet-copied) step transmits again on the next TX slot. No-op outside an
+    /// active QSO. Also resets the TX watchdog so re-sending counts as activity.
+    pub fn qso_resend(&mut self) {
+        if let Mode::Qso { station, .. } = &mut self.mode {
+            station.resend();
+            self.reset_tx_watchdog();
+        }
+    }
+
+    /// Operator in-QSO free text (WSJT-X Tx5): override the next transmission with
+    /// `text`, addressed to the current DX station if one is known (`<DX> <ME>
+    /// <text>`) else sent verbatim. No-op outside an active QSO or for empty text.
+    pub fn qso_freetext(&mut self, text: &str) {
+        let text = text.trim();
+        if text.is_empty() {
+            return;
+        }
+        let mycall = self.settings.mycall.clone();
+        if let Mode::Qso { station, .. } = &mut self.mode {
+            let msg = match &station.dxcall {
+                Some(dx) => tempo_core::message::Msg::Other(format!("{dx} {mycall} {text}")),
+                None => tempo_core::message::Msg::Other(text.to_string()),
+            };
+            station.override_next(msg);
+            self.reset_tx_watchdog();
+        }
     }
 
     // ----- command delegates ----------------------------------------------
@@ -1173,6 +1208,8 @@ impl Engine {
                     dxcall: station.dxcall.clone(),
                     rx_report: station.rx_report,
                     running: *running,
+                    tx_now: station.pending_text(),
+                    stalled: station.stalled(),
                 });
             }
             Mode::FieldDay { station, running } => {

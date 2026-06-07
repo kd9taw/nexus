@@ -1,8 +1,13 @@
+import { useState } from 'react'
 import type { ModeRequest, QsoStatus } from '../types'
 
 interface Props {
   qso: QsoStatus | null
   onSetMode: (mode: ModeRequest) => void
+  /** Re-arm the current QSO message (re-transmit a stalled/uncopied step). */
+  onResend: () => void
+  /** Send in-QSO free text (WSJT-X Tx5) as the next transmission. */
+  onFreetext: (text: string) => void
 }
 
 function reportLabel(rxReport: number | null): string {
@@ -10,11 +15,21 @@ function reportLabel(rxReport: number | null): string {
   return `${rxReport > 0 ? '+' : ''}${rxReport} dB`
 }
 
-export function QsoPanel({ qso, onSetMode }: Props) {
+export function QsoPanel({ qso, onSetMode, onResend, onFreetext }: Props) {
   // Default to Search-&-Pounce (listen first), never an implied "Calling CQ".
   const running = qso?.running ?? false
   const dxcall = qso?.dxcall ?? null
   const state = qso?.state ?? 'Idle'
+  const txNow = qso?.txNow ?? null
+  const stalled = qso?.stalled ?? false
+
+  const [freeText, setFreeText] = useState('')
+  const sendFree = () => {
+    const t = freeText.trim()
+    if (!t) return
+    onFreetext(t)
+    setFreeText('')
+  }
 
   // Human-readable status banner.
   const banner = running
@@ -57,6 +72,20 @@ export function QsoPanel({ qso, onSetMode }: Props) {
           </div>
         </dl>
 
+        <div className={`qso-now${stalled ? ' stalled' : ''}`}>
+          <span className="qso-now-label">{stalled ? 'Stalled — no reply' : 'Now sending'}</span>
+          <span className="qso-now-msg mono">{txNow ?? '— (listening)'}</span>
+          <button
+            type="button"
+            className="qso-resend"
+            onClick={onResend}
+            disabled={!txNow}
+            title="Re-arm this message and transmit it again (the partner didn't copy)"
+          >
+            ↻ Resend
+          </button>
+        </div>
+
         <div className="qso-actions">
           <button
             type="button"
@@ -77,6 +106,26 @@ export function QsoPanel({ qso, onSetMode }: Props) {
             <small>search &amp; pounce</small>
           </button>
         </div>
+
+        <form
+          className="qso-freetext"
+          onSubmit={(e) => {
+            e.preventDefault()
+            sendFree()
+          }}
+        >
+          <input
+            type="text"
+            value={freeText}
+            maxLength={13}
+            placeholder="Free text (Tx5) — e.g. GL OM 73"
+            aria-label="In-QSO free text"
+            onChange={(e) => setFreeText(e.target.value.toUpperCase())}
+          />
+          <button type="submit" disabled={!freeText.trim()} title="Send this free text on the next over (max 13 chars)">
+            Send
+          </button>
+        </form>
 
         <p className="qso-hint">
           The auto-sequencer advances each slot: <strong>Running</strong> calls

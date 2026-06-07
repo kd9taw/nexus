@@ -128,6 +128,22 @@ export async function callStation(call: string): Promise<AppSnapshot> {
   return mockEngine.callStation(call)
 }
 
+/** Operator "Resend": re-arm the current QSO message (re-transmit a stalled or
+ * uncopied step). No-op outside a QSO. Returns the fresh snapshot. */
+export async function qsoResend(): Promise<AppSnapshot> {
+  const invoke = tauriInvoke()
+  if (invoke) return invoke<AppSnapshot>('qso_resend', {})
+  return mockEngine.qsoResend()
+}
+
+/** Operator in-QSO free text (WSJT-X Tx5): override the next transmission with
+ * `text`, directed to the current DX when known. Returns the fresh snapshot. */
+export async function qsoFreetext(text: string): Promise<AppSnapshot> {
+  const invoke = tauriInvoke()
+  if (invoke) return invoke<AppSnapshot>('qso_freetext', { text })
+  return mockEngine.qsoFreetext(text)
+}
+
 /** Append a contact to the ADIF logbook. Returns the fresh snapshot. */
 export async function logQso(record: LoggedQso): Promise<AppSnapshot> {
   const invoke = tauriInvoke()
