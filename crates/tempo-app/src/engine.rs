@@ -52,6 +52,14 @@ enum Mode {
     },
 }
 
+/// One of our own transmitted messages, recorded per TX slot so the decode feed
+/// can show each of our calls (the WSJT-X own-TX rows / "I called them 4 times").
+struct OwnTx {
+    text: String,
+    freq_hz: f32,
+    when_unix: u64,
+}
+
 /// Drives transmit/receive against the modem and updates [`AppState`].
 pub struct Engine {
     pub app: AppState,
@@ -72,6 +80,10 @@ pub struct Engine {
     broadcast_queue: VecDeque<String>,
     /// Rotating chunk message-id for broadcasts ('A'..'Z').
     broadcast_id: u8,
+    /// Rolling history of our own transmitted messages (newest-last) — surfaced as
+    /// `mine` rows in the decode feed so the operator sees each of their calls
+    /// (WSJT-X "your message in Band Activity"). Capped; cleared on halt/mode change.
+    own_tx: VecDeque<OwnTx>,
     last_rx: Option<Vec<f32>>,
     /// Decodes from the most recent [`Engine::ingest`] (for the network layer to
     /// emit over the WSJT-X UDP API / PSK Reporter).
@@ -224,6 +236,7 @@ impl Engine {
             beacon_every: 8,
             tx_queue: VecDeque::new(),
             broadcast_queue: VecDeque::new(),
+            own_tx: VecDeque::new(),
             broadcast_id: 0,
             last_rx: None,
             last_decodes: Vec::new(),
@@ -917,6 +930,7 @@ impl Engine {
         self.reset_tx_watchdog();
         self.tx_queue.clear();
         self.broadcast_queue.clear();
+        self.own_tx.clear();
         // A new QSO (or mode change) starts a fresh auto-log window.
         self.qso_logged = false;
         self.qso_report_sent = None;
@@ -1168,6 +1182,7 @@ impl Engine {
         self.tuning = false;
         self.tx_queue.clear();
         self.broadcast_queue.clear();
+        self.own_tx.clear();
         self.app.set_transmitting(false);
     }
 
@@ -1492,9 +1507,33 @@ impl Engine {
                     // DTO wire contract keeps rv as i32 (-1 = N/A); collapse the
                     // unified Option<i32> at this boundary.
                     rv: d.rv.unwrap_or(-1),
+                    mine: false,
                 }
             })
             .collect();
+        // Append OUR OWN transmissions as `mine` rows so the operator sees each of
+        // their calls in the decode feed (WSJT-X own-TX). The UI keys these by
+        // cycle so repeated identical calls stack as distinct timestamped lines.
+        let mycall = self.settings.mycall.clone();
+        for tx in &self.own_tx {
+            s.recent_decodes.push(DecodeRow {
+                from: Some(mycall.clone()),
+                snr: 0,
+                dt_sec: 0.0,
+                freq_hz: tx.freq_hz,
+                message: tx.text.clone(),
+                is_cq: false,
+                directed_to_me: false,
+                worked: false,
+                country: None,
+                new_dxcc: false,
+                new_grid: false,
+                rv: -1,
+                mine: true,
+                tier: s.link.tier,
+            });
+            let _ = tx.when_unix; // recorded for parity; the UI stamps its own UTC
+        }
         s.harq_rescues = self.harq_rescues;
         s.pending_log = self.pending_log.clone().map(Into::into);
         s
@@ -1595,6 +1634,17 @@ impl Engine {
                 {
                     self.tx_watchdog = true;
                     self.tx_enabled = false;
+                }
+                // Record this transmission so the decode feed shows our own calls
+                // (one row per cycle — WSJT-X own-TX). Ring-capped to stay bounded.
+                const OWN_TX_RING: usize = 30;
+                self.own_tx.push_back(OwnTx {
+                    text: t.clone(),
+                    freq_hz: self.tx_offset_hz,
+                    when_unix: now_unix_secs(),
+                });
+                if self.own_tx.len() > OWN_TX_RING {
+                    self.own_tx.pop_front();
                 }
                 // Robust tier (DX1) modulates 8-FSK; fast tier (FT1) uses 4-CPM.
                 // Both place the signal at the operator's TX audio offset.
@@ -2481,6 +2531,34 @@ mod tests {
         let log = e.get_log();
         assert_eq!(log.len(), 1);
         assert_eq!(log[0].mode, "FT8", "FT8 contacts log as FT8 (award eligibility)");
+    }
+
+    #[test]
+    fn own_transmissions_surface_as_mine_rows() {
+        // Working a station, our transmitted message shows up as a `mine` decode
+        // row so the operator sees each of their calls.
+        let mut e = Engine::new("K2DEF", "FN31", 0); // parity 0 → TX on even slots
+        e.call_station("W9XYZ"); // answering → pending Grid to W9XYZ
+        let _ = e.poll_tx(0); // transmits on the even slot
+        let snap = e.snapshot();
+        let mine: Vec<_> = snap.recent_decodes.iter().filter(|d| d.mine).collect();
+        assert_eq!(mine.len(), 1, "one own-TX row after one transmission");
+        assert_eq!(mine[0].from.as_deref(), Some("K2DEF"));
+        assert!(mine[0].message.contains("W9XYZ"), "shows what we sent");
+        // A second over adds a second own-TX row (the repeated-call chronology).
+        let _ = e.poll_tx(2);
+        assert_eq!(
+            e.snapshot().recent_decodes.iter().filter(|d| d.mine).count(),
+            2,
+            "each call is its own row"
+        );
+        // Stop TX clears the own-TX history.
+        e.halt_tx();
+        assert_eq!(
+            e.snapshot().recent_decodes.iter().filter(|d| d.mine).count(),
+            0,
+            "halt_tx clears own-TX rows"
+        );
     }
 
     #[test]

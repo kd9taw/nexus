@@ -281,6 +281,7 @@ function decode(p: Partial<DecodeRow> & Pick<DecodeRow, 'from' | 'message'>): De
     country: p.country ?? null,
     newDxcc: p.newDxcc ?? false,
     newGrid: p.newGrid ?? false,
+    mine: p.mine ?? false,
     tier: p.tier ?? 'FT1',
     rv: p.rv ?? 0,
   }
@@ -297,6 +298,8 @@ const recentDecodes: DecodeRow[] = [
   decode({ from: 'W6PQR', message: 'CQ W6PQR CM87', snr: -7, dtSec: 0.0, freqHz: 1320, isCq: true, country: 'United States', tier: 'FT1' }),
   decode({ from: 'VE3JKL', message: 'VE3JKL W1XYZ R-12', snr: -18, dtSec: 0.2, freqHz: 980, country: 'Canada', tier: 'FT1', rv: 1 }),
   decode({ from: 'N0GHI', message: `${MYCALL} N0GHI -14`, snr: -14, dtSec: -0.1, freqHz: 1740, directedToMe: true, country: 'United States', tier: 'DX1' }),
+  // Our own transmitted call (yellow own-TX row — the "I called them" chronology).
+  decode({ from: MYCALL, message: `F5RXL ${MYCALL} ${MYGRID}`, snr: 0, dtSec: 0, freqHz: 1500, mine: true, tier: 'FT8' }),
 ]
 
 const NOW = Math.floor(Date.now() / 1000)

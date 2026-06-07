@@ -3650,6 +3650,16 @@ select.settings-input {
 /* WSJT-X coloring conventions: a decode with YOUR call (someone answering you)
    is the loudest — red. CQ calls are green. New-DXCC/new-grid get their own
    highlights below; worked recedes. */
+/* Our own transmitted message — WSJT-X yellow. One row per cycle, so repeated
+   calls stack and you can see how many times you've called. */
+.decode-row.mine {
+  border-left: 3px solid #f5d020;
+  background: color-mix(in srgb, #f5d020 18%, transparent);
+}
+.decode-row.mine .decode-msg {
+  color: #f5d860;
+  font-weight: 700;
+}
 .decode-row.cq {
   border-left-color: var(--state-good);
   background: color-mix(in srgb, var(--state-good) 13%, transparent);

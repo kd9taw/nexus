@@ -37,6 +37,9 @@ type Sort = 'time' | 'snr' | 'freq'
 const MAX_HISTORY = 300
 /** "On RX freq" tolerance (Hz) — decodes within this of the RX marker. */
 const RX_TOL_HZ = 50
+/** T/R slot width (ms) used to key own-TX rows per cycle (FT8 = 15 s; FT4 stacks
+ * a touch more aggressively, which is acceptable). */
+const SLOT_MS = 15_000
 
 /**
  * Band Activity that ACCUMULATES across slots and freezes while you read it —
@@ -73,7 +76,13 @@ export function OperateDecodes({
     const m = histRef.current
     const now = Date.now()
     for (const d of decodes) {
-      const key = `${d.message}|${Math.round(d.freqHz / 5)}`
+      // Our own TX rows must NOT dedupe across cycles — each call is a distinct
+      // timestamped line (WSJT-X "I called them 4 times"). Key them by the slot
+      // window so a re-poll within the same cycle refreshes, but a new cycle adds
+      // a fresh row. Received decodes dedupe by message+freq as before.
+      const key = d.mine
+        ? `mine|${d.message}|${Math.round(d.freqHz / 5)}|${Math.floor(now / SLOT_MS)}`
+        : `${d.message}|${Math.round(d.freqHz / 5)}`
       m.delete(key) // re-insert so Map order = recency
       m.set(key, { ...d, slot, at: now })
     }
@@ -96,7 +105,8 @@ export function OperateDecodes({
         case 'me':
           return d.directedToMe
         case 'rx':
-          return Math.abs(d.freqHz - rxOffsetHz) <= RX_TOL_HZ
+          // Always include our own TX (it's the active QSO, even at the TX offset).
+          return d.mine || Math.abs(d.freqHz - rxOffsetHz) <= RX_TOL_HZ
         case 'b4':
           return d.worked
         case 'new':
@@ -277,6 +287,7 @@ function dtClass(dt: number): string {
 }
 
 function rowClass(d: DecodeRow): string {
+  if (d.mine) return 'mine' // our own transmitted message — yellow
   if (d.directedToMe) return 'directed'
   if (d.newDxcc) return 'newdxcc'
   if (d.newGrid) return 'newgrid'

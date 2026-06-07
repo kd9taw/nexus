@@ -66,6 +66,11 @@ pub struct DecodeRow {
     /// True if the decode carries a Maidenhead grid never worked before.
     #[serde(default)]
     pub new_grid: bool,
+    /// True if this row is OUR OWN transmitted message (not a received decode) —
+    /// the UI shows it highlighted (yellow) and one row per cycle, so the operator
+    /// sees each of their calls. `snr`/`dt_sec` are 0 and `rv` is -1 for these.
+    #[serde(default)]
+    pub mine: bool,
     pub tier: Tier,
     /// IR-HARQ redundancy versions combined to recover this decode: 0 = decoded
     /// from the initial transmission alone; 1/2 = recovered by joint-combining

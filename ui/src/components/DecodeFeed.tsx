@@ -10,6 +10,7 @@ interface Props {
 
 /** Priority class for color-coding (directedToMe > new-DXCC > new-grid > worked > CQ). */
 function rowClass(d: DecodeRow): string {
+  if (d.mine) return 'mine'
   if (d.directedToMe) return 'directed'
   if (d.newDxcc) return 'newdxcc'
   if (d.newGrid) return 'newgrid'
