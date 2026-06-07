@@ -14,6 +14,7 @@ import {
   setTier as apiSetTier,
   setSource as apiSetSource,
   setTxEnabled as apiSetTxEnabled,
+  setTxLevel as apiSetTxLevel,
   setTune as apiSetTune,
   haltTx as apiHaltTx,
   setTxEven as apiSetTxEven,
@@ -372,6 +373,12 @@ export default function App() {
     })
   }, [])
 
+  const handleSetTxLevel = useCallback((level: number) => {
+    void withErrorToast(() => apiSetTxLevel(level), 'Could not set TX level').then((s) => {
+      if (s) setSnap(s)
+    })
+  }, [])
+
   const handleSetTune = useCallback((on: boolean) => {
     void withErrorToast(() => apiSetTune(on), 'Could not toggle tune').then((s) => {
       if (s) setSnap(s)
@@ -682,6 +689,7 @@ export default function App() {
           onSourceChange={handleSourceChange}
           onTune={handleTune}
           onCall={handleCall}
+          onSetTxLevel={handleSetTxLevel}
         />
       )
       break

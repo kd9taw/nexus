@@ -15,6 +15,8 @@ interface Props {
   onTune: (freqHz: number, shift: boolean) => void
   /** Work / answer a decoded station. */
   onCall: (call: string) => void
+  /** Set the TX audio drive level (0.0–1.0) — the Pwr slider. */
+  onSetTxLevel: (level: number) => void
 }
 
 /** Mode chips, in the order the cockpit presents them (popular modes first). */
@@ -40,8 +42,10 @@ export function OperateCockpit({
   onSourceChange,
   onTune,
   onCall,
+  onSetTxLevel,
 }: Props) {
   const source = snap.radio.source
+  const catOk = snap.radio.catOk
   return (
     <main className="layout single operate-cockpit">
       <div className="cockpit-bar">
@@ -89,6 +93,27 @@ export function OperateCockpit({
           <span className="cockpit-offsets" title="Receive / transmit audio offsets (Hz)">
             RX {Math.round(snap.radio.rxOffsetHz)} · TX {Math.round(snap.radio.txOffsetHz)} Hz
           </span>
+          {catOk != null && (
+            <span
+              className={`cockpit-cat ${catOk ? 'ok' : 'bad'}`}
+              title={snap.radio.catDetail || (catOk ? 'Rig CAT connected' : 'Rig CAT not connected')}
+            >
+              {catOk ? 'CAT ✓' : 'CAT ✗'}
+            </span>
+          )}
+          <label className="cockpit-pwr" title="TX drive (Pwr) — trim down until your rig's ALC is just zero">
+            <span>Pwr</span>
+            <input
+              type="range"
+              min="0"
+              max="1"
+              step="0.01"
+              value={snap.radio.txLevel}
+              onChange={(e) => onSetTxLevel(Number(e.target.value))}
+              aria-label="TX power / drive level"
+            />
+            <span className="cockpit-pwr-val">{Math.round(snap.radio.txLevel * 100)}%</span>
+          </label>
         </div>
       </div>
 

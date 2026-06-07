@@ -4272,6 +4272,39 @@ select.settings-input {
   font-family: var(--font-mono);
   color: var(--text-faint);
 }
+.cockpit-cat {
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+}
+.cockpit-cat.ok {
+  color: var(--state-good, #29c281);
+  background: color-mix(in srgb, var(--state-good, #29c281) 16%, transparent);
+  border-color: color-mix(in srgb, var(--state-good, #29c281) 45%, transparent);
+}
+.cockpit-cat.bad {
+  color: var(--state-bad, #e5484d);
+  background: color-mix(in srgb, var(--state-bad, #e5484d) 16%, transparent);
+  border-color: color-mix(in srgb, var(--state-bad, #e5484d) 45%, transparent);
+}
+.cockpit-pwr {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.72rem;
+  color: var(--text-dim);
+}
+.cockpit-pwr input[type='range'] {
+  width: 84px;
+}
+.cockpit-pwr-val {
+  font-variant-numeric: tabular-nums;
+  min-width: 30px;
+  text-align: right;
+}
 
 .cockpit-body {
   flex: 1;

@@ -761,6 +761,19 @@ fn set_tx_enabled(state: State<'_, SharedEngine>, enabled: bool) -> Result<AppSn
     Ok(eng.snapshot())
 }
 
+/// Set the TX audio drive level (0.0–1.0) live — the "Pwr" slider. The radio loop
+/// applies it to the audio backend on the next slot; persisted so it survives
+/// restart. Returns the refreshed snapshot.
+#[tauri::command]
+fn set_tx_level(state: State<'_, SharedEngine>, level: f32) -> Result<AppSnapshot, String> {
+    let mut eng = state.lock().map_err(|e| e.to_string())?;
+    eng.set_tx_level(level);
+    if let Err(e) = eng.settings().save(&settings_path()) {
+        eprintln!("tempo: set_tx_level save failed: {e}");
+    }
+    Ok(eng.snapshot())
+}
+
 /// Hold (`true`) or release (`false`) a steady tune carrier for ATU/amp tuning.
 /// While tuning, normal slot TX is suppressed and the radio loop plays a steady
 /// f0 sine. Returns the refreshed snapshot.
@@ -2111,6 +2124,7 @@ pub fn run() {
             get_band_plan,
             set_frequency,
             set_tx_enabled,
+            set_tx_level,
             set_tune,
             halt_tx,
             test_cat,

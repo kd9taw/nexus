@@ -269,6 +269,8 @@ export interface RadioStatus {
   txOffsetHz: number
   /** Keep the TX offset fixed when RX changes ("Hold Tx Freq"). */
   holdTxFreq: boolean
+  /** TX audio drive level (0.0–1.0) — the "Pwr" slider. */
+  txLevel: number
   /** Real PC-clock-vs-UTC offset in ms (positive = fast), or null if offline/disabled. */
   clockOffsetMs?: number | null
   /** Where decodes come from: the native engine or a WSJT-X/JTDX/MSHV companion. */

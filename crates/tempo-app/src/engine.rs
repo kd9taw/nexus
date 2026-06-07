@@ -964,6 +964,13 @@ impl Engine {
         }
     }
 
+    /// Set the TX audio drive level (0.0–1.0), clamped. The radio loop reads
+    /// `settings.tx_level` each slot and applies it to the audio backend, so this
+    /// takes effect live (the "Pwr" slider — trim until ALC is just zero).
+    pub fn set_tx_level(&mut self, level: f32) {
+        self.settings.tx_level = level.clamp(0.0, 1.0);
+    }
+
     /// Whether normal slot TX is currently enabled.
     pub fn tx_enabled(&self) -> bool {
         self.tx_enabled
@@ -1148,6 +1155,7 @@ impl Engine {
         s.radio.tx_even = self.tx_even();
         s.radio.tx_offset_hz = self.tx_offset_hz;
         s.radio.rx_offset_hz = self.rx_offset_hz;
+        s.radio.tx_level = self.settings.tx_level;
         s.radio.hold_tx_freq = self.hold_tx_freq;
         s.radio.clock_offset_ms = self.clock_offset_ms;
         s.radio.source = self.source_kind;

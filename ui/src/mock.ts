@@ -436,6 +436,7 @@ function baseSnapshot(settings: Settings): AppSnapshot {
       txEven: true,
       rxOffsetHz: 1500,
       txOffsetHz: 1500,
+      txLevel: 0.9,
       holdTxFreq: false,
       clockOffsetMs: null,
       source: 'native',
@@ -764,6 +765,14 @@ class MockEngine {
         tuning: enabled ? this.snap.radio.tuning : false,
       },
     }
+    this.emit()
+    return this.snap
+  }
+
+  setTxLevel(level: number): AppSnapshot {
+    const clamped = Math.max(0, Math.min(1, level))
+    this.snap = { ...this.snap, radio: { ...this.snap.radio, txLevel: clamped } }
+    this.settings = { ...this.settings, txLevel: clamped }
     this.emit()
     return this.snap
   }

@@ -78,6 +78,7 @@ impl AppState {
                 // (the engine recomputes this from recent DT each snapshot).
                 time_sync_ok: true,
                 rx_level: 0.0,
+                tx_level: 0.9,
                 tx_enabled: true,
                 tuning: false,
                 tx_watchdog: false,

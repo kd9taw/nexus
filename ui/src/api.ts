@@ -450,6 +450,13 @@ export async function setTxEnabled(enabled: boolean): Promise<AppSnapshot> {
   return mockEngine.setTxEnabled(enabled)
 }
 
+/** Set the TX audio drive level (0.0–1.0) — the "Pwr" slider. Returns the snapshot. */
+export async function setTxLevel(level: number): Promise<AppSnapshot> {
+  const invoke = tauriInvoke()
+  if (invoke) return invoke<AppSnapshot>('set_tx_level', { level })
+  return mockEngine.setTxLevel(level)
+}
+
 /** Key / unkey a tune carrier. Returns the fresh snapshot. */
 export async function setTune(on: boolean): Promise<AppSnapshot> {
   const invoke = tauriInvoke()

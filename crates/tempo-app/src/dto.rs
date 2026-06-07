@@ -213,6 +213,14 @@ pub struct RadioStatus {
     /// Human-readable source label, e.g. "Native (FT8)" or "WSJT-X UDP".
     #[serde(default)]
     pub source_label: String,
+    /// TX audio drive level (0.0–1.0) — the "Pwr" slider; trim until ALC is ~zero.
+    #[serde(default = "default_txlevel")]
+    pub tx_level: f32,
+}
+
+/// serde default helper: TX drive defaults to 0.9.
+fn default_txlevel() -> f32 {
+    0.9
 }
 
 /// serde default helper: `tx_enabled` defaults to true on partial deserialize.

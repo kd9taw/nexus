@@ -124,11 +124,11 @@ export function TopBar({
             onClick={() => onSetTxEnabled(!radio.txEnabled)}
             title={
               radio.txEnabled
-                ? 'Transmit enabled — click to mute (listen only)'
-                : 'Muted (listen only) — click to enable transmit'
+                ? 'Transmit ENABLED — your queued message will go out. Click to disable transmit (receive keeps decoding either way).'
+                : 'Transmit DISABLED — receive keeps decoding. Click to enable transmit (WSJT-X "Enable Tx").'
             }
           >
-            {radio.txEnabled ? 'Monitor' : 'Muted'}
+            {radio.txEnabled ? 'TX On' : 'TX Off'}
           </button>
           <button
             type="button"
@@ -159,7 +159,7 @@ export function TopBar({
         </div>
 
         {radio.txWatchdog && (
-          <span className="watchdog-chip" role="alert" title="Transmit was auto-halted by the TX watchdog. Re-enable Monitor to clear.">
+          <span className="watchdog-chip" role="alert" title="Transmit was auto-halted by the TX watchdog. Click TX On to re-enable.">
             ⚠ TX watchdog — auto-halted
           </span>
         )}
