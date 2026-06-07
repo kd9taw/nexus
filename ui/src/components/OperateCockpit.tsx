@@ -27,6 +27,10 @@ interface Props {
   onFreetext: (text: string) => void
   /** The Call Roster (a wired StationList), placed in the cockpit side column. */
   roster: ReactNode
+  /** Side-column layout: 'classic' (WSJT-X — Band Activity dominant) or 'roster'
+   * (GridTracker — Call Roster dominant). */
+  layoutMode: 'classic' | 'roster'
+  onLayoutMode: (m: 'classic' | 'roster') => void
 }
 
 /** Mode chips, in the order the cockpit presents them (popular modes first). */
@@ -57,6 +61,8 @@ export function OperateCockpit({
   onResend,
   onFreetext,
   roster,
+  layoutMode,
+  onLayoutMode,
 }: Props) {
   const source = snap.radio.source
   const catOk = snap.radio.catOk
@@ -133,6 +139,26 @@ export function OperateCockpit({
               {catOk ? 'CAT ✓' : 'CAT ✗'}
             </span>
           )}
+          <div className="cockpit-layout-toggle" role="group" aria-label="Operate layout">
+            <button
+              type="button"
+              className={`clt-opt${layoutMode === 'classic' ? ' active' : ''}`}
+              aria-pressed={layoutMode === 'classic'}
+              onClick={() => onLayoutMode('classic')}
+              title="Classic — WSJT-X layout (Band Activity dominant)"
+            >
+              Classic
+            </button>
+            <button
+              type="button"
+              className={`clt-opt${layoutMode === 'roster' ? ' active' : ''}`}
+              aria-pressed={layoutMode === 'roster'}
+              onClick={() => onLayoutMode('roster')}
+              title="Roster — GridTracker layout (Call Roster dominant)"
+            >
+              Roster
+            </button>
+          </div>
           <label className="cockpit-pwr" title="TX drive (Pwr) — trim down until your rig's ALC is just zero">
             <span>Pwr</span>
             <input
@@ -177,7 +203,7 @@ export function OperateCockpit({
           />
           <LinkPill link={snap.link} radio={snap.radio} />
         </section>
-        <aside className="cockpit-side">
+        <aside className={`cockpit-side ${layoutMode}`}>
           <OperateQsoStrip
             qso={snap.qso}
             onSetMode={onSetMode}

@@ -144,6 +144,26 @@ export default function App() {
     return features.landing
   })
   const [prop, setProp] = useState<PropagationSnapshot | null>(null)
+  // Operate layout mode: Classic (WSJT-X — Band Activity dominant) vs Roster
+  // (GridTracker — the Call Roster dominant). Persisted UI pref; new hams who
+  // love GridTracker pick Roster, die-hards keep Classic. Default Classic.
+  const [operateLayout, setOperateLayout] = useState<'classic' | 'roster'>(() => {
+    try {
+      const v = localStorage.getItem('nexus.operateLayout')
+      if (v === 'classic' || v === 'roster') return v
+    } catch {
+      /* unreadable storage — fall through to default */
+    }
+    return 'classic'
+  })
+  const handleOperateLayout = useCallback((m: 'classic' | 'roster') => {
+    setOperateLayout(m)
+    try {
+      localStorage.setItem('nexus.operateLayout', m)
+    } catch {
+      /* ignore persist failure */
+    }
+  }, [])
   // Per-(band,mode) last-alert time so a band coming alive toasts once, not every
   // poll (defence in depth — the backend tracker already flags `isNew` once).
   const openingAlertRef = useRef<Map<string, number>>(new Map())
@@ -736,6 +756,8 @@ export default function App() {
           onResend={handleQsoResend}
           onFreetext={handleQsoFreetext}
           roster={stationsPanel}
+          layoutMode={operateLayout}
+          onLayoutMode={handleOperateLayout}
         />
       )
       break

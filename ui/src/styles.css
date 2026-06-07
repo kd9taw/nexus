@@ -4715,6 +4715,32 @@ select.settings-input {
   overflow: hidden;
   padding: 8px 10px;
 }
+/* Roster mode (GridTracker-style): Call Roster dominant, Band Activity recedes.
+   Classic mode keeps the defaults above (Band Activity 3:1). */
+.cockpit-side.roster .cockpit-decodes {
+  flex: 1 1 0;
+}
+.cockpit-side.roster .cockpit-roster {
+  flex: 3 1 0;
+}
+.cockpit-layout-toggle {
+  display: inline-flex;
+  gap: 2px;
+}
+.clt-opt {
+  padding: 2px 9px;
+  border: 1px solid var(--border);
+  background: var(--bg-elev-2);
+  color: var(--text-dim);
+  font-size: 0.7rem;
+  font-weight: 800;
+  border-radius: var(--radius-sm);
+}
+.clt-opt.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
 .cockpit-roster > * {
   flex: 1;
   min-width: 0;
