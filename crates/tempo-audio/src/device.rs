@@ -238,4 +238,13 @@ impl AudioBackend for CpalBackend {
     fn set_tx_level(&mut self, level: f32) {
         self.tx_level = level.clamp(0.0, 1.0);
     }
+
+    /// Discard queued-but-unplayed TX audio (hard Stop TX): clear the output ring
+    /// so the current transmission is cut immediately, not at the slot's end.
+    fn flush_output(&mut self) -> usize {
+        let mut ring = self.out_ring.lock().unwrap_or_else(|e| e.into_inner());
+        let n = ring.len();
+        ring.clear();
+        n
+    }
 }

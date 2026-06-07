@@ -288,6 +288,10 @@ pub struct QsoStatus {
     /// Resend or move on).
     #[serde(default)]
     pub stalled: bool,
+    /// How many times the current message has been transmitted this step (resets
+    /// when the partner advances the QSO) — the "I've called them N times" count.
+    #[serde(default)]
+    pub tx_count: u32,
 }
 
 /// Status of the coordinated-QSY ("move together") feature — a SEPARATE, opt-in

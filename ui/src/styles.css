@@ -4887,6 +4887,13 @@ select.settings-input {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.cq-attempts {
+  flex: none;
+  font-size: 0.72rem;
+  font-weight: 800;
+  color: var(--band-marginal, #f5a524);
+  font-variant-numeric: tabular-nums;
+}
 .cq-resend {
   flex: none;
   padding: 2px 9px;

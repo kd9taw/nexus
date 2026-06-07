@@ -17,6 +17,12 @@ pub trait AudioBackend {
     /// Set the TX audio level (0.0–1.0) applied to played samples. No-op default
     /// for non-hardware backends (the real sound card overrides it).
     fn set_tx_level(&mut self, _level: f32) {}
+    /// Discard any queued-but-not-yet-played TX audio immediately (a hard Stop TX
+    /// mid-transmission). Default no-op; the real sound card clears its output
+    /// ring. Returns the count discarded (for tests).
+    fn flush_output(&mut self) -> usize {
+        0
+    }
 }
 
 /// In-memory backend for tests: serves scripted capture chunks and records every
@@ -25,6 +31,8 @@ pub trait AudioBackend {
 pub struct MockBackend {
     to_capture: VecDeque<Vec<f32>>,
     pub played: Vec<f32>,
+    /// How many times `flush_output` was called (for hard-Stop-TX tests).
+    pub flush_calls: usize,
 }
 
 impl MockBackend {
@@ -43,5 +51,9 @@ impl AudioBackend for MockBackend {
     }
     fn play(&mut self, samples: &[f32]) {
         self.played.extend_from_slice(samples);
+    }
+    fn flush_output(&mut self) -> usize {
+        self.flush_calls += 1;
+        0
     }
 }

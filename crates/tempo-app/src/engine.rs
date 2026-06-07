@@ -1369,6 +1369,7 @@ impl Engine {
                     running: *running,
                     tx_now: station.pending_text(),
                     stalled: station.stalled(),
+                    tx_count: station.tx_count,
                 });
             }
             Mode::FieldDay { station, running } => {

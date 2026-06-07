@@ -616,6 +616,8 @@ export interface QsoStatus {
   /** True when the sequencer has retransmitted to its limit without the partner
    * advancing — withholding further TX until Resend or a new decode. */
   stalled?: boolean
+  /** Times the current message has been sent this step ("called them N times"). */
+  txCount?: number
 }
 
 /**

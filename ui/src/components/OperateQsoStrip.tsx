@@ -30,6 +30,7 @@ export function OperateQsoStrip({ qso, onSetMode, onResend, onFreetext, onLog }:
   const state = qso?.state ?? 'Idle'
   const txNow = qso?.txNow ?? null
   const stalled = qso?.stalled ?? false
+  const txCount = qso?.txCount ?? 0
   const rpt = reportLabel(qso?.rxReport)
 
   const [free, setFree] = useState('')
@@ -73,6 +74,11 @@ export function OperateQsoStrip({ qso, onSetMode, onResend, onFreetext, onLog }:
       <div className={`cq-now${stalled ? ' stalled' : ''}`}>
         <span className="cq-now-label">{stalled ? 'Stalled' : 'TX'}</span>
         <span className="cq-now-msg mono">{txNow ?? '— listening'}</span>
+        {txCount > 1 && (
+          <span className="cq-attempts" title={`Sent ${txCount} times — calling repeatedly`}>
+            ×{txCount}
+          </span>
+        )}
         <button
           type="button"
           className="cq-resend"

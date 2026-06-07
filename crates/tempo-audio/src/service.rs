@@ -389,6 +389,16 @@ impl RadioLoop {
             self.last_slot = None;
         }
 
+        // Hard Stop TX: if transmit was disabled mid-over (the UI "Stop TX" button
+        // calls engine.halt_tx, or a logger sent HaltTx), cut the CURRENT
+        // transmission immediately — drop PTT and discard the queued TX audio
+        // rather than letting the slot's audio play out to its deadline.
+        if self.tx_until_ms.is_some() && !eng.tx_enabled() {
+            let _ = rig.ptt(false);
+            backend.flush_output();
+            self.tx_until_ms = None;
+        }
+
         // Inbound WSJT-X control (HaltTx / FreeText / Reply) from a logger / JTAlert.
         if let Some(server) = sinks.wsjtx {
             while let Ok(Some(inb)) = server.poll() {
@@ -396,6 +406,7 @@ impl RadioLoop {
                     WsjtxInbound::HaltTx { .. } => {
                         eng.halt_tx();
                         let _ = rig.ptt(false);
+                        backend.flush_output();
                         self.tx_until_ms = None;
                     }
                     WsjtxInbound::FreeText { text, send, .. } => {
@@ -1049,6 +1060,29 @@ mod tests {
 
         assert!(!rig.keyed, "PTT released after the hold deadline");
         assert!(state.tx_until_ms.is_none());
+    }
+
+    #[test]
+    fn stop_tx_mid_over_hard_stops_immediately() {
+        // Mid-transmission (PTT keyed, hold deadline far in the future), the
+        // operator hits Stop TX (engine.halt_tx → tx disabled). The next loop
+        // iteration must cut it NOW: drop PTT, flush the queued audio, clear hold.
+        let engine = Arc::new(Mutex::new(Engine::new("W9XYZ", "EN37", 0)));
+        let mut backend = MockBackend::new();
+        let mut rig = Rig::vox();
+        let _ = rig.ptt(true);
+        let mut state = loop_state();
+        state.tx_until_ms = Some(9_999_999.0); // long hold — would NOT expire on its own
+        engine.lock().unwrap().halt_tx(); // operator hit Stop TX
+        let (sinks, mut ra, mut rr) = (no_sinks(), mock_reopen_audio(), mock_reopen_rig());
+
+        state
+            .step(&engine, &mut backend, &mut rig, &sinks, 100.0, &mut ra, &mut rr)
+            .unwrap();
+
+        assert!(!rig.keyed, "PTT dropped immediately on Stop TX");
+        assert!(state.tx_until_ms.is_none(), "TX hold cleared");
+        assert!(backend.flush_calls > 0, "queued TX audio was flushed");
     }
 
     #[test]
