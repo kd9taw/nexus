@@ -907,6 +907,13 @@ impl Engine {
         if let Mode::Qso { station, .. } = &mut self.mode {
             station.confirm_with_rrr = self.settings.prefer_rrr;
         }
+        // Mode↔tier invariant: free-text Chat needs an FT1/DX1 waveform — its
+        // chunked free text does NOT fit FT8/FT4's 13-char packer (it would
+        // silently transmit nothing). Snap to FT1 when entering Chat on a
+        // structured tier, so Chat can never silently fail.
+        if matches!(self.mode, Mode::Chat) && matches!(self.app.tier(), Tier::Ft8 | Tier::Ft4) {
+            self.set_tier(Tier::Ft1);
+        }
         self.reset_tx_watchdog();
         self.tx_queue.clear();
         self.broadcast_queue.clear();
@@ -2445,6 +2452,20 @@ mod tests {
         let log = e.get_log();
         assert_eq!(log.len(), 1);
         assert_eq!(log[0].mode, "FT8", "FT8 contacts log as FT8 (award eligibility)");
+    }
+
+    #[test]
+    fn entering_chat_snaps_off_ft8_to_ft1() {
+        // Chat free-text can't ride FT8 (13-char packer) — entering Chat on FT8
+        // must snap the tier to FT1 so it never silently transmits nothing.
+        let mut e = Engine::new("W9XYZ", "EN37", 0);
+        assert_eq!(e.tier(), Tier::Ft8, "default is FT8");
+        e.set_mode("chat").unwrap();
+        assert_eq!(e.tier(), Tier::Ft1, "Chat snapped to FT1");
+        // DX1 is also chat-capable — entering Chat from DX1 leaves it on DX1.
+        e.set_tier(Tier::Dx1);
+        e.set_mode("chat").unwrap();
+        assert_eq!(e.tier(), Tier::Dx1, "Chat keeps a chat-capable tier");
     }
 
     #[test]
