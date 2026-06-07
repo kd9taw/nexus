@@ -1681,8 +1681,15 @@ impl Engine {
                 if let Some(snr) = report_in(station.outgoing()) {
                     self.qso_report_sent = Some(snr);
                 }
-                // Auto-log exactly once when the QSO sequence completes.
-                if station.state == QsoState::Done && !self.qso_logged {
+                // Auto-log exactly once when the contact is complete. The responder
+                // reaches Done (it sent the final 73); the INITIATOR reaches
+                // Confirming the moment it rogers with RR73 — and the partner very
+                // often never sends a final 73 back, so waiting for Done dropped
+                // CQ-side QSOs from the log entirely. Both reports are exchanged by
+                // Confirming, so it's loggable. (qso_logged guards the double.)
+                if matches!(station.state, QsoState::Done | QsoState::Confirming)
+                    && !self.qso_logged
+                {
                     self.qso_logged = true;
                     completed = Some((
                         station.dxcall.clone().unwrap_or_default(),
@@ -2438,6 +2445,28 @@ mod tests {
         let log = e.get_log();
         assert_eq!(log.len(), 1);
         assert_eq!(log[0].mode, "FT8", "FT8 contacts log as FT8 (award eligibility)");
+    }
+
+    #[test]
+    fn cq_initiator_autologs_at_rr73_without_a_final_73() {
+        // Calling CQ: a station answers, we report, they roger — we send RR73 and
+        // they vanish (no final 73). The contact must still auto-log (the bug was
+        // it waited for a 73 that never came).
+        let mut e = Engine::new("W9XYZ", "EN37", 0);
+        assert!(e.settings().auto_log);
+        e.set_mode("qso-run").unwrap(); // CallingCq
+        // K2DEF answers our CQ with a grid → we send a report (AwaitRoger).
+        e.ingest_decodes_for_test(&[dec_snr("W9XYZ K2DEF FN31", -8)], 1);
+        // K2DEF rogers our report → we send RR73 (Confirming). No final 73 ever comes.
+        e.ingest_decodes_for_test(&[dec_snr("W9XYZ K2DEF R-12", -8)], 3);
+
+        let log = e.get_log();
+        assert_eq!(log.len(), 1, "CQ-side QSO auto-logs at RR73");
+        assert_eq!(log[0].call, "K2DEF");
+        assert_eq!(log[0].rst_rcvd, Some(-12), "report they sent us");
+        // Idempotent: a later 73 (or re-observe) doesn't double-log.
+        e.ingest_decodes_for_test(&[dec_snr("W9XYZ K2DEF 73", -8)], 5);
+        assert_eq!(e.get_log().len(), 1, "no double-log on a late 73");
     }
 
     #[test]
