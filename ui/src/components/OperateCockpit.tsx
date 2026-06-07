@@ -131,6 +131,22 @@ export function OperateCockpit({
         </div>
       </div>
 
+      <div className={`cockpit-status ${snap.radio.transmitting ? 'tx' : 'rx'}`}>
+        <span className="cs-state">
+          {snap.radio.transmitting ? '▲ TRANSMITTING' : snap.radio.txEnabled ? '▼ Receiving' : '■ TX off'}
+        </span>
+        {snap.radio.transmitting && snap.qso?.txNow && (
+          <span className="cs-msg mono">{snap.qso.txNow}</span>
+        )}
+        <span className="cs-spacer" />
+        <span className="cs-period" title="Your transmit period">
+          {snap.radio.txEven ? 'EVEN / 1st' : 'ODD / 2nd'}
+        </span>
+        <span className="cs-next" title="Time to the next slot">
+          next {Math.max(0, Math.ceil(snap.radio.nextSlotMs / 1000))}s
+        </span>
+      </div>
+
       <div className="cockpit-body">
         <section className="cockpit-waterfall panel">
           <Waterfall

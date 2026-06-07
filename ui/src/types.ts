@@ -209,6 +209,8 @@ export interface Station {
   presence: Presence
   /** True if this callsign has been worked (logged) before. */
   worked: boolean
+  /** DXCC entity name (country), resolved from the callsign. */
+  country?: string | null
 }
 
 export interface ChatMessage {

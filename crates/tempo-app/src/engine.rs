@@ -1095,6 +1095,11 @@ impl Engine {
     /// clear the TX indicator. Wired to the WSJT-X UDP "HaltTx" control so a
     /// logger / JTAlert can stop Tempo keying.
     pub fn halt_tx(&mut self) {
+        // Stop transmitting AND stay stopped: disable TX so the auto-sequencer
+        // doesn't immediately re-arm on the next slot (WSJT-X "Halt Tx" also
+        // unchecks Enable Tx). Drop any tune carrier and queued audio too.
+        self.tx_enabled = false;
+        self.tuning = false;
         self.tx_queue.clear();
         self.broadcast_queue.clear();
         self.app.set_transmitting(false);
@@ -1294,9 +1299,13 @@ impl Engine {
     /// Full snapshot, with mode + per-mode (QSO / Field Day) status filled in.
     pub fn snapshot(&self) -> AppSnapshot {
         let mut s = self.app.snapshot();
-        // Mark roster stations worked-before (B4) from the persistent logbook.
+        // Mark roster stations worked-before (B4) from the persistent logbook, and
+        // resolve each one's DXCC country (DX chasers scan the roster by country).
         for st in &mut s.stations {
             st.worked = self.logbook.worked_before(&st.call);
+            if let Some(resolve) = &self.dxcc_resolve {
+                st.country = resolve(&st.call);
+            }
         }
         // Reflect transmit-enable / tuning / watchdog and the DT-derived
         // time-sync health into the radio status the UI renders.
@@ -1830,6 +1839,23 @@ mod tests {
         let snap = e.snapshot();
         assert!(!snap.radio.tx_enabled);
         assert!(!snap.radio.transmitting);
+    }
+
+    #[test]
+    fn halt_tx_stops_and_stays_stopped() {
+        // Stop TX must actually stop: an armed QSO sequencer would otherwise
+        // re-transmit on the very next slot, making the button look broken.
+        let mut e = Engine::new("K2DEF", "FN31", 0);
+        e.call_station("W9XYZ"); // arms the responder sequencer (running)
+        assert!(!e.poll_tx(0).is_empty(), "baseline: the QSO transmits");
+
+        e.halt_tx();
+        assert!(!e.tx_enabled(), "halt_tx disables transmit");
+        assert!(
+            e.poll_tx(0).is_empty() && e.poll_tx(2).is_empty(),
+            "stays stopped across slots — the sequencer does NOT re-arm"
+        );
+        assert!(!e.snapshot().radio.transmitting);
     }
 
     #[test]

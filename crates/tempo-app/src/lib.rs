@@ -317,6 +317,8 @@ impl AppState {
             presence,
             // Set by the engine from the logbook (worked-before); default false here.
             worked: false,
+            // Resolved by the engine from the DXCC resolver; None at this layer.
+            country: None,
         }
     }
 

@@ -177,12 +177,12 @@ const MYCALL = 'KD9TAW'
 const MYGRID = 'EN52'
 
 const stations: Station[] = [
-  { call: 'K2DEF', grid: 'FN20', snr: -9, lastHeardSlot: 0, heardCount: 14, presence: 'active', worked: true },
-  { call: 'N0GHI', grid: 'EM48', snr: -14, lastHeardSlot: -1, heardCount: 6, presence: 'active', worked: false },
-  { call: 'VE3JKL', grid: 'FN03', snr: -18, lastHeardSlot: -4, heardCount: 3, presence: 'idle', worked: false },
-  { call: 'KD8MNO', grid: 'EN82', snr: -21, lastHeardSlot: -11, heardCount: 2, presence: 'idle', worked: true },
-  { call: 'W6PQR', grid: 'CM87', snr: -7, lastHeardSlot: -2, heardCount: 9, presence: 'active', worked: false },
-  { call: 'AA1STU', grid: null, snr: -24, lastHeardSlot: -38, heardCount: 1, presence: 'stale', worked: false },
+  { call: 'K2DEF', grid: 'FN20', snr: -9, lastHeardSlot: 0, heardCount: 14, presence: 'active', worked: true, country: 'United States' },
+  { call: 'N0GHI', grid: 'EM48', snr: -14, lastHeardSlot: -1, heardCount: 6, presence: 'active', worked: false, country: 'United States' },
+  { call: 'VE3JKL', grid: 'FN03', snr: -18, lastHeardSlot: -4, heardCount: 3, presence: 'idle', worked: false, country: 'Canada' },
+  { call: 'KD8MNO', grid: 'EN82', snr: -21, lastHeardSlot: -11, heardCount: 2, presence: 'idle', worked: true, country: 'United States' },
+  { call: 'W6PQR', grid: 'CM87', snr: -7, lastHeardSlot: -2, heardCount: 9, presence: 'active', worked: false, country: 'United States' },
+  { call: 'AA1STU', grid: null, snr: -24, lastHeardSlot: -38, heardCount: 1, presence: 'stale', worked: false, country: 'United States' },
 ]
 
 function msg(p: Partial<ChatMessage> & Pick<ChatMessage, 'text' | 'slot' | 'outbound'>): ChatMessage {

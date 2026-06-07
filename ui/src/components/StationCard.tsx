@@ -71,6 +71,8 @@ export function StationCard({
             {unread > 0 && <span className="unread-badge">{unread}</span>}
           </span>
           <span className="station-line2">
+            {station.country && <span className="station-country">{station.country}</span>}
+            {station.country && ' · '}
             {station.grid ?? '—'}
             {dist && <span className="station-dist"> · {dist}</span>}
             {bearing && <span className="station-bearing"> · {bearing}</span>}

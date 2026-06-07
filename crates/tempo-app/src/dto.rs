@@ -30,6 +30,10 @@ pub struct Station {
     pub presence: Presence,
     /// True if this callsign is in the logbook (worked before) — for B4 styling.
     pub worked: bool,
+    /// DXCC entity name (country), resolved from the callsign — DX chasers scan
+    /// the roster by country. `None` unless a DXCC resolver is wired.
+    #[serde(default)]
+    pub country: Option<String>,
 }
 
 /// A single decoded signal from the most recent RX slot, for the live decode

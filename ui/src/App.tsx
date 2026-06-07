@@ -339,6 +339,8 @@ export default function App() {
         // sequences inline there while the waterfall + decodes stay visible.
         // (Never bounce to the chat-style 'qso' view and lose the band.)
         setView('operate')
+        // Immediate confirmation the action took (and TX is now armed for it).
+        pushToast(`▶ Working ${call} — transmitting your call`, 'success', 4000)
       }
     })
   }, [])
