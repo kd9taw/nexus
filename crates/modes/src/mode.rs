@@ -41,13 +41,23 @@ impl ModeKind {
         }
     }
 
-    /// Number of int16 samples in one decode frame at 12 kHz.
+    /// Number of int16 samples in one DECODE frame at 12 kHz (the length the
+    /// vendored decoder reads from the start of the captured window).
     pub fn frame_samples(self) -> usize {
         match self {
             ModeKind::Ft8 => ft8::NMAX,
             ModeKind::Ft4 => ft4::NMAX,
             ModeKind::Ft1 => ft1::NMAX,
         }
+    }
+
+    /// Number of samples to CAPTURE per slot = the full T/R period at 12 kHz. For
+    /// FT8/FT1 this equals `frame_samples` (decode frame == slot); for FT4 the slot
+    /// (7.5 s = 90000) is LONGER than the decode frame (6.048 s = NMAX), so the RX
+    /// ring must hold the WHOLE slot — the decoder then reads its HEAD (leading
+    /// Costas sync). Capturing only NMAX keeps the slot TAIL and amputates sync.
+    pub fn capture_samples(self) -> usize {
+        (self.slot_secs() * ft1::SAMPLE_RATE) as usize
     }
 }
 

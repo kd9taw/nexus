@@ -233,6 +233,10 @@ struct RadioLoop {
     psk_spots: Vec<Spot>,
     last_psk_flush: f64,
     last_fd_qsos: usize,
+    /// Latest measured PC-clock-vs-UTC offset (ms, `local − UTC`), read from the
+    /// engine each loop and SUBTRACTED from the system clock so TX/RX slots land
+    /// on the true UTC grid even when the OS clock is skewed. 0 until measured.
+    clock_offset_ms: i64,
 }
 
 impl RadioLoop {
@@ -253,6 +257,7 @@ impl RadioLoop {
             psk_spots: Vec::new(),
             last_psk_flush: now_unix_ms(),
             last_fd_qsos: 0,
+            clock_offset_ms: 0,
         }
     }
 
@@ -272,6 +277,14 @@ impl RadioLoop {
         reopen_audio: &mut dyn FnMut(&Transport) -> Result<B, String>,
         reopen_rig: &mut dyn FnMut(&Transport, u64, &str) -> RigOpen,
     ) -> Result<(), String> {
+        // Steer the slot clock to TRUE UTC: subtract the measured PC-clock-vs-UTC
+        // offset (local − UTC) from the system clock, so TX keys and RX decode
+        // windows land on the real UTC grid (:00/:15/:30/:45 for FT8) even when the
+        // OS clock is skewed — the difference between "decodes only on a
+        // well-synced PC" and "decodes anywhere". Applied to ALL downstream `now`
+        // uses (slot index, next-slot countdown, TX-hold deadlines) consistently.
+        let now = now - self.clock_offset_ms as f64;
+
         // Continuously fold captured audio into the rolling RX window.
         let captured = backend.capture();
         if !captured.is_empty() {
@@ -351,6 +364,9 @@ impl RadioLoop {
 
         let slot = self.clock.slot_index(now);
         let mut eng = engine.lock().map_err(|e| e.to_string())?;
+        // Pick up the latest measured clock offset for the NEXT iteration's UTC
+        // steering (the NTP probe thread writes it onto the engine).
+        self.clock_offset_ms = eng.clock_offset_ms().unwrap_or(0);
         // Keep the TopBar's next-slot countdown live every iteration.
         eng.set_slot_timing(self.clock.ms_to_next_slot(now) as u64);
         // RX input meter + live waterfall audio (decoupled from the slot decoder).
@@ -430,7 +446,7 @@ impl RadioLoop {
         if tier_now != self.cur_tier {
             self.cur_tier = tier_now;
             self.clock = SlotClock::with_period_secs(eng.active_slot_secs());
-            self.rx = RxRing::with_capacity(eng.active_frame_samples());
+            self.rx = RxRing::with_capacity(eng.active_capture_samples());
             self.last_slot = None;
         }
 
@@ -1060,6 +1076,29 @@ mod tests {
 
         assert!(!rig.keyed, "PTT released after the hold deadline");
         assert!(state.tx_until_ms.is_none());
+    }
+
+    #[test]
+    fn slot_clock_steers_to_utc_with_the_measured_offset() {
+        // The measured PC-clock-vs-UTC offset must actually steer the slot clock
+        // (not just be displayed), or TX/RX land off the UTC grid on a skewed PC.
+        let now = 101_000.0; // arbitrary; FT1 SlotClock has 4 s (4000 ms) slots
+        let next_ms = |offset_ms: i64| -> u64 {
+            let engine = Arc::new(Mutex::new(Engine::new("W9XYZ", "EN37", 0)));
+            engine.lock().unwrap().set_clock_offset_ms(Some(offset_ms));
+            let mut backend = MockBackend::new();
+            let mut rig = Rig::vox();
+            let mut state = loop_state();
+            let (sinks, mut ra, mut rr) = (no_sinks(), mock_reopen_audio(), mock_reopen_rig());
+            // First step picks the offset up off the engine; second applies it.
+            state.step(&engine, &mut backend, &mut rig, &sinks, now, &mut ra, &mut rr).unwrap();
+            assert_eq!(state.clock_offset_ms, offset_ms, "offset read from engine");
+            state.step(&engine, &mut backend, &mut rig, &sinks, now, &mut ra, &mut rr).unwrap();
+            engine.lock().unwrap().snapshot().radio.next_slot_ms
+        };
+        // A 3 s clock skew shifts the next-slot countdown by 3 s (mod the 4 s slot)
+        // — proof the offset reaches the slot clock, not just the UI chip.
+        assert_ne!(next_ms(0), next_ms(3000), "clock offset must move the slot grid");
     }
 
     #[test]

@@ -29,7 +29,7 @@ pub struct Transceiver<B: AudioBackend> {
 
 impl<B: AudioBackend> Transceiver<B> {
     pub fn new(engine: Engine, backend: B, rig: Rig) -> Self {
-        let cap = engine.active_frame_samples();
+        let cap = engine.active_capture_samples();
         Self {
             engine,
             backend,
@@ -41,8 +41,8 @@ impl<B: AudioBackend> Transceiver<B> {
     /// Move any newly-captured audio into the RX ring. Call often (between slots).
     pub fn pump_audio(&mut self) {
         // Keep the capture window sized to the active mode (resize preserves the
-        // most recent samples) so a mode switch decodes the right-length frame.
-        let want = self.engine.active_frame_samples();
+        // most recent samples) so a mode switch captures the right-length slot.
+        let want = self.engine.active_capture_samples();
         if self.rx.capacity() != want {
             self.rx.resize(want);
         }

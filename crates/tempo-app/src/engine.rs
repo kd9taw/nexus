@@ -1321,6 +1321,14 @@ impl Engine {
         self.clock_offset_ms = ms;
     }
 
+    /// The measured PC-clock-vs-UTC offset (ms), `local − UTC` (positive = the PC
+    /// clock is ahead of UTC). `None` when the NTP check is off / offline. The
+    /// radio loop subtracts this from the system clock so TX/RX slots land on the
+    /// true UTC grid even when the OS clock is skewed.
+    pub fn clock_offset_ms(&self) -> Option<i64> {
+        self.clock_offset_ms
+    }
+
     /// Reset the transmit-watchdog: clear the tripped flag and the consecutive
     /// TX-slot count. Called on any operator-initiated action.
     fn reset_tx_watchdog(&mut self) {
@@ -1355,6 +1363,22 @@ impl Engine {
             t => t
                 .mode_kind()
                 .map(|k| k.frame_samples())
+                .unwrap_or(ft1::NMAX),
+        }
+    }
+
+    /// Samples the RX ring should CAPTURE per slot = the full T/R period. Equals
+    /// [`active_frame_samples`] for FT8/FT1 (slot == decode frame) but is LARGER
+    /// for FT4 (7.5 s slot > 6.048 s frame), so the ring holds the whole slot and
+    /// the decoder reads its head (leading sync) instead of the amputated tail.
+    ///
+    /// [`active_frame_samples`]: Engine::active_frame_samples
+    pub fn active_capture_samples(&self) -> usize {
+        match self.app.tier() {
+            Tier::Dx1 => ft1::dx1::capture_len(),
+            t => t
+                .mode_kind()
+                .map(|k| k.capture_samples())
                 .unwrap_or(ft1::NMAX),
         }
     }
@@ -2813,6 +2837,26 @@ mod tests {
             "FT8 live ingest must recover the message; got {:?}",
             e.last_decodes()
         );
+    }
+
+    #[test]
+    fn ft4_captures_the_full_slot_not_just_the_decode_frame() {
+        // FT4's slot (7.5 s) is longer than its decode frame (6.048 s). The RX ring
+        // must CAPTURE the whole slot so the decoder reads its head (leading sync);
+        // capturing only the frame kept the slot tail and amputated sync.
+        let mut e = Engine::new("KD9TAW", "EN52", 0);
+        e.set_tier(Tier::Ft4);
+        assert_eq!(e.active_frame_samples(), modes::ModeKind::Ft4.frame_samples());
+        assert_eq!(e.active_capture_samples(), 90_000, "capture the full 7.5 s slot");
+        assert!(
+            e.active_capture_samples() > e.active_frame_samples(),
+            "FT4 captures more than it decodes (slot > frame)"
+        );
+        // FT8/FT1: slot == decode frame, so capture == frame (no change).
+        e.set_tier(Tier::Ft8);
+        assert_eq!(e.active_capture_samples(), e.active_frame_samples());
+        e.set_tier(Tier::Ft1);
+        assert_eq!(e.active_capture_samples(), e.active_frame_samples());
     }
 
     /// FT4 decodes through the live engine ingest path on the FT4 tier (7.5 s,
