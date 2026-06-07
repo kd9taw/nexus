@@ -87,6 +87,32 @@ const PTT_METHODS: { value: string; label: string }[] = [
 
 const NUMERIC_KEYS: FieldKey[] = ['dialMhz', 'baud', 'rigctldPort', 'rigModel', 'txWatchdogMin', 'catBrokerPort']
 
+/** Settings is split into tabbed sections: only the active one renders, so a
+ * keystroke re-renders ~one section's worth of inputs instead of the whole panel
+ * (fixes typing lag) — and it tames the single-giant-scroll wall. */
+type SettingsTab =
+  | 'station'
+  | 'rig'
+  | 'audio'
+  | 'operating'
+  | 'alerts'
+  | 'connections'
+  | 'confirmations'
+  | 'features'
+  | 'workspace'
+
+const SETTINGS_TABS: { id: SettingsTab; label: string }[] = [
+  { id: 'station', label: 'Station' },
+  { id: 'rig', label: 'Rig / CAT' },
+  { id: 'audio', label: 'Audio' },
+  { id: 'operating', label: 'Operating' },
+  { id: 'alerts', label: 'Alerts' },
+  { id: 'connections', label: 'Connections' },
+  { id: 'confirmations', label: 'Confirmations' },
+  { id: 'features', label: 'Features' },
+  { id: 'workspace', label: 'Workspace' },
+]
+
 export function SettingsPanel({
   onSaved,
   radio,
@@ -120,6 +146,7 @@ export function SettingsPanel({
   const [qrzPw, setQrzPw] = useState('')
   const [qrzKey, setQrzKey] = useState('')
   const [clublogPw, setClublogPw] = useState('')
+  const [tab, setTab] = useState<SettingsTab>('station')
 
   useEffect(() => {
     let mounted = true
@@ -516,8 +543,23 @@ export function SettingsPanel({
       </div>
 
       <form className="settings-form" onSubmit={handleSubmit}>
+        <div className="settings-tabs" role="tablist" aria-label="Settings sections">
+          {SETTINGS_TABS.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              role="tab"
+              aria-selected={tab === t.id}
+              className={`settings-tab${tab === t.id ? ' active' : ''}`}
+              onClick={() => setTab(t.id)}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
         <div className="settings-scroll">
           {/* ---- Workspace (UI-only prefs, applied live like the theme) ---- */}
+          {tab === 'workspace' && (
           <fieldset className="settings-section">
             <legend>Workspace</legend>
             <div className="settings-grid">
@@ -569,8 +611,10 @@ export function SettingsPanel({
               </div>
             </div>
           </fieldset>
+          )}
 
           {/* ---- Features (modular toggles + goal profiles) ---- */}
+          {tab === 'features' && (
           <fieldset className="settings-section">
             <legend>Features</legend>
             <div className="settings-field">
@@ -635,8 +679,10 @@ export function SettingsPanel({
               )
             })}
           </fieldset>
+          )}
 
           {/* ---- Operator & radio ---- */}
+          {tab === 'station' && (
           <fieldset className="settings-section">
             <legend>Operator &amp; Radio</legend>
             <div className="settings-grid">
@@ -676,8 +722,10 @@ export function SettingsPanel({
               </span>
             </div>
           </fieldset>
+          )}
 
           {/* ---- Rig control ---- */}
+          {tab === 'rig' && (
           <fieldset className="settings-section">
             <legend>Rig Control</legend>
             <div className="settings-grid">
@@ -892,8 +940,10 @@ export function SettingsPanel({
               your <em>Rig Model</em> and <em>Serial Port</em>; serial RTS/DTR and VOX need no model.
             </p>
           </fieldset>
+          )}
 
           {/* ---- Audio ---- */}
+          {tab === 'audio' && (
           <fieldset className="settings-section">
             <legend>Audio</legend>
             <div className="settings-grid">
@@ -969,8 +1019,10 @@ export function SettingsPanel({
               </div>
             </div>
           </fieldset>
+          )}
 
           {/* ---- Operating ---- */}
+          {tab === 'operating' && (
           <fieldset className="settings-section">
             <legend>Operating</legend>
             <div className="settings-grid">
@@ -1122,8 +1174,11 @@ export function SettingsPanel({
               </div>
             </div>
           </fieldset>
+          )}
 
           {/* ---- Alerts ---- */}
+          {tab === 'alerts' && (
+          <>
           <fieldset className="settings-section">
             <legend>Alerts</legend>
             <div className="settings-grid">
@@ -1222,10 +1277,13 @@ export function SettingsPanel({
               </label>
             </div>
           </fieldset>
+          </>
+          )}
 
           {/* ---- Network integrations ---- */}
+          {tab === 'connections' && (
           <fieldset className="settings-section">
-            <legend>Network</legend>
+            <legend>Connections</legend>
             <div className="settings-grid">
               <div className="settings-field">
                 <label className="settings-toggle">
@@ -1311,7 +1369,15 @@ export function SettingsPanel({
                   around you" before you've worked anyone. Takes effect on restart.
                 </span>
               </div>
+            </div>
+          </fieldset>
+          )}
 
+          {/* ---- Confirmations (LoTW / eQSL / QRZ / ClubLog accounts) ---- */}
+          {tab === 'confirmations' && (
+          <fieldset className="settings-section">
+            <legend>Confirmations</legend>
+            <div className="settings-grid">
               <label className="settings-field">
                 <span className="settings-label">LoTW username</span>
                 <input
@@ -1705,6 +1771,7 @@ export function SettingsPanel({
               </div>
             </div>
           </fieldset>
+          )}
         </div>
 
         <div className="settings-actions">

@@ -2963,6 +2963,37 @@ body.resizing {
   display: flex;
   flex-direction: column;
 }
+.settings-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 10px 18px 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+.settings-tab {
+  padding: 7px 13px;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: var(--transition);
+  position: relative;
+  top: 1px;
+}
+.settings-tab:hover {
+  color: var(--text);
+  background: var(--bg-elev-2);
+}
+.settings-tab.active {
+  color: var(--accent);
+  background: var(--bg-elev-1);
+  border-color: var(--border-soft);
+  border-bottom: 1px solid var(--bg-elev-1);
+}
 .settings-scroll {
   flex: 1;
   min-height: 0;
