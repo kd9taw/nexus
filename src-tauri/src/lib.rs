@@ -1985,6 +1985,11 @@ pub fn run() {
         serial_port: settings.serial_port.clone(),
         baud: settings.baud,
         rigctld_port: settings.rigctld_port,
+        broker_self_port: if settings.cat_broker {
+            Some(settings.cat_broker_port)
+        } else {
+            None
+        },
         dial_hz: settings.dial_hz(),
         mode: settings.sideband.clone(),
         wsjtx_udp: settings.wsjtx_udp,

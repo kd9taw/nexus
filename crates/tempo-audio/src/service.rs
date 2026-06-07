@@ -66,6 +66,9 @@ pub struct RadioConfig {
     pub baud: u32,
     /// Local TCP port Tempo runs rigctld on (and connects to).
     pub rigctld_port: u16,
+    /// The port our OWN CAT broker serves on (if enabled), so auto-coexist never
+    /// connects Nexus to itself. `None` = broker off.
+    pub broker_self_port: Option<u16>,
     /// Dial frequency to set on the rig (Hz).
     pub dial_hz: u64,
     /// Operating mode to set on the rig (e.g. "USB").
@@ -92,6 +95,7 @@ impl Default for RadioConfig {
             serial_port: String::new(),
             baud: 38400,
             rigctld_port: 4532,
+            broker_self_port: None,
             dial_hz: 14_090_500,
             mode: "USB".to_string(),
             wsjtx_udp: false,
@@ -662,6 +666,9 @@ struct Transport {
     serial_port: String,
     baud: u32,
     rigctld_port: u16,
+    /// The port our OWN CAT broker is serving on (if enabled), so auto-coexist never
+    /// connects Nexus to itself. `None` = broker off.
+    broker_self_port: Option<u16>,
     audio_in: String,
     audio_out: String,
     tx_level: f32,
@@ -675,6 +682,7 @@ impl Transport {
             serial_port: c.serial_port.clone(),
             baud: c.baud,
             rigctld_port: c.rigctld_port,
+            broker_self_port: c.broker_self_port,
             audio_in: c.audio_in.clone(),
             audio_out: c.audio_out.clone(),
             tx_level: c.tx_level,
@@ -688,6 +696,11 @@ impl Transport {
             serial_port: s.serial_port.clone(),
             baud: s.baud,
             rigctld_port: s.rigctld_port,
+            broker_self_port: if s.cat_broker {
+                Some(s.cat_broker_port)
+            } else {
+                None
+            },
             audio_in: s.audio_in.clone(),
             audio_out: s.audio_out.clone(),
             tx_level: s.tx_level,
@@ -702,6 +715,7 @@ impl Transport {
             || self.serial_port != o.serial_port
             || self.baud != o.baud
             || self.rigctld_port != o.rigctld_port
+            || self.broker_self_port != o.broker_self_port
     }
 
     /// True if the selected sound-card input/output device changed.
@@ -722,22 +736,51 @@ type RigOpen = (Rig, Option<RigctldProc>, Option<bool>, String);
 fn open_rig(t: &Transport, dial_hz: u64, mode: &str) -> RigOpen {
     match t.ptt_method.as_str() {
         "cat" if t.rig_model != 0 => {
-            match spawn_rigctld(t.rig_model, &t.serial_port, t.baud, t.rigctld_port) {
-                Ok(proc) => {
-                    // Give the daemon a moment to bind its TCP port before connecting.
-                    std::thread::sleep(Duration::from_millis(700));
-                    let mut rig = Rig::rigctld(&format!("127.0.0.1:{}", t.rigctld_port));
-                    let _ = rig.set_freq(dial_hz);
-                    let _ = rig.set_mode(mode, 0);
-                    let (ok, detail) = probe_cat(&mut rig, t.rigctld_port);
-                    (rig, Some(proc), ok, detail)
-                }
-                Err(e) => (
+            let addr = format!("127.0.0.1:{}", t.rigctld_port);
+            if t.broker_self_port == Some(t.rigctld_port) {
+                // Misconfig: our own CAT broker and the launched rigctld want the same
+                // port. Don't connect to ourselves, and don't try to spawn (it can't
+                // bind) — tell the operator to fix the ports.
+                (
                     Rig::vox(),
                     None,
                     Some(false),
-                    format!("Could not launch the bundled rigctld (Hamlib): {e}"),
-                ),
+                    format!(
+                        "CAT broker and rigctld are both on :{} — give them different ports, or turn the broker off.",
+                        t.rigctld_port
+                    ),
+                )
+            } else if crate::rigctld_server::probe_rigctld(&addr, Duration::from_millis(400)) {
+                // Auto-coexist: a rigctld is ALREADY here (e.g. WSJT-X launched one).
+                // Connect THROUGH it instead of fighting for the serial port.
+                let mut rig = Rig::rigctld(&addr);
+                let _ = rig.set_freq(dial_hz);
+                let _ = rig.set_mode(mode, 0);
+                let (ok, detail) = probe_cat(&mut rig, t.rigctld_port);
+                (
+                    rig,
+                    None, // we didn't spawn it — leave the existing daemon alone
+                    ok,
+                    format!("Sharing the rigctld already on :{} — {detail}", t.rigctld_port),
+                )
+            } else {
+                match spawn_rigctld(t.rig_model, &t.serial_port, t.baud, t.rigctld_port) {
+                    Ok(proc) => {
+                        // Give the daemon a moment to bind its TCP port before connecting.
+                        std::thread::sleep(Duration::from_millis(700));
+                        let mut rig = Rig::rigctld(&addr);
+                        let _ = rig.set_freq(dial_hz);
+                        let _ = rig.set_mode(mode, 0);
+                        let (ok, detail) = probe_cat(&mut rig, t.rigctld_port);
+                        (rig, Some(proc), ok, detail)
+                    }
+                    Err(e) => (
+                        Rig::vox(),
+                        None,
+                        Some(false),
+                        format!("Could not launch the bundled rigctld (Hamlib): {e}"),
+                    ),
+                }
             }
         }
         "cat" => (
@@ -1065,6 +1108,72 @@ mod tests {
             state.last_slot.is_none(),
             "slot decode skipped while tuning"
         );
+    }
+
+    fn cat_transport(rigctld_port: u16, broker_self_port: Option<u16>) -> Transport {
+        Transport {
+            ptt_method: "cat".to_string(),
+            rig_model: 1035,
+            serial_port: "/dev/ttyUSB0".to_string(),
+            baud: 38400,
+            rigctld_port,
+            broker_self_port,
+            audio_in: String::new(),
+            audio_out: String::new(),
+            tx_level: 0.9,
+        }
+    }
+
+    #[test]
+    fn open_rig_flags_broker_port_conflict() {
+        // CAT broker and the launched rigctld both on the same port → no self-connect,
+        // no doomed spawn; a clear message instead. Pure (no I/O before the guard).
+        let t = cat_transport(4532, Some(4532));
+        let (_rig, proc, ok, detail) = open_rig(&t, 14_074_000, "USB");
+        assert!(proc.is_none());
+        assert_eq!(ok, Some(false));
+        assert!(detail.contains("different ports"), "got: {detail}");
+    }
+
+    #[test]
+    fn open_rig_coexists_with_an_existing_rigctld() {
+        use crate::rigctld_server::RigBackend;
+        struct CoexistRig(std::sync::Mutex<u64>);
+        impl RigBackend for CoexistRig {
+            fn freq_hz(&self) -> u64 {
+                *self.0.lock().unwrap()
+            }
+            fn mode(&self) -> (String, u32) {
+                ("USB".into(), 2700)
+            }
+            fn ptt(&self) -> bool {
+                false
+            }
+            fn set_freq(&self, hz: u64) -> bool {
+                *self.0.lock().unwrap() = hz;
+                true
+            }
+            fn set_mode(&self, _m: &str, _p: u32) -> bool {
+                true
+            }
+            fn set_ptt(&self, _on: bool) -> bool {
+                true
+            }
+        }
+
+        // Stand up a broker that plays the role of an already-running (foreign)
+        // rigctld on some port.
+        let backend: Arc<dyn RigBackend> = Arc::new(CoexistRig(std::sync::Mutex::new(14_074_000)));
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || crate::rigctld_server::serve(listener, backend));
+
+        // open_rig must SHARE it (no spawn), not fight for the serial port.
+        let t = cat_transport(port, None);
+        let (_rig, proc, ok, detail) = open_rig(&t, 14_074_000, "USB");
+        assert!(proc.is_none(), "shared the existing rigctld — did not spawn one");
+        assert_eq!(ok, Some(true), "connected through it: {detail}");
+        assert!(detail.contains("Sharing"), "got: {detail}");
     }
 
     #[test]
