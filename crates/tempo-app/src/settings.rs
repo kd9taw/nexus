@@ -48,6 +48,11 @@ pub struct Settings {
     pub baud: u32,
     /// Local TCP port Tempo uses for rigctld (it spawns rigctld on this port).
     pub rigctld_port: u16,
+    /// Run the rigctld-compatible CAT **broker** so other apps (WSJT-X / N1MM /
+    /// loggers) share the radio THROUGH Nexus, on `cat_broker_port`. Off by default.
+    pub cat_broker: bool,
+    /// TCP port the CAT broker listens on (Hamlib NET rigctl default 4532).
+    pub cat_broker_port: u16,
 
     // --- network (WSJT-X parity) ---
     /// Emit the WSJT-X-compatible UDP protocol (for JTAlert/GridTracker/loggers).
@@ -218,6 +223,8 @@ impl Default for Settings {
             serial_port: String::new(),
             baud: 38400,
             rigctld_port: 4532,
+            cat_broker: false,
+            cat_broker_port: 4532,
             wsjtx_udp: false,
             wsjtx_udp_addr: "127.0.0.1:2237".to_string(),
             companion_addr: "127.0.0.1:2237".to_string(),

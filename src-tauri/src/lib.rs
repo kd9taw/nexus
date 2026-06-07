@@ -1913,6 +1913,65 @@ fn qsy_stop(state: State<'_, SharedEngine>) -> Result<AppSnapshot, String> {
     Ok(eng.snapshot())
 }
 
+/// Bridges the CAT broker (rigctld server) to Nexus's live engine: other apps read
+/// the dial/mode/PTT and can retune Nexus. v1 is CAT-sharing (freq/mode) for loggers
+/// + panadapters; it does NOT key the rig on a foreign app's behalf — Nexus owns TX
+/// timing (external-PTT / TX arbitration is a flagged v2 item).
+#[cfg(feature = "radio")]
+struct EngineRig(SharedEngine);
+
+#[cfg(feature = "radio")]
+impl tempo_audio::rigctld_server::RigBackend for EngineRig {
+    fn freq_hz(&self) -> u64 {
+        self.0
+            .lock()
+            .map(|e| (e.settings().dial_mhz * 1_000_000.0).round() as u64)
+            .unwrap_or(0)
+    }
+    fn mode(&self) -> (String, u32) {
+        let m = self.0.lock().map(|e| e.settings().sideband.clone()).unwrap_or_default();
+        (if m.is_empty() { "USB".into() } else { m }, 2700)
+    }
+    fn ptt(&self) -> bool {
+        self.0.lock().map(|e| e.snapshot().radio.transmitting).unwrap_or(false)
+    }
+    fn set_freq(&self, hz: u64) -> bool {
+        let Ok(mut e) = self.0.lock() else { return false };
+        let mhz = hz as f64 / 1_000_000.0;
+        // Derive the band label from the freq; keep the current band if off-plan.
+        let band = propagation::model::Band::from_mhz(mhz)
+            .map(|b| b.label().to_string())
+            .unwrap_or_else(|| e.settings().band.clone());
+        let mode = {
+            let m = e.settings().sideband.clone();
+            if m.is_empty() { "USB".to_string() } else { m }
+        };
+        e.set_frequency(mhz, &band, &mode);
+        true
+    }
+    fn set_mode(&self, mode: &str, _passband_hz: u32) -> bool {
+        let Ok(mut e) = self.0.lock() else { return false };
+        let (mhz, band) = {
+            let s = e.settings();
+            (s.dial_mhz, s.band.clone())
+        };
+        // Collapse data submodes (PKTUSB/DATA-U/FT8/…) to the underlying sideband.
+        let up = mode.to_ascii_uppercase();
+        let sb = if up.contains("LSB") {
+            "LSB"
+        } else if up == "FM" {
+            "FM"
+        } else {
+            "USB"
+        };
+        e.set_frequency(mhz, &band, sb);
+        true
+    }
+    fn set_ptt(&self, _on: bool) -> bool {
+        false // v1: Nexus owns TX; it won't key the rig for a foreign app (v2: arbitration).
+    }
+}
+
 /// Build and run the Tauri application.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -1991,6 +2050,27 @@ pub fn run() {
                 eprintln!("tempo: radio loop stopped: {e}");
             }
         });
+    }
+
+    // CAT broker: let other apps (WSJT-X / N1MM / loggers) share the radio THROUGH
+    // Nexus over the rigctld protocol. Localhost-only (never expose the rig to the
+    // network). Boot-time start when enabled; toggling needs a restart for now.
+    #[cfg(feature = "radio")]
+    {
+        let (broker_on, broker_port) = engine
+            .lock()
+            .map(|e| (e.settings().cat_broker, e.settings().cat_broker_port))
+            .unwrap_or((false, 4532));
+        if broker_on {
+            let backend: std::sync::Arc<dyn tempo_audio::rigctld_server::RigBackend> =
+                std::sync::Arc::new(EngineRig(engine.clone()));
+            std::thread::spawn(move || {
+                match std::net::TcpListener::bind(("127.0.0.1", broker_port)) {
+                    Ok(l) => tempo_audio::rigctld_server::serve(l, backend),
+                    Err(e) => eprintln!("tempo: CAT broker couldn't bind 127.0.0.1:{broker_port}: {e}"),
+                }
+            });
+        }
     }
 
     let prop_cache: PropCache = Arc::new(Mutex::new(None));

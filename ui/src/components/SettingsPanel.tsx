@@ -85,7 +85,7 @@ const PTT_METHODS: { value: string; label: string }[] = [
   { value: 'vox', label: 'VOX (no keying)' },
 ]
 
-const NUMERIC_KEYS: FieldKey[] = ['dialMhz', 'baud', 'rigctldPort', 'rigModel', 'txWatchdogMin']
+const NUMERIC_KEYS: FieldKey[] = ['dialMhz', 'baud', 'rigctldPort', 'rigModel', 'txWatchdogMin', 'catBrokerPort']
 
 export function SettingsPanel({
   onSaved,
@@ -824,6 +824,41 @@ export function SettingsPanel({
                 />
                 <span className="settings-hint">Port Tempo launches rigctld on.</span>
               </label>
+
+              <div className="settings-field">
+                <label className="settings-toggle">
+                  <span className="settings-label">Share my radio (CAT broker)</span>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={form.catBroker}
+                    className={`toggle${form.catBroker ? ' on' : ''}`}
+                    onClick={() => updateBool('catBroker', !form.catBroker)}
+                  >
+                    <span className="toggle-knob" />
+                  </button>
+                </label>
+                <span className="settings-hint">
+                  Run a rigctld-compatible server so WSJT-X / N1MM / loggers share this radio THROUGH Nexus
+                  (point them at Hamlib NET rigctl, localhost:{form.catBrokerPort}). Restart to apply.
+                </span>
+              </div>
+
+              {form.catBroker && (
+                <label className="settings-field">
+                  <span className="settings-label">CAT broker port</span>
+                  <input
+                    className="settings-input"
+                    type="number"
+                    inputMode="numeric"
+                    value={String(form.catBrokerPort)}
+                    placeholder="4532"
+                    onChange={(e) => update('catBrokerPort', e.target.value)}
+                    autoComplete="off"
+                  />
+                  <span className="settings-hint">Other apps connect here (Hamlib NET rigctl default 4532).</span>
+                </label>
+              )}
             </div>
             <div className="settings-cat-test">
               <button

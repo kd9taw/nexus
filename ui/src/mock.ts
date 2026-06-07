@@ -324,6 +324,8 @@ function defaultSettings(): Settings {
     serialPort: '',
     baud: 38400,
     rigctldPort: 4532,
+    catBroker: false,
+    catBrokerPort: 4532,
     // audio
     audioIn: '',
     audioOut: '',

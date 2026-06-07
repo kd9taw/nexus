@@ -665,6 +665,10 @@ export interface Settings {
   baud: number
   /** TCP port that rigctld listens on / Tempo launches it with. */
   rigctldPort: number
+  /** Run the rigctld-compatible CAT broker so other apps share the radio. */
+  catBroker: boolean
+  /** TCP port the CAT broker listens on (Hamlib NET rigctl default 4532). */
+  catBrokerPort: number
   // --- audio ---
   /** Input (RX) audio device name. "" = system default. */
   audioIn: string
