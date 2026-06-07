@@ -3574,6 +3574,24 @@ select.settings-input {
 .decode-row.new {
   border-left-color: var(--border);
 }
+/* New-DXCC "new one" — the highest-value chase; a bright, can't-miss highlight. */
+.decode-row.newdxcc {
+  border-left-color: #ff5d8f;
+  background: color-mix(in srgb, #ff5d8f 15%, transparent);
+}
+.decode-row.newdxcc .decode-msg {
+  color: #ff86ab;
+  font-weight: 800;
+}
+/* New grid — a softer amber highlight, a notch below new-DXCC. */
+.decode-row.newgrid {
+  border-left-color: #f5a524;
+  background: color-mix(in srgb, #f5a524 11%, transparent);
+}
+.decode-row.newgrid .decode-msg {
+  color: #f5b53f;
+  font-weight: 700;
+}
 .decode-snr {
   font-family: var(--font-mono);
   font-size: 11px;
@@ -3640,6 +3658,14 @@ select.settings-input {
 .decode-tag.me {
   color: var(--accent-ink);
   background: var(--state-good);
+}
+.decode-tag.newdxcc {
+  color: #fff;
+  background: #ff5d8f;
+}
+.decode-tag.newgrid {
+  color: #1a1205;
+  background: #f5a524;
 }
 .decode-work {
   flex: 0 0 auto;

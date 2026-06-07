@@ -14,6 +14,7 @@
 //! [`mode`]: Engine::set_mode
 
 use std::collections::VecDeque;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -112,6 +113,16 @@ pub struct Engine {
     logbook: Logbook,
     /// ADIF file the logbook is persisted to, if the shell set one.
     log_path: Option<PathBuf>,
+    /// Callsign → DXCC entity resolver, injected by the command layer (which owns
+    /// the cty.dat table) so tempo-app stays DXCC-free. `None` in headless tests
+    /// (new-DXCC highlighting simply stays off). See [`Engine::set_dxcc_resolver`].
+    #[allow(clippy::type_complexity)]
+    dxcc_resolve: Option<Box<dyn Fn(&str) -> Option<String> + Send + Sync>>,
+    /// DXCC entities already worked (from the logbook) — for new-entity decode
+    /// highlighting. Rebuilt on log load + each log mutation.
+    worked_entities: HashSet<String>,
+    /// Maidenhead grids already worked (uppercased) — for new-grid highlighting.
+    worked_grids: HashSet<String>,
     /// The signal report I last sent the current QSO's DX station (RST sent),
     /// captured from the sequencer's outgoing (R)Report. Reset per QSO.
     qso_report_sent: Option<i32>,
@@ -228,6 +239,9 @@ impl Engine {
             seen_decode: false,
             logbook: Logbook::new(),
             log_path: None,
+            dxcc_resolve: None,
+            worked_entities: HashSet::new(),
+            worked_grids: HashSet::new(),
             qso_report_sent: None,
             pending_log: None,
             qso_logged: false,
@@ -458,6 +472,38 @@ impl Engine {
     pub fn set_log_path(&mut self, path: PathBuf) {
         self.logbook = Logbook::load(&path);
         self.log_path = Some(path);
+        self.refresh_worked_index();
+    }
+
+    /// Inject the callsign → DXCC entity resolver (the command layer passes
+    /// `propagation::dxcc::resolve`-backed closure). Rebuilds the worked-entity
+    /// index so new-DXCC decode highlighting works from the next snapshot.
+    pub fn set_dxcc_resolver(
+        &mut self,
+        resolve: impl Fn(&str) -> Option<String> + Send + Sync + 'static,
+    ) {
+        self.dxcc_resolve = Some(Box::new(resolve));
+        self.refresh_worked_index();
+    }
+
+    /// Recompute the worked-entity and worked-grid sets from the logbook. Cheap
+    /// (a few hundred records); run on log load and after each log mutation.
+    fn refresh_worked_index(&mut self) {
+        self.worked_grids.clear();
+        self.worked_entities.clear();
+        for r in self.logbook.records() {
+            if let Some(g) = &r.grid {
+                let g = g.trim();
+                if !g.is_empty() {
+                    self.worked_grids.insert(g.to_uppercase());
+                }
+            }
+            if let Some(resolve) = &self.dxcc_resolve {
+                if let Some(entity) = resolve(&r.call) {
+                    self.worked_entities.insert(entity);
+                }
+            }
+        }
     }
 
     /// Manually add a contact to the logbook (the UI "Log QSO" button). Adds in
@@ -478,6 +524,7 @@ impl Engine {
             }
         }
         self.logbook.add(rec);
+        self.refresh_worked_index();
     }
 
     /// Begin a Parks/Summits On The Air activation — every QSO logged afterward is
@@ -533,6 +580,7 @@ impl Engine {
                     eprintln!("tempo: update_qso save failed: {e}");
                 }
             }
+            self.refresh_worked_index();
         }
         ok
     }
@@ -548,6 +596,7 @@ impl Engine {
                     eprintln!("tempo: delete_qso save failed: {e}");
                 }
             }
+            self.refresh_worked_index();
         }
         ok
     }
@@ -565,6 +614,7 @@ impl Engine {
                 }
             }
         }
+        self.refresh_worked_index();
         (added.len(), skipped, self.logbook.len())
     }
 
@@ -1282,6 +1332,23 @@ impl Engine {
                     .as_deref()
                     .map(|c| self.logbook.worked_before(c))
                     .unwrap_or(false);
+                // New-grid (B3): the decode carries a Maidenhead grid we've never
+                // worked. Grid is present on CQ/grid forms.
+                let grid = match &parsed {
+                    Msg::Cq { grid, .. } | Msg::Grid { grid, .. } => Some(grid.as_str()),
+                    _ => None,
+                };
+                let new_grid = grid
+                    .map(|g| !g.is_empty() && !self.worked_grids.contains(&g.to_uppercase()))
+                    .unwrap_or(false);
+                // New-DXCC (B3): the sender's entity has never been worked. Needs
+                // the injected resolver; stays off in headless tests.
+                let new_dxcc = match (&from, &self.dxcc_resolve) {
+                    (Some(c), Some(resolve)) => resolve(c)
+                        .map(|e| !self.worked_entities.contains(&e))
+                        .unwrap_or(false),
+                    _ => false,
+                };
                 DecodeRow {
                     from,
                     snr: d.snr,
@@ -1291,6 +1358,8 @@ impl Engine {
                     is_cq,
                     directed_to_me,
                     worked,
+                    new_dxcc,
+                    new_grid,
                     // Label each decode by the mode that actually produced it
                     // (native source's mode, or a companion stream's per-decode
                     // WSJT-X mode); fall back to the selected tier when unknown
@@ -2171,6 +2240,49 @@ mod tests {
         e.discard_pending_log();
         assert!(e.get_log().is_empty(), "discard logs nothing");
         assert!(e.snapshot().pending_log.is_none());
+    }
+
+    #[test]
+    fn new_grid_and_new_dxcc_highlight_in_decode_feed() {
+        let mut e = Engine::new("K2DEF", "FN31", 0);
+        // Stub resolver: first letter of the call is its "entity".
+        e.set_dxcc_resolver(|call| call.chars().next().map(|c| c.to_string()));
+
+        // Log a contact with W9XYZ in grid EN37 → entity "W" and grid EN37 worked.
+        e.log_qso(QsoRecord {
+            call: "W9XYZ".into(),
+            grid: Some("EN37".into()),
+            state: None,
+            band: "20m".into(),
+            freq_mhz: 14.074,
+            mode: "FT8".into(),
+            rst_sent: None,
+            rst_rcvd: None,
+            when_unix: 0,
+            confirmed: false,
+            award_confirmed: false,
+            credit_granted: vec![],
+            credit_submitted: vec![],
+            upload: Default::default(),
+            ota: Default::default(),
+        });
+
+        // A CQ from a same-entity station in a NEW grid → new_grid, not new_dxcc.
+        // A CQ from a different-entity station → new_dxcc.
+        e.ingest_decodes_for_test(
+            &[
+                dec_snr("CQ W1AW EN37", -5),   // entity "W" worked; grid EN37 worked
+                dec_snr("CQ W4ABC EM73", -8),  // entity "W" worked; grid EM73 NEW
+                dec_snr("CQ DL1XYZ JO31", -9), // entity "D" NEW; grid JO31 NEW
+            ],
+            0,
+        );
+        let rows = e.snapshot().recent_decodes;
+        let row = |c: &str| rows.iter().find(|r| r.from.as_deref() == Some(c)).unwrap();
+
+        assert!(!row("W1AW").new_grid && !row("W1AW").new_dxcc, "all worked");
+        assert!(row("W4ABC").new_grid && !row("W4ABC").new_dxcc, "new grid only");
+        assert!(row("DL1XYZ").new_grid && row("DL1XYZ").new_dxcc, "new grid + new entity");
     }
 
     #[test]

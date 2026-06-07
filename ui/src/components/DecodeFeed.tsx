@@ -8,9 +8,11 @@ interface Props {
   onCall: (call: string) => void
 }
 
-/** Priority class for color-coding (directedToMe wins over CQ over worked). */
+/** Priority class for color-coding (directedToMe > new-DXCC > new-grid > worked > CQ). */
 function rowClass(d: DecodeRow): string {
   if (d.directedToMe) return 'directed'
+  if (d.newDxcc) return 'newdxcc'
+  if (d.newGrid) return 'newgrid'
   if (d.worked) return 'worked'
   if (d.isCq) return 'cq'
   return 'new'
@@ -49,6 +51,8 @@ export function DecodeFeed({ decodes, harqRescues, onCall }: Props) {
               <span className="decode-freq">{Math.round(d.freqHz)}</span>
               <span className="decode-msg" title={d.message}>
                 {d.message}
+                {d.newDxcc && <span className="decode-tag newdxcc" title="New DXCC entity — a new one!">DXCC</span>}
+                {d.newGrid && !d.newDxcc && <span className="decode-tag newgrid" title="New grid square">GRID</span>}
                 {d.worked && <span className="b4-chip" title="Worked before">B4</span>}
                 {d.isCq && !d.directedToMe && <span className="decode-tag cq">CQ</span>}
                 {d.directedToMe && <span className="decode-tag me">YOU</span>}

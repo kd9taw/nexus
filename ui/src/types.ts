@@ -303,6 +303,10 @@ export interface DecodeRow {
   isCq: boolean
   directedToMe: boolean
   worked: boolean
+  /** Sender resolves to a DXCC entity never worked before (a "new one"). */
+  newDxcc?: boolean
+  /** Decode carries a Maidenhead grid never worked before. */
+  newGrid?: boolean
   tier: Tier
   /** IR-HARQ redundancy versions combined to recover this decode: 0 = decoded
    * from the initial transmission alone; 1/2 = recovered by joint-combining that

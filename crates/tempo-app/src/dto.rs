@@ -50,6 +50,13 @@ pub struct DecodeRow {
     pub directed_to_me: bool,
     /// True if the sender is in the logbook (worked before).
     pub worked: bool,
+    /// True if the sender resolves to a DXCC entity never worked before — a "new
+    /// one". Off unless a DXCC resolver is wired (always off in headless tests).
+    #[serde(default)]
+    pub new_dxcc: bool,
+    /// True if the decode carries a Maidenhead grid never worked before.
+    #[serde(default)]
+    pub new_grid: bool,
     pub tier: Tier,
     /// IR-HARQ redundancy versions combined to recover this decode: 0 = decoded
     /// from the initial transmission alone; 1/2 = recovered by joint-combining

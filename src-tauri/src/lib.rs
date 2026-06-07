@@ -2094,6 +2094,12 @@ pub fn run() {
     // before highlighting and the log view reflect previous sessions), and
     // restore the persisted signal source.
     if let Ok(mut eng) = engine.lock() {
+        // Wire the DXCC entity resolver (cty.dat lives in the propagation crate)
+        // so new-DXCC decode highlighting works; set it BEFORE loading the log so
+        // the initial worked-entity index is populated.
+        eng.set_dxcc_resolver(|call| {
+            propagation::dxcc::resolve(call).map(|i| i.entity.to_string())
+        });
         eng.set_log_path(logbook_path());
         if persisted_source == SourceKind::Companion {
             if let Err(e) = eng.set_source(SourceKind::Companion) {

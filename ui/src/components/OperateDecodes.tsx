@@ -82,7 +82,7 @@ export function OperateDecodes({ decodes, slot, rxOffsetHz, harqRescues, onCall 
         case 'b4':
           return d.worked
         case 'new':
-          return !d.worked
+          return d.newDxcc || d.newGrid || (!d.worked && (d.isCq || d.directedToMe))
         default:
           return true
       }
@@ -181,6 +181,16 @@ export function OperateDecodes({ decodes, slot, rxOffsetHz, harqRescues, onCall 
             <span className="decode-freq">{Math.round(d.freqHz)}</span>
             <span className="decode-msg" title={d.message}>
               {d.message}
+              {d.newDxcc && (
+                <span className="decode-tag newdxcc" title="New DXCC entity — a new one!">
+                  DXCC
+                </span>
+              )}
+              {d.newGrid && !d.newDxcc && (
+                <span className="decode-tag newgrid" title="New grid square">
+                  GRID
+                </span>
+              )}
               {d.worked && <span className="b4-chip" title="Worked before">B4</span>}
               {d.isCq && !d.directedToMe && <span className="decode-tag cq">CQ</span>}
               {d.directedToMe && <span className="decode-tag me">YOU</span>}
@@ -221,7 +231,7 @@ const FILTER_TITLE: Record<Filter, string> = {
   me: 'Directed to my callsign',
   rx: 'On my RX frequency (±50 Hz) — follow a QSO without clutter',
   b4: 'Worked before',
-  new: 'Not worked before',
+  new: 'New DXCC / new grid — the "new one" chase',
 }
 
 /** UTC HHMMSS for the per-row time column (matches WSJT-X's compact time). */
@@ -241,6 +251,8 @@ function dtClass(dt: number): string {
 
 function rowClass(d: DecodeRow): string {
   if (d.directedToMe) return 'directed'
+  if (d.newDxcc) return 'newdxcc'
+  if (d.newGrid) return 'newgrid'
   if (d.worked) return 'worked'
   if (d.isCq) return 'cq'
   return 'new'

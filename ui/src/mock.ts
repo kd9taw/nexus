@@ -278,6 +278,8 @@ function decode(p: Partial<DecodeRow> & Pick<DecodeRow, 'from' | 'message'>): De
     isCq: p.isCq ?? false,
     directedToMe: p.directedToMe ?? false,
     worked: p.worked ?? false,
+    newDxcc: p.newDxcc ?? false,
+    newGrid: p.newGrid ?? false,
     tier: p.tier ?? 'FT1',
     rv: p.rv ?? 0,
   }
@@ -287,10 +289,10 @@ function decode(p: Partial<DecodeRow> & Pick<DecodeRow, 'from' | 'message'>): De
 // tier (one HARQ rescue), and a DX1 robust call directed at me — so the mode
 // chips show the full spread the native engine decodes.
 const recentDecodes: DecodeRow[] = [
-  decode({ from: 'F5RXL', message: 'CQ F5RXL IN94', snr: -3, dtSec: -0.1, freqHz: 1197, isCq: true, tier: 'FT8' }),
+  decode({ from: 'F5RXL', message: 'CQ F5RXL IN94', snr: -3, dtSec: -0.1, freqHz: 1197, isCq: true, newDxcc: true, newGrid: true, tier: 'FT8' }),
   decode({ from: 'EA6EE', message: 'N1JFU EA6EE R-07', snr: -14, dtSec: 0.2, freqHz: 641, tier: 'FT8' }),
   decode({ from: 'HA0DU', message: 'K1JT HA0DU KN07', snr: -13, dtSec: 0.3, freqHz: 590, worked: true, tier: 'FT8' }),
-  decode({ from: 'N9OY', message: 'CQ RU N9OY EN43', snr: -3, dtSec: -0.2, freqHz: 1640, isCq: true, tier: 'FT4' }),
+  decode({ from: 'N9OY', message: 'CQ RU N9OY EN43', snr: -3, dtSec: -0.2, freqHz: 1640, isCq: true, newGrid: true, tier: 'FT4' }),
   decode({ from: 'W6PQR', message: 'CQ W6PQR CM87', snr: -7, dtSec: 0.0, freqHz: 1320, isCq: true, tier: 'FT1' }),
   decode({ from: 'VE3JKL', message: 'VE3JKL W1XYZ R-12', snr: -18, dtSec: 0.2, freqHz: 980, tier: 'FT1', rv: 1 }),
   decode({ from: 'N0GHI', message: `${MYCALL} N0GHI -14`, snr: -14, dtSec: -0.1, freqHz: 1740, directedToMe: true, tier: 'DX1' }),
