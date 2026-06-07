@@ -31,10 +31,15 @@ export function coerceEnabled(partial: Partial<Record<FeatureId, boolean>>): Rec
   return out
 }
 
-/** The first-run / fallback state: Everything on (never hide a feature from an
- * upgrading user; the wizard curates *down* only by explicit choice). */
+/** The first-run / fallback state: everything on EXCEPT Field Day. Field Day is a
+ * contest workspace most operators never use, so it stays opt-in (enable it in
+ * Settings ▸ Features, or pick the Contest profile). Every OTHER feature defaults
+ * on, so an upgrading user never silently loses one; the wizard curates further
+ * down only by explicit choice. */
 export function defaultState(): FeatureState {
-  return applyProfile('everything')
+  const s = applyProfile('everything')
+  s.enabled.fieldDay = false
+  return s
 }
 
 /** State for a chosen profile. Carries forward prior reveal dismissals (switching

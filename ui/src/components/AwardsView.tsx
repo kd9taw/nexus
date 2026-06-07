@@ -13,24 +13,69 @@ const WAZ_ZONES = 40
 /** US states for the Worked All States (WAS) award. */
 const WAS_STATES = 50
 
-/** Render a chase list (entity + the bands to confirm), or an empty note. */
+type NeedSort = 'entity' | 'bands'
+
+/** Render a chase list (entity + the bands to confirm) with a quick filter + a
+ * sort (A–Z or by how many bands are needed), or an empty note. */
 function NeedList({ items, empty }: { items: EntityNeed[]; empty: string }) {
+  const [sort, setSort] = useState<NeedSort>('entity')
+  const [q, setQ] = useState('')
   if (items.length === 0) return <p className="aw-empty">{empty}</p>
+  const needle = q.trim().toLowerCase()
+  const rows = items
+    .filter((n) => !needle || n.entity.toLowerCase().includes(needle))
+    .sort((a, b) =>
+      sort === 'bands'
+        ? b.bands.length - a.bands.length || a.entity.localeCompare(b.entity)
+        : a.entity.localeCompare(b.entity),
+    )
   return (
-    <ul className="aw-needed">
-      {items.map((n) => (
-        <li key={n.entity}>
-          <span className="aw-entity">{n.entity}</span>
-          <span className="aw-needbands">
-            {n.bands.map((b) => (
-              <span className="aw-chip" key={b}>
-                {b}
+    <>
+      <div className="aw-needctl">
+        <input
+          className="aw-needfilter"
+          type="text"
+          value={q}
+          placeholder="filter entities…"
+          aria-label="Filter entities"
+          onChange={(e) => setQ(e.target.value)}
+        />
+        <button
+          type="button"
+          className={`aw-needsort${sort === 'entity' ? ' active' : ''}`}
+          onClick={() => setSort('entity')}
+          title="Sort A–Z"
+        >
+          A–Z
+        </button>
+        <button
+          type="button"
+          className={`aw-needsort${sort === 'bands' ? ' active' : ''}`}
+          onClick={() => setSort('bands')}
+          title="Sort by number of bands needed"
+        >
+          # bands
+        </button>
+      </div>
+      {rows.length === 0 ? (
+        <p className="aw-empty">No entities match “{q.trim()}”.</p>
+      ) : (
+        <ul className="aw-needed">
+          {rows.map((n) => (
+            <li key={n.entity}>
+              <span className="aw-entity">{n.entity}</span>
+              <span className="aw-needbands">
+                {n.bands.map((b) => (
+                  <span className="aw-chip" key={b}>
+                    {b}
+                  </span>
+                ))}
               </span>
-            ))}
-          </span>
-        </li>
-      ))}
-    </ul>
+            </li>
+          ))}
+        </ul>
+      )}
+    </>
   )
 }
 

@@ -14,10 +14,14 @@ import {
 import { resolveEnabled } from './profiles'
 
 describe('feature state transitions', () => {
-  it('first-run default is Everything (never hide a feature from an upgrading user)', () => {
+  it('first-run default is Everything except opt-in Field Day', () => {
     const s = defaultState()
     expect(s.profile).toBe('everything')
-    for (const f of FEATURES) expect(s.enabled[f.id]).toBe(true)
+    for (const f of FEATURES) {
+      // Field Day is the one carve-out — opt-in (most operators don't contest);
+      // every other feature defaults on so upgrades never lose one.
+      expect(s.enabled[f.id]).toBe(f.id === 'fieldDay' ? false : true)
+    }
   })
 
   it('coerceEnabled forces core on and defaults unknown/missing to on', () => {

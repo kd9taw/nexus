@@ -5636,6 +5636,41 @@ select.settings-input {
   font-weight: 700;
   color: var(--state-good);
 }
+.aw-needctl {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.aw-needfilter {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elev-1);
+  color: var(--text);
+  font-size: 12px;
+}
+.aw-needfilter:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.aw-needsort {
+  flex: none;
+  padding: 4px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elev-2);
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 700;
+}
+.aw-needsort.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
 .aw-needed {
   list-style: none;
   margin: 0;
