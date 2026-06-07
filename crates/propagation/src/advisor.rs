@@ -126,6 +126,10 @@ impl PropAdvisor {
         let mut by_region: HashMap<Region, (HashSet<String>, HashSet<String>)> = HashMap::new();
         // Accumulate far-grid lat/lon per region for a mean bearing.
         let mut region_pts: HashMap<Region, (f64, f64, u32)> = HashMap::new();
+        // Distinct stations active on the band — INCLUDING far↔far spots near the
+        // operator (the regional census). Drives the "is the band alive" score so
+        // a band reads open from activity around you, not only your own contacts.
+        let mut activity: HashSet<String> = HashSet::new();
 
         for s in spots {
             if s.band != band || s.time < cutoff {
@@ -133,6 +137,12 @@ impl PropAdvisor {
             }
             let side = s.side(&self.me_call);
             if side == Side::Neither {
+                // Regional activity (stations near the operator working each other):
+                // count both ends toward band liveness, but not toward the
+                // operator-anchored hear_me/i_hear or the bearing (which are "where
+                // do MY signals go").
+                activity.insert(s.tx_call.to_uppercase());
+                activity.insert(s.rx_call.to_uppercase());
                 continue;
             }
             let Some(far) = s.far_call(&self.me_call) else {
@@ -148,6 +158,7 @@ impl PropAdvisor {
                 }
                 Side::Neither => unreachable!(),
             }
+            activity.insert(far.clone());
             if let Some(g) = s.far_grid(&self.me_call) {
                 let region = Region::from_grid(g);
                 let entry = by_region.entry(region).or_default();
@@ -165,8 +176,10 @@ impl PropAdvisor {
             }
         }
 
-        let unique: HashSet<&String> = hear_me.union(&i_hear).collect();
-        let observed = unique.len();
+        // Band liveness counts ALL distinct stations active on the band (operator
+        // paths + regional census), so bands the operator isn't personally on still
+        // read open when there's activity around them.
+        let observed = activity.len();
         let observed_norm = 1.0 - (-(observed as f32) / self.config.saturate_k).exp();
 
         let best_region = self.best_region(&by_region, &region_pts);
@@ -353,6 +366,35 @@ mod tests {
             adv.headline.contains("6M") && adv.headline.contains("OPEN"),
             "got: {}",
             adv.headline
+        );
+    }
+
+    #[test]
+    fn regional_activity_opens_a_band_the_operator_isnt_on() {
+        // Stations NEAR the operator working each other on 15m — the operator is on
+        // neither end of any spot. This must still read the band as alive (not
+        // "Closed"), the bug behind "only 1-2 bands show open".
+        let near = ["EN50", "EN61", "EM49", "FN20", "EN52", "EM48"];
+        let mut spots = Vec::new();
+        for i in 0..12 {
+            let tx = format!("W{i}AA");
+            let rx = format!("K{i}BB");
+            let g = near[i % near.len()];
+            // Neither call is KD9TAW — pure regional census.
+            spots.push(path(&tx, g, &rx, near[(i + 1) % near.len()], Band::B15));
+        }
+        let wx = SpaceWx {
+            sfi: 140.0,
+            kp: 2.0,
+            ..Default::default()
+        };
+        let adv = PropAdvisor::new("KD9TAW", "EN52").advise(NOW, &spots, &wx);
+        let fifteen = adv.bands.iter().find(|b| b.band == "15m").unwrap();
+        assert!(
+            !matches!(fifteen.tier, ActivityTier::Closed),
+            "regional activity should open the band, got {:?} (score {})",
+            fifteen.tier,
+            fifteen.score
         );
     }
 

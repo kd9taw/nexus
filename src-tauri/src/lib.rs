@@ -532,6 +532,15 @@ fn get_propagation(
         );
     }
 
+    // Rebuild the band advisor on the SAME merged window (own paths + near-region
+    // census) the opening detector uses — so the "Bands — what's open now" list
+    // reflects activity AROUND the operator, not only bands they've personally
+    // been heard on. (The cached snapshot's advisory was built from own-call spots
+    // alone, which is why bands you weren't using all read "Closed".)
+    if regional_scope {
+        snap.advisory = propagation::PropAdvisor::new(&mycall, &mygrid).advise(now, &wide, &wx);
+    }
+
     Ok(snap)
 }
 
