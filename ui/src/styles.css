@@ -4710,12 +4710,15 @@ select.settings-input {
   flex: 1;
   min-height: 0;
 }
-/* Lower region: Band Activity (main) beside the Rx-Freq + Roster column. */
+/* Lower region: Band Activity (main) beside the Rx-Freq + Roster column. The
+   single grid row must FILL the height (minmax(0,1fr)) — otherwise it sizes to
+   content and leaves dead space below when the lists are short. */
 .cockpit-lower {
   flex: 1;
   min-height: 0;
   display: grid;
   grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   gap: var(--gap);
 }
 /* Roster mode (GridTracker-style): the Call Roster column becomes dominant. */
