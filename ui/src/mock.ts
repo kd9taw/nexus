@@ -1077,6 +1077,71 @@ class MockEngine {
     return Promise.resolve({
       diagnoses: [
         {
+          index: 5,
+          award: 'DXCC/WAS',
+          status: 'needsAction',
+          reasons: [
+            {
+              code: 'r1',
+              confidence: 'confident',
+              explanation: 'EA7KW is logged but never uploaded to LoTW — upload it.',
+              action: { kind: 'uploadToLotw' },
+            },
+          ],
+        },
+        {
+          index: 6,
+          award: 'DXCC/WAS',
+          status: 'needsAction',
+          reasons: [
+            {
+              code: 'r1',
+              confidence: 'confident',
+              explanation: 'I2ABC is logged but never uploaded to LoTW — upload it.',
+              action: { kind: 'uploadToLotw' },
+            },
+          ],
+        },
+        {
+          index: 7,
+          award: 'DXCC/WAS',
+          status: 'needsAction',
+          reasons: [
+            {
+              code: 'r1',
+              confidence: 'confident',
+              explanation: 'F5XYZ is logged but never uploaded to LoTW — upload it.',
+              action: { kind: 'uploadToLotw' },
+            },
+          ],
+        },
+        {
+          index: 8,
+          award: 'DXCC/WAS',
+          status: 'needsAction',
+          reasons: [
+            {
+              code: 'r9',
+              confidence: 'confident',
+              explanation: 'Your LoTW upload of VK3ABC bounced (invalid Station Location) — fix and re-upload.',
+              action: { kind: 'reUpload', source: 'LoTW', detail: 'invalid Station Location' },
+            },
+          ],
+        },
+        {
+          index: 9,
+          award: 'DXCC/WAS',
+          status: 'needsAction',
+          reasons: [
+            {
+              code: 'r9',
+              confidence: 'confident',
+              explanation: 'LoTW rejected your certificate / Station Location for ZL2AB — fix it in TQSL, then re-upload.',
+              action: { kind: 'reauthenticate', source: 'LoTW' },
+            },
+          ],
+        },
+        {
           index: 12,
           award: 'DXCC/WAS',
           status: 'confirmedWrongSource',
@@ -1087,6 +1152,19 @@ class MockEngine {
               explanation:
                 'JA1XYZ is confirmed on a non-award source (eQSL/QRZ) only — that does NOT count for ARRL DXCC/WAS.',
               action: { kind: 'uploadToLotw' },
+            },
+          ],
+        },
+        {
+          index: 20,
+          award: 'DXCC/WAS',
+          status: 'needsAction',
+          reasons: [
+            {
+              code: 'r2',
+              confidence: 'likely',
+              explanation: "You're in LoTW for PY2XX — waiting on them to upload/confirm.",
+              action: { kind: 'nudgePartner', call: 'PY2XX', source: 'LoTW' },
             },
           ],
         },
@@ -1117,12 +1195,18 @@ class MockEngine {
           ],
         },
       ],
+      // Ordered as the engine emits: count DESC, then kind ASC. R9 is split into two
+      // homogeneous buckets (re-upload vs fix-cert) so the bulk button stays safe.
       buckets: [
+        { kind: 'Logged but never uploaded to LoTW', count: 3, qsoIndices: [5, 6, 7] },
         { kind: 'Confirmed elsewhere — not ARRL-eligible (get LoTW/paper)', count: 1, qsoIndices: [12] },
         { kind: 'Field mismatch blocking a confirmation', count: 1, qsoIndices: [47] },
+        { kind: 'LoTW rejected your certificate — fix it in TQSL', count: 1, qsoIndices: [9] },
+        { kind: 'LoTW upload bounced — fix & re-upload', count: 1, qsoIndices: [8] },
         { kind: 'Missing STATE for WAS', count: 1, qsoIndices: [88] },
+        { kind: 'Uploaded — waiting on the other operator', count: 1, qsoIndices: [20] },
       ],
-      waitingOnPartner: 0,
+      waitingOnPartner: 6,
       pendingLag: 9,
     })
   }

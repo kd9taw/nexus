@@ -4717,6 +4717,44 @@ select.settings-input {
   color: var(--accent);
   white-space: nowrap;
 }
+.conf-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.74rem;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease;
+}
+.conf-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 26%, transparent);
+  border-color: var(--accent);
+}
+.conf-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.conf-btn-bulk {
+  margin-left: 2px;
+}
+.conf-msg {
+  margin: var(--space-3) 0 0;
+  font-size: 0.82rem;
+  color: var(--text);
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: var(--bg);
+  border: 1px solid var(--border-soft);
+}
 .conf-muted {
   margin: var(--space-3) 0 0;
   font-size: 0.82rem;

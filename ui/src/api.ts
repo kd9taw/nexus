@@ -204,7 +204,8 @@ export async function downloadLotwReport(): Promise<LotwSyncResult> {
 export async function uploadLotwReport(indices?: number[]): Promise<UploadReport> {
   const invoke = tauriInvoke()
   if (invoke) return invoke<UploadReport>('upload_lotw_report', { indices: indices ?? null })
-  return { dispatched: 0, outcome: 'none', detail: null }
+  const n = indices?.length ?? 0
+  return { dispatched: n, outcome: n > 0 ? 'pending' : 'none', detail: null }
 }
 
 /** Store the eQSL password in the OS keychain (write-only; empty clears it). */

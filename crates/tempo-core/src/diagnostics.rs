@@ -13,7 +13,7 @@
 //! duplicate (R7). The upload-state reasons (R1 never-uploaded, R9 bounced, the
 //! Confident R2) need a new `UploadState` field → Phase 1b.
 
-use crate::logbook::QsoRecord;
+use crate::logbook::{QsoRecord, UploadOutcome};
 use crate::reconcile::{mode_class, OrphanConfirmation, ReconcileSummary};
 
 const SECS_PER_DAY: u64 = 86_400;
@@ -148,17 +148,31 @@ pub struct DiagnosticsReport {
     pub pending_lag: usize,
 }
 
+/// Is this QSO recent enough to still be "lag" (give it time) rather than a
+/// failure? Saturating so a corrupt/out-of-range `when_unix` can never wrap the
+/// `u64 -> i64` cast negative and overflow the subtraction.
+fn is_recent(now: i64, when_unix: u64, lag_secs: i64) -> bool {
+    let w = i64::try_from(when_unix).unwrap_or(i64::MAX);
+    now.saturating_sub(w) < lag_secs && now >= w
+}
+
 /// Within-QSO reason rank: lower = higher leverage (shown first). The full order
-/// R9>R1>R3>R4*>R6>R7>R2>R5 — 1a uses the R3..R7 subset.
+/// R9>R4*>R6>R7>R3>R1>R2>R5 — 1a uses the R3..R7 subset.
+///
+/// R1 ("never uploaded to LoTW") is the generic catch-all that fits nearly every
+/// unconfirmed QSO, so it ranks BELOW the specific data-fixes (R4*/R6/R7): if a
+/// QSO has a band mismatch *and* hasn't been uploaded, "fix the band" is the real
+/// blocker — uploading a band-wrong record won't make it match. R9 (an upload that
+/// actively bounced) outranks everything: it's not on LoTW at all until you fix it.
 fn rank(code: ReasonCode) -> u8 {
     use ReasonCode::*;
     match code {
         R9UploadBounced => 0,
-        R1NeverUploaded => 1,
-        R3WrongSource => 2,
-        R4aBandMismatch | R4bModeMismatch | R4cDateMismatch | R4dMissingState => 3,
-        R6BustedCall => 4,
-        R7Duplicate => 5,
+        R4aBandMismatch | R4bModeMismatch | R4cDateMismatch | R4dMissingState => 1,
+        R6BustedCall => 2,
+        R7Duplicate => 3,
+        R3WrongSource => 4,
+        R1NeverUploaded => 5,
         R2PartnerHasnt => 6,
         R5Lag => 7,
     }
@@ -332,6 +346,108 @@ pub fn diagnose(
         }
     }
 
+    // --- R1/R9/R2: outbound LoTW upload state (Phase 1b) ---
+    // The whole point of the upload state: distinguish "never uploaded" (R1, your
+    // fix) from "uploaded, partner hasn't" (R2, their fix) from "bounced" (R9).
+    let mut waiting_on_partner = 0usize;
+    for (i, r) in records.iter().enumerate() {
+        if r.award_confirmed {
+            continue; // award credit ends the upload conversation — any stale upload
+                      // state is moot once LoTW has matched it.
+        }
+        let recent = is_recent(now, r.when_unix, cfg.lag_secs);
+        match r.upload.lotw.as_ref().map(|s| (s.outcome, s.detail.clone())) {
+            // R9 — your upload bounced (highest leverage, own-side, Confident). This
+            // fires even for an eQSL-confirmed QSO: a bounced LoTW upload is still
+            // actionable, and R3 ("get it onto LoTW") can't express "it bounced".
+            Some((UploadOutcome::Rejected, detail)) => {
+                let tail = detail
+                    .as_deref()
+                    .map(|d| format!(" ({d})"))
+                    .unwrap_or_default();
+                push_reason(
+                    &mut reasons,
+                    i,
+                    Reason {
+                        code: ReasonCode::R9UploadBounced,
+                        confidence: Confidence::Confident,
+                        explanation: format!("Your LoTW upload of {} bounced{tail} — fix and re-upload.", r.call),
+                        action: Action::ReUpload {
+                            source: "LoTW".into(),
+                            detail,
+                        },
+                    },
+                );
+            }
+            Some((UploadOutcome::AuthFail, _)) => push_reason(
+                &mut reasons,
+                i,
+                Reason {
+                    code: ReasonCode::R9UploadBounced,
+                    confidence: Confidence::Confident,
+                    explanation: format!(
+                        "LoTW rejected your certificate / Station Location for {} — fix it in TQSL, then re-upload.",
+                        r.call
+                    ),
+                    action: Action::Reauthenticate {
+                        source: "LoTW".into(),
+                    },
+                },
+            ),
+            // A QSO already confirmed on a non-award source (eQSL/QRZ) is R3's story —
+            // it already says "get it onto LoTW", so don't pile on a redundant R1/R2.
+            // (Only a *bounced* upload, handled above, adds anything R3 can't say.)
+            _ if r.confirmed => {}
+            // R1 — never uploaded (the most common silent failure).
+            None => push_reason(
+                &mut reasons,
+                i,
+                Reason {
+                    code: ReasonCode::R1NeverUploaded,
+                    confidence: Confidence::Confident,
+                    explanation: format!("{} is logged but never uploaded to LoTW — upload it.", r.call),
+                    action: Action::UploadToLotw,
+                },
+            ),
+            // R2 — uploaded, waiting on the partner (Likely, their side). Skip it when
+            // the QSO already has a data-fix reason (an orphan proves the partner DID
+            // upload — it's a band/mode/call fix, not a partner-wait) or is recent
+            // (the lag counter owns recent QSOs), so each rollup counter owns it once.
+            Some((UploadOutcome::Accepted, _)) | Some((UploadOutcome::Duplicate, _)) => {
+                let already_data_fix = reasons[i].iter().any(|x| {
+                    matches!(
+                        x.code,
+                        ReasonCode::R4aBandMismatch
+                            | ReasonCode::R4bModeMismatch
+                            | ReasonCode::R4cDateMismatch
+                            | ReasonCode::R6BustedCall
+                    )
+                });
+                if !already_data_fix && !recent {
+                    waiting_on_partner += 1;
+                    push_reason(
+                        &mut reasons,
+                        i,
+                        Reason {
+                            code: ReasonCode::R2PartnerHasnt,
+                            confidence: Confidence::Likely,
+                            explanation: format!(
+                                "You're in LoTW for {} — waiting on them to upload/confirm.",
+                                r.call
+                            ),
+                            action: Action::NudgePartner {
+                                call: r.call.clone(),
+                                source: "LoTW".into(),
+                            },
+                        },
+                    );
+                }
+            }
+            // Pending — dispatched, awaiting the own-call echo. Transient, not a row.
+            Some((UploadOutcome::Pending, _)) => {}
+        }
+    }
+
     // --- Build diagnoses + rollup ---
     let mut report = DiagnosticsReport::default();
     let mut buckets: HashMap<&'static str, ActionBucket> = HashMap::new();
@@ -342,7 +458,7 @@ pub fn diagnose(
         rs.sort_by_key(|x| rank(x.code));
 
         // Status from confirmation state (+ lag), independent of advisory reasons.
-        let recent = (now - r.when_unix as i64) < cfg.lag_secs && (now >= r.when_unix as i64);
+        let recent = is_recent(now, r.when_unix, cfg.lag_secs);
         let status = if granted {
             QsoAwardStatus::Credited
         } else if r.award_confirmed {
@@ -364,9 +480,15 @@ pub fn diagnose(
         if rs.is_empty() {
             continue;
         }
+        // A record with actionable reasons is NeedsAction, not merely lagging.
+        let status = if status == QsoAwardStatus::PendingLag {
+            QsoAwardStatus::NeedsAction
+        } else {
+            status
+        };
 
         // Bucket by the top reason's action.
-        let kind = bucket_kind(rs[0].code);
+        let kind = bucket_kind(&rs[0]);
         let b = buckets.entry(kind).or_insert_with(|| ActionBucket {
             kind: kind.to_string(),
             count: 0,
@@ -387,6 +509,7 @@ pub fn diagnose(
     let mut bs: Vec<ActionBucket> = buckets.into_values().collect();
     bs.sort_by(|a, b| b.count.cmp(&a.count).then(a.kind.cmp(&b.kind)));
     report.buckets = bs;
+    report.waiting_on_partner = waiting_on_partner;
     report
 }
 
@@ -520,9 +643,9 @@ fn best_r6_candidate(
     })
 }
 
-fn bucket_kind(code: ReasonCode) -> &'static str {
+fn bucket_kind(reason: &Reason) -> &'static str {
     use ReasonCode::*;
-    match code {
+    match reason.code {
         R3WrongSource => "Confirmed elsewhere — not ARRL-eligible (get LoTW/paper)",
         R4aBandMismatch | R4bModeMismatch | R4cDateMismatch => {
             "Field mismatch blocking a confirmation"
@@ -530,6 +653,18 @@ fn bucket_kind(code: ReasonCode) -> &'static str {
         R4dMissingState => "Missing STATE for WAS",
         R6BustedCall => "Possible busted callsign",
         R7Duplicate => "Possible duplicate log entry",
+        R1NeverUploaded => "Logged but never uploaded to LoTW",
+        // R9 carries two different fixes under one code — keep each bucket homogeneous
+        // so the UI's one-click bulk upload never re-sends a record whose real fix is
+        // repairing the certificate (which would just bounce again).
+        R9UploadBounced => {
+            if matches!(reason.action, Action::Reauthenticate { .. }) {
+                "LoTW rejected your certificate — fix it in TQSL"
+            } else {
+                "LoTW upload bounced — fix & re-upload"
+            }
+        }
+        R2PartnerHasnt => "Uploaded — waiting on the other operator",
         _ => "Needs action",
     }
 }
@@ -537,6 +672,7 @@ fn bucket_kind(code: ReasonCode) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::logbook::{UploadState, UploadStatus};
 
     fn rec(call: &str, band: &str, mode: &str, day: u64) -> QsoRecord {
         QsoRecord {
@@ -656,8 +792,12 @@ mod tests {
             &[None],
             vec![orphan("W1AW", "20m", "Digital", 20_000)],
         );
+        // Same class → no R4b (the QSO still shows R1 for never-uploaded, just not R4b).
         assert!(
-            same.diagnoses.is_empty(),
+            !same.diagnoses[0]
+                .reasons
+                .iter()
+                .any(|x| x.code == ReasonCode::R4bModeMismatch),
             "same mode-class is not a mismatch (raw FT8 vs class Digital)"
         );
         let cross = diag(&[r], &[None], vec![orphan("W1AW", "20m", "Phone", 20_000)]);
@@ -716,23 +856,202 @@ mod tests {
         ));
     }
 
+    fn lotw(outcome: UploadOutcome) -> UploadState {
+        UploadState {
+            lotw: Some(UploadStatus {
+                outcome,
+                when_unix: NOW,
+                detail: None,
+            }),
+            ..Default::default()
+        }
+    }
+
     #[test]
-    fn recent_unconfirmed_is_lag_not_a_row() {
-        // A QSO worked ~1 day ago, unconfirmed, no orphan → counted as lag, not listed.
-        let day = (NOW / 86_400) as u64 - 1; // yesterday (within the 14-day lag window)
-        let r = rec("W1AW", "20m", "FT8", day);
+    fn recent_uploaded_unconfirmed_is_lag_not_a_row() {
+        // A QSO worked ~1 day ago, uploaded (Pending = awaiting the echo), no orphan
+        // → counted as lag, not listed. (Never-uploaded recent QSOs are R1 now, below.)
+        let day = (NOW / 86_400) as u64 - 1; // yesterday (within the lag window)
+        let mut r = rec("W1AW", "20m", "FT8", day);
+        r.upload = lotw(UploadOutcome::Pending);
         let rep = diag(&[r], &[None], vec![]);
         assert!(rep.diagnoses.is_empty());
         assert_eq!(rep.pending_lag, 1);
     }
 
     #[test]
-    fn plain_old_unconfirmed_without_evidence_is_not_listed_in_1a() {
-        // Old, unconfirmed, no orphan, no upload-state (1b) → 1a can't diagnose it.
-        let r = rec("W1AW", "20m", "FT8", 20_000);
+    fn old_unconfirmed_never_uploaded_is_r1() {
+        // Old, unconfirmed, never uploaded to LoTW → R1 (the most common silent gap).
+        let r = rec("W1AW", "20m", "FT8", 20_000); // upload state defaults to none
         let rep = diag(&[r], &[None], vec![]);
-        assert!(rep.diagnoses.is_empty());
-        assert_eq!(rep.pending_lag, 0);
+        let d = &rep.diagnoses[0];
+        assert_eq!(d.reasons[0].code, ReasonCode::R1NeverUploaded);
+        assert!(matches!(d.reasons[0].action, Action::UploadToLotw));
+        assert_eq!(d.status, QsoAwardStatus::NeedsAction);
+    }
+
+    #[test]
+    fn r9_bounced_rejected_vs_authfail() {
+        // Rejected → ReUpload with the (sanitized) detail; AuthFail → Reauthenticate.
+        let mut rej = rec("W1AW", "20m", "FT8", 20_000);
+        rej.upload = UploadState {
+            lotw: Some(UploadStatus {
+                outcome: UploadOutcome::Rejected,
+                when_unix: NOW,
+                detail: Some("bad record".into()),
+            }),
+            ..Default::default()
+        };
+        let mut auth = rec("K2AA", "20m", "FT8", 20_000);
+        auth.upload = lotw(UploadOutcome::AuthFail);
+        let rep = diag(&[rej, auth], &[None, None], vec![]);
+        let d0 = rep.diagnoses.iter().find(|d| d.index == 0).unwrap();
+        assert_eq!(d0.reasons[0].code, ReasonCode::R9UploadBounced);
+        assert!(matches!(
+            &d0.reasons[0].action,
+            Action::ReUpload { source, detail }
+                if source == "LoTW" && detail.as_deref() == Some("bad record")
+        ));
+        let d1 = rep.diagnoses.iter().find(|d| d.index == 1).unwrap();
+        assert_eq!(d1.reasons[0].code, ReasonCode::R9UploadBounced);
+        assert!(matches!(
+            &d1.reasons[0].action,
+            Action::Reauthenticate { source } if source == "LoTW"
+        ));
+    }
+
+    #[test]
+    fn r2_uploaded_waiting_on_partner() {
+        // Old, accepted by LoTW, partner hasn't matched → R2 + the waiting count.
+        let mut r = rec("DL1ABC", "20m", "FT8", 20_000);
+        r.upload = lotw(UploadOutcome::Accepted);
+        let rep = diag(&[r], &[None], vec![]);
+        assert_eq!(rep.waiting_on_partner, 1);
+        let d = &rep.diagnoses[0];
+        assert_eq!(d.reasons[0].code, ReasonCode::R2PartnerHasnt);
+        assert_eq!(d.reasons[0].confidence, Confidence::Likely);
+        assert!(matches!(
+            &d.reasons[0].action,
+            Action::NudgePartner { call, source } if call == "DL1ABC" && source == "LoTW"
+        ));
+    }
+
+    #[test]
+    fn recent_accepted_is_lag_not_waiting() {
+        // Accepted but worked recently → owned by the lag counter, not "waiting on
+        // partner" (each rollup counter owns a QSO exactly once — no double count).
+        let day = (NOW / 86_400) as u64 - 1;
+        let mut r = rec("DL1ABC", "20m", "FT8", day);
+        r.upload = lotw(UploadOutcome::Accepted);
+        let rep = diag(&[r], &[None], vec![]);
+        assert_eq!(rep.waiting_on_partner, 0, "recent acceptance is lag, not waiting");
+        assert_eq!(rep.pending_lag, 1);
+        assert!(rep.diagnoses.is_empty(), "recent acceptance is not a nudge row");
+    }
+
+    #[test]
+    fn eqsl_confirmed_with_bounced_lotw_still_shows_r9() {
+        // A QSO confirmed on eQSL only (confirmed, not award_confirmed) whose LoTW
+        // upload bounced must surface R9 (fix & re-upload), NOT just R3's "upload it"
+        // — uploading the same record would bounce again.
+        let mut rej = rec("DL1ABC", "20m", "FT8", 20_000);
+        rej.confirmed = true;
+        rej.upload = UploadState {
+            lotw: Some(UploadStatus {
+                outcome: UploadOutcome::Rejected,
+                when_unix: NOW,
+                detail: Some("bad band".into()),
+            }),
+            ..Default::default()
+        };
+        let rep = diag(&[rej], &[None], vec![]);
+        let codes: Vec<_> = rep.diagnoses[0].reasons.iter().map(|x| x.code).collect();
+        assert_eq!(codes[0], ReasonCode::R9UploadBounced, "R9 leads, not R3");
+        assert!(codes.contains(&ReasonCode::R3WrongSource), "R3 still present as context");
+
+        // The AuthFail variant routes to re-authenticate, again ahead of R3.
+        let mut auth = rec("DL1ABC", "20m", "FT8", 20_000);
+        auth.confirmed = true;
+        auth.upload = lotw(UploadOutcome::AuthFail);
+        let rep2 = diag(&[auth], &[None], vec![]);
+        assert_eq!(rep2.diagnoses[0].reasons[0].code, ReasonCode::R9UploadBounced);
+        assert!(matches!(
+            &rep2.diagnoses[0].reasons[0].action,
+            Action::Reauthenticate { source } if source == "LoTW"
+        ));
+    }
+
+    #[test]
+    fn eqsl_confirmed_never_uploaded_is_r3_only_not_r1() {
+        // For an eQSL-confirmed QSO, R3 already says "get it onto LoTW" — don't pile
+        // on a redundant R1 (no upload state) or R2 (accepted).
+        let mut none = rec("DL1ABC", "20m", "FT8", 20_000);
+        none.confirmed = true; // no upload state
+        let r1 = diag(&[none], &[None], vec![]);
+        let codes: Vec<_> = r1.diagnoses[0].reasons.iter().map(|x| x.code).collect();
+        assert_eq!(codes, vec![ReasonCode::R3WrongSource], "R3 only, no R1");
+
+        let mut acc = rec("DL1ABC", "20m", "FT8", 20_000);
+        acc.confirmed = true;
+        acc.upload = lotw(UploadOutcome::Accepted);
+        let r2 = diag(&[acc], &[None], vec![]);
+        let codes2: Vec<_> = r2.diagnoses[0].reasons.iter().map(|x| x.code).collect();
+        assert_eq!(codes2, vec![ReasonCode::R3WrongSource], "R3 only, no R2");
+        assert_eq!(r2.waiting_on_partner, 0, "eQSL-confirmed accepted is R3's story");
+    }
+
+    #[test]
+    fn accepted_with_orphan_is_data_fix_not_waiting() {
+        // Accepted upload but a band-mismatch orphan exists → the orphan proves the
+        // partner uploaded; this is a data-fix (R4a leads), not a partner-wait.
+        let mut r = rec("W1AW", "20m", "FT8", 20_000);
+        r.upload = lotw(UploadOutcome::Accepted);
+        let rep = diag(&[r], &[None], vec![orphan("W1AW", "40m", "Digital", 20_000)]);
+        let codes: Vec<_> = rep.diagnoses[0].reasons.iter().map(|x| x.code).collect();
+        assert_eq!(codes[0], ReasonCode::R4aBandMismatch, "data-fix leads");
+        assert!(!codes.contains(&ReasonCode::R2PartnerHasnt), "no partner-wait row");
+        assert_eq!(rep.waiting_on_partner, 0, "orphan proves the partner uploaded");
+    }
+
+    #[test]
+    fn r9_reupload_and_authfail_split_into_distinct_buckets() {
+        // The two R9 outcomes must land in SEPARATE buckets so the UI's bulk upload
+        // never re-sends an AuthFail record (whose real fix is repairing the cert).
+        let mut rej = rec("W1AW", "20m", "FT8", 20_000);
+        rej.upload = lotw(UploadOutcome::Rejected);
+        let mut auth = rec("K2AA", "20m", "FT8", 20_000);
+        auth.upload = lotw(UploadOutcome::AuthFail);
+        let rep = diag(&[rej, auth], &[None, None], vec![]);
+        let kinds: Vec<_> = rep.buckets.iter().map(|b| b.kind.as_str()).collect();
+        assert!(kinds.contains(&"LoTW upload bounced — fix & re-upload"));
+        assert!(kinds.contains(&"LoTW rejected your certificate — fix it in TQSL"));
+        // Each bucket holds exactly its one homogeneous member.
+        for b in &rep.buckets {
+            assert_eq!(b.count, b.qso_indices.len());
+            assert_eq!(b.count, 1);
+        }
+    }
+
+    #[test]
+    fn pending_upload_is_not_a_row() {
+        // Old QSO dispatched to LoTW but still Pending (awaiting the own-call echo) →
+        // transient, neither a reason row nor a waiting-on-partner count.
+        let mut r = rec("W1AW", "20m", "FT8", 20_000);
+        r.upload = lotw(UploadOutcome::Pending);
+        let rep = diag(&[r], &[None], vec![]);
+        assert!(rep.diagnoses.is_empty(), "Pending is transient, not a row");
+        assert_eq!(rep.waiting_on_partner, 0);
+    }
+
+    #[test]
+    fn specific_fix_outranks_generic_r1_upload() {
+        // An unconfirmed QSO with a band-mismatch orphan is ALSO never-uploaded, so
+        // both R4a and R1 fire — but "fix the band" (R4a) must lead, not "upload it".
+        let r = rec("W1AW", "20m", "FT8", 20_000);
+        let rep = diag(&[r], &[None], vec![orphan("W1AW", "40m", "Digital", 20_000)]);
+        let codes: Vec<_> = rep.diagnoses[0].reasons.iter().map(|x| x.code).collect();
+        assert_eq!(codes[0], ReasonCode::R4aBandMismatch, "specific fix leads");
+        assert!(codes.contains(&ReasonCode::R1NeverUploaded), "R1 stacks beneath");
     }
 
     #[test]

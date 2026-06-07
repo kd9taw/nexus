@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react'
-import { Trophy, CheckCircle2, Radio, Target, Layers, Send, Globe2, Award, Flag } from 'lucide-react'
-import type { AwardSummary, EntityNeed, DiagnosticsReport, DiagAction } from '../types'
-import { getAwards, getConfirmationDiagnostics } from '../api'
+import { useEffect, useRef, useState } from 'react'
+import { Trophy, CheckCircle2, Radio, Target, Layers, Send, Globe2, Award, Flag, UploadCloud } from 'lucide-react'
+import type { AwardSummary, EntityNeed, DiagnosticsReport, QsoDiagnosis, UploadReport } from '../types'
+import { getAwards, getConfirmationDiagnostics, uploadLotwReport } from '../api'
 import { StateBlock } from './StateBlock'
 
 /** Confirmed entities for the basic DXCC award. */
@@ -44,13 +44,61 @@ function NeedList({ items, empty }: { items: EntityNeed[]; empty: string }) {
  */
 /** `showGamification` (the `gamification` feature) gates the celebratory badge
  * grid; the award math + tables always render. */
-/** A small non-interactive guidance chip for a diagnostic's top action. Phase 1a
- * is diagnosis + guidance; the one-click upload/resubmit affordances land in 1b. */
-function actionHint(a?: DiagAction) {
+
+/** The two action kinds that map to a one-click LoTW (re)upload via TQSL. */
+const UPLOAD_KINDS = new Set(['uploadToLotw', 'reUpload'])
+
+/** Human-readable result of an upload attempt, for the panel status line. */
+function uploadMessage(r: UploadReport): string {
+  const n = r.dispatched
+  switch (r.outcome) {
+    case 'pending':
+      return `Signed and sent ${n} to LoTW — awaiting confirmation.`
+    case 'duplicate':
+      return `Already on LoTW (${n}) — nothing to re-send.`
+    case 'rejected':
+      return `LoTW rejected the upload${r.detail ? `: ${r.detail}` : ''}.`
+    case 'authfail':
+      return 'LoTW rejected your certificate / Station Location — fix it in TQSL, then retry.'
+    case 'retry':
+      return 'LoTW was unreachable — your log is unchanged; try again shortly.'
+    case 'none':
+      return 'Nothing to upload.'
+    default:
+      return `Upload finished (${r.outcome}).`
+  }
+}
+
+/** Per-QSO action affordance: a live button for the two upload kinds, a static
+ * guidance chip for the rest (field/dup/call fixes + partner-side waits are 1a). */
+function RowAction({
+  d,
+  busyKey,
+  onUpload,
+}: {
+  d: QsoDiagnosis
+  busyKey: string | null
+  onUpload: (indices: number[], key: string) => void
+}) {
+  const a = d.reasons[0]?.action
   if (!a) return null
-  if (a.kind === 'uploadToLotw') return <span className="conf-act">Upload to LoTW</span>
+  const key = `row-${d.index}`
+  if (UPLOAD_KINDS.has(a.kind)) {
+    return (
+      <button
+        className="conf-btn"
+        disabled={busyKey !== null}
+        onClick={() => onUpload([d.index], key)}
+      >
+        {busyKey === key ? 'Uploading…' : a.kind === 'reUpload' ? 'Re-upload' : 'Upload to LoTW'}
+      </button>
+    )
+  }
+  if (a.kind === 'reauthenticate') return <span className="conf-act">Fix cert in TQSL</span>
+  if (a.kind === 'nudgePartner') return <span className="conf-act">Waiting on {a.call}</span>
   if (a.kind === 'mergeDuplicate') return <span className="conf-act">Review dup #{(a.otherIndex ?? 0) + 1}</span>
-  if (a.kind === 'reauthenticate') return <span className="conf-act">Re-auth {a.source}</span>
+  if (a.kind === 'fixField') return <span className="conf-act">Fix {a.field}</span>
+  if (a.kind === 'correctBustedCall') return <span className="conf-act">Was it {a.suggested}?</span>
   return null
 }
 
@@ -58,7 +106,13 @@ export function AwardsView({ showGamification = true }: { showGamification?: boo
   const [aw, setAw] = useState<AwardSummary | null>(null)
   const [diag, setDiag] = useState<DiagnosticsReport | null>(null)
   const [err, setErr] = useState(false)
+  const [busyKey, setBusyKey] = useState<string | null>(null)
+  const [uploadMsg, setUploadMsg] = useState<string | null>(null)
+  // Guards post-await setState in upload() — TQSL signing can take seconds, during
+  // which the operator may switch tabs and unmount this view.
+  const mounted = useRef(true)
   useEffect(() => {
+    mounted.current = true
     let live = true
     getAwards()
       .then((a) => live && setAw(a))
@@ -68,8 +122,27 @@ export function AwardsView({ showGamification = true }: { showGamification?: boo
       .catch(() => {}) // diagnostics are a best-effort add-on; never block the dashboard
     return () => {
       live = false
+      mounted.current = false
     }
   }, [])
+
+  /** Sign + upload the given QSOs via TQSL, then re-diagnose so the panel reflects
+   * the new state (uploaded rows drop to Pending/waiting; bounced ones show R9). */
+  async function upload(indices: number[], key: string) {
+    setBusyKey(key)
+    setUploadMsg(null)
+    try {
+      const r = await uploadLotwReport(indices)
+      const fresh = await getConfirmationDiagnostics().catch(() => null)
+      if (!mounted.current) return
+      setUploadMsg(uploadMessage(r))
+      if (fresh) setDiag(fresh)
+    } catch (e) {
+      if (mounted.current) setUploadMsg(e instanceof Error ? e.message : String(e))
+    } finally {
+      if (mounted.current) setBusyKey(null)
+    }
+  }
 
   if (err) {
     return (
@@ -327,21 +400,48 @@ export function AwardsView({ showGamification = true }: { showGamification?: boo
         </div>
       </div>
 
-      {diag && (diag.diagnoses.length > 0 || diag.pendingLag > 0) && (
+      {diag && (diag.diagnoses.length > 0 || diag.pendingLag > 0 || diag.waitingOnPartner > 0) && (
         <div className="aw-panel conf-panel">
           <h3>
             <CheckCircle2 size={14} aria-hidden="true" /> Confirmations — why isn't this credited?
           </h3>
-          {diag.buckets.length > 0 && (
-            <div className="conf-buckets">
-              {diag.buckets.map((b, i) => (
-                <div className="conf-bucket" key={i}>
-                  <span className="conf-bucket-count">{b.count}</span>
-                  <span className="conf-bucket-kind">{b.kind}</span>
+          {(() => {
+            // Top action per flagged QSO → lets a bucket offer a one-click bulk upload
+            // when its members are the upload kinds (R1 never-sent / R9 bounced).
+            const actionByIndex = new Map(
+              diag.diagnoses.map((d) => [d.index, d.reasons[0]?.action.kind]),
+            )
+            // Require EVERY member to be an upload kind — a bucket can be homogeneous
+            // by construction (the engine splits R9 re-upload vs re-auth), but this
+            // guards against ever shipping a re-auth record through the bulk button.
+            const bucketUploadable = (indices: number[]) =>
+              indices.length > 0 && indices.every((i) => UPLOAD_KINDS.has(actionByIndex.get(i) ?? ''))
+            return (
+              diag.buckets.length > 0 && (
+                <div className="conf-buckets">
+                  {diag.buckets.map((b, i) => {
+                    const key = `bucket-${i}`
+                    return (
+                      <div className="conf-bucket" key={i}>
+                        <span className="conf-bucket-count">{b.count}</span>
+                        <span className="conf-bucket-kind">{b.kind}</span>
+                        {bucketUploadable(b.qsoIndices) && (
+                          <button
+                            className="conf-btn conf-btn-bulk"
+                            disabled={busyKey !== null}
+                            onClick={() => upload(b.qsoIndices, key)}
+                          >
+                            <UploadCloud size={12} aria-hidden="true" />
+                            {busyKey === key ? 'Uploading…' : `Upload ${b.count}`}
+                          </button>
+                        )}
+                      </div>
+                    )
+                  })}
                 </div>
-              ))}
-            </div>
-          )}
+              )
+            )
+          })()}
           {diag.diagnoses.length > 0 && (
             <ul className="conf-list">
               {diag.diagnoses.slice(0, 50).map((d) => {
@@ -351,11 +451,18 @@ export function AwardsView({ showGamification = true }: { showGamification?: boo
                     <span className={`conf-code conf-${r?.code ?? 'x'}`}>{(r?.code ?? '').toUpperCase()}</span>
                     <span className="conf-expl">{r?.explanation}</span>
                     {r?.confidence === 'likely' && <span className="conf-likely">likely</span>}
-                    {actionHint(r?.action)}
+                    <RowAction d={d} busyKey={busyKey} onUpload={upload} />
                   </li>
                 )
               })}
             </ul>
+          )}
+          {uploadMsg && <p className="conf-msg">{uploadMsg}</p>}
+          {diag.waitingOnPartner > 0 && (
+            <p className="conf-muted">
+              {diag.waitingOnPartner} QSO{diag.waitingOnPartner === 1 ? '' : 's'} uploaded to LoTW —
+              waiting on the other operator to confirm.
+            </p>
           )}
           {diag.pendingLag > 0 && (
             <p className="conf-muted">
