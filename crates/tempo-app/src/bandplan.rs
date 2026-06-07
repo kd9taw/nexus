@@ -79,6 +79,57 @@ pub fn band_plan() -> Vec<BandChannel> {
     ]
 }
 
+/// The **standard WSJT-X FT8 dial frequencies** — so that on the FT8 tier a band
+/// pick lands you on the canonical watering hole (14.074 etc.) where the FT8 world
+/// calls, not Nexus's native off-cluster channel. USB, suppressed-carrier dials.
+pub fn ft8_band_plan() -> Vec<BandChannel> {
+    let n = "standard FT8 calling frequency (WSJT-X default)";
+    vec![
+        ch("160m", "HF", 1.840, "USB", "160 m · FT8", n),
+        ch("80m", "HF", 3.573, "USB", "80 m · FT8", n),
+        ch("60m", "HF", 5.357, "USB", "60 m · FT8", n),
+        ch("40m", "HF", 7.074, "USB", "40 m · FT8", n),
+        ch("30m", "HF", 10.136, "USB", "30 m · FT8", n),
+        ch("20m", "HF", 14.074, "USB", "20 m · FT8", n),
+        ch("17m", "HF", 18.100, "USB", "17 m · FT8", n),
+        ch("15m", "HF", 21.074, "USB", "15 m · FT8", n),
+        ch("12m", "HF", 24.915, "USB", "12 m · FT8", n),
+        ch("10m", "HF", 28.074, "USB", "10 m · FT8", n),
+        ch("6m", "VHF", 50.313, "USB", "6 m · FT8", n),
+        ch("2m", "VHF", 144.174, "USB", "2 m · FT8", n),
+        ch("70cm", "UHF", 432.065, "USB", "70 cm · FT8", n),
+    ]
+}
+
+/// The **standard WSJT-X FT4 dial frequencies**. USB, suppressed-carrier dials.
+pub fn ft4_band_plan() -> Vec<BandChannel> {
+    let n = "standard FT4 calling frequency (WSJT-X default)";
+    vec![
+        ch("80m", "HF", 3.575, "USB", "80 m · FT4", n),
+        ch("40m", "HF", 7.0475, "USB", "40 m · FT4", n),
+        ch("30m", "HF", 10.140, "USB", "30 m · FT4", n),
+        ch("20m", "HF", 14.080, "USB", "20 m · FT4", n),
+        ch("17m", "HF", 18.104, "USB", "17 m · FT4", n),
+        ch("15m", "HF", 21.140, "USB", "15 m · FT4", n),
+        ch("12m", "HF", 24.919, "USB", "12 m · FT4", n),
+        ch("10m", "HF", 28.180, "USB", "10 m · FT4", n),
+        ch("6m", "VHF", 50.318, "USB", "6 m · FT4", n),
+        ch("2m", "VHF", 144.170, "USB", "2 m · FT4", n),
+    ]
+}
+
+/// The band/calling plan for the active tier: FT8/FT4 use the standard WSJT-X
+/// watering holes (so you call where everyone else does); FT1/DX1 use Nexus's
+/// native off-cluster plan (those are new narrow modes that must avoid mutual QRM).
+pub fn band_plan_for(tier: crate::dto::Tier) -> Vec<BandChannel> {
+    use crate::dto::Tier;
+    match tier {
+        Tier::Ft8 => ft8_band_plan(),
+        Tier::Ft4 => ft4_band_plan(),
+        Tier::Ft1 | Tier::Dx1 => band_plan(),
+    }
+}
+
 /// The Tempo channel whose dial matches `dial_mhz` (within 500 Hz), if any — used
 /// by the UI to highlight the active band channel.
 pub fn channel_for_dial(dial_mhz: f64) -> Option<BandChannel> {
@@ -113,7 +164,33 @@ mod tests {
         assert_eq!(channel_for_dial(145.5600).unwrap().mode, "FM");
         assert!(
             channel_for_dial(14.074).is_none(),
-            "FT8 dial is not a Tempo channel"
+            "FT8 dial is not a Tempo-native channel"
         );
+    }
+
+    #[test]
+    fn tier_aware_plan_uses_standard_ft8_ft4_dials() {
+        use crate::dto::Tier;
+        // FT8 tier → the standard 14.074 watering hole (where the FT8 world calls).
+        let ft8_20 = band_plan_for(Tier::Ft8)
+            .into_iter()
+            .find(|c| c.band == "20m")
+            .unwrap();
+        assert!((ft8_20.dial_mhz - 14.074).abs() < 1e-9, "FT8 20m = 14.074");
+        // FT4 tier → 14.080.
+        let ft4_20 = band_plan_for(Tier::Ft4)
+            .into_iter()
+            .find(|c| c.band == "20m")
+            .unwrap();
+        assert!((ft4_20.dial_mhz - 14.080).abs() < 1e-9, "FT4 20m = 14.080");
+        // FT1/DX1 keep the native off-cluster plan (must avoid mutual QRM).
+        let ft1_20 = band_plan_for(Tier::Ft1)
+            .into_iter()
+            .find(|c| c.band == "20m")
+            .unwrap();
+        assert!((ft1_20.dial_mhz - 14.0905).abs() < 1e-9, "FT1 20m stays native .0905");
+        // The full standard set is present.
+        assert_eq!(ft8_band_plan().len(), 13);
+        assert!(ft8_band_plan().iter().all(|c| c.mode == "USB"));
     }
 }

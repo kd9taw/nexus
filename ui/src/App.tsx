@@ -261,6 +261,20 @@ export default function App() {
     }
   }, [])
 
+  // Refetch the band plan when the tier changes: FT8/FT4 use the standard WSJT-X
+  // watering holes (14.074 …), FT1/DX1 the native off-cluster plan. So picking a
+  // band always lands you where that mode actually calls.
+  const activeTier = snap?.link.tier
+  useEffect(() => {
+    let live = true
+    getBandPlan()
+      .then((b) => live && setBandPlan(b))
+      .catch(() => {})
+    return () => {
+      live = false
+    }
+  }, [activeTier])
+
   // poll the (mock) typing state so the indicator re-renders smoothly
   useEffect(() => {
     const id = window.setInterval(() => setTypingTick((t) => t + 1), 400)

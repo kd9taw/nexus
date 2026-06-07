@@ -843,8 +843,10 @@ fn get_rig_models() -> Vec<(u32, String)> {
 /// Tempo's proposed calling-frequency band plan (HF + VHF/UHF), for the band
 /// selector. Each entry is General-legal + clear of the existing watering holes.
 #[tauri::command]
-fn get_band_plan() -> Vec<tempo_app::bandplan::BandChannel> {
-    tempo_app::bandplan::band_plan()
+fn get_band_plan(state: State<'_, SharedEngine>) -> Result<Vec<tempo_app::bandplan::BandChannel>, String> {
+    // Tier-aware: FT8/FT4 → the standard WSJT-X watering holes; FT1/DX1 → native plan.
+    let tier = state.lock().map_err(|e| e.to_string())?.tier();
+    Ok(tempo_app::bandplan::band_plan_for(tier))
 }
 
 /// Change band / dial frequency / mode live (does not reset the operating mode).
