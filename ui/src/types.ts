@@ -303,6 +303,8 @@ export interface DecodeRow {
   isCq: boolean
   directedToMe: boolean
   worked: boolean
+  /** Sender's DXCC entity name (country), resolved from the callsign. */
+  country?: string | null
   /** Sender resolves to a DXCC entity never worked before (a "new one"). */
   newDxcc?: boolean
   /** Decode carries a Maidenhead grid never worked before. */
@@ -318,6 +320,8 @@ export interface DecodeRow {
 export interface LoggedQso {
   call: string
   grid: string | null
+  /** DXCC entity name (country), resolved from the callsign — the key DXer field. */
+  country?: string | null
   /** US state (ADIF STATE, 2-letter) for WAS, when known. */
   state?: string | null
   band: string

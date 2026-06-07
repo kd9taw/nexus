@@ -1,17 +1,17 @@
 // Decode alerts: a WebAudio beep + a visual toast, fired from the live decode
 // feed and gated by user settings.
 //
-// - alertMyCall → any decode directed at my callsign
-// - alertCq     → any decode that is a CQ
-// - alertNew    → a station not seen before this browser session
+// We do NOT alert on every decode — that's noise. Experienced operators want
+// loud, aggressive alerts ONLY for the things worth chasing:
+// - alertMyCall → a decode directed at my callsign (someone calling me)
+// - alertNew    → a NEW DXCC entity (a "new one" — aggressive) or a new grid
+// - alertCq     → a plain CQ (off by default; opt-in, since CQs are constant)
 //
-// Each unique decode (from + message + freq) alerts at most once, and the
-// "new station" set persists for the whole session so a call only alerts once.
+// Each unique decode (from + message + freq) alerts at most once.
 
 import type { DecodeRow, Settings } from './types'
 import { pushToast } from './toast'
 
-const seenStations = new Set<string>()
 const alertedDecodes = new Set<string>()
 
 let audioCtx: AudioContext | null = null
@@ -55,40 +55,53 @@ function decodeKey(d: DecodeRow): string {
   return `${d.from ?? '?'}|${d.message}|${Math.round(d.freqHz)}`
 }
 
-type AlertKind = 'mycall' | 'cq' | 'new'
+type AlertKind = 'mycall' | 'newdxcc' | 'newgrid' | 'cq'
 
-const BEEP_HZ: Record<AlertKind, number> = { mycall: 880, cq: 620, new: 740 }
+const BEEP_HZ: Record<AlertKind, number> = { mycall: 880, newdxcc: 520, newgrid: 740, cq: 620 }
+
+/** Two quick tones — the attention-grabbing alert for a new DXCC ("new one"). */
+function doubleBeep(freq: number): void {
+  beep(freq)
+  window.setTimeout(() => beep(freq * 1.5), 130)
+}
 
 /**
- * Inspect the latest decode rows and fire alerts for any that match the
- * enabled settings and haven't alerted before. Marks every row as seen so the
- * "new station" detection stays correct even when alerts are off.
+ * Inspect the latest decode rows and fire alerts ONLY for new/needed things:
+ * someone calling me, a new DXCC entity (aggressive), a new grid, or — if the
+ * operator opted in — a plain CQ. Each unique decode alerts at most once.
  */
 export function processDecodes(decodes: DecodeRow[], settings: Settings): void {
   for (const d of decodes) {
     const call = d.from
-    const isNewStation = call != null && !seenStations.has(call)
-    if (call != null) seenStations.add(call)
 
-    // Decide whether this row should alert (highest priority first).
+    // Decide whether this row should alert (highest priority first). New DXCC
+    // and new grid are gated by alertNew; a new DXCC is the loud "new one".
     let kind: AlertKind | null = null
     if (settings.alertMyCall && d.directedToMe) kind = 'mycall'
+    else if (settings.alertNew && d.newDxcc) kind = 'newdxcc'
+    else if (settings.alertNew && d.newGrid) kind = 'newgrid'
     else if (settings.alertCq && d.isCq) kind = 'cq'
-    else if (settings.alertNew && isNewStation) kind = 'new'
     if (!kind) continue
 
     const key = decodeKey(d)
     if (alertedDecodes.has(key)) continue
     alertedDecodes.add(key)
 
-    beep(BEEP_HZ[kind])
     const who = call ?? 'station'
+    const where = d.country ? ` — ${d.country}` : ''
+    if (kind === 'newdxcc') {
+      // Aggressive: double tone + a prominent, long-lived toast.
+      doubleBeep(BEEP_HZ.newdxcc)
+      pushToast(`🎯 NEW DXCC: ${who}${where}`, 'success', 9000)
+      continue
+    }
+    beep(BEEP_HZ[kind])
     const text =
       kind === 'mycall'
         ? `${who} is calling you`
-        : kind === 'cq'
-          ? `CQ from ${who}`
-          : `New station ${who}`
+        : kind === 'newgrid'
+          ? `New grid: ${who}${where}`
+          : `CQ from ${who}${where}`
     pushToast(text, kind === 'mycall' ? 'success' : 'info', 3500)
   }
 

@@ -49,8 +49,9 @@ export function DecodeFeed({ decodes, harqRescues, onCall }: Props) {
               </span>
               <span className={`decode-snr ${snrClass(d.snr)}`}>{fmtSnr(d.snr)}</span>
               <span className="decode-freq">{Math.round(d.freqHz)}</span>
-              <span className="decode-msg" title={d.message}>
+              <span className="decode-msg" title={d.country ? `${d.message} · ${d.country}` : d.message}>
                 {d.message}
+                {d.country && <span className="decode-country">{d.country}</span>}
                 {d.newDxcc && <span className="decode-tag newdxcc" title="New DXCC entity — a new one!">DXCC</span>}
                 {d.newGrid && !d.newDxcc && <span className="decode-tag newgrid" title="New grid square">GRID</span>}
                 {d.worked && <span className="b4-chip" title="Worked before">B4</span>}

@@ -50,6 +50,11 @@ pub struct DecodeRow {
     pub directed_to_me: bool,
     /// True if the sender is in the logbook (worked before).
     pub worked: bool,
+    /// Sender's DXCC entity name (country), resolved from the callsign. `None`
+    /// unless a DXCC resolver is wired (always None in headless tests). DX chasers
+    /// scan by country, so this rides on every decode + roster row.
+    #[serde(default)]
+    pub country: Option<String>,
     /// True if the sender resolves to a DXCC entity never worked before — a "new
     /// one". Off unless a DXCC resolver is wired (always off in headless tests).
     #[serde(default)]
@@ -404,6 +409,9 @@ impl From<UploadStateDto> for tempo_core::logbook::UploadState {
 pub struct LoggedQso {
     pub call: String,
     pub grid: Option<String>,
+    /// DXCC entity name (country), resolved from the callsign — the key DXer field.
+    #[serde(default)]
+    pub country: Option<String>,
     /// US state (ADIF STATE, 2-letter) for WAS, when known.
     #[serde(default)]
     pub state: Option<String>,
@@ -439,6 +447,7 @@ impl From<tempo_core::logbook::QsoRecord> for LoggedQso {
         LoggedQso {
             call: r.call,
             grid: r.grid,
+            country: r.country,
             state: r.state,
             band: r.band,
             freq_mhz: r.freq_mhz,
@@ -460,6 +469,7 @@ impl From<LoggedQso> for tempo_core::logbook::QsoRecord {
         tempo_core::logbook::QsoRecord {
             call: q.call,
             grid: q.grid,
+            country: q.country,
             state: q.state,
             band: q.band,
             freq_mhz: q.freq_mhz,

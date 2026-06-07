@@ -509,6 +509,13 @@ impl Engine {
     /// Manually add a contact to the logbook (the UI "Log QSO" button). Adds in
     /// memory and appends to the ADIF file if a log path is set.
     pub fn log_qso(&mut self, mut rec: QsoRecord) {
+        // Resolve the DXCC entity (country) if the record doesn't already carry one
+        // — so manually-logged contacts get a country too, not just auto-QSOs.
+        if rec.country.is_none() {
+            if let Some(resolve) = &self.dxcc_resolve {
+                rec.country = resolve(&rec.call);
+            }
+        }
         // Tag with the current POTA/SOTA activation (your side) if one is set and the
         // record doesn't already carry one — so the contact exports with the right
         // MY_SIG/MY_SOTA_REF and counts toward your activation.
@@ -572,7 +579,13 @@ impl Engine {
     /// Sync-derived state is preserved by `Logbook::update_record`. Persists by
     /// rewriting the whole ADIF (an edit can't be an append). Returns false if
     /// `index` is out of range.
-    pub fn update_qso(&mut self, index: usize, rec: QsoRecord) -> bool {
+    pub fn update_qso(&mut self, index: usize, mut rec: QsoRecord) -> bool {
+        // Keep country populated on edits (the edit form doesn't carry it).
+        if rec.country.is_none() {
+            if let Some(resolve) = &self.dxcc_resolve {
+                rec.country = resolve(&rec.call);
+            }
+        }
         let ok = self.logbook.update_record(index, rec);
         if ok {
             if let Some(path) = &self.log_path {
@@ -1341,14 +1354,18 @@ impl Engine {
                 let new_grid = grid
                     .map(|g| !g.is_empty() && !self.worked_grids.contains(&g.to_uppercase()))
                     .unwrap_or(false);
-                // New-DXCC (B3): the sender's entity has never been worked. Needs
-                // the injected resolver; stays off in headless tests.
-                let new_dxcc = match (&from, &self.dxcc_resolve) {
-                    (Some(c), Some(resolve)) => resolve(c)
-                        .map(|e| !self.worked_entities.contains(&e))
-                        .unwrap_or(false),
-                    _ => false,
+                // Country + New-DXCC (B3): resolve the sender's DXCC entity once.
+                // `country` rides every decode (DX chasers scan by country); the
+                // entity also drives new-DXCC. Needs the injected resolver; both
+                // stay None/false in headless tests.
+                let entity = match (&from, &self.dxcc_resolve) {
+                    (Some(c), Some(resolve)) => resolve(c),
+                    _ => None,
                 };
+                let new_dxcc = entity
+                    .as_ref()
+                    .map(|e| !self.worked_entities.contains(e))
+                    .unwrap_or(false);
                 DecodeRow {
                     from,
                     snr: d.snr,
@@ -1358,6 +1375,7 @@ impl Engine {
                     is_cq,
                     directed_to_me,
                     worked,
+                    country: entity,
                     new_dxcc,
                     new_grid,
                     // Label each decode by the mode that actually produced it
@@ -1631,9 +1649,16 @@ impl Engine {
             Tier::Ft1 => "FT1",
         }
         .to_string();
+        // Resolve the DXCC entity (country) at log time — the key field for a
+        // DXer. Uses the injected resolver; None in headless tests.
+        let country = self
+            .dxcc_resolve
+            .as_ref()
+            .and_then(|resolve| resolve(&dxcall));
         QsoRecord {
             call: dxcall,
             grid: dxgrid,
+            country,
             state: None,
             band: self.settings.band.clone(),
             freq_mhz: self.settings.dial_mhz,
@@ -2252,6 +2277,7 @@ mod tests {
         e.log_qso(QsoRecord {
             call: "W9XYZ".into(),
             grid: Some("EN37".into()),
+            country: None,
             state: None,
             band: "20m".into(),
             freq_mhz: 14.074,
@@ -2295,6 +2321,29 @@ mod tests {
         let log = e.get_log();
         assert_eq!(log.len(), 1);
         assert_eq!(log[0].mode, "FT8", "FT8 contacts log as FT8 (award eligibility)");
+    }
+
+    #[test]
+    fn completed_qso_logs_country_from_resolver() {
+        let mut e = Engine::new("K2DEF", "FN31", 0);
+        // Stub resolver: map the DX call to a country.
+        e.set_dxcc_resolver(|call| {
+            if call == "DL1XYZ" {
+                Some("Germany".to_string())
+            } else {
+                None
+            }
+        });
+        e.call_station("DL1XYZ");
+        e.ingest_decodes_for_test(&[dec_snr("K2DEF DL1XYZ -10", -7)], 1);
+        e.ingest_decodes_for_test(&[dec_snr("K2DEF DL1XYZ RR73", -7)], 3);
+        let log = e.get_log();
+        assert_eq!(log.len(), 1);
+        assert_eq!(
+            log[0].country.as_deref(),
+            Some("Germany"),
+            "country resolved + logged at QSO completion"
+        );
     }
 
     /// Engine-level coordinated-QSY end-to-end: an initiator engine announces a

@@ -828,6 +828,7 @@ mod tests {
         QsoRecord {
             call: call.into(),
             grid: None,
+            country: None,
             state: None,
             band: band.into(),
             freq_mhz: 14.074,

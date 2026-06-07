@@ -13,6 +13,10 @@ use std::path::Path;
 pub struct QsoRecord {
     pub call: String,
     pub grid: Option<String>,
+    /// DXCC entity name (ADIF `COUNTRY`), resolved from the callsign at log time.
+    /// The single most important derived field for a DXer — every award is keyed
+    /// on it. `None` only when the call couldn't be resolved. Round-trips via ADIF.
+    pub country: Option<String>,
     /// US state (ADIF `STATE`, 2-letter postal code, uppercased) — drives WAS.
     /// `None` for non-US contacts or when the report didn't carry it.
     pub state: Option<String>,
@@ -431,6 +435,9 @@ pub fn adif_record(r: &QsoRecord) -> String {
     if let Some(g) = &r.grid {
         out.push_str(&field("GRIDSQUARE", g));
     }
+    if let Some(c) = &r.country {
+        out.push_str(&field("COUNTRY", c));
+    }
     if let Some(st) = &r.state {
         out.push_str(&field("STATE", st));
     }
@@ -634,6 +641,10 @@ fn record_from(f: &std::collections::HashMap<String, String>) -> Option<QsoRecor
     Some(QsoRecord {
         call,
         grid: f.get("GRIDSQUARE").cloned(),
+        country: f
+            .get("COUNTRY")
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty()),
         state: f
             .get("STATE")
             .map(|s| s.trim().to_ascii_uppercase())
@@ -718,6 +729,7 @@ mod tests {
         QsoRecord {
             call: call.into(),
             grid: Some("EN37".into()),
+            country: None,
             state: None,
             band: band.into(),
             freq_mhz: 14.0905,
@@ -910,6 +922,24 @@ mod tests {
         assert!(t2.contains("<EQSL_QSL_RCVD:1>Y"));
         let b2 = parse_adif(&t2);
         assert!(b2[0].confirmed && !b2[0].award_confirmed);
+    }
+
+    #[test]
+    fn country_round_trips_through_adif() {
+        // Parses COUNTRY; serialize re-emits it; re-parse preserves.
+        let recs =
+            parse_adif("<EOH>\n<CALL:6>DL1XYZ<BAND:3>20m<MODE:3>FT8<COUNTRY:7>Germany<EOR>\n");
+        assert_eq!(recs[0].country.as_deref(), Some("Germany"));
+        let mut lb = Logbook::new();
+        lb.add(recs[0].clone());
+        let text = lb.adif();
+        assert!(text.contains("<COUNTRY:7>Germany"), "emits the country field");
+        assert_eq!(parse_adif(&text)[0].country.as_deref(), Some("Germany"));
+        // No COUNTRY → no field emitted.
+        let none = rec("K2DEF", "40m", 1_700_000_000);
+        let mut lb2 = Logbook::new();
+        lb2.add(none);
+        assert!(!lb2.adif().contains("<COUNTRY"));
     }
 
     #[test]

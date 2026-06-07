@@ -213,6 +213,7 @@ export function Logbook({
     if (!t) return true
     return (
       q.call.toLowerCase().includes(t) ||
+      (q.country?.toLowerCase().includes(t) ?? false) ||
       q.band.toLowerCase().includes(t) ||
       q.mode.toLowerCase().includes(t) ||
       fmtUtc(q.whenUnix).toLowerCase().includes(t)
@@ -449,6 +450,7 @@ export function Logbook({
       <div className="log-table logbook-table" role="table">
         <div className="log-row logbook-row head" role="row">
           <span className="log-cell" role="columnheader">Call</span>
+          <span className="log-cell" role="columnheader">Country</span>
           <span className="log-cell" role="columnheader">Band</span>
           <span className="log-cell" role="columnheader">Freq</span>
           <span className="log-cell" role="columnheader">Mode</span>
@@ -471,6 +473,7 @@ export function Logbook({
                 key={`${q.call}-${q.whenUnix}-${i}`}
               >
                 <span className="log-cell mono">{q.call}</span>
+                <span className="log-cell log-country" title={q.country ?? ''}>{q.country ?? '—'}</span>
                 <span className="log-cell">{q.band}</span>
                 <span className="log-cell mono">{q.freqMhz.toFixed(4)}</span>
                 <span className="log-cell">{q.mode}</span>

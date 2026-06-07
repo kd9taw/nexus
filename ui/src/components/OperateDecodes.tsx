@@ -179,8 +179,9 @@ export function OperateDecodes({ decodes, slot, rxOffsetHz, harqRescues, onCall 
               {fmtDt(d.dtSec)}
             </span>
             <span className="decode-freq">{Math.round(d.freqHz)}</span>
-            <span className="decode-msg" title={d.message}>
+            <span className="decode-msg" title={d.country ? `${d.message} · ${d.country}` : d.message}>
               {d.message}
+              {d.country && <span className="decode-country">{d.country}</span>}
               {d.newDxcc && (
                 <span className="decode-tag newdxcc" title="New DXCC entity — a new one!">
                   DXCC

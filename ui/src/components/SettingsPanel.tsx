@@ -1156,12 +1156,12 @@ export function SettingsPanel({
                     <span className="toggle-knob" />
                   </button>
                 </label>
-                <span className="settings-hint">Alert on any decoded CQ.</span>
+                <span className="settings-hint">Alert on any decoded CQ. Off by default — CQs are constant.</span>
               </div>
 
               <div className="settings-field">
                 <label className="settings-toggle">
-                  <span className="settings-label">New stations</span>
+                  <span className="settings-label">New DXCC / grid</span>
                   <button
                     type="button"
                     role="switch"
@@ -1172,7 +1172,10 @@ export function SettingsPanel({
                     <span className="toggle-knob" />
                   </button>
                 </label>
-                <span className="settings-hint">Alert when a station not heard this session appears.</span>
+                <span className="settings-hint">
+                  Loudly alert on a new DXCC entity (a “new one”) or a new grid — the things worth
+                  chasing. Does NOT alert on every decode.
+                </span>
               </div>
             </div>
           </fieldset>

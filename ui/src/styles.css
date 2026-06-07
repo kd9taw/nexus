@@ -3667,6 +3667,17 @@ select.settings-input {
   color: #1a1205;
   background: #f5a524;
 }
+/* DXCC entity (country) on a decode row — DX chasers scan by country. */
+.decode-country {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-faint);
+  font-family: var(--font-sans, inherit);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 11ch;
+}
 .decode-work {
   flex: 0 0 auto;
   border: 1px solid var(--border);
@@ -3719,7 +3730,13 @@ select.settings-input {
   margin-top: 12px;
 }
 .logbook-row {
-  grid-template-columns: 1fr 0.7fr 1fr 0.7fr 0.6fr 0.6fr 1.6fr 0.7fr 0.8fr;
+  grid-template-columns: 1fr 1.3fr 0.7fr 1fr 0.7fr 0.6fr 0.6fr 1.6fr 0.7fr 0.8fr;
+}
+.log-country {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
 }
 .logbook-row.editing {
   outline: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
@@ -3797,8 +3814,10 @@ select.settings-input {
 
 @media (max-width: 900px) {
   .logbook-row {
-    grid-template-columns: 1fr 0.7fr 0.8fr 1.2fr 0.7fr;
+    grid-template-columns: 1fr 1.3fr 0.7fr 0.7fr 0.7fr;
   }
+  /* Narrow: keep Call, Country, Band, QSL, actions; hide Freq/Mode/Sent/Rcvd/Time. */
+  .logbook-row .log-cell:nth-child(4),
   .logbook-row .log-cell:nth-child(5),
   .logbook-row .log-cell:nth-child(6),
   .logbook-row .log-cell:nth-child(7),

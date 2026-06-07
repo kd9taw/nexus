@@ -261,7 +261,9 @@ impl Default for Settings {
             qsy_cadence: tempo_core::qsy::DEFAULT_CADENCE,
             alert_my_call: true,
             alert_cq: false,
-            alert_new: false,
+            // New-DXCC / new-grid alerts: ON by default — these are the "new ones"
+            // worth chasing (not per-decode spam, which we never alert on).
+            alert_new: true,
             lotw_username: String::new(),
             lotw_last_qsl: String::new(),
             lotw_station_location: String::new(),

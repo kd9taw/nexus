@@ -278,6 +278,7 @@ function decode(p: Partial<DecodeRow> & Pick<DecodeRow, 'from' | 'message'>): De
     isCq: p.isCq ?? false,
     directedToMe: p.directedToMe ?? false,
     worked: p.worked ?? false,
+    country: p.country ?? null,
     newDxcc: p.newDxcc ?? false,
     newGrid: p.newGrid ?? false,
     tier: p.tier ?? 'FT1',
@@ -289,21 +290,21 @@ function decode(p: Partial<DecodeRow> & Pick<DecodeRow, 'from' | 'message'>): De
 // tier (one HARQ rescue), and a DX1 robust call directed at me — so the mode
 // chips show the full spread the native engine decodes.
 const recentDecodes: DecodeRow[] = [
-  decode({ from: 'F5RXL', message: 'CQ F5RXL IN94', snr: -3, dtSec: -0.1, freqHz: 1197, isCq: true, newDxcc: true, newGrid: true, tier: 'FT8' }),
-  decode({ from: 'EA6EE', message: 'N1JFU EA6EE R-07', snr: -14, dtSec: 0.2, freqHz: 641, tier: 'FT8' }),
-  decode({ from: 'HA0DU', message: 'K1JT HA0DU KN07', snr: -13, dtSec: 0.3, freqHz: 590, worked: true, tier: 'FT8' }),
-  decode({ from: 'N9OY', message: 'CQ RU N9OY EN43', snr: -3, dtSec: -0.2, freqHz: 1640, isCq: true, newGrid: true, tier: 'FT4' }),
-  decode({ from: 'W6PQR', message: 'CQ W6PQR CM87', snr: -7, dtSec: 0.0, freqHz: 1320, isCq: true, tier: 'FT1' }),
-  decode({ from: 'VE3JKL', message: 'VE3JKL W1XYZ R-12', snr: -18, dtSec: 0.2, freqHz: 980, tier: 'FT1', rv: 1 }),
-  decode({ from: 'N0GHI', message: `${MYCALL} N0GHI -14`, snr: -14, dtSec: -0.1, freqHz: 1740, directedToMe: true, tier: 'DX1' }),
+  decode({ from: 'F5RXL', message: 'CQ F5RXL IN94', snr: -3, dtSec: -0.1, freqHz: 1197, isCq: true, country: 'France', newDxcc: true, newGrid: true, tier: 'FT8' }),
+  decode({ from: 'EA6EE', message: 'N1JFU EA6EE R-07', snr: -14, dtSec: 0.2, freqHz: 641, country: 'Balearic Is.', tier: 'FT8' }),
+  decode({ from: 'HA0DU', message: 'K1JT HA0DU KN07', snr: -13, dtSec: 0.3, freqHz: 590, country: 'Hungary', worked: true, tier: 'FT8' }),
+  decode({ from: 'N9OY', message: 'CQ RU N9OY EN43', snr: -3, dtSec: -0.2, freqHz: 1640, isCq: true, country: 'United States', newGrid: true, tier: 'FT4' }),
+  decode({ from: 'W6PQR', message: 'CQ W6PQR CM87', snr: -7, dtSec: 0.0, freqHz: 1320, isCq: true, country: 'United States', tier: 'FT1' }),
+  decode({ from: 'VE3JKL', message: 'VE3JKL W1XYZ R-12', snr: -18, dtSec: 0.2, freqHz: 980, country: 'Canada', tier: 'FT1', rv: 1 }),
+  decode({ from: 'N0GHI', message: `${MYCALL} N0GHI -14`, snr: -14, dtSec: -0.1, freqHz: 1740, directedToMe: true, country: 'United States', tier: 'DX1' }),
 ]
 
 const NOW = Math.floor(Date.now() / 1000)
 const logbook: LoggedQso[] = [
-  { call: 'K2DEF', grid: 'FN20', band: '20m', freqMhz: 14.0905, mode: 'FT1', rstSent: -9, rstRcvd: -11, whenUnix: NOW - 3600, confirmed: false, awardConfirmed: false },
-  { call: 'KD8MNO', grid: 'EN82', band: '40m', freqMhz: 7.0445, mode: 'FT1', rstSent: -15, rstRcvd: -18, whenUnix: NOW - 7200, confirmed: true, awardConfirmed: true },
+  { call: 'K2DEF', grid: 'FN20', country: 'United States', band: '20m', freqMhz: 14.0905, mode: 'FT1', rstSent: -9, rstRcvd: -11, whenUnix: NOW - 3600, confirmed: false, awardConfirmed: false },
+  { call: 'KD8MNO', grid: 'EN82', country: 'United States', band: '40m', freqMhz: 7.0445, mode: 'FT1', rstSent: -15, rstRcvd: -18, whenUnix: NOW - 7200, confirmed: true, awardConfirmed: true },
   // Confirmed only via eQSL → NOT award-eligible (shows the distinction).
-  { call: 'W1AW', grid: 'FN31', band: '20m', freqMhz: 14.0905, mode: 'DX1', rstSent: -3, rstRcvd: -5, whenUnix: NOW - 86400, confirmed: true, awardConfirmed: false },
+  { call: 'W1AW', grid: 'FN31', country: 'United States', band: '20m', freqMhz: 14.0905, mode: 'DX1', rstSent: -3, rstRcvd: -5, whenUnix: NOW - 86400, confirmed: true, awardConfirmed: false },
 ]
 
 // ---------------------------------------------------------------------------
@@ -357,7 +358,7 @@ function defaultSettings(): Settings {
     qsyCadence: 6,
     alertMyCall: true,
     alertCq: false,
-    alertNew: false,
+    alertNew: true,
     lotwUsername: '',
     lotwLastQsl: '',
     lotwStationLocation: '',
