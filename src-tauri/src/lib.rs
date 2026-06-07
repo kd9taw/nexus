@@ -31,8 +31,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tauri::State;
 use tempo_app::dto::{
-    AppSnapshot, DiagnosticsReportDto, ImportStats, LoggedQso, LotwSyncResult, SourceKind, Spectrum,
-    Tier,
+    AppSnapshot, DiagnosticsReportDto, ImportStats, LoggedQso, LotwSyncResult, SourceKind,
+    Spectrum, Tier,
 };
 use tempo_app::engine::Engine;
 use tempo_app::settings::Settings;
@@ -65,11 +65,30 @@ type SharedLivePaths = Arc<Mutex<propagation::LiveSpots>>;
 /// genuine onset (`is_new`) exactly once and keep a sustained opening latched.
 type SharedOpeningTracker = Arc<Mutex<propagation::OpeningTracker>>;
 
+/// Near-region opening spots (Phase 2): spots geographically near the operator on
+/// the VHF/10 m opening bands where NEITHER end is the operator. Kept SEPARATE
+/// from `SharedLivePaths` so they enrich the opening detector without polluting the
+/// advisor's own-call "who hears me / who I hear".
+///
+/// A NEWTYPE, not a `type` alias: Tauri keys managed state by `TypeId`, and an
+/// alias to `Arc<Mutex<LiveSpots>>` would collide with `SharedLivePaths` (same
+/// TypeId) → `.manage()` panics at startup and DI can't tell the buffers apart.
+struct SharedRegionPaths(Arc<Mutex<propagation::LiveSpots>>);
+
 /// Lifetime stop flag for the PSK Reporter MQTT daemon thread (see CLUSTER_STOP).
 static PSKR_STOP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// One-shot latch for the PSK Reporter MQTT daemon thread (see CLUSTER_STARTED).
 static PSKR_STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// One-shot latch for the near-region opening MQTT daemon thread (Phase 2).
+static PSKR_REGION_STARTED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Keep a near-region spot only if an end is within this many km of the operator
+/// (~one Es hop — "openings I could plausibly join"). The per-band global stream
+/// is gated to this radius client-side (the broker can't filter by region).
+const REGION_RADIUS_KM: f64 = 2000.0;
 
 /// Liveness of the background live feeds, updated from their daemon threads and
 /// read by `get_feed_health` for the Now-Bar connector pills. Timestamps are Unix
@@ -174,6 +193,63 @@ fn start_pskr_feed(live_paths: &SharedLivePaths, mycall: &str, health: &SharedHe
                     if let Ok(mut b) = buf.lock() {
                         b.push(spot);
                     }
+                }
+            },
+            &PSKR_STOP,
+        );
+    });
+}
+
+/// Spawn the near-region opening MQTT thread once per process (Phase 2). No-op
+/// unless `mycall` is real, `mygrid` resolves (nothing can be "near" otherwise),
+/// and the operator hasn't opted out. Subscribes to the per-band VHF/10 m global
+/// streams, then keeps only spots that are (a) NOT the operator's own paths (those
+/// live in `live_paths`) and (b) within `REGION_RADIUS_KM` of the operator — so the
+/// opening detector can flag "a band is open around you" while the buffers stay
+/// disjoint and field-rig-bounded. Time-evicts on push so a wide opening can't
+/// truncate the baseline.
+fn start_pskr_region_feed(region_paths: &SharedRegionPaths, mycall: &str, mygrid: &str) {
+    if !is_real_call(mycall)
+        || propagation::geo::maidenhead_to_latlon(mygrid).is_none()
+        || PSKR_REGION_STARTED.swap(true, std::sync::atomic::Ordering::SeqCst)
+    {
+        return;
+    }
+    let buf = region_paths.0.clone();
+    let call = mycall.trim().to_string();
+    let grid = mygrid.trim().to_string();
+    std::thread::spawn(move || {
+        let topics = propagation::pskr_region_topics();
+        let topic_refs: Vec<&str> = topics.iter().map(|s| s.as_str()).collect();
+        let base_w = propagation::OpeningConfig::default().base_w;
+        tempo_net::mqtt::subscribe(
+            PSKR_MQTT_ADDR,
+            &format!("nexus-rgn-{call}"),
+            &topic_refs,
+            |topic, _payload| {
+                let now = now_unix();
+                let Some(spot) = propagation::parse_pskr_mqtt(topic, now) else {
+                    return;
+                };
+                // Own-call paths belong to live_paths; keep only far↔far so the
+                // two buffers are disjoint (no double-count in the anomaly rate).
+                if spot.side(&call) != propagation::Side::Neither {
+                    return;
+                }
+                // Near-region gate, failing CLOSED: at least one end within radius.
+                let near = [spot.tx_grid.as_deref(), spot.rx_grid.as_deref()]
+                    .into_iter()
+                    .flatten()
+                    .any(|g| {
+                        propagation::geo::grid_distance_km(&grid, g)
+                            .is_some_and(|d| d <= REGION_RADIUS_KM)
+                    });
+                if !near {
+                    return;
+                }
+                if let Ok(mut b) = buf.lock() {
+                    b.push(spot);
+                    b.trim_older_than(now - (base_w + 600));
                 }
             },
             &PSKR_STOP,
@@ -350,6 +426,7 @@ fn get_propagation(
     state: State<'_, SharedEngine>,
     cache: State<'_, PropCache>,
     live_paths: State<'_, SharedLivePaths>,
+    region_paths: State<'_, SharedRegionPaths>,
     opening_tracker: State<'_, SharedOpeningTracker>,
 ) -> Result<propagation::PropagationSnapshot, String> {
     let (mycall, mygrid, needs) = {
@@ -427,13 +504,32 @@ fn get_propagation(
         a_index: snap.space_wx.a_index,
         xray_long: if snap.space_wx.flare { 1e-5 } else { 1e-7 },
     };
-    let wide = live_paths
+    // Merge the operator's own-call window with the near-region window (disjoint —
+    // the region feed drops own-call spots). The regional opening gate is enabled
+    // only when there's regional data, so a band can light up from activity around
+    // the operator, not just their own contacts.
+    let mut wide = live_paths
         .lock()
         .map(|b| b.recent(now, cfg.base_w))
         .unwrap_or_default();
+    let mut regional_scope = false;
+    if let Ok(r) = region_paths.0.lock() {
+        let regional = r.recent(now, cfg.base_w);
+        if !regional.is_empty() {
+            regional_scope = true;
+            wide.extend(regional);
+        }
+    }
     if let Ok(mut tr) = opening_tracker.lock() {
-        snap.openings =
-            propagation::detect_openings_tracked(&mycall, &mygrid, now, &wide, &wx, &mut tr);
+        snap.openings = propagation::detect_openings_tracked(
+            &mycall,
+            &mygrid,
+            now,
+            &wide,
+            &wx,
+            &mut tr,
+            regional_scope,
+        );
     }
 
     Ok(snap)
@@ -474,6 +570,7 @@ fn set_settings(
     state: State<'_, SharedEngine>,
     spots: State<'_, SharedSpots>,
     live_paths: State<'_, SharedLivePaths>,
+    region_paths: State<'_, SharedRegionPaths>,
     health: State<'_, SharedHealth>,
     mut settings: Settings,
 ) -> Result<AppSnapshot, String> {
@@ -481,6 +578,8 @@ fn set_settings(
     let cluster_enabled = settings.cluster_enabled;
     let cluster_host = settings.cluster_host.clone();
     let mycall = settings.mycall.clone();
+    let mygrid = settings.mygrid.clone();
+    let opening_regional = settings.opening_regional;
 
     let snap = {
         let mut eng = state.lock().map_err(|e| e.to_string())?;
@@ -513,6 +612,9 @@ fn set_settings(
         start_cluster_feed(spots.inner(), &cluster_host, &mycall, health.inner());
     }
     start_pskr_feed(live_paths.inner(), &mycall, health.inner());
+    if opening_regional {
+        start_pskr_region_feed(region_paths.inner(), &mycall, &mygrid);
+    }
     Ok(snap)
 }
 
@@ -1467,6 +1569,8 @@ pub fn run() {
     let cluster_enabled = settings.cluster_enabled;
     let cluster_host = settings.cluster_host.clone();
     let cluster_call = settings.mycall.clone();
+    let region_grid = settings.mygrid.clone();
+    let region_enabled = settings.opening_regional;
     let engine: SharedEngine = Arc::new(Mutex::new(Engine::with_settings(settings)));
 
     // Live network feeds (DX-cluster / RBN spots + the PSK Reporter MQTT firehose).
@@ -1478,11 +1582,17 @@ pub fn run() {
     // mirrors the nowcast's existing PSK Reporter use, so it has no extra toggle.
     let spots: SharedSpots = Arc::new(Mutex::new(tempo_net::cluster::SpotBuffer::default()));
     let live_paths: SharedLivePaths = Arc::new(Mutex::new(propagation::LiveSpots::default()));
+    let region_paths = SharedRegionPaths(Arc::new(Mutex::new(propagation::LiveSpots::new(
+        propagation::REGION_SPOT_CAP,
+    ))));
     let health: SharedHealth = Arc::new(FeedHealthState::default());
     if cluster_enabled {
         start_cluster_feed(&spots, &cluster_host, &cluster_call, &health);
     }
     start_pskr_feed(&live_paths, &cluster_call, &health);
+    if region_enabled {
+        start_pskr_region_feed(&region_paths, &cluster_call, &region_grid);
+    }
 
     // Point the logbook at its ADIF file and load prior contacts (so worked-
     // before highlighting and the log view reflect previous sessions), and
@@ -1516,6 +1626,7 @@ pub fn run() {
         .manage(prop_cache)
         .manage(spots)
         .manage(live_paths)
+        .manage(region_paths)
         .manage(health)
         .manage(SharedOpeningTracker::default())
         .manage(SharedQrzSession::default())

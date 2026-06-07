@@ -168,9 +168,13 @@ fn project_opening(
     onset_secs: i64,
     is_new: bool,
 ) -> OpeningView {
-    // Distinct far stations (union of both directions; reciprocal ones are counted
-    // on both sides, so subtract the overlap).
-    let stations = (f.unique_far_rx + f.unique_far_tx).saturating_sub(f.reciprocal_pairs) as u32;
+    // Distinct stations to display. Operator-anchored count (union of both
+    // directions, minus the reciprocal overlap), OR the regional census when the
+    // operator isn't in the paths — so a near-region opening reads "~12 stns near
+    // you" instead of "0". `max` degrades to the operator count when the regional
+    // census is empty (v1 behavior preserved).
+    let op_stations = (f.unique_far_rx + f.unique_far_tx).saturating_sub(f.reciprocal_pairs);
+    let stations = op_stations.max(f.unique_stations) as u32;
     let note = if mode == PropMode::Unknown {
         "Opening — mode uncertain".to_string()
     } else if band == Band::B6 && f.min_km > 0.0 && f.min_km < 1000.0 {
@@ -208,8 +212,12 @@ pub fn detect_openings_tracked(
     spots: &[PathSpot],
     wx: &SpaceWx,
     tracker: &mut OpeningTracker,
+    regional_scope: bool,
 ) -> Vec<OpeningView> {
-    let cfg = OpeningConfig::default();
+    let cfg = OpeningConfig {
+        regional_scope,
+        ..OpeningConfig::default()
+    };
     let signals = detect_opening_signals(spots, me_call, me_grid, now, wx, &cfg, &OPENING_BANDS);
     tracker
         .update(now, &signals)

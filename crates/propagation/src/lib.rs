@@ -60,6 +60,7 @@ pub use opening::{
     BandSignal, OpeningConfig, OpeningEvent, OpeningTracker,
 };
 pub use pskr_mqtt::{
-    mqtt_topics as pskr_mqtt_topics, parse_mqtt_report as parse_pskr_mqtt, LiveSpots,
+    mqtt_topics as pskr_mqtt_topics, parse_mqtt_report as parse_pskr_mqtt,
+    region_topics as pskr_region_topics, LiveSpots, REGION_SPOT_CAP,
 };
 pub use spot::Spot;

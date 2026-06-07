@@ -682,6 +682,9 @@ export interface Settings {
   clublogApiKey: string
   /** Auto-upload each logged QSO to ClubLog (realtime push). */
   clublogUpload: boolean
+  /** Watch near-region spots (not just your own paths) so opening detection can
+   *  flag "a band is open around you" before you've worked anyone. */
+  openingRegional: boolean
   /** Editable quick-reply macros, per context. */
   macros: {
     chat: string[]

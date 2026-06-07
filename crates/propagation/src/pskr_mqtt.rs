@@ -66,7 +66,26 @@ impl LiveSpots {
     pub fn is_empty(&self) -> bool {
         self.spots.is_empty()
     }
+    /// Evict spots older than `cutoff` (Unix secs) from the front. The regional
+    /// opening buffer calls this on push so a wide opening can't push the baseline
+    /// window out via the count cap (which would evict quiet baseline bins ahead of
+    /// the hot ones and manufacture a false-normal). The count cap then serves only
+    /// as a hard memory backstop.
+    pub fn trim_older_than(&mut self, cutoff: i64) {
+        while let Some(front) = self.spots.front() {
+            if front.time < cutoff {
+                self.spots.pop_front();
+            } else {
+                break;
+            }
+        }
+    }
 }
+
+/// Buffer cap for the near-region opening firehose (Phase 2) — larger than the
+/// own-call default since a `{band}/#` stream during an opening is much wider.
+/// Backstop only; `LiveSpots::trim_older_than` is the primary (time-based) evictor.
+pub const REGION_SPOT_CAP: usize = 60_000;
 
 /// MQTT topic filters for the operator's own paths: "who hears me" (we're the
 /// sender) and "who I hear" (we're the receiver). `#` matches the trailing topic
@@ -77,6 +96,19 @@ pub fn mqtt_topics(mycall: &str) -> Vec<String> {
         format!("pskr/filter/v2/+/+/{c}/#"), // sender == me  → who heard me
         format!("pskr/filter/v2/+/+/+/{c}/#"), // receiver == me → who I hear
     ]
+}
+
+/// MQTT topic filters for the near-region opening bands (Phase 2): the per-band
+/// global stream `pskr/filter/v2/{band}/#` (band fixed, everything after it
+/// wildcarded — the broadest broker-side filter that still isolates a band, since
+/// grids can't be prefix-matched at the topic level). The caller narrows to "near
+/// me" client-side (grid distance) and drops own-call spots. VHF + 10 m only (the
+/// Es/opening bands, self-throttling); HF F2 stays own-call-only to bound volume.
+pub fn region_topics() -> Vec<String> {
+    ["10m", "6m", "4m", "2m"]
+        .iter()
+        .map(|b| format!("pskr/filter/v2/{b}/#"))
+        .collect()
 }
 
 fn non_empty(s: &str) -> Option<String> {
@@ -130,6 +162,41 @@ mod tests {
         let t = mqtt_topics("kd9taw");
         assert_eq!(t[0], "pskr/filter/v2/+/+/KD9TAW/#"); // who heard me (sender slot)
         assert_eq!(t[1], "pskr/filter/v2/+/+/+/KD9TAW/#"); // who I hear (receiver slot)
+    }
+
+    #[test]
+    fn region_topics_are_per_band_streams() {
+        let t = region_topics();
+        assert!(t.contains(&"pskr/filter/v2/6m/#".to_string()));
+        assert!(t
+            .iter()
+            .all(|s| s.starts_with("pskr/filter/v2/") && s.ends_with("/#")));
+        assert!(
+            !t.iter().any(|s| s.contains("20m")),
+            "HF stays own-call-only"
+        );
+    }
+
+    #[test]
+    fn trim_older_than_evicts_only_out_of_window() {
+        let mut buf = LiveSpots::new(100);
+        let mk = |t: i64| PathSpot {
+            time: t,
+            tx_call: "A".into(),
+            tx_grid: Some("FN42".into()),
+            rx_call: "B".into(),
+            rx_grid: Some("FN31".into()),
+            band: Band::B6,
+            mode: None,
+            snr: None,
+        };
+        for k in 0..10i64 {
+            buf.push(mk(1_000 + k * 600)); // 1000, 1600, ..., 6400 (oldest first)
+        }
+        buf.trim_older_than(4_000); // drop everything before t=4000
+        let kept = buf.recent(10_000, 100_000);
+        assert!(kept.iter().all(|s| s.time >= 4_000), "only in-window kept");
+        assert_eq!(kept.len(), 5, "t = 4000,4600,5200,5800,6400");
     }
 
     #[test]

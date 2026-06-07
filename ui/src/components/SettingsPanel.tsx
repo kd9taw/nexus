@@ -1126,6 +1126,25 @@ export function SettingsPanel({
                 </span>
               </div>
 
+              <div className="settings-field">
+                <label className="settings-toggle">
+                  <span className="settings-label">Near-region opening watch</span>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={form.openingRegional}
+                    className={`toggle${form.openingRegional ? ' on' : ''}`}
+                    onClick={() => updateBool('openingRegional', !form.openingRegional)}
+                  >
+                    <span className="toggle-knob" />
+                  </button>
+                </label>
+                <span className="settings-hint">
+                  Watch VHF/10 m activity near your QTH (not just your own contacts) so openings flag "open
+                  around you" before you've worked anyone. Takes effect on restart.
+                </span>
+              </div>
+
               <label className="settings-field">
                 <span className="settings-label">LoTW username</span>
                 <input

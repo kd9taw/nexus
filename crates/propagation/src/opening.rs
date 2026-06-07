@@ -65,6 +65,16 @@ pub struct OpeningConfig {
     pub exit_windows: u32,
     /// Geomagnetic |lat| (deg) at/above which a far end is "auroral-zone".
     pub auroral_lat: f64,
+    /// Phase 2: consider near-region (neither-end-is-operator) spots in the open
+    /// gate. Default false → operator-anchored v1 behavior, bit-identical.
+    pub regional_scope: bool,
+    /// Min distinct participating stations for a REGIONAL open (Phase 2).
+    pub min_regional_stations: usize,
+    /// Min two-way pairs for a regional open — rejects one loud station heard by many.
+    pub min_regional_reciprocal: usize,
+    /// Min cross-band share for a regional open — rejects a uniform contest/Es surge
+    /// lifting every band (a real opening is band-specific).
+    pub min_regional_cross_band_share: f32,
     /// Baseline hold-out: exclude the most-recent N bins (the current episode +
     /// its rising edge) from the anomaly baseline so z survives a plateau.
     pub gap_bins: usize,
@@ -95,6 +105,10 @@ impl Default for OpeningConfig {
             enter_windows: 2,
             exit_windows: 3,
             auroral_lat: 55.0,
+            regional_scope: false, // v1 default: operator-anchored gate only
+            min_regional_stations: 12,
+            min_regional_reciprocal: 2,
+            min_regional_cross_band_share: 0.3,
             gap_bins: 3, // hold out the recent ~30 min (the episode + rising edge)
             max_dwell_secs: 6 * 3600, // 6 h backstop
         }
@@ -113,6 +127,12 @@ pub struct BandFeatures {
     pub unique_far_tx: usize,
     /// Far stations confirmed BOTH ways with the operator (me→X and X→me).
     pub reciprocal_pairs: usize,
+    /// Distinct stations participating on EITHER end of ALL spots — the regional
+    /// density census (Phase 2). On the own-call feed this ≈ `unique_far_*` + 1.
+    pub unique_stations: usize,
+    /// Distinct unordered call-pairs {A,B} confirmed both ways (regional two-way),
+    /// not just those involving the operator (Phase 2). Superset of `reciprocal_pairs`.
+    pub reciprocal_pairs_regional: usize,
     pub median_km: f64,
     pub max_km: f64,
     pub min_km: f64,
@@ -155,6 +175,8 @@ impl BandFeatures {
             unique_far_rx: 0,
             unique_far_tx: 0,
             reciprocal_pairs: 0,
+            unique_stations: 0,
+            reciprocal_pairs_regional: 0,
             median_km: 0.0,
             max_km: 0.0,
             min_km: 0.0,
@@ -183,8 +205,20 @@ impl BandFeatures {
     /// a feature (a rising-edge / terminator-ramp signal) for confidence + Phase-2
     /// tuning, not as the open gate.
     pub fn raw_open(&self, cfg: &OpeningConfig) -> bool {
-        self.anomaly_z >= cfg.z_open
-            && (self.unique_far_rx >= cfg.min_far_rx || self.unique_far_tx >= cfg.min_far_tx)
+        if self.anomaly_z < cfg.z_open {
+            return false;
+        }
+        // Operator-anchored gate (v1): enough far stations on either direction.
+        let op_gate = self.unique_far_rx >= cfg.min_far_rx || self.unique_far_tx >= cfg.min_far_tx;
+        // Regional gate (Phase 2, opt-in): a band-wide surge near the operator.
+        // Multi-condition so neither a single loud station (needs two-way pairs)
+        // nor a uniform contest/Es lifting every band (needs band-specificity)
+        // can fabricate an opening.
+        let regional_gate = cfg.regional_scope
+            && self.unique_stations >= cfg.min_regional_stations
+            && self.reciprocal_pairs_regional >= cfg.min_regional_reciprocal
+            && self.cross_band_share >= cfg.min_regional_cross_band_share;
+        op_gate || regional_gate
     }
 
     /// Is the band still "warm" (above the exit threshold)?
@@ -230,6 +264,54 @@ pub fn reciprocity(spots: &[PathSpot], me_call: &str, now: i64, window: i64) -> 
         }
     }
     heard_me.intersection(&i_heard).count()
+}
+
+/// Regional two-way reciprocity: distinct unordered call-pairs {A,B} for which
+/// BOTH directions exist (A heard B AND B heard A) in the window — NOT just pairs
+/// involving the operator. The operator-anchored [`reciprocity`] is the special
+/// case where one end is `me`. Keyed by callsign (matching the far-call contract).
+pub fn reciprocity_regional(spots: &[PathSpot], now: i64, window: i64) -> usize {
+    let cutoff = now - window;
+    let mut directed: HashSet<(String, String)> = HashSet::new();
+    for s in spots.iter().filter(|s| s.time >= cutoff) {
+        directed.insert((
+            s.tx_call.to_ascii_uppercase(),
+            s.rx_call.to_ascii_uppercase(),
+        ));
+    }
+    let mut pairs: HashSet<(String, String)> = HashSet::new();
+    for (a, b) in &directed {
+        if directed.contains(&(b.clone(), a.clone())) {
+            // Canonicalize the unordered pair (smaller call first) to dedupe mirrors.
+            let key = if a <= b {
+                (a.clone(), b.clone())
+            } else {
+                (b.clone(), a.clone())
+            };
+            pairs.insert(key);
+        }
+    }
+    pairs.len()
+}
+
+/// The FARTHER of two candidate grids from `me` (for folding a near-region
+/// neither-end-is-operator spot into the me-anchored geometry — one symmetric far
+/// sample). `None` if neither grid resolves a distance.
+fn farther_grid<'a>(me: &str, a: Option<&'a str>, b: Option<&'a str>) -> Option<&'a str> {
+    let da = a.and_then(|g| grid_distance_km(me, g));
+    let db = b.and_then(|g| grid_distance_km(me, g));
+    match (da, db) {
+        (Some(x), Some(y)) => {
+            if x >= y {
+                a
+            } else {
+                b
+            }
+        }
+        (Some(_), None) => a,
+        (None, Some(_)) => b,
+        (None, None) => None,
+    }
 }
 
 /// Percentile (0..1) of an ascending-sorted slice (linear interpolation).
@@ -337,6 +419,7 @@ pub fn band_features(
 
     let mut far_rx: HashSet<String> = HashSet::new();
     let mut far_tx: HashSet<String> = HashSet::new();
+    let mut all_stations: HashSet<String> = HashSet::new();
     let mut dists: Vec<f64> = Vec::new();
     let mut bearings: Vec<f64> = Vec::new();
     let me_geomag = maidenhead_to_latlon(me_grid).map(|(la, lo)| geomagnetic_lat_deg(la, lo));
@@ -347,20 +430,30 @@ pub fn band_features(
     let times: Vec<i64> = band_spots.iter().map(|s| s.time).collect();
 
     for s in band_spots {
-        match s.side(me_call) {
+        // Regional density census: every distinct station on either end.
+        all_stations.insert(s.tx_call.to_ascii_uppercase());
+        all_stations.insert(s.rx_call.to_ascii_uppercase());
+        // The single grid to fold into the operator-anchored geometry pools:
+        // operator spots → the far end (bit-identical to the old far_grid path);
+        // a near-region (Neither) spot → its FARTHER end from me (one symmetric
+        // sample, NOT both — folding both would inject a spurious short leg and
+        // suppress the very skip-hole it should drive).
+        let geo_grid: Option<&str> = match s.side(me_call) {
             Side::HeardMe => {
                 if let Some(c) = s.far_call(me_call) {
-                    far_rx.insert(c.to_uppercase());
+                    far_rx.insert(c.to_ascii_uppercase());
                 }
+                s.rx_grid.as_deref()
             }
             Side::IHeard => {
                 if let Some(c) = s.far_call(me_call) {
-                    far_tx.insert(c.to_uppercase());
+                    far_tx.insert(c.to_ascii_uppercase());
                 }
+                s.tx_grid.as_deref()
             }
-            Side::Neither => {}
-        }
-        if let Some(fg) = s.far_grid(me_call) {
+            Side::Neither => farther_grid(me_grid, s.tx_grid.as_deref(), s.rx_grid.as_deref()),
+        };
+        if let Some(fg) = geo_grid {
             if let Some(d) = grid_distance_km(me_grid, fg) {
                 dists.push(d);
             }
@@ -382,12 +475,10 @@ pub fn band_features(
 
     bf.unique_far_rx = far_rx.len();
     bf.unique_far_tx = far_tx.len();
-    bf.reciprocal_pairs = reciprocity(
-        &band_spots.iter().map(|s| (*s).clone()).collect::<Vec<_>>(),
-        me_call,
-        now,
-        cfg.base_w,
-    );
+    bf.unique_stations = all_stations.len();
+    let owned: Vec<PathSpot> = band_spots.iter().map(|s| (*s).clone()).collect();
+    bf.reciprocal_pairs = reciprocity(&owned, me_call, now, cfg.base_w);
+    bf.reciprocal_pairs_regional = reciprocity_regional(&owned, now, cfg.base_w);
 
     dists.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     if !dists.is_empty() {
@@ -1241,5 +1332,127 @@ mod tests {
             "sustained opening should still be open after 40 min"
         );
         assert_eq!(new_count, 1, "is_new must fire exactly once for the onset");
+    }
+
+    // ---- Phase 2: near-region generalization -------------------------------
+    fn far_far(tx: &str, txg: &str, rx: &str, rxg: &str, band: Band, dt: i64) -> PathSpot {
+        PathSpot {
+            time: NOW - dt,
+            tx_call: tx.into(),
+            tx_grid: Some(txg.into()),
+            rx_call: rx.into(),
+            rx_grid: Some(rxg.into()),
+            band,
+            mode: Some("FT8".into()),
+            snr: None,
+        }
+    }
+
+    #[test]
+    fn reciprocity_regional_counts_far_far_pairs() {
+        // A<->B both ways, NEITHER is the operator → 1 regional pair; the
+        // operator-anchored reciprocity sees none.
+        let spots = vec![
+            far_far("DL1AAA", "JN58", "G3XYZ", "IO91", Band::B6, 10),
+            far_far("G3XYZ", "IO91", "DL1AAA", "JN58", Band::B6, 12), // reciprocal
+            far_far("F5ABC", "JN12", "DL1AAA", "JN58", Band::B6, 14), // one-way only
+        ];
+        assert_eq!(reciprocity_regional(&spots, NOW, 7200), 1);
+        assert_eq!(reciprocity(&spots, ME, NOW, 7200), 0);
+    }
+
+    #[test]
+    fn band_features_counts_neither_into_census_and_far_geometry() {
+        let cfg = OpeningConfig::default();
+        let grids = ["FN42", "EM12", "FM18", "DM79", "EN90", "FM07"];
+        let spots: Vec<PathSpot> = grids
+            .iter()
+            .enumerate()
+            .map(|(i, g)| {
+                far_far(
+                    &format!("A{i}"),
+                    g,
+                    &format!("B{i}"),
+                    "FN31",
+                    Band::B6,
+                    (i as i64) * 5,
+                )
+            })
+            .collect();
+        let bs: Vec<&PathSpot> = spots.iter().collect();
+        let bf = band_features(Band::B6, &bs, ME, ME_GRID, NOW, &cfg);
+        assert_eq!(bf.unique_far_rx, 0);
+        assert_eq!(bf.unique_far_tx, 0, "no operator-side spots");
+        assert!(bf.unique_stations >= 6, "regional census counts both ends");
+        assert!(
+            bf.min_km > cfg.d_near_km,
+            "single farther endpoint folded; none near"
+        );
+        assert!(bf.skip_hole, "a near-region Es burst drives skip_hole");
+        assert!(
+            (640.0..=4500.0).contains(&bf.median_km),
+            "Es-window distance"
+        );
+    }
+
+    #[test]
+    fn neither_single_far_endpoint_does_not_suppress_skip_hole() {
+        // Each Neither spot has a NEAR end (EN61 ~200 km) + a FAR end. Folding only
+        // the FARTHER end means the near end never fills the sub-d_near bucket, so
+        // skip_hole stays true (the bug a dual-endpoint fold would cause).
+        let cfg = OpeningConfig::default();
+        let far = ["FN42", "EM12", "FM18", "DM79", "EN90", "FM07"];
+        let spots: Vec<PathSpot> = far
+            .iter()
+            .enumerate()
+            .map(|(i, g)| {
+                far_far(
+                    &format!("N{i}"),
+                    "EN61",
+                    &format!("F{i}"),
+                    g,
+                    Band::B6,
+                    (i as i64) * 5,
+                )
+            })
+            .collect();
+        let bs: Vec<&PathSpot> = spots.iter().collect();
+        let bf = band_features(Band::B6, &bs, ME, ME_GRID, NOW, &cfg);
+        assert!(bf.skip_hole, "near end must not be folded");
+        assert!(
+            bf.min_km > cfg.d_near_km,
+            "no near sample despite a near end present"
+        );
+    }
+
+    #[test]
+    fn regional_gate_is_multi_condition_and_opt_in() {
+        let mut cfg = OpeningConfig::default();
+        let mut f = BandFeatures::empty(Band::B6);
+        f.anomaly_z = 6.0;
+        f.unique_stations = 15;
+        f.reciprocal_pairs_regional = 4;
+        f.cross_band_share = 0.7;
+        // v1 default (regional_scope off): regional spots can't open (no op far counts).
+        assert!(
+            !f.raw_open(&cfg),
+            "regional spots don't open under the v1 default"
+        );
+        cfg.regional_scope = true;
+        assert!(f.raw_open(&cfg), "opens with the regional gate enabled");
+        // One loud station heard by many: many stations, but no two-way pairs.
+        let mut one_loud = f.clone();
+        one_loud.reciprocal_pairs_regional = 0;
+        assert!(
+            !one_loud.raw_open(&cfg),
+            "one-way (no reciprocity) must not open"
+        );
+        // Contest: every band up → low cross-band share.
+        let mut contest = f.clone();
+        contest.cross_band_share = 0.1;
+        assert!(
+            !contest.raw_open(&cfg),
+            "uniform multi-band surge must not open"
+        );
     }
 }

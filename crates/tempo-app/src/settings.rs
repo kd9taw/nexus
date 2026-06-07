@@ -161,6 +161,11 @@ pub struct Settings {
     /// Auto-upload each logged QSO to ClubLog (realtime push). Off by default.
     pub clublog_upload: bool,
 
+    /// Watch near-region spots (not just your own paths) so opening detection can
+    /// flag "a band is open around you" before you've worked anyone. On by default;
+    /// the operator opt-out for the near-region MQTT feed (Phase 2).
+    pub opening_regional: bool,
+
     /// Editable quick-reply macros per mode (the Composer chips).
     pub macros: Macros,
 }
@@ -237,6 +242,7 @@ impl Default for Settings {
             clublog_callsign: String::new(),
             clublog_api_key: String::new(),
             clublog_upload: false,
+            opening_regional: true,
             macros: Macros::default(),
         }
     }
