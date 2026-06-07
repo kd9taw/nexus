@@ -1,4 +1,4 @@
-import type { Station } from '../types'
+import type { NeedTag, Station } from '../types'
 import { bearingLabel, distanceLabel } from '../grid'
 
 interface Props {
@@ -7,9 +7,20 @@ interface Props {
   currentSlot: number
   selected: boolean
   unread: number
+  /** Top award-need tier for this call (null = nothing needed / not resolvable). */
+  need: NeedTag | null
   onSelect: (call: string) => void
   /** Work / call this station (enters QSO answering it). */
   onCall: (call: string) => void
+}
+
+/** Short chip text + class suffix per need tier. */
+const NEED_CHIP: Record<NeedTag, { label: string; cls: string; title: string }> = {
+  NewEntity: { label: 'NEW', cls: 'entity', title: 'New DXCC entity — work it!' },
+  NewZone: { label: 'ZONE', cls: 'zone', title: 'New CQ zone' },
+  NewBand: { label: 'BAND', cls: 'band', title: 'New band-slot for this entity' },
+  NewMode: { label: 'MODE', cls: 'mode', title: 'New mode for this entity' },
+  Confirm: { label: 'CFM', cls: 'confirm', title: 'Worked — needs a confirmation' },
 }
 
 function lastHeardLabel(lastHeardSlot: number, currentSlot: number): string {
@@ -26,14 +37,18 @@ export function StationCard({
   currentSlot,
   selected,
   unread,
+  need,
   onSelect,
   onCall,
 }: Props) {
   const dist = distanceLabel(myGrid, station.grid)
   const bearing = bearingLabel(myGrid, station.grid)
+  const chip = need ? NEED_CHIP[need] : null
   return (
     <div
-      className={`station-card${selected ? ' selected' : ''}${station.worked ? ' worked' : ''}`}
+      className={`station-card${selected ? ' selected' : ''}${station.worked ? ' worked' : ''}${
+        chip ? ` needed need-${chip.cls}` : ''
+      }`}
     >
       <button
         type="button"
@@ -45,6 +60,11 @@ export function StationCard({
         <span className="station-main">
           <span className="station-line1">
             <span className="station-call">{station.call}</span>
+            {chip && (
+              <span className={`need-chip need-${chip.cls}`} title={chip.title}>
+                {chip.label}
+              </span>
+            )}
             {station.worked && <span className="b4-chip" title="Worked before">B4</span>}
             {unread > 0 && <span className="unread-badge">{unread}</span>}
           </span>

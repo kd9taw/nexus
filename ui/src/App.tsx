@@ -46,9 +46,9 @@ import { NowBar } from './components/NowBar'
 import { AwardsView } from './components/AwardsView'
 import { PropagationView } from './components/PropagationView'
 import { MapView } from './components/MapView'
-import { getPropagation, getFeedHealth } from './api'
+import { getPropagation, getFeedHealth, getNeedAlerts } from './api'
 import { setStatus } from './status'
-import type { PropagationSnapshot, FeedHealth } from './types'
+import type { PropagationSnapshot, FeedHealth, NeedTag } from './types'
 import { QsoPanel } from './components/QsoPanel'
 import { FieldDayView } from './components/FieldDayView'
 import { BandFeed } from './components/BandFeed'
@@ -195,6 +195,30 @@ export default function App() {
     const load = () =>
       getFeedHealth()
         .then((h) => live && setFeedHealth(h))
+        .catch(() => {})
+    load()
+    const id = setInterval(load, 30_000)
+    return () => {
+      live = false
+      clearInterval(id)
+    }
+  }, [])
+  // Need-tier per heard call (top tag), so the roster can colour wanted stations.
+  // Same scoring the Propagation "need heard now" list uses (get_need_alerts), keyed
+  // by callsign for the roster; refreshed on the prop cadence.
+  const [needByCall, setNeedByCall] = useState<Map<string, NeedTag>>(new Map())
+  useEffect(() => {
+    let live = true
+    const load = () =>
+      getNeedAlerts()
+        .then((alerts) => {
+          if (!live) return
+          const m = new Map<string, NeedTag>()
+          for (const a of alerts) {
+            if (a.tags.length > 0) m.set(a.call.toUpperCase(), a.tags[0])
+          }
+          setNeedByCall(m)
+        })
         .catch(() => {})
     load()
     const id = setInterval(load, 30_000)
@@ -466,6 +490,7 @@ export default function App() {
       currentSlot={snap.radio.slot}
       activePeer={activePeer}
       unreadByPeer={unreadByPeer}
+      needByCall={needByCall}
       onSelect={handleSelect}
       onCall={handleCall}
     />

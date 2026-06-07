@@ -1974,6 +1974,38 @@ body.resizing {
   padding: 1px 6px;
 }
 
+/* Award-need badge on a roster card — what's worth working about this station.
+   Tiers descend NEW(entity) > ZONE > BAND > MODE > CFM. */
+.need-chip {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  border-radius: 999px;
+  padding: 1px 6px;
+  color: var(--need-color, var(--accent));
+  background: color-mix(in srgb, var(--need-color, var(--accent)) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--need-color, var(--accent)) 50%, transparent);
+}
+.need-entity {
+  --need-color: var(--state-good, #29c281);
+}
+.need-zone {
+  --need-color: #c084fc;
+}
+.need-band {
+  --need-color: var(--accent, #2dd4bf);
+}
+.need-mode {
+  --need-color: #60a5fa;
+}
+.need-confirm {
+  --need-color: var(--band-marginal, #d8a657);
+}
+/* A subtle left accent on the card so needed stations stand out in the list. */
+.station-card.needed {
+  border-left: 2px solid var(--need-color, var(--accent));
+}
+
 /* IR-HARQ rescue badge: a decode recovered by joint-combining retransmissions. */
 .harq-chip {
   margin-left: 6px;
