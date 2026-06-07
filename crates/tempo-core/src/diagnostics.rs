@@ -156,25 +156,68 @@ fn is_recent(now: i64, when_unix: u64, lag_secs: i64) -> bool {
     now.saturating_sub(w) < lag_secs && now >= w
 }
 
-/// Within-QSO reason rank: lower = higher leverage (shown first). The full order
-/// R9>R4*>R6>R7>R3>R1>R2>R5 — 1a uses the R3..R7 subset.
+/// The upload target a reason's action refers to ("LoTW"/"QRZ"/"ClubLog"), or "" for
+/// non-upload actions. Used both to dedupe reasons per (code, source) and to rank.
+fn action_source(a: &Action) -> &str {
+    match a {
+        Action::UploadToLotw => "LoTW",
+        Action::UploadToQrz => "QRZ",
+        Action::UploadToClublog => "ClubLog",
+        Action::ReUpload { source, .. }
+        | Action::Reauthenticate { source }
+        | Action::NudgePartner { source, .. } => source,
+        _ => "",
+    }
+}
+
+/// Is this action about LoTW (the award-grade source) vs a non-award push target
+/// (QRZ/ClubLog)? Used to rank award reasons ahead of "also push to QRZ/ClubLog".
+fn is_lotw_action(a: &Action) -> bool {
+    match a {
+        Action::UploadToLotw => true,
+        Action::UploadToQrz | Action::UploadToClublog => false,
+        Action::ReUpload { source, .. }
+        | Action::Reauthenticate { source }
+        | Action::NudgePartner { source, .. } => source.eq_ignore_ascii_case("LoTW"),
+        // Non-upload reasons (field/call/dup/wait): their codes rank distinctly, so
+        // the LoTW-ness is irrelevant — default true.
+        _ => true,
+    }
+}
+
+/// Within-QSO reason rank: lower = higher leverage (shown first). The LoTW order is
+/// R9>R4*>R6>R7>R3>R1>R2>R5 (1a uses the R3..R7 subset); the non-award QRZ/ClubLog
+/// variants of R9/R1 slot just *below* their LoTW counterparts so an award reason
+/// (e.g. R2 "waiting on the LoTW partner") always leads "also push to QRZ".
 ///
-/// R1 ("never uploaded to LoTW") is the generic catch-all that fits nearly every
-/// unconfirmed QSO, so it ranks BELOW the specific data-fixes (R4*/R6/R7): if a
-/// QSO has a band mismatch *and* hasn't been uploaded, "fix the band" is the real
-/// blocker — uploading a band-wrong record won't make it match. R9 (an upload that
-/// actively bounced) outranks everything: it's not on LoTW at all until you fix it.
-fn rank(code: ReasonCode) -> u8 {
+/// R1 ("never uploaded") is the generic catch-all that fits nearly every unconfirmed
+/// QSO, so it ranks BELOW the specific data-fixes (R4*/R6/R7): if a QSO has a band
+/// mismatch *and* hasn't been uploaded, "fix the band" is the real blocker. R9 (an
+/// upload that actively bounced) outranks everything: it's not on file until fixed.
+fn rank(reason: &Reason) -> u8 {
     use ReasonCode::*;
-    match code {
-        R9UploadBounced => 0,
-        R4aBandMismatch | R4bModeMismatch | R4cDateMismatch | R4dMissingState => 1,
-        R6BustedCall => 2,
-        R7Duplicate => 3,
-        R3WrongSource => 4,
-        R1NeverUploaded => 5,
-        R2PartnerHasnt => 6,
-        R5Lag => 7,
+    let lotw = is_lotw_action(&reason.action);
+    match reason.code {
+        R9UploadBounced => {
+            if lotw {
+                0
+            } else {
+                1
+            }
+        }
+        R4aBandMismatch | R4bModeMismatch | R4cDateMismatch | R4dMissingState => 2,
+        R6BustedCall => 3,
+        R7Duplicate => 4,
+        R3WrongSource => 5,
+        R1NeverUploaded => {
+            if lotw {
+                6
+            } else {
+                8
+            }
+        }
+        R2PartnerHasnt => 7,
+        R5Lag => 9,
     }
 }
 
@@ -250,10 +293,16 @@ pub fn diagnose(
     now: i64,
     cfg: &DiagCfg,
 ) -> DiagnosticsReport {
-    // Per-record accumulated reasons (deduped by code).
+    // Per-record accumulated reasons, deduped by (code, source) — the source matters
+    // so a record can carry, e.g., both "never uploaded to LoTW" (R1/LoTW) and "never
+    // pushed to QRZ" (R1/QRZ) without the second collapsing into the first.
     let mut reasons: Vec<Vec<Reason>> = vec![Vec::new(); records.len()];
     let push_reason = |slots: &mut Vec<Vec<Reason>>, i: usize, r: Reason| {
-        if !slots[i].iter().any(|x| x.code == r.code) {
+        let key = (r.code, action_source(&r.action));
+        if !slots[i]
+            .iter()
+            .any(|x| x.code == key.0 && action_source(&x.action) == key.1)
+        {
             slots[i].push(r);
         }
     };
@@ -346,9 +395,15 @@ pub fn diagnose(
         }
     }
 
-    // --- R1/R9/R2: outbound LoTW upload state (Phase 1b) ---
+    // --- R1/R9/R2: outbound upload state (Phase 1b) ---
     // The whole point of the upload state: distinguish "never uploaded" (R1, your
     // fix) from "uploaded, partner hasn't" (R2, their fix) from "bounced" (R9).
+    // LoTW gets the full treatment (it's award-grade with a partner match); QRZ and
+    // ClubLog get R1 (never pushed) + R9 (bounced) only — and R1 there is self-gated
+    // on whether the operator actually uses that service (any QSO carries its state),
+    // so a non-user never sees "never pushed to QRZ" noise.
+    let track_qrz = records.iter().any(|r| r.upload.qrz.is_some());
+    let track_clublog = records.iter().any(|r| r.upload.clublog.is_some());
     let mut waiting_on_partner = 0usize;
     for (i, r) in records.iter().enumerate() {
         if r.award_confirmed {
@@ -446,6 +501,78 @@ pub fn diagnose(
             // Pending — dispatched, awaiting the own-call echo. Transient, not a row.
             Some((UploadOutcome::Pending, _)) => {}
         }
+
+        // QRZ / ClubLog push health (non-award targets): a bounce is always
+        // actionable (R9); "never pushed" (R1) only when the operator uses that
+        // service (tracked) and the QSO is otherwise unconfirmed. No R2 — these have
+        // no partner-match step, and an Accepted/Duplicate push is simply done.
+        for (status, source, never, tracked) in [
+            (r.upload.qrz.as_ref(), "QRZ", Action::UploadToQrz, track_qrz),
+            (
+                r.upload.clublog.as_ref(),
+                "ClubLog",
+                Action::UploadToClublog,
+                track_clublog,
+            ),
+        ] {
+            match status.map(|s| (s.outcome, s.detail.clone())) {
+                Some((UploadOutcome::Rejected, detail)) => {
+                    let tail = detail
+                        .as_deref()
+                        .map(|d| format!(" ({d})"))
+                        .unwrap_or_default();
+                    push_reason(
+                        &mut reasons,
+                        i,
+                        Reason {
+                            code: ReasonCode::R9UploadBounced,
+                            confidence: Confidence::Confident,
+                            explanation: format!(
+                                "Your {source} upload of {} bounced{tail} — fix and re-upload.",
+                                r.call
+                            ),
+                            action: Action::ReUpload {
+                                source: source.into(),
+                                detail,
+                            },
+                        },
+                    );
+                }
+                Some((UploadOutcome::AuthFail, _)) => push_reason(
+                    &mut reasons,
+                    i,
+                    Reason {
+                        code: ReasonCode::R9UploadBounced,
+                        confidence: Confidence::Confident,
+                        explanation: format!(
+                            "{source} rejected your login for {} — fix it in Settings, then re-upload.",
+                            r.call
+                        ),
+                        action: Action::Reauthenticate {
+                            source: source.into(),
+                        },
+                    },
+                ),
+                // R1 — never pushed, but only for a service the operator actually uses
+                // and a QSO that isn't already confirmed elsewhere (R3 owns those).
+                None if tracked && !r.confirmed => push_reason(
+                    &mut reasons,
+                    i,
+                    Reason {
+                        code: ReasonCode::R1NeverUploaded,
+                        confidence: Confidence::Confident,
+                        explanation: format!(
+                            "{} is logged but never uploaded to {source} — upload it.",
+                            r.call
+                        ),
+                        action: never,
+                    },
+                ),
+                // Accepted/Duplicate = on file (done); Pending = transient; untracked
+                // or confirmed-elsewhere None = nothing to surface.
+                _ => {}
+            }
+        }
     }
 
     // --- Build diagnoses + rollup ---
@@ -455,7 +582,7 @@ pub fn diagnose(
     for (i, r) in records.iter().enumerate() {
         let granted = !r.credit_granted.is_empty();
         let mut rs = std::mem::take(&mut reasons[i]);
-        rs.sort_by_key(|x| rank(x.code));
+        rs.sort_by_key(rank);
 
         // Status from confirmation state (+ lag), independent of advisory reasons.
         let recent = is_recent(now, r.when_unix, cfg.lag_secs);
@@ -653,17 +780,28 @@ fn bucket_kind(reason: &Reason) -> &'static str {
         R4dMissingState => "Missing STATE for WAS",
         R6BustedCall => "Possible busted callsign",
         R7Duplicate => "Possible duplicate log entry",
-        R1NeverUploaded => "Logged but never uploaded to LoTW",
-        // R9 carries two different fixes under one code — keep each bucket homogeneous
-        // so the UI's one-click bulk upload never re-sends a record whose real fix is
-        // repairing the certificate (which would just bounce again).
-        R9UploadBounced => {
-            if matches!(reason.action, Action::Reauthenticate { .. }) {
-                "LoTW rejected your certificate — fix it in TQSL"
-            } else {
-                "LoTW upload bounced — fix & re-upload"
-            }
-        }
+        // R1 buckets by target (LoTW vs QRZ vs ClubLog) so each is homogeneous.
+        R1NeverUploaded => match reason.action {
+            Action::UploadToQrz => "Logged but never uploaded to QRZ",
+            Action::UploadToClublog => "Logged but never uploaded to ClubLog",
+            _ => "Logged but never uploaded to LoTW",
+        },
+        // R9 carries different fixes (re-upload vs re-auth) across targets — keep each
+        // bucket homogeneous so the UI's one-click bulk upload never re-sends a record
+        // whose real fix is repairing a credential (or targets the wrong service).
+        R9UploadBounced => match &reason.action {
+            Action::Reauthenticate { source } => match source.as_str() {
+                "QRZ" => "QRZ login rejected — fix it in Settings",
+                "ClubLog" => "ClubLog login rejected — fix it in Settings",
+                _ => "LoTW rejected your certificate — fix it in TQSL",
+            },
+            Action::ReUpload { source, .. } => match source.as_str() {
+                "QRZ" => "QRZ upload bounced — fix & re-upload",
+                "ClubLog" => "ClubLog upload bounced — fix & re-upload",
+                _ => "LoTW upload bounced — fix & re-upload",
+            },
+            _ => "LoTW upload bounced — fix & re-upload",
+        },
         R2PartnerHasnt => "Uploaded — waiting on the other operator",
         _ => "Needs action",
     }
@@ -1052,6 +1190,101 @@ mod tests {
         let codes: Vec<_> = rep.diagnoses[0].reasons.iter().map(|x| x.code).collect();
         assert_eq!(codes[0], ReasonCode::R4aBandMismatch, "specific fix leads");
         assert!(codes.contains(&ReasonCode::R1NeverUploaded), "R1 stacks beneath");
+    }
+
+    fn with_qrz(mut r: QsoRecord, outcome: UploadOutcome) -> QsoRecord {
+        r.upload.qrz = Some(UploadStatus {
+            outcome,
+            when_unix: NOW,
+            detail: None,
+        });
+        r
+    }
+    fn with_clublog(mut r: QsoRecord, outcome: UploadOutcome) -> QsoRecord {
+        r.upload.clublog = Some(UploadStatus {
+            outcome,
+            when_unix: NOW,
+            detail: None,
+        });
+        r
+    }
+
+    #[test]
+    fn qrz_bounce_shows_r9_in_its_own_bucket() {
+        let r = with_qrz(rec("W1AW", "20m", "FT8", 20_000), UploadOutcome::Rejected);
+        let rep = diag(&[r], &[None], vec![]);
+        let top = &rep.diagnoses[0].reasons[0];
+        assert_eq!(top.code, ReasonCode::R9UploadBounced);
+        assert!(matches!(&top.action, Action::ReUpload { source, .. } if source == "QRZ"));
+        assert!(rep
+            .buckets
+            .iter()
+            .any(|b| b.kind == "QRZ upload bounced — fix & re-upload"));
+    }
+
+    #[test]
+    fn clublog_authfail_shows_r9_reauth_distinct_source() {
+        let r = with_clublog(rec("W1AW", "20m", "FT8", 20_000), UploadOutcome::AuthFail);
+        let rep = diag(&[r], &[None], vec![]);
+        let top = &rep.diagnoses[0].reasons[0];
+        assert_eq!(top.code, ReasonCode::R9UploadBounced);
+        assert!(matches!(&top.action, Action::Reauthenticate { source } if source == "ClubLog"));
+        assert!(rep
+            .buckets
+            .iter()
+            .any(|b| b.kind == "ClubLog login rejected — fix it in Settings"));
+    }
+
+    #[test]
+    fn qrz_never_pushed_r1_is_self_gated_on_use() {
+        // No record carries any QRZ state → "never pushed to QRZ" must NOT fire
+        // (the operator doesn't use QRZ push), so this plain unconfirmed QSO is R1-LoTW only.
+        let solo = rec("W1AW", "20m", "FT8", 20_000);
+        let rep = diag(&[solo], &[None], vec![]);
+        let codes: Vec<_> = rep.diagnoses[0].reasons.iter().map(|x| x.code).collect();
+        assert_eq!(codes, vec![ReasonCode::R1NeverUploaded], "R1-LoTW only, no QRZ");
+        assert!(matches!(rep.diagnoses[0].reasons[0].action, Action::UploadToLotw));
+
+        // Once ANY QSO carries QRZ state, a never-pushed unconfirmed QSO gets R1-QRZ.
+        let user = with_qrz(rec("K2AA", "20m", "FT8", 19_000), UploadOutcome::Accepted);
+        let target = rec("W1AW", "20m", "FT8", 20_000); // qrz None, lotw None
+        let rep2 = diag(&[user, target], &[None, None], vec![]);
+        let d = rep2.diagnoses.iter().find(|d| d.index == 1).unwrap();
+        assert!(
+            d.reasons.iter().any(|x| matches!(x.action, Action::UploadToQrz)),
+            "R1-QRZ now fires"
+        );
+        assert!(
+            d.reasons.iter().any(|x| matches!(x.action, Action::UploadToLotw)),
+            "R1-LoTW too"
+        );
+    }
+
+    #[test]
+    fn lotw_r1_outranks_qrz_r1() {
+        // Never uploaded to LoTW (R1-LoTW) AND never pushed to QRZ (R1-QRZ, tracked).
+        // The award target (LoTW) must lead.
+        let user = with_qrz(rec("K2AA", "20m", "FT8", 19_000), UploadOutcome::Accepted);
+        let target = rec("W1AW", "20m", "FT8", 20_000);
+        let rep = diag(&[user, target], &[None, None], vec![]);
+        let d = rep.diagnoses.iter().find(|d| d.index == 1).unwrap();
+        assert!(matches!(d.reasons[0].action, Action::UploadToLotw), "LoTW R1 leads QRZ R1");
+    }
+
+    #[test]
+    fn lotw_partner_wait_outranks_qrz_never_pushed() {
+        // QSO is in LoTW (Accepted, old) → R2 "waiting on partner"; never pushed to
+        // QRZ (tracked via a sibling) → R1-QRZ. The award reason (R2) must lead.
+        let mut subject = rec("DL1ABC", "20m", "FT8", 20_000);
+        subject.upload = lotw(UploadOutcome::Accepted); // LoTW Accepted; qrz/clublog None
+        let tracker = with_qrz(rec("K2AA", "20m", "FT8", 19_000), UploadOutcome::Accepted);
+        let rep = diag(&[subject, tracker], &[None, None], vec![]);
+        let d = rep.diagnoses.iter().find(|d| d.index == 0).unwrap();
+        assert_eq!(d.reasons[0].code, ReasonCode::R2PartnerHasnt, "award wait leads");
+        assert!(
+            d.reasons.iter().any(|x| matches!(x.action, Action::UploadToQrz)),
+            "QRZ never-pushed stacks beneath"
+        );
     }
 
     #[test]

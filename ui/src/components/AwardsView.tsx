@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Trophy, CheckCircle2, Radio, Target, Layers, Send, Globe2, Award, Flag, UploadCloud } from 'lucide-react'
-import type { AwardSummary, EntityNeed, DiagnosticsReport, QsoDiagnosis, UploadReport } from '../types'
+import type { AwardSummary, EntityNeed, DiagnosticsReport, DiagAction, QsoDiagnosis, UploadReport } from '../types'
 import { getAwards, getConfirmationDiagnostics, uploadLotwReport } from '../api'
 import { StateBlock } from './StateBlock'
 
@@ -45,8 +45,13 @@ function NeedList({ items, empty }: { items: EntityNeed[]; empty: string }) {
 /** `showGamification` (the `gamification` feature) gates the celebratory badge
  * grid; the award math + tables always render. */
 
-/** The two action kinds that map to a one-click LoTW (re)upload via TQSL. */
-const UPLOAD_KINDS = new Set(['uploadToLotw', 'reUpload'])
+/** True iff this action maps to the one-click LoTW (re)upload via TQSL — the only
+ * service with an in-app bulk/by-index upload path. A `reUpload` for QRZ/ClubLog
+ * carries a non-LoTW `source` and must NOT drive the LoTW upload button. */
+function isLotwUpload(a?: DiagAction): boolean {
+  if (!a) return false
+  return a.kind === 'uploadToLotw' || (a.kind === 'reUpload' && (a.source ?? 'LoTW') === 'LoTW')
+}
 
 /** Human-readable result of an upload attempt, for the panel status line. */
 function uploadMessage(r: UploadReport): string {
@@ -83,7 +88,8 @@ function RowAction({
   const a = d.reasons[0]?.action
   if (!a) return null
   const key = `row-${d.index}`
-  if (UPLOAD_KINDS.has(a.kind)) {
+  // Only LoTW has an in-app one-click (re)upload (via TQSL) — show the live button.
+  if (isLotwUpload(a)) {
     return (
       <button
         className="conf-btn"
@@ -94,7 +100,16 @@ function RowAction({
       </button>
     )
   }
-  if (a.kind === 'reauthenticate') return <span className="conf-act">Fix cert in TQSL</span>
+  // QRZ/ClubLog have no bulk path — guide the operator instead of mis-firing LoTW.
+  if (a.kind === 'reUpload') return <span className="conf-act">Re-push to {a.source}</span>
+  if (a.kind === 'uploadToQrz') return <span className="conf-act">Push to QRZ</span>
+  if (a.kind === 'uploadToClublog') return <span className="conf-act">Push to ClubLog</span>
+  if (a.kind === 'reauthenticate')
+    return (
+      <span className="conf-act">
+        {(a.source ?? 'LoTW') === 'LoTW' ? 'Fix cert in TQSL' : `Fix ${a.source} login in Settings`}
+      </span>
+    )
   if (a.kind === 'nudgePartner') return <span className="conf-act">Waiting on {a.call}</span>
   if (a.kind === 'mergeDuplicate') return <span className="conf-act">Review dup #{(a.otherIndex ?? 0) + 1}</span>
   if (a.kind === 'fixField') return <span className="conf-act">Fix {a.field}</span>
@@ -407,15 +422,15 @@ export function AwardsView({ showGamification = true }: { showGamification?: boo
           </h3>
           {(() => {
             // Top action per flagged QSO → lets a bucket offer a one-click bulk upload
-            // when its members are the upload kinds (R1 never-sent / R9 bounced).
+            // ONLY when every member is a LoTW (re)upload (the one service with an
+            // in-app bulk path). The engine already splits buckets by source + re-auth,
+            // but require every member so a QRZ/ClubLog or re-auth record can never be
+            // shipped through the LoTW upload button.
             const actionByIndex = new Map(
-              diag.diagnoses.map((d) => [d.index, d.reasons[0]?.action.kind]),
+              diag.diagnoses.map((d) => [d.index, d.reasons[0]?.action]),
             )
-            // Require EVERY member to be an upload kind — a bucket can be homogeneous
-            // by construction (the engine splits R9 re-upload vs re-auth), but this
-            // guards against ever shipping a re-auth record through the bulk button.
             const bucketUploadable = (indices: number[]) =>
-              indices.length > 0 && indices.every((i) => UPLOAD_KINDS.has(actionByIndex.get(i) ?? ''))
+              indices.length > 0 && indices.every((i) => isLotwUpload(actionByIndex.get(i)))
             return (
               diag.buckets.length > 0 && (
                 <div className="conf-buckets">

@@ -227,6 +227,22 @@ pub enum QrzPushResult {
     Fail,
 }
 
+impl QrzPushResult {
+    /// Map a QRZ push outcome to the generic per-QSO [`UploadOutcome`] for the
+    /// logbook's `upload.qrz` cursor. `Ok`/`Replace` → on file (Accepted); a
+    /// rejected duplicate is benign (Duplicate); `AuthFail`/`Fail` are bounces the
+    /// diagnostics surface as R9. Always definitive (no transient/None case).
+    pub fn to_upload_outcome(self) -> crate::logbook::UploadOutcome {
+        use crate::logbook::UploadOutcome as U;
+        match self {
+            QrzPushResult::Ok | QrzPushResult::Replace => U::Accepted,
+            QrzPushResult::Duplicate => U::Duplicate,
+            QrzPushResult::AuthFail => U::AuthFail,
+            QrzPushResult::Fail => U::Rejected,
+        }
+    }
+}
+
 /// Parsed QRZ Logbook INSERT response.
 #[derive(Debug, Clone, PartialEq)]
 pub struct QrzPush {
@@ -536,5 +552,15 @@ mod tests {
             parse_push_response("RESULT=OK&REASON=100%").result,
             QrzPushResult::Ok
         );
+    }
+
+    #[test]
+    fn push_result_maps_to_upload_outcome() {
+        use crate::logbook::UploadOutcome as U;
+        assert_eq!(QrzPushResult::Ok.to_upload_outcome(), U::Accepted);
+        assert_eq!(QrzPushResult::Replace.to_upload_outcome(), U::Accepted);
+        assert_eq!(QrzPushResult::Duplicate.to_upload_outcome(), U::Duplicate);
+        assert_eq!(QrzPushResult::AuthFail.to_upload_outcome(), U::AuthFail);
+        assert_eq!(QrzPushResult::Fail.to_upload_outcome(), U::Rejected);
     }
 }

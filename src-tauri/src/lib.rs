@@ -1504,7 +1504,10 @@ fn qrz_lookup(
 /// this after a successful `log_qso` when auto-upload is on. No lock held over the
 /// network call.
 #[tauri::command]
-fn qrz_push_qso(record: LoggedQso) -> Result<tempo_app::dto::QrzPushResultDto, String> {
+fn qrz_push_qso(
+    record: LoggedQso,
+    state: State<'_, SharedEngine>,
+) -> Result<tempo_app::dto::QrzPushResultDto, String> {
     let key = qrz_logbook_keychain()?
         .get_password()
         .map_err(|_| "No QRZ Logbook API key stored — set it in Settings.".to_string())?;
@@ -1512,7 +1515,19 @@ fn qrz_push_qso(record: LoggedQso) -> Result<tempo_app::dto::QrzPushResultDto, S
     let adif = tempo_core::logbook::adif_record(&rec);
     let body = tempo_core::qrz::build_insert_body(&key, &adif, false);
     let resp = propagation::live::qrz::post_form(tempo_core::qrz::QRZ_LOGBOOK_URL, body)?;
-    Ok(tempo_core::qrz::parse_push_response(&resp).into())
+    let push = tempo_core::qrz::parse_push_response(&resp);
+    // Record the outcome on the just-pushed QSO so diagnostics can surface R1 (never
+    // pushed to QRZ) / R9 (QRZ upload bounced). QRZ outcomes are always definitive.
+    {
+        let outcome = push.result.to_upload_outcome();
+        let detail = push
+            .reason
+            .as_deref()
+            .and_then(tempo_core::lotw_upload::sanitize_detail);
+        let mut eng = state.lock().map_err(|e| e.to_string())?;
+        eng.stamp_qrz_upload(&rec, outcome, now_unix(), detail);
+    }
+    Ok(push.into())
 }
 
 // ----- ClubLog realtime QSO push --------------------------------------------
@@ -1606,6 +1621,17 @@ fn clublog_push_qso(
     if push.result == tempo_core::clublog::ClubLogResult::AuthFail {
         // Halt further auto-pushes until a credential changes (IP-block guard).
         CLUBLOG_SUSPENDED.store(true, Ordering::Relaxed);
+    }
+    // Record the outcome on the just-pushed QSO so diagnostics can surface R1 (never
+    // pushed to ClubLog) / R9 (bounced). Transient results (ServerError/Unknown) map
+    // to None → leave it unstamped for a clean retry.
+    if let Some(outcome) = push.result.to_upload_outcome() {
+        let detail = push
+            .message
+            .as_deref()
+            .and_then(tempo_core::lotw_upload::sanitize_detail);
+        let mut eng = state.lock().map_err(|e| e.to_string())?;
+        eng.stamp_clublog_upload(&rec, outcome, now_unix(), detail);
     }
     Ok(push.into())
 }

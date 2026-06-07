@@ -235,6 +235,49 @@ impl Logbook {
         crate::reconcile::promote_own_echo(&mut self.records, &own, when_unix)
     }
 
+    /// Index of the NEWEST logged QSO matching `pushed`'s key (call/band/mode-class/
+    /// UTC-day) — the just-logged QSO in the auto-push-at-log-time flow. `None` if no
+    /// match (e.g. the QSO isn't in this log).
+    fn newest_match_index(&self, pushed: &QsoRecord) -> Option<usize> {
+        let mc = crate::reconcile::mode_class(&pushed.mode);
+        let day = pushed.when_unix / 86_400;
+        self.records
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(_, r)| {
+                r.call.eq_ignore_ascii_case(&pushed.call)
+                    && r.band.eq_ignore_ascii_case(&pushed.band)
+                    && crate::reconcile::mode_class(&r.mode) == mc
+                    && r.when_unix / 86_400 == day
+            })
+            .map(|(i, _)| i)
+    }
+
+    /// Stamp a QRZ Logbook push outcome onto the newest matching QSO (the one just
+    /// pushed). Returns whether a record was stamped. Pure — call `save` to persist.
+    pub fn stamp_qrz_upload(&mut self, pushed: &QsoRecord, status: UploadStatus) -> bool {
+        match self.newest_match_index(pushed) {
+            Some(i) => {
+                self.records[i].upload.qrz = Some(status);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Stamp a ClubLog realtime push outcome onto the newest matching QSO. Returns
+    /// whether a record was stamped. Pure — call `save` to persist.
+    pub fn stamp_clublog_upload(&mut self, pushed: &QsoRecord, status: UploadStatus) -> bool {
+        match self.newest_match_index(pushed) {
+            Some(i) => {
+                self.records[i].upload.clublog = Some(status);
+                true
+            }
+            None => false,
+        }
+    }
+
     /// UTC date (`YYYY-MM-DD`) of the oldest QSO whose LoTW upload is awaiting the
     /// echo (`Pending`) — the lower bound for an own-QSO (`qso_qsl=no`) pull so a
     /// sync never scans the whole log. `None` when nothing is in flight (the caller

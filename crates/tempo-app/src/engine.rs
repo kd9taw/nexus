@@ -516,6 +516,57 @@ impl Engine {
         self.logbook.oldest_pending_lotw_date()
     }
 
+    /// Record a QRZ Logbook push outcome on the just-pushed QSO (`upload.qrz`), so
+    /// the diagnostics can show "never uploaded to QRZ" (R1) / "QRZ upload bounced"
+    /// (R9). Persists on change. Returns whether a record was stamped.
+    pub fn stamp_qrz_upload(
+        &mut self,
+        pushed: &QsoRecord,
+        outcome: tempo_core::logbook::UploadOutcome,
+        when_unix: i64,
+        detail: Option<String>,
+    ) -> bool {
+        let status = tempo_core::logbook::UploadStatus {
+            outcome,
+            when_unix,
+            detail,
+        };
+        let changed = self.logbook.stamp_qrz_upload(pushed, status);
+        if changed {
+            if let Some(path) = &self.log_path {
+                if let Err(e) = self.logbook.save(path) {
+                    eprintln!("tempo: stamp_qrz_upload save failed: {e}");
+                }
+            }
+        }
+        changed
+    }
+
+    /// Record a ClubLog realtime push outcome on the just-pushed QSO
+    /// (`upload.clublog`). Persists on change. Returns whether a record was stamped.
+    pub fn stamp_clublog_upload(
+        &mut self,
+        pushed: &QsoRecord,
+        outcome: tempo_core::logbook::UploadOutcome,
+        when_unix: i64,
+        detail: Option<String>,
+    ) -> bool {
+        let status = tempo_core::logbook::UploadStatus {
+            outcome,
+            when_unix,
+            detail,
+        };
+        let changed = self.logbook.stamp_clublog_upload(pushed, status);
+        if changed {
+            if let Some(path) = &self.log_path {
+                if let Err(e) = self.logbook.save(path) {
+                    eprintln!("tempo: stamp_clublog_upload save failed: {e}");
+                }
+            }
+        }
+        changed
+    }
+
     /// Merge an eQSL confirmation report into the log. Same generic reconcile path
     /// as [`Engine::merge_lotw_report`]; the award-grade distinction lives in the
     /// ADIF (eQSL carries `EQSL_QSL_RCVD`, not `QSL_RCVD`/`LOTW_QSL_RCVD`), so an

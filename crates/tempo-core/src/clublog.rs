@@ -60,6 +60,24 @@ pub enum ClubLogResult {
     Unknown,
 }
 
+impl ClubLogResult {
+    /// Map a ClubLog push outcome to the generic per-QSO [`UploadOutcome`] for the
+    /// logbook's `upload.clublog` cursor. `None` for the transient cases
+    /// (`ServerError`/`Unknown`) so the QSO stays unstamped for a clean retry,
+    /// matching the LoTW network-error convention; `AuthFail`/`Rejected` are bounces
+    /// the diagnostics surface as R9.
+    pub fn to_upload_outcome(self) -> Option<crate::logbook::UploadOutcome> {
+        use crate::logbook::UploadOutcome as U;
+        match self {
+            ClubLogResult::Ok | ClubLogResult::Modified => Some(U::Accepted),
+            ClubLogResult::Duplicate => Some(U::Duplicate),
+            ClubLogResult::Rejected => Some(U::Rejected),
+            ClubLogResult::AuthFail => Some(U::AuthFail),
+            ClubLogResult::ServerError | ClubLogResult::Unknown => None,
+        }
+    }
+}
+
 /// A classified realtime response.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClubLogPush {
@@ -197,5 +215,18 @@ mod tests {
             Some("Access denied")
         );
         assert!(classify_response(200, "   ").message.is_none());
+    }
+
+    #[test]
+    fn result_maps_to_upload_outcome() {
+        use crate::logbook::UploadOutcome as U;
+        assert_eq!(ClubLogResult::Ok.to_upload_outcome(), Some(U::Accepted));
+        assert_eq!(ClubLogResult::Modified.to_upload_outcome(), Some(U::Accepted));
+        assert_eq!(ClubLogResult::Duplicate.to_upload_outcome(), Some(U::Duplicate));
+        assert_eq!(ClubLogResult::Rejected.to_upload_outcome(), Some(U::Rejected));
+        assert_eq!(ClubLogResult::AuthFail.to_upload_outcome(), Some(U::AuthFail));
+        // Transient → no stamp (clean retry).
+        assert_eq!(ClubLogResult::ServerError.to_upload_outcome(), None);
+        assert_eq!(ClubLogResult::Unknown.to_upload_outcome(), None);
     }
 }

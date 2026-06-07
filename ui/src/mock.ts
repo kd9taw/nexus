@@ -1182,6 +1182,45 @@ class MockEngine {
           ],
         },
         {
+          index: 30,
+          award: 'DXCC/WAS',
+          status: 'needsAction',
+          reasons: [
+            {
+              code: 'r9',
+              confidence: 'confident',
+              explanation: 'Your QRZ upload of OH2XX bounced (rejected ADIF) — fix and re-upload.',
+              action: { kind: 'reUpload', source: 'QRZ', detail: 'rejected ADIF' },
+            },
+          ],
+        },
+        {
+          index: 31,
+          award: 'DXCC/WAS',
+          status: 'needsAction',
+          reasons: [
+            {
+              code: 'r1',
+              confidence: 'confident',
+              explanation: 'SP9ABC is logged but never uploaded to QRZ — upload it.',
+              action: { kind: 'uploadToQrz' },
+            },
+          ],
+        },
+        {
+          index: 32,
+          award: 'DXCC/WAS',
+          status: 'needsAction',
+          reasons: [
+            {
+              code: 'r9',
+              confidence: 'confident',
+              explanation: 'ClubLog rejected your login for VK9XX — fix it in Settings, then re-upload.',
+              action: { kind: 'reauthenticate', source: 'ClubLog' },
+            },
+          ],
+        },
+        {
           index: 88,
           award: 'DXCC/WAS',
           status: 'confirmed',
@@ -1195,15 +1234,19 @@ class MockEngine {
           ],
         },
       ],
-      // Ordered as the engine emits: count DESC, then kind ASC. R9 is split into two
-      // homogeneous buckets (re-upload vs fix-cert) so the bulk button stays safe.
+      // Ordered as the engine emits: count DESC, then kind ASC. R9 is split per source +
+      // re-upload/re-auth so each bucket is homogeneous (the bulk button only ever fires
+      // for an all-LoTW-(re)upload bucket).
       buckets: [
         { kind: 'Logged but never uploaded to LoTW', count: 3, qsoIndices: [5, 6, 7] },
+        { kind: 'ClubLog login rejected — fix it in Settings', count: 1, qsoIndices: [32] },
         { kind: 'Confirmed elsewhere — not ARRL-eligible (get LoTW/paper)', count: 1, qsoIndices: [12] },
         { kind: 'Field mismatch blocking a confirmation', count: 1, qsoIndices: [47] },
         { kind: 'LoTW rejected your certificate — fix it in TQSL', count: 1, qsoIndices: [9] },
         { kind: 'LoTW upload bounced — fix & re-upload', count: 1, qsoIndices: [8] },
+        { kind: 'Logged but never uploaded to QRZ', count: 1, qsoIndices: [31] },
         { kind: 'Missing STATE for WAS', count: 1, qsoIndices: [88] },
+        { kind: 'QRZ upload bounced — fix & re-upload', count: 1, qsoIndices: [30] },
         { kind: 'Uploaded — waiting on the other operator', count: 1, qsoIndices: [20] },
       ],
       waitingOnPartner: 6,
