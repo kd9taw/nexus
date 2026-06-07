@@ -492,6 +492,23 @@ impl Engine {
         summary
     }
 
+    /// Merge a LoTW own-QSO report (`qso_qsl=no`) INTO the log: promote in-flight
+    /// uploads (Pending / never-marked) to `Accepted` where LoTW confirms it holds
+    /// your record — the step that turns a just-uploaded QSO into "waiting on the
+    /// partner" (R2) and clears false "never uploaded" (R1) for out-of-band uploads.
+    /// Persists the log on any change. Returns the count newly promoted.
+    pub fn merge_lotw_own_echo(&mut self, text: &str, when_unix: i64) -> usize {
+        let promoted = self.logbook.merge_own_echo(text, when_unix);
+        if promoted > 0 {
+            if let Some(path) = &self.log_path {
+                if let Err(e) = self.logbook.save(path) {
+                    eprintln!("tempo: merge_lotw_own_echo save failed: {e}");
+                }
+            }
+        }
+        promoted
+    }
+
     /// Merge an eQSL confirmation report into the log. Same generic reconcile path
     /// as [`Engine::merge_lotw_report`]; the award-grade distinction lives in the
     /// ADIF (eQSL carries `EQSL_QSL_RCVD`, not `QSL_RCVD`/`LOTW_QSL_RCVD`), so an

@@ -92,6 +92,30 @@ pub fn build_report_url(q: &LotwQuery) -> String {
     url
 }
 
+/// Build the LoTW **own-QSO** download URL (`qso_qsl=no`): the records LoTW holds
+/// from you that the partner hasn't matched yet. Used to promote an in-flight
+/// upload from "Pending" to "Accepted" — proof your side is on file, so the QSO is
+/// now genuinely "waiting on the other operator" (R2) rather than never-sent (R1).
+///
+/// `qso_qslsince` is deliberately omitted: that cursor tracks confirmation *match*
+/// dates and does not apply to a `qso_qsl=no` query, so this is a full own-pull
+/// (bounded by your log size). The returned URL carries the password — never log it.
+pub fn build_own_report_url(q: &LotwQuery) -> String {
+    let mut url = format!(
+        "{LOTW_REPORT_URL}?login={}&password={}&qso_query=1&qso_qsl=no",
+        pct(&q.username),
+        pct(&q.password),
+    );
+    if let Some(call) = q.owncall.as_deref() {
+        let call = call.trim();
+        if !call.is_empty() {
+            url.push_str("&qso_owncall=");
+            url.push_str(&pct(call));
+        }
+    }
+    url
+}
+
 /// True iff `body` is a genuine LoTW ADIF report rather than an HTML error page.
 ///
 /// A successful report **begins** with the documented status banner (the same
@@ -189,6 +213,21 @@ mod tests {
         assert!(url.contains("qso_owncall=KD9TAW"));
         // Space in the date is encoded.
         assert!(url.contains("qso_qslsince=2026-01-02%2003%3A04%3A05"));
+    }
+
+    #[test]
+    fn own_report_url_requests_unmatched_own_qsos() {
+        let url = build_own_report_url(&LotwQuery {
+            owncall: Some("KD9TAW".into()),
+            ..q()
+        });
+        assert!(url.contains("qso_query=1"));
+        assert!(url.contains("qso_qsl=no"), "own-echo asks for unmatched records");
+        assert!(!url.contains("qso_qsl=yes"));
+        assert!(url.contains("qso_owncall=KD9TAW"));
+        // No match-date cursor on an own-QSO pull, and the password is still encoded.
+        assert!(!url.contains("qso_qslsince="));
+        assert!(url.contains("password=p%40ss%20w%26rd%3D1"));
     }
 
     #[test]

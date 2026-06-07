@@ -226,6 +226,15 @@ impl Logbook {
         crate::reconcile::reconcile(&mut self.records, &incoming)
     }
 
+    /// Merge a LoTW **own-QSO** report (`qso_qsl=no` ADIF — your records LoTW holds
+    /// but the partner hasn't matched). Promotes matched QSOs' LoTW upload state to
+    /// `Accepted` (your side is on file → "waiting on partner"). Returns the count
+    /// newly promoted. Pure merge — call [`save`](Self::save) to persist.
+    pub fn merge_own_echo(&mut self, text: &str, when_unix: i64) -> usize {
+        let own = parse_adif(text);
+        crate::reconcile::promote_own_echo(&mut self.records, &own, when_unix)
+    }
+
     /// The whole logbook as ADIF text (header + records).
     pub fn adif(&self) -> String {
         let mut s = adif_header();

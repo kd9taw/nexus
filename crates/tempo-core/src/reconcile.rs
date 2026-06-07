@@ -178,10 +178,70 @@ pub fn reconcile(local: &mut [QsoRecord], incoming: &[QsoRecord]) -> ReconcileSu
     sum
 }
 
+/// Promote a logged QSO's own LoTW upload state to `Accepted` when it appears in
+/// the **own-QSO report** (LoTW's `qso_qsl=no` — your records LoTW holds but the
+/// partner hasn't matched yet). That membership is proof LoTW has your side on
+/// file, which is exactly what turns a "Pending" (awaiting echo) or never-marked
+/// upload into the "waiting on the other operator" (R2) state, and clears a false
+/// "never uploaded" (R1) for QSOs uploaded out-of-band (e.g. plain TQSL).
+///
+/// Consume-once by (call, band, mode-class, UTC-day) with the same ±1-day midnight
+/// tolerance as [`reconcile`]. Award-confirmed QSOs are skipped (already matched —
+/// and `qso_qsl=no` would not list them anyway). Idempotent: an already-Accepted/
+/// Duplicate QSO is re-stamped harmlessly and not counted. Returns the number
+/// *newly* promoted.
+pub fn promote_own_echo(local: &mut [QsoRecord], own: &[QsoRecord], when_unix: i64) -> usize {
+    use crate::logbook::{UploadOutcome, UploadStatus};
+
+    // Index award-unconfirmed local QSOs by match key; reversed so pop() consumes
+    // in log order (oldest first), mirroring `reconcile`.
+    let mut buckets: HashMap<Key, Vec<usize>> = HashMap::new();
+    for (i, r) in local.iter().enumerate() {
+        if !r.award_confirmed {
+            buckets.entry(key(r)).or_default().push(i);
+        }
+    }
+    for v in buckets.values_mut() {
+        v.reverse();
+    }
+
+    let mut promoted = 0usize;
+    for inc in own {
+        let call_u = inc.call.to_ascii_uppercase();
+        let band_l = inc.band.to_ascii_lowercase();
+        let mc = mode_class(&inc.mode);
+        let day = inc.when_unix / 86_400;
+        let mut idx = None;
+        for d in [day, day.wrapping_sub(1), day + 1] {
+            if let Some(v) = buckets.get_mut(&(call_u.clone(), band_l.clone(), mc, d)) {
+                if let Some(i) = v.pop() {
+                    idx = Some(i);
+                    break;
+                }
+            }
+        }
+        if let Some(i) = idx {
+            let already_on_file = matches!(
+                local[i].upload.lotw.as_ref().map(|s| s.outcome),
+                Some(UploadOutcome::Accepted) | Some(UploadOutcome::Duplicate)
+            );
+            local[i].upload.lotw = Some(UploadStatus {
+                outcome: UploadOutcome::Accepted,
+                when_unix,
+                detail: None,
+            });
+            if !already_on_file {
+                promoted += 1;
+            }
+        }
+    }
+    promoted
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::logbook::QsoRecord;
+    use crate::logbook::{QsoRecord, UploadOutcome, UploadState, UploadStatus};
 
     fn rec(call: &str, band: &str, mode: &str, day: u64) -> QsoRecord {
         QsoRecord {
@@ -200,6 +260,86 @@ mod tests {
             credit_submitted: Vec::new(),
             upload: Default::default(),
         }
+    }
+
+    fn with_lotw(mut r: QsoRecord, outcome: UploadOutcome) -> QsoRecord {
+        r.upload = UploadState {
+            lotw: Some(UploadStatus {
+                outcome,
+                when_unix: 0,
+                detail: None,
+            }),
+            ..Default::default()
+        };
+        r
+    }
+
+    fn lotw_outcome(r: &QsoRecord) -> Option<UploadOutcome> {
+        r.upload.lotw.as_ref().map(|s| s.outcome)
+    }
+
+    #[test]
+    fn own_echo_promotes_pending_to_accepted() {
+        let mut log = vec![with_lotw(rec("W1AW", "20m", "FT8", 20_000), UploadOutcome::Pending)];
+        // Own-QSO report row (submode differs: MFSK→Digital), ±0 day.
+        let own = vec![rec("w1aw", "20M", "MFSK", 20_000)];
+        let n = promote_own_echo(&mut log, &own, 99);
+        assert_eq!(n, 1);
+        assert_eq!(lotw_outcome(&log[0]), Some(UploadOutcome::Accepted));
+        assert_eq!(log[0].upload.lotw.as_ref().unwrap().when_unix, 99);
+    }
+
+    #[test]
+    fn own_echo_clears_false_never_uploaded() {
+        // A QSO LoTW holds but we never marked (uploaded out-of-band) → Accepted.
+        let mut log = vec![rec("W1AW", "20m", "FT8", 20_000)]; // upload state = none
+        let own = vec![rec("W1AW", "20m", "FT8", 20_000)];
+        let n = promote_own_echo(&mut log, &own, 7);
+        assert_eq!(n, 1);
+        assert_eq!(lotw_outcome(&log[0]), Some(UploadOutcome::Accepted));
+    }
+
+    #[test]
+    fn own_echo_skips_award_confirmed_and_is_consume_once() {
+        let mut award = rec("K2AA", "20m", "FT8", 20_000);
+        award.award_confirmed = true;
+        let mut log = vec![
+            award, // must NOT be touched
+            with_lotw(rec("W1AW", "20m", "FT8", 20_000), UploadOutcome::Pending),
+            with_lotw(rec("W1AW", "20m", "FT8", 20_000), UploadOutcome::Pending), // twin
+        ];
+        // One own-echo row for the W1AW key → consumes exactly one of the twins.
+        let own = vec![rec("W1AW", "20m", "FT8", 20_000)];
+        let n = promote_own_echo(&mut log, &own, 1);
+        assert_eq!(n, 1, "one own-echo row promotes one twin");
+        assert_eq!(lotw_outcome(&log[0]), None, "award-confirmed untouched");
+        let promoted = log[1..]
+            .iter()
+            .filter(|r| lotw_outcome(r) == Some(UploadOutcome::Accepted))
+            .count();
+        let still_pending = log[1..]
+            .iter()
+            .filter(|r| lotw_outcome(r) == Some(UploadOutcome::Pending))
+            .count();
+        assert_eq!((promoted, still_pending), (1, 1));
+    }
+
+    #[test]
+    fn own_echo_already_accepted_not_double_counted() {
+        let mut log = vec![with_lotw(rec("W1AW", "20m", "FT8", 20_000), UploadOutcome::Accepted)];
+        let own = vec![rec("W1AW", "20m", "FT8", 20_000)];
+        let n = promote_own_echo(&mut log, &own, 5);
+        assert_eq!(n, 0, "already on file — re-stamp is not a new promotion");
+        assert_eq!(lotw_outcome(&log[0]), Some(UploadOutcome::Accepted));
+    }
+
+    #[test]
+    fn own_echo_no_match_leaves_state_untouched() {
+        let mut log = vec![with_lotw(rec("W1AW", "20m", "FT8", 20_000), UploadOutcome::Pending)];
+        let own = vec![rec("K9XYZ", "40m", "FT8", 19_000)]; // different QSO
+        let n = promote_own_echo(&mut log, &own, 1);
+        assert_eq!(n, 0);
+        assert_eq!(lotw_outcome(&log[0]), Some(UploadOutcome::Pending));
     }
 
     #[test]
