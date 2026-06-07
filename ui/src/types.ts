@@ -313,6 +313,9 @@ export interface DecodeRow {
   newGrid?: boolean
   /** True if this row is OUR OWN transmitted message (yellow, one per cycle). */
   mine?: boolean
+  /** For `mine` rows: Unix-second the message was transmitted — the stable
+   * per-cycle key + timestamp (so own-TX rows don't drift/duplicate). */
+  txAt?: number | null
   tier: Tier
   /** IR-HARQ redundancy versions combined to recover this decode: 0 = decoded
    * from the initial transmission alone; 1/2 = recovered by joint-combining that

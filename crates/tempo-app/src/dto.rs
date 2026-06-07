@@ -71,6 +71,12 @@ pub struct DecodeRow {
     /// sees each of their calls. `snr`/`dt_sec` are 0 and `rv` is -1 for these.
     #[serde(default)]
     pub mine: bool,
+    /// For `mine` rows: the Unix-second the message was transmitted. STABLE per
+    /// transmission, so the UI keys/timestamps each own-TX row by its real cycle
+    /// (not the browser clock) — one row per actual transmission, no dupes. `None`
+    /// for received decodes.
+    #[serde(default)]
+    pub tx_at: Option<u64>,
     pub tier: Tier,
     /// IR-HARQ redundancy versions combined to recover this decode: 0 = decoded
     /// from the initial transmission alone; 1/2 = recovered by joint-combining

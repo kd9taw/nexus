@@ -77,14 +77,17 @@ export function OperateDecodes({
     const now = Date.now()
     for (const d of decodes) {
       // Our own TX rows must NOT dedupe across cycles — each call is a distinct
-      // timestamped line (WSJT-X "I called them 4 times"). Key them by the slot
-      // window so a re-poll within the same cycle refreshes, but a new cycle adds
-      // a fresh row. Received decodes dedupe by message+freq as before.
+      // timestamped line (WSJT-X "I called them 4 times"). Key them by the engine's
+      // actual TRANSMIT time (txAt), so the same transmission re-emitted across
+      // poll/clock boundaries stays ONE row, and each new cycle is a new row —
+      // exactly synced to the T/R cycles. Received decodes dedupe by message+freq.
       const key = d.mine
-        ? `mine|${d.message}|${Math.round(d.freqHz / 5)}|${Math.floor(now / SLOT_MS)}`
+        ? `mine|${d.txAt ?? Math.floor(now / SLOT_MS)}`
         : `${d.message}|${Math.round(d.freqHz / 5)}`
       m.delete(key) // re-insert so Map order = recency
-      m.set(key, { ...d, slot, at: now })
+      // Own-TX rows timestamp by their transmit cycle, not the ingest clock.
+      const at = d.mine && d.txAt ? d.txAt * 1000 : now
+      m.set(key, { ...d, slot, at })
     }
     if (m.size > MAX_HISTORY) {
       const drop = m.size - MAX_HISTORY

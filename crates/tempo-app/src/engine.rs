@@ -1508,6 +1508,7 @@ impl Engine {
                     // unified Option<i32> at this boundary.
                     rv: d.rv.unwrap_or(-1),
                     mine: false,
+                    tx_at: None,
                 }
             })
             .collect();
@@ -1530,9 +1531,9 @@ impl Engine {
                 new_grid: false,
                 rv: -1,
                 mine: true,
+                tx_at: Some(tx.when_unix),
                 tier: s.link.tier,
             });
-            let _ = tx.when_unix; // recorded for parity; the UI stamps its own UTC
         }
         s.harq_rescues = self.harq_rescues;
         s.pending_log = self.pending_log.clone().map(Into::into);
