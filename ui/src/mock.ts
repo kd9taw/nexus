@@ -14,6 +14,7 @@ import type {
   AudioDevices,
   BandChannel,
   ChatMessage,
+  DetectedRig,
   Conversation,
   DecodeRow,
   FieldDayQso,
@@ -677,6 +678,26 @@ class MockEngine {
 
   getRigModels(): Promise<[number, string][]> {
     return Promise.resolve(RIG_MODELS.map((m) => [m[0], m[1]] as [number, string]))
+  }
+
+  detectRigs(): Promise<DetectedRig[]> {
+    // Demo: a native-USB IC-705 (identified) on a CP210x bridge with its CODEC.
+    return Promise.resolve([
+      {
+        portName: 'COM5',
+        vid: 0x10c4,
+        pid: 0xea60,
+        product: 'IC-705',
+        manufacturer: 'Icom Inc.',
+        suggestedModel: 3085,
+        suggestedModelName: 'Icom IC-705',
+        chip: 'Silicon Labs CP210x',
+        driverNote: 'Windows needs the Silicon Labs CP210x VCP driver — install it, then Retry.',
+        driverUrl: 'https://www.silabs.com/developer-tools/usb-to-uart-bridge-vcp-drivers',
+        driverBundled: false,
+        suggestedAudio: 'Microphone (USB Audio CODEC)',
+      },
+    ])
   }
 
   getBandPlan(): Promise<BandChannel[]> {

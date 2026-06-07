@@ -12,6 +12,7 @@ import type {
   BandChannel,
   CatTestResult,
   ClubLogPushResult,
+  DetectedRig,
   DiagnosticsReport,
   FeedHealth,
   ImportStats,
@@ -526,6 +527,13 @@ export async function getRigModels(): Promise<[number, string][]> {
   const invoke = tauriInvoke()
   if (invoke) return invoke<[number, string][]>('get_rig_models')
   return mockEngine.getRigModels()
+}
+
+/** Zero-config: scan connected USB radios → suggested model + port + paired audio. */
+export async function detectRigs(): Promise<DetectedRig[]> {
+  const invoke = tauriInvoke()
+  if (invoke) return invoke<DetectedRig[]>('detect_rigs')
+  return mockEngine.detectRigs()
 }
 
 /**

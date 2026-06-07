@@ -26,6 +26,47 @@ pub fn available_ports() -> Vec<String> {
     Vec::new()
 }
 
+/// A USB serial port plus the descriptor fields zero-config setup reads to identify
+/// the radio (model from `product`) and the bridge chip / driver (from `vid`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UsbPort {
+    pub port_name: String,
+    pub vid: u16,
+    pub pid: u16,
+    pub product: String,
+    pub manufacturer: String,
+}
+
+/// USB serial ports currently present, with their USB descriptor fields. Non-USB
+/// ports (legacy RS-232, Bluetooth SPP, …) are omitted — zero-config only reasons
+/// about USB. Empty without the `serial` feature or if enumeration fails.
+#[cfg(feature = "serial")]
+pub fn available_usb_ports() -> Vec<UsbPort> {
+    use serialport::SerialPortType;
+    match serialport::available_ports() {
+        Ok(ports) => ports
+            .into_iter()
+            .filter_map(|p| match p.port_type {
+                SerialPortType::UsbPort(info) => Some(UsbPort {
+                    port_name: p.port_name,
+                    vid: info.vid,
+                    pid: info.pid,
+                    product: info.product.unwrap_or_default(),
+                    manufacturer: info.manufacturer.unwrap_or_default(),
+                }),
+                _ => None,
+            })
+            .collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// USB serial ports — empty without the `serial` feature (no enumeration backend).
+#[cfg(not(feature = "serial"))]
+pub fn available_usb_ports() -> Vec<UsbPort> {
+    Vec::new()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

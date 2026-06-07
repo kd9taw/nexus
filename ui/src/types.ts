@@ -148,6 +148,26 @@ export interface AudioDevices {
   output: string[]
 }
 
+/** A zero-config auto-detected USB radio (from `detect_rigs`). */
+export interface DetectedRig {
+  portName: string
+  vid: number
+  pid: number
+  product: string
+  manufacturer: string
+  /** Hamlib model guessed from the USB product string (null = chip known, rig not). */
+  suggestedModel: number | null
+  suggestedModelName: string | null
+  /** Bridge-chip name (e.g. "Silicon Labs CP210x") or "USB (native)". */
+  chip: string
+  /** Driver guidance + official link when one is needed on this OS. */
+  driverNote: string | null
+  driverUrl: string | null
+  driverBundled: boolean
+  /** Best-guess paired sound device (the rig's USB-Audio CODEC). */
+  suggestedAudio: string | null
+}
+
 /**
  * Mode-change request variants accepted by `set_mode`. The "-run" / "-monitor"
  * / "-sp" suffixes pick the operator role within QSO / Field Day modes.

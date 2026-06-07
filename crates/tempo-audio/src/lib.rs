@@ -30,6 +30,7 @@ pub mod rigctld_proc;
 pub mod rigmodels;
 pub mod runtime;
 pub mod slot;
+pub mod usbrig;
 
 #[cfg(feature = "device")]
 pub mod device;

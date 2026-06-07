@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
-import type { AudioDevices, BandChannel, CatTestResult, RadioStatus, Settings } from '../types'
+import type { AudioDevices, BandChannel, CatTestResult, DetectedRig, RadioStatus, Settings } from '../types'
 import {
   clearClublogPassword,
   clearEqslPassword,
   clearLotwPassword,
   clearQrzLogbookKey,
   clearQrzPassword,
+  detectRigs,
   downloadEqslReport,
   downloadLotwReport,
   getAudioDevices,
@@ -106,6 +107,8 @@ export function SettingsPanel({
   const [audio, setAudio] = useState<AudioDevices>({ input: [], output: [] })
   const [portsLoading, setPortsLoading] = useState(false)
   const [audioLoading, setAudioLoading] = useState(false)
+  const [detected, setDetected] = useState<DetectedRig[]>([])
+  const [detecting, setDetecting] = useState(false)
   const [catTesting, setCatTesting] = useState(false)
   const [catResult, setCatResult] = useState<CatTestResult | null>(null)
   // LoTW/eQSL passwords are write-only (kept in the OS keychain, never read back),
@@ -205,6 +208,38 @@ export function SettingsPanel({
     markDirty()
     const name = rigModels.find((m) => m[0] === modelNum)?.[1] ?? ''
     setForm((prev) => (prev ? { ...prev, rigModel: modelNum, rigModelName: name } : prev))
+  }
+
+  // Zero-config: scan connected USB radios.
+  const onDetectRigs = async () => {
+    setDetecting(true)
+    const rigs = await withErrorToast(() => detectRigs(), 'Radio detection failed')
+    setDetecting(false)
+    if (rigs) {
+      setDetected(rigs)
+      if (rigs.length === 0) pushToast('No USB radios detected — plug one in, then Detect again.', 'info')
+    }
+  }
+
+  // One-click apply a detected rig: fill model (if identified) + port + paired audio.
+  const applyDetectedRig = (r: DetectedRig) => {
+    markDirty()
+    setForm((prev) =>
+      prev
+        ? {
+            ...prev,
+            ...(r.suggestedModel != null
+              ? { rigModel: r.suggestedModel, rigModelName: r.suggestedModelName ?? '' }
+              : {}),
+            serialPort: r.portName,
+            ...(r.suggestedAudio ? { audioIn: r.suggestedAudio, audioOut: r.suggestedAudio } : {}),
+          }
+        : prev,
+    )
+    pushToast(
+      `Applied ${r.suggestedModelName ?? (r.product || 'radio')} on ${r.portName} — review + Save settings`,
+      'success',
+    )
   }
 
   // FrequencyControl edits the in-form band/dial/sideband; it's persisted on Save.
@@ -661,6 +696,61 @@ export function SettingsPanel({
                 </select>
                 <span className="settings-hint">How transmit is keyed.</span>
               </label>
+
+              <div className="settings-field">
+                <span className="settings-label">Zero-config setup</span>
+                <div className="settings-input-row">
+                  <button
+                    type="button"
+                    className="settings-refresh"
+                    onClick={onDetectRigs}
+                    disabled={detecting}
+                  >
+                    {detecting ? 'Scanning…' : 'Detect my radio'}
+                  </button>
+                </div>
+                {detected.length > 0 && (
+                  <ul className="rig-detect-list">
+                    {detected.map((r, i) => (
+                      <li className="rig-detect" key={`${r.portName}-${i}`}>
+                        <div className="rig-detect-main">
+                          <span className="rig-detect-name">
+                            {r.suggestedModelName ?? (r.product || 'Unknown radio')}
+                          </span>
+                          <span className="rig-detect-meta">
+                            {r.portName} · {r.chip}
+                            {r.suggestedAudio ? ` · ${r.suggestedAudio}` : ''}
+                          </span>
+                          {!r.suggestedModel && (
+                            <span className="rig-detect-meta">
+                              Couldn't identify the model from USB — pick it below.
+                            </span>
+                          )}
+                          {r.driverNote && !r.driverBundled && (
+                            <span className="rig-detect-driver">
+                              {r.driverNote}
+                              {r.driverUrl && (
+                                <>
+                                  {' '}
+                                  <a href={r.driverUrl} target="_blank" rel="noreferrer">
+                                    driver ↗
+                                  </a>
+                                </>
+                              )}
+                            </span>
+                          )}
+                        </div>
+                        <button type="button" className="settings-save" onClick={() => applyDetectedRig(r)}>
+                          Use this
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <span className="settings-hint">
+                  Scans connected USB radios and fills the model, port, and sound device below. Review, then Save.
+                </span>
+              </div>
 
               <label className="settings-field">
                 <span className="settings-label">Rig Model</span>

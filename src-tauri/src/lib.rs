@@ -682,6 +682,76 @@ fn get_audio_devices() -> AudioDevices {
     }
 }
 
+/// One auto-detected USB radio, for the zero-config setup picker.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DetectedRigDto {
+    port_name: String,
+    vid: u16,
+    pid: u16,
+    product: String,
+    manufacturer: String,
+    /// Hamlib model + name guessed from the USB product string (null = bridge chip
+    /// identified but not the specific rig — the operator picks the model).
+    suggested_model: Option<u32>,
+    suggested_model_name: Option<String>,
+    /// Human bridge-chip name (e.g. "Silicon Labs CP210x"), or "USB (native)".
+    chip: String,
+    /// Driver guidance when one is needed on this OS (null = native/bundled).
+    driver_note: Option<String>,
+    driver_url: Option<String>,
+    driver_bundled: bool,
+    /// Best-guess paired sound device (the rig's USB-Audio CODEC).
+    suggested_audio: Option<String>,
+}
+
+/// Zero-config station setup: enumerate connected USB radios and resolve each to a
+/// suggested Hamlib model (from the USB product string), bridge-chip + OS-aware
+/// driver guidance, and a paired sound device. Empty without the `radio` feature.
+/// The operator one-click-applies a result (fills rig model + port + audio).
+#[tauri::command]
+fn detect_rigs() -> Vec<DetectedRigDto> {
+    #[cfg(feature = "radio")]
+    {
+        use tempo_audio::usbrig::UsbSerialChip;
+        let ports = tempo_audio::ports::available_usb_ports();
+        let (audio_in, _out) = tempo_audio::device::available_devices();
+        let os = tempo_audio::usbrig::current_os();
+        tempo_audio::usbrig::detect_rigs(&ports, &audio_in, os)
+            .into_iter()
+            .map(|r| {
+                let chip = match (&r.driver, r.chip) {
+                    (Some(d), _) => d.chip.to_string(),
+                    (None, UsbSerialChip::Other) => "USB (native)".to_string(),
+                    (None, c) => format!("{c:?}"),
+                };
+                DetectedRigDto {
+                    port_name: r.port_name,
+                    vid: r.vid,
+                    pid: r.pid,
+                    product: r.product,
+                    manufacturer: r.manufacturer,
+                    suggested_model: r.suggested_model,
+                    suggested_model_name: r.suggested_model_name.map(|s| s.to_string()),
+                    chip,
+                    driver_note: r.driver.as_ref().map(|d| d.note.to_string()),
+                    driver_url: r
+                        .driver
+                        .as_ref()
+                        .filter(|d| !d.url.is_empty())
+                        .map(|d| d.url.to_string()),
+                    driver_bundled: r.driver.as_ref().is_some_and(|d| d.bundled),
+                    suggested_audio: r.suggested_audio,
+                }
+            })
+            .collect()
+    }
+    #[cfg(not(feature = "radio"))]
+    {
+        Vec::new()
+    }
+}
+
 /// Enable/disable normal slot transmit ("Monitor"). `false` mutes transmit and
 /// clears anything queued; `true` re-enables it and clears a tripped watchdog.
 #[tauri::command]
@@ -1878,6 +1948,7 @@ pub fn run() {
             broadcast,
             get_serial_ports,
             get_audio_devices,
+            detect_rigs,
             get_rig_models,
             get_band_plan,
             set_frequency,
