@@ -9,7 +9,7 @@
 use crate::dxcc;
 use crate::dxped::{NeedKind, OperatorNeeds};
 use crate::geo::{haversine_km, maidenhead_to_latlon};
-use crate::model::{Band, ModeClass, PathSpot};
+use crate::model::{Band, ModeClass, PathSpot, Side};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
@@ -203,6 +203,59 @@ pub fn heard_near_me(reports: &[PathSpot], me: (f64, f64)) -> Vec<Heard> {
     out
 }
 
+/// Stations workable because YOUR signal is reaching their area ("getting out").
+/// From reception reports: first find where your signal lands (receivers that
+/// copied YOU, per band); then a DX that a third party is hearing is workable if
+/// your reach covers its location on that band — your signal demonstrably gets to
+/// that region, so you can likely work stations there even if you aren't hearing
+/// them and no near-me receiver is either. Complements [`heard_near_me`] (their
+/// signal reaching you) with the reverse path. Deduped by (call, band).
+pub fn workable_by_getting_out(reports: &[PathSpot], my_call: &str) -> Vec<Heard> {
+    // Where MY signal is reaching, per band (receivers that copied me).
+    let mut reach: Vec<(Band, (f64, f64))> = Vec::new();
+    for p in reports {
+        if p.side(my_call) == Side::HeardMe {
+            if let Some(ll) = p.rx_grid.as_deref().and_then(maidenhead_to_latlon) {
+                reach.push((p.band, ll));
+            }
+        }
+    }
+    if reach.is_empty() {
+        return Vec::new(); // no getting-out evidence → nothing to add
+    }
+    let mut out = Vec::new();
+    let mut seen: HashSet<(String, String)> = HashSet::new();
+    for p in reports {
+        // Only DX a THIRD party is hearing (HeardMe = me TX; IHeard = I already hear).
+        if p.side(my_call) != Side::Neither {
+            continue;
+        }
+        let Some(dx) = p
+            .tx_grid
+            .as_deref()
+            .and_then(maidenhead_to_latlon)
+            .or_else(|| dxcc::resolve(&p.tx_call).map(|i| (i.lat, i.lon)))
+        else {
+            continue; // can't locate the DX → can't match it to my reach
+        };
+        let r = near_me_radius_km(p.band);
+        if reach
+            .iter()
+            .any(|(b, ll)| *b == p.band && haversine_km(*ll, dx) <= r)
+        {
+            let band = p.band.label().to_string();
+            if seen.insert((p.tx_call.to_ascii_uppercase(), band.clone())) {
+                out.push(Heard {
+                    call: p.tx_call.clone(),
+                    band,
+                    mode: p.mode.clone().unwrap_or_else(|| "FT8".to_string()),
+                });
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -214,6 +267,33 @@ mod tests {
             band: band.into(),
             mode: "FT8".into(),
         }
+    }
+
+    #[test]
+    fn getting_out_surfaces_dx_my_signal_reaches() {
+        let mk = |tx: &str, tx_grid: Option<&str>, rx: &str, rx_grid: &str, band: &str| PathSpot {
+            time: 0,
+            tx_call: tx.into(),
+            tx_grid: tx_grid.map(Into::into),
+            rx_call: rx.into(),
+            rx_grid: Some(rx_grid.into()),
+            band: Band::from_label(band).unwrap(),
+            mode: Some("FT8".into()),
+            snr: None,
+        };
+        let reports = vec![
+            // Who-heard-me: my signal copied by a receiver in Spain on 20m.
+            mk("KD9TAW", None, "EA1RX", "IN80", "20m"),
+            // A Spanish DX a third party is hearing, near my reach → workable.
+            mk("EA5DX", Some("IM98"), "G0XYZ", "IO91", "20m"),
+            // A Japanese DX a third party is hearing — my reach doesn't cover it.
+            mk("JA1ZZ", Some("PM95"), "VK2AB", "QF56", "20m"),
+        ];
+        let out = workable_by_getting_out(&reports, "KD9TAW");
+        let calls: Vec<&str> = out.iter().map(|h| h.call.as_str()).collect();
+        assert!(calls.contains(&"EA5DX"), "DX in my reach surfaced: {calls:?}");
+        assert!(!calls.contains(&"JA1ZZ"), "DX outside my reach not surfaced");
+        assert!(!calls.contains(&"KD9TAW"), "never surface myself");
     }
 
     #[test]

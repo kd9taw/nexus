@@ -1321,15 +1321,24 @@ async fn get_need_alerts(
             mode: "FT8".to_string(), // FT-family → Digital class; the band is what varies
         })
         .collect();
-    // The real value: stations a receiver NEAR YOU is hearing on bands you're not
-    // on — from the PSK Reporter firehose + the near-region feed, gated by a
-    // band-aware "local to me" radius (Es footprint on VHF is tighter than F2 on
-    // HF). No propagation model, no bare cluster spots — empirical evidence only.
-    if let Some(me) = propagation::geo::maidenhead_to_latlon(snap.mygrid.trim()) {
-        let now = now_unix() as i64;
-        if let Ok(buf) = live_paths.lock() {
-            heard.extend(propagation::heard_near_me(&buf.recent(now, 900), me));
+    // The real value (empirical evidence, not a model): two complementary signals
+    // over the PSK Reporter firehose + near-region feed —
+    //   1. heard_near_me: a receiver NEAR YOU is hearing the DX (their signal
+    //      reaches you), gated by a band-aware "local to me" radius (Es on VHF is
+    //      tighter than F2 on HF);
+    //   2. workable_by_getting_out: a third party is hearing a DX in a region your
+    //      OWN signal is reaching (who-heard-me reports) on that band — you can
+    //      likely work it even if you aren't hearing it yet.
+    let now = now_unix() as i64;
+    let me_ll = propagation::geo::maidenhead_to_latlon(snap.mygrid.trim());
+    if let Ok(buf) = live_paths.lock() {
+        let recent = buf.recent(now, 900);
+        if let Some(me) = me_ll {
+            heard.extend(propagation::heard_near_me(&recent, me));
         }
+        heard.extend(propagation::workable_by_getting_out(&recent, &snap.mycall));
+    }
+    if let Some(me) = me_ll {
         if let Ok(buf) = region_paths.0.lock() {
             heard.extend(propagation::heard_near_me(&buf.recent(now, 900), me));
         }
