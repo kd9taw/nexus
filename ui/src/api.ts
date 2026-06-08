@@ -142,12 +142,26 @@ export async function selectPeer(peer: string | null): Promise<void> {
 
 /**
  * Answer / work a station by callsign: enters QSO mode targeting that DX.
+ * `message`/`snr` are the exact decoded line being answered (when the operator
+ * double-clicked a decode) so the sequencer jumps to the correct next Tx —
+ * WSJT-X double-click semantics — rather than restarting at the grid.
  * Returns the fresh snapshot.
  */
-export async function callStation(call: string, grid?: string): Promise<AppSnapshot> {
+export async function callStation(
+  call: string,
+  grid?: string,
+  message?: string,
+  snr?: number,
+): Promise<AppSnapshot> {
   const invoke = tauriInvoke()
-  if (invoke) return invoke<AppSnapshot>('call_station', { call, grid: grid ?? null })
-  return mockEngine.callStation(call, grid)
+  if (invoke)
+    return invoke<AppSnapshot>('call_station', {
+      call,
+      grid: grid ?? null,
+      message: message ?? null,
+      snr: snr ?? null,
+    })
+  return mockEngine.callStation(call, grid, message, snr)
 }
 
 /** Confirm-and-log a QSO held by the prompt-to-log popup (the possibly-edited

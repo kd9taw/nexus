@@ -12,7 +12,7 @@ interface Props {
   /** Session count of IR-HARQ rescues (decodes recovered by combining). */
   harqRescues: number
   /** Work / answer a decoded station. */
-  onCall: (call: string) => void
+  onCall: (call: string, grid?: string, message?: string, snr?: number) => void
   /** Force a fixed filter and hide the filter chips (e.g. the Rx-Frequency pane
    * is a Band Activity locked to the 'rx' filter). */
   lockedFilter?: Filter
@@ -206,7 +206,7 @@ export function OperateDecodes({
             className={`decode-row ${rowClass(d)}`}
             role="listitem"
             key={`${d.message}-${d.freqHz}-${i}`}
-            onDoubleClick={() => d.from && onCall(d.from)}
+            onDoubleClick={() => d.from && onCall(d.from, undefined, d.message, d.snr)}
             title={d.from ? `Double-click to work ${d.from}` : undefined}
           >
             <span className={`decode-tier ${d.tier.toLowerCase()}`} title={`Decoded by ${d.tier}`}>
@@ -244,7 +244,7 @@ export function OperateDecodes({
               <button
                 type="button"
                 className="decode-work"
-                onClick={() => onCall(d.from as string)}
+                onClick={() => onCall(d.from as string, undefined, d.message, d.snr)}
                 title={`Answer ${d.from}`}
               >
                 {d.isCq ? 'Call' : 'Work'}

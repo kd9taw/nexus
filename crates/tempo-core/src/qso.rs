@@ -145,23 +145,152 @@ impl Station {
     /// operator clicked a heard station to work them (WSJT-X "double-click to
     /// call"). It sends its grid to `dxcall` and then runs the responder side of
     /// the exchange, exactly as if it had just heard that station's CQ.
+    ///
+    /// This is [`Station::start`] with no message context — always starts at the
+    /// grid (Tx1). Prefer [`start`] when you know the message being answered.
+    ///
+    /// [`start`]: Station::start
     pub fn answering(mycall: &str, mygrid: &str, dxcall: &str) -> Self {
+        Self::start(mycall, mygrid, dxcall, None, false)
+    }
+
+    /// Begin a directed QSO with `dxcall`, jumping straight to the Tx state the
+    /// message we're answering implies — WSJT-X's double-click semantics (its
+    /// `processMessage`). `context` is the decoded message we are responding to
+    /// (the line the operator double-clicked, or the latest message from `dxcall`
+    /// addressed to us) paired with the SNR we decoded it at — that SNR becomes
+    /// the report we send back.
+    ///
+    /// The next message you send is fixed by what the DX last sent **to you**:
+    ///
+    /// | DX sent (to me)        | I send       | start state  |
+    /// |------------------------|--------------|--------------|
+    /// | CQ / call / `None`     | my grid (T1) | AwaitReport  |
+    /// | my-grid reply (Grid)   | report  (T2) | AwaitRoger   |
+    /// | report (Report)        | R+rpt   (T3) | AwaitRr73    |
+    /// | R+report (RReport)     | RR73/RRR(T4) | Confirming   |
+    /// | RRR / RR73             | 73      (T5) | Done         |
+    /// | 73 (Bye73)             | — (log)      | Done         |
+    ///
+    /// This is the fix for "clicking a station that already answered restarts at
+    /// the grid message": a context addressed to me advances the start state, so
+    /// answering a station that already sent you a report goes straight to the
+    /// R-report — never back to the grid. A CQ / not-addressed-to-me / `None`
+    /// context starts at the grid, exactly like working a fresh CQ.
+    pub fn start(
+        mycall: &str,
+        mygrid: &str,
+        dxcall: &str,
+        context: Option<(&Msg, i32)>,
+        prefer_rrr: bool,
+    ) -> Self {
+        let mycall_s: String = mycall.into();
+        let mut dxgrid: Option<String> = None;
+        let mut rx_report: Option<i32> = None;
+
+        // Default: start the exchange — send our grid to dxcall (Tx1).
+        let grid_start = || {
+            (
+                State::AwaitReport,
+                Some(Msg::Grid {
+                    to: dxcall.into(),
+                    de: mycall_s.clone(),
+                    grid: mygrid.into(),
+                }),
+                format!("calling {dxcall} with grid"),
+            )
+        };
+
+        // Only a message addressed to *us* advances the start state; a CQ or a
+        // message to someone else means we're initiating, so we start at the grid.
+        let to_me = context
+            .and_then(|(m, _)| m.addressee())
+            .map(|to| to.eq_ignore_ascii_case(&mycall_s))
+            .unwrap_or(false);
+
+        let (state, pending, log_line) = match context {
+            // `rpt` (the SNR we decoded the DX at) is the report we send them.
+            Some((msg, rpt)) if to_me => match msg {
+                // DX answered our CQ with their grid → send them a report.
+                Msg::Grid { de, grid, .. } => {
+                    dxgrid = Some(grid.clone());
+                    (
+                        State::AwaitRoger,
+                        Some(Msg::Report {
+                            to: de.clone(),
+                            de: mycall_s.clone(),
+                            snr: rpt,
+                        }),
+                        format!("{de} answered with grid → sending report {rpt}"),
+                    )
+                }
+                // DX sent us a bare report → roger it with R + our report.
+                Msg::Report { de, snr, .. } => {
+                    rx_report = Some(*snr);
+                    (
+                        State::AwaitRr73,
+                        Some(Msg::RReport {
+                            to: de.clone(),
+                            de: mycall_s.clone(),
+                            snr: rpt,
+                        }),
+                        format!(
+                            "got report {snr} → sending R{}",
+                            crate::message::fmt_report(rpt)
+                        ),
+                    )
+                }
+                // DX sent R + report → send the roger (RR73, or RRR by preference).
+                Msg::RReport { de, snr, .. } => {
+                    rx_report = Some(*snr);
+                    let roger = if prefer_rrr {
+                        Msg::Rrr {
+                            to: de.clone(),
+                            de: mycall_s.clone(),
+                        }
+                    } else {
+                        Msg::Rr73 {
+                            to: de.clone(),
+                            de: mycall_s.clone(),
+                        }
+                    };
+                    (
+                        State::Confirming,
+                        Some(roger),
+                        format!(
+                            "got R-report → sending {}",
+                            if prefer_rrr { "RRR" } else { "RR73" }
+                        ),
+                    )
+                }
+                // DX already rogered (RRR/RR73) → send the final 73.
+                Msg::Rrr { de, .. } | Msg::Rr73 { de, .. } => (
+                    State::Done,
+                    Some(Msg::Bye73 {
+                        to: de.clone(),
+                        de: mycall_s.clone(),
+                    }),
+                    "got RR73 → sending 73, QSO complete".into(),
+                ),
+                // DX already signed 73 → nothing to send; ready to log.
+                Msg::Bye73 { .. } => (State::Done, None, "got 73 → QSO complete".into()),
+                _ => grid_start(),
+            },
+            _ => grid_start(),
+        };
+
         Self {
-            mycall: mycall.into(),
+            mycall: mycall_s,
             mygrid: mygrid.into(),
             dxcall: Some(dxcall.into()),
-            dxgrid: None,
-            state: State::AwaitReport,
-            pending: Some(Msg::Grid {
-                to: dxcall.into(),
-                de: mycall.into(),
-                grid: mygrid.into(),
-            }),
-            rx_report: None,
+            dxgrid,
+            state,
+            pending,
+            rx_report,
             rv_count: 0,
             tx_count: 0,
-            confirm_with_rrr: false,
-            transcript: vec![format!("calling {dxcall} with grid")],
+            confirm_with_rrr: prefer_rrr,
+            transcript: vec![log_line],
         }
     }
 
@@ -430,6 +559,123 @@ mod nqso_progress_tests {
             let p = st.nqso_progress();
             assert!((0..=5).contains(&p), "{st:?} -> {p} out of 0..=5");
         }
+    }
+}
+
+#[cfg(test)]
+mod start_context_tests {
+    //! WSJT-X double-click semantics: starting a directed QSO jumps to the Tx
+    //! state implied by the message we're answering (its `processMessage`). The
+    //! bug this guards: clicking a station that already answered us must NOT reset
+    //! to the grid (Tx1) — it must advance to the correct next message.
+    use super::*;
+    use crate::message::Msg;
+
+    const ME: &str = "KD9TAW";
+    const MY_GRID: &str = "EN61";
+    const DX: &str = "W9XYZ";
+
+    fn start(text: &str, snr: i32) -> Station {
+        let m = Msg::parse(text);
+        Station::start(ME, MY_GRID, DX, Some((&m, snr)), false)
+    }
+
+    #[test]
+    fn clicking_a_cq_starts_at_the_grid() {
+        let s = start("CQ W9XYZ FN31", -7);
+        assert_eq!(s.state, State::AwaitReport);
+        assert_eq!(s.pending_text().as_deref(), Some("W9XYZ KD9TAW EN61"));
+    }
+
+    #[test]
+    fn no_context_starts_at_the_grid() {
+        let s = Station::start(ME, MY_GRID, DX, None, false);
+        assert_eq!(s.state, State::AwaitReport);
+        assert_eq!(s.pending_text().as_deref(), Some("W9XYZ KD9TAW EN61"));
+    }
+
+    #[test]
+    fn dx_answered_my_cq_with_grid_sends_report() {
+        // I called CQ; DX replied with their grid addressed to me → I send a report
+        // (the SNR I decoded them at), NOT my grid. dxgrid is captured for the log.
+        let s = start("KD9TAW W9XYZ FN31", -12);
+        assert_eq!(s.state, State::AwaitRoger);
+        assert_eq!(s.pending_text().as_deref(), Some("W9XYZ KD9TAW -12"));
+        assert_eq!(s.dxgrid.as_deref(), Some("FN31"));
+    }
+
+    #[test]
+    fn dx_sent_a_report_sends_r_report() {
+        // The user's exact bug: they sent their call, DX came back with a report;
+        // clicking must send R+report, not the grid square.
+        let s = start("KD9TAW W9XYZ -09", -11);
+        assert_eq!(s.state, State::AwaitRr73);
+        assert_eq!(s.pending_text().as_deref(), Some("W9XYZ KD9TAW R-11"));
+        assert_eq!(s.rx_report, Some(-9), "captured the report DX gave us");
+    }
+
+    #[test]
+    fn dx_sent_r_report_sends_rr73() {
+        let s = start("KD9TAW W9XYZ R-15", -8);
+        assert_eq!(s.state, State::Confirming);
+        assert_eq!(s.pending_text().as_deref(), Some("W9XYZ KD9TAW RR73"));
+        assert_eq!(s.rx_report, Some(-15));
+    }
+
+    #[test]
+    fn dx_sent_r_report_with_rrr_preference_sends_rrr() {
+        let m = Msg::parse("KD9TAW W9XYZ R-15");
+        let s = Station::start(ME, MY_GRID, DX, Some((&m, -8)), true);
+        assert_eq!(s.state, State::Confirming);
+        assert_eq!(s.pending_text().as_deref(), Some("W9XYZ KD9TAW RRR"));
+    }
+
+    #[test]
+    fn dx_sent_rr73_sends_final_73() {
+        let s = start("KD9TAW W9XYZ RR73", -8);
+        assert_eq!(s.state, State::Done);
+        assert_eq!(s.pending_text().as_deref(), Some("W9XYZ KD9TAW 73"));
+    }
+
+    #[test]
+    fn dx_sent_73_completes_with_nothing_to_send() {
+        let s = start("KD9TAW W9XYZ 73", -8);
+        assert_eq!(s.state, State::Done);
+        assert!(s.pending.is_none());
+        assert!(s.done());
+    }
+
+    #[test]
+    fn message_addressed_to_someone_else_starts_at_grid() {
+        // DX is working another station — clicking DX means I initiate, so grid.
+        let s = start("N0ABC W9XYZ -05", -8);
+        assert_eq!(s.state, State::AwaitReport);
+        assert_eq!(s.pending_text().as_deref(), Some("W9XYZ KD9TAW EN61"));
+    }
+
+    #[test]
+    fn resumed_qso_then_advances_normally_via_observe() {
+        // Resume at "DX sent report" (→ we send R-report), then the partner sends
+        // RR73 → we advance to the final 73 through the normal observe() path.
+        let mut s = start("KD9TAW W9XYZ -09", -11);
+        assert_eq!(s.state, State::AwaitRr73);
+        let rr73 = Msg::Rr73 {
+            to: ME.into(),
+            de: DX.into(),
+        };
+        s.observe(&[Decode {
+            message: rr73.to_text(),
+            sync: 1.0,
+            snr: 0,
+            dt: 0.0,
+            freq: 1500.0,
+            nap: 0,
+            qual: 1.0,
+            rv: None,
+            mode: None,
+        }]);
+        assert_eq!(s.state, State::Done);
+        assert_eq!(s.pending_text().as_deref(), Some("W9XYZ KD9TAW 73"));
     }
 }
 

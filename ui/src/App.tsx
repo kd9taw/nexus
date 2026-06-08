@@ -391,19 +391,25 @@ export default function App() {
     void withErrorToast(() => Promise.resolve(apiSelectPeer(call)), 'Could not select station')
   }, [])
 
-  const handleCall = useCallback((call: string, grid?: string) => {
-    void withErrorToast(() => apiCallStation(call, grid), `Could not work ${call}`).then((s) => {
-      if (s) {
-        setSnap(s)
-        // Work the station on the single-screen Operate cockpit — the QSO
-        // sequences inline there while the waterfall + decodes stay visible.
-        // (Never bounce to the chat-style 'qso' view and lose the band.)
-        setView('operate')
-        // Immediate confirmation the action took (and TX is now armed for it).
-        pushToast(`▶ Working ${call} — transmitting your call`, 'success', 4000)
-      }
-    })
-  }, [])
+  const handleCall = useCallback(
+    (call: string, grid?: string, message?: string, snr?: number) => {
+      void withErrorToast(
+        () => apiCallStation(call, grid, message, snr),
+        `Could not work ${call}`,
+      ).then((s) => {
+        if (s) {
+          setSnap(s)
+          // Work the station on the single-screen Operate cockpit — the QSO
+          // sequences inline there while the waterfall + decodes stay visible.
+          // (Never bounce to the chat-style 'qso' view and lose the band.)
+          setView('operate')
+          // Immediate confirmation the action took (and TX is now armed for it).
+          pushToast(`▶ Working ${call} — transmitting your call`, 'success', 4000)
+        }
+      })
+    },
+    [],
+  )
 
   const handleConfirmLog = useCallback((record: LoggedQso) => {
     void withErrorToast(() => apiConfirmPendingLog(record), 'Could not log QSO').then((s) => {

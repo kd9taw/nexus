@@ -975,7 +975,7 @@ impl Engine {
     /// queues, and opens a fresh auto-log window (so the contact logs once when
     /// the sequence completes).
     pub fn call_station(&mut self, dxcall: &str) {
-        self.call_station_with_grid(dxcall, None);
+        self.call_station_ctx(dxcall, None, None, None);
     }
 
     /// As [`call_station`], but pre-seeds the DX station's grid (e.g. the operator
@@ -984,21 +984,92 @@ impl Engine {
     ///
     /// [`call_station`]: Engine::call_station
     pub fn call_station_with_grid(&mut self, dxcall: &str, dxgrid: Option<&str>) {
+        self.call_station_ctx(dxcall, dxgrid, None, None);
+    }
+
+    /// The faithful WSJT-X "double-click to work" entry point. `reply_msg` is the
+    /// exact decoded line the operator double-clicked (with its `reply_snr`);
+    /// WSJT-X parses *that* message to choose the next Tx, so clicking a station
+    /// that already answered resumes the QSO mid-sequence instead of restarting at
+    /// the grid. When `reply_msg` is `None` (a roster/spot/typed call with no
+    /// specific line), we fall back to the most recent decode from `dxcall`
+    /// addressed to us this slot. Working a station also **enables TX** (so a
+    /// double-click transmits even if TX was toggled off) — matching WSJT-X.
+    pub fn call_station_ctx(
+        &mut self,
+        dxcall: &str,
+        dxgrid: Option<&str>,
+        reply_msg: Option<&str>,
+        reply_snr: Option<i32>,
+    ) {
         let mycall = self.settings.mycall.clone();
         let mygrid = self.settings.mygrid.clone();
-        let mut station = QsoStation::answering(&mycall, &mygrid, dxcall);
-        station.confirm_with_rrr = self.settings.prefer_rrr;
-        station.dxgrid = dxgrid.map(|g| g.trim().to_uppercase()).filter(|g| !g.is_empty());
+
+        // Resolve the message we're answering → (parsed Msg, the report we send =
+        // the SNR we decoded the DX at). Prefer the clicked line; recover its SNR
+        // from this slot's decodes if the caller didn't pass one; else fall back to
+        // the latest decode from dxcall addressed to me.
+        let context: Option<(Msg, i32)> = match reply_msg {
+            Some(text) if !text.trim().is_empty() => {
+                let snr = reply_snr
+                    .or_else(|| {
+                        self.last_decodes
+                            .iter()
+                            .find(|d| d.message.eq_ignore_ascii_case(text.trim()))
+                            .map(|d| d.snr)
+                    })
+                    .unwrap_or(0)
+                    .clamp(-30, 30);
+                Some((Msg::parse(text), snr))
+            }
+            _ => self.latest_reply_from(dxcall, &mycall),
+        };
+
+        let mut station = QsoStation::start(
+            &mycall,
+            &mygrid,
+            dxcall,
+            context.as_ref().map(|(m, s)| (m, *s)),
+            self.settings.prefer_rrr,
+        );
+        // Pre-seed the operator/spot grid only if we didn't capture one from the
+        // message we're answering.
+        if station.dxgrid.is_none() {
+            station.dxgrid = dxgrid
+                .map(|g| g.trim().to_uppercase())
+                .filter(|g| !g.is_empty());
+        }
         self.mode = Mode::Qso {
             station: Box::new(station),
             running: true,
         };
-        self.reset_tx_watchdog();
+        // Working a station implies transmit: enable TX (also clears a tripped
+        // watchdog + resets the continuous-TX count, like the Monitor toggle) so
+        // the auto-sequencer actually keys even if TX was toggled off.
+        self.set_tx_enabled(true);
         self.tx_queue.clear();
         self.broadcast_queue.clear();
         self.qso_logged = false;
         self.qso_report_sent = None;
         ft1::harq_reset(); // fresh exchange: drop stale receive-side IR-HARQ state
+    }
+
+    /// The most recent decode from `dxcall` addressed to `mycall` in this slot,
+    /// parsed with the SNR we heard it at — the QSO context for resuming a directed
+    /// call when no specific line was clicked.
+    fn latest_reply_from(&self, dxcall: &str, mycall: &str) -> Option<(Msg, i32)> {
+        self.last_decodes.iter().rev().find_map(|d| {
+            let m = Msg::parse(&d.message);
+            let from_dx = m
+                .sender()
+                .map(|s| s.eq_ignore_ascii_case(dxcall))
+                .unwrap_or(false);
+            let to_me = m
+                .addressee()
+                .map(|a| a.eq_ignore_ascii_case(mycall))
+                .unwrap_or(false);
+            (from_dx && to_me).then(|| (m, d.snr.clamp(-30, 30)))
+        })
     }
 
     /// Confirm-and-log a QSO held by the prompt-to-log popup. `rec` is the
@@ -1952,9 +2023,14 @@ impl Engine {
         } else {
             self.last_rx.as_deref()
         };
+        // No audio yet (no device selected, Companion/UDP source with no local
+        // capture, or before the first decode) → return an EMPTY row, not a row of
+        // zeros. An all-zeros 120-bin row is non-empty, so the waterfall would
+        // "scroll" a flat colormap-floor band that reads as a broken/blank display;
+        // an empty row lets the UI cleanly skip the tick until real audio arrives.
         let row = match src {
             Some(f) => spectrum::power_spectrum(f, ft1::SAMPLE_RATE, 200.0, 2900.0, SPECTRUM_BINS),
-            None => vec![0.0; SPECTRUM_BINS],
+            None => Vec::new(),
         };
         Spectrum { row }
     }

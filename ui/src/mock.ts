@@ -1018,21 +1018,49 @@ class MockEngine {
   }
 
   /** Answer a station: enter QSO (S&P) mode targeting that DX call. */
-  callStation(call: string, grid?: string): AppSnapshot {
+  callStation(call: string, grid?: string, message?: string, snr?: number): AppSnapshot {
     this.qsoRunning = false
     this.qsoStep = 1
     const station = this.snap.stations.find((s) => s.call === call)
     this.dxGrid = grid?.trim().toUpperCase() || station?.grid || null
+    const me = this.settings.mycall
+    // Mirror the backend's WSJT-X double-click mapping: the next Tx is fixed by
+    // what the DX last sent *to me*. Falls back to the grid (Tx1) for a CQ / a
+    // message addressed to someone else / no message.
+    const rpt = (snr ?? station?.snr ?? -13)
+    const fmt = (n: number) => `${n >= 0 ? '+' : '-'}${String(Math.abs(n)).padStart(2, '0')}`
+    let txNow = `${call} ${me} ${this.settings.mygrid}`
+    let state = 'Answering CQ'
+    const tok = (message ?? '').trim().toUpperCase().split(/\s+/)
+    if (tok.length >= 3 && tok[0] === me.toUpperCase()) {
+      const third = tok[2]
+      if (/^R[-+]\d{1,2}$/.test(third)) {
+        txNow = `${call} ${me} RR73`
+        state = 'Confirming (RR73)'
+      } else if (/^[-+]\d{1,2}$/.test(third)) {
+        txNow = `${call} ${me} R${fmt(rpt)}`
+        state = 'Rogering report'
+      } else if (third === 'RRR' || third === 'RR73') {
+        txNow = `${call} ${me} 73`
+        state = 'Signing 73'
+      } else {
+        // a grid reply → send the report
+        txNow = `${call} ${me} ${fmt(rpt)}`
+        state = 'Sending report'
+        if (/^[A-R]{2}\d{2}$/.test(third)) this.dxGrid = third
+      }
+    }
     this.snap = {
       ...this.snap,
       mode: 'qso',
       activePeer: call,
+      radio: { ...this.snap.radio, txEnabled: true },
       qso: {
-        state: 'Answering CQ',
+        state,
         dxcall: call,
         rxReport: station ? station.snr : -13,
         running: false,
-        txNow: `${call} ${this.settings.mycall} ${this.settings.mygrid}`,
+        txNow,
         stalled: false,
       },
       fieldDay: null,

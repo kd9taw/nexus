@@ -1100,16 +1100,22 @@ fn set_hold_tx_freq(state: State<'_, SharedEngine>, on: bool) -> Result<AppSnaps
 }
 
 /// Initiate a directed QSO with a specific station (the UI "work this station"
-/// action). Enters QSO mode answering `call`. Returns the refreshed snapshot.
+/// action). Enters QSO mode answering `call`. `message`/`snr` are the exact
+/// decoded line the operator double-clicked (when available) so the auto-sequencer
+/// jumps to the correct next Tx — WSJT-X double-click semantics — instead of
+/// restarting at the grid. Returns the refreshed snapshot.
 #[tauri::command]
 fn call_station(
     state: State<'_, SharedEngine>,
     call: String,
     grid: Option<String>,
+    message: Option<String>,
+    snr: Option<i32>,
 ) -> Result<AppSnapshot, String> {
     let mut eng = state.lock().map_err(|e| e.to_string())?;
     let g = grid.as_deref().map(str::trim).filter(|s| !s.is_empty());
-    eng.call_station_with_grid(&call, g);
+    let msg = message.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    eng.call_station_ctx(&call, g, msg, snr);
     Ok(eng.snapshot())
 }
 
