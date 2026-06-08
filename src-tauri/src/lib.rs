@@ -29,6 +29,7 @@
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use propagation::PathPredictor as _; // brings `predict` into scope for HeuristicEngine
 use tauri::Manager;
 use tauri::State;
 use tempo_app::dto::{
@@ -1316,6 +1317,37 @@ fn get_need_alerts(
             mode: "FT8".to_string(), // FT-family → Digital class; the band is what varies
         })
         .collect();
+    // Workability gate for SPOTTED stations (below): a cluster/RBN spot existing
+    // somewhere doesn't mean the operator can work it. Cross-check each against the
+    // propagation path FROM the operator's QTH so we don't surface 80m/160m DX at
+    // midday or 6m DX with no opening. (The operator's OWN roster above is always
+    // kept — they're hearing it, so it's workable by definition.)
+    let me_ll = propagation::geo::maidenhead_to_latlon(snap.mygrid.trim());
+    let now_i = now_unix() as i64;
+    let hour = (((now_i / 3600) % 24 + 24) % 24) as usize;
+    let wx = propagation::model::SpaceWx::default(); // day/night/MUF physics dominates the gate
+    let predictor = propagation::HeuristicEngine::new(me_ll);
+    let workable_from_me = |call: &str, band: &str| -> bool {
+        // No grid set → can't predict; don't hide anything.
+        if me_ll.is_none() {
+            return true;
+        }
+        let Some(info) = propagation::dxcc::resolve(call) else {
+            return true; // unresolvable → don't hide
+        };
+        // VHF (6m/2m) DX from the spotting network needs a local opening to be
+        // workable — which surfaces via the operator's OWN decodes (kept above).
+        // A far cluster spot is not workable from here, so drop it.
+        if propagation::model::Band::from_label(band).is_some_and(|b| b.is_vhf()) {
+            return false;
+        }
+        let pred = predictor.predict((info.lat, info.lon), now_i, &wx);
+        pred.bands
+            .iter()
+            .find(|o| o.band.eq_ignore_ascii_case(band))
+            .and_then(|o| o.hourly.get(hour).copied())
+            .is_some_and(|p| p >= 0.12)
+    };
     // ...plus recent DX-cluster / RBN spots (each on its own band, derived from
     // freq). Only the last 15 min — "heard now" must mean recent.
     if let Ok(buf) = spots.lock() {
@@ -1347,7 +1379,10 @@ fn get_need_alerts(
                 })
                 .unwrap_or("FT8");
             if let Some(h) = propagation::heard_from_freq(&cs.dx_call, cs.freq_mhz(), mode) {
-                heard.push(h);
+                // Only surface spots the operator actually has a propagation path to.
+                if workable_from_me(&h.call, &h.band) {
+                    heard.push(h);
+                }
             }
         }
     }
