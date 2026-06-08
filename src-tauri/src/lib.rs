@@ -560,9 +560,11 @@ async fn get_propagation(
     }
     // Bridge the DX-cluster / RBN firehose (a continent-wide who-hears-whom stream
     // on every band) into the SAME window so the band ladder + opening detector see
-    // real band activity, not just the operator's own-call traffic. RBN/cluster
-    // lines rarely carry grids, so these light up band LIVENESS (the "activity"
-    // census) even if region/bearing still needs gridded PSKR spots.
+    // real band activity, not just the operator's own-call traffic. CW/RTTY (RBN)
+    // skimmers are the reality of propagation here, NOT needed-roster candidates: we
+    // geolocate each skimmer via the real RBN skimmer→grid table so its reception
+    // carries true near/far geometry into the opening detector + advisor. Skimmers
+    // not in the table still light up band LIVENESS (no grid → activity census only).
     if let Ok(buf) = spots.lock() {
         let cluster = buf.recent_within(
             std::time::Instant::now(),
@@ -575,7 +577,7 @@ async fn get_propagation(
                     tx_call: cs.dx_call.to_uppercase(),
                     tx_grid: None,
                     rx_call: cs.spotter.to_uppercase(),
-                    rx_grid: None,
+                    rx_grid: propagation::skimmer_grid(&cs.spotter).map(str::to_string),
                     band,
                     mode: None,
                     snr: None,
@@ -1302,7 +1304,6 @@ async fn get_need_alerts(
     state: State<'_, SharedEngine>,
     live_paths: State<'_, SharedLivePaths>,
     region_paths: State<'_, SharedRegionPaths>,
-    spots: State<'_, SharedSpots>,
 ) -> Result<Vec<propagation::NeedAlert>, String> {
     let eng = state.lock().map_err(|e| e.to_string())?;
     let mut needs = propagation::LogNeeds::new();
@@ -1344,37 +1345,11 @@ async fn get_need_alerts(
             heard.extend(propagation::heard_near_me(&buf.recent(now, 900), me));
         }
     }
-    // RBN (CW/RTTY) spots whose SKIMMER is near you — folds CW/RTTY needs in
-    // alongside PSK. RBN telnet carries the skimmer call but no grid, so we
-    // geolocate the skimmer (US call-area centroid / DXCC centroid) and keep only
-    // spots from a skimmer within the band-aware radius of you.
-    if let Some(me) = me_ll {
-        if let Ok(buf) = spots.lock() {
-            for cs in buf.recent_within(
-                std::time::Instant::now(),
-                std::time::Duration::from_secs(900),
-            ) {
-                let mode = cs
-                    .comment
-                    .split_whitespace()
-                    .find(|t| {
-                        matches!(
-                            t.to_ascii_uppercase().as_str(),
-                            "CW" | "RTTY" | "PSK" | "FT8" | "FT4" | "SSB" | "USB" | "LSB"
-                                | "JT65" | "JT9" | "MFSK"
-                        )
-                    })
-                    .unwrap_or("CW"); // RBN is overwhelmingly CW
-                if let Some(h) = propagation::heard_from_freq(&cs.dx_call, cs.freq_mhz(), mode) {
-                    if let Some(b) = propagation::model::Band::from_label(&h.band) {
-                        if propagation::skimmer_near_me(&cs.spotter, me, b) {
-                            heard.push(h);
-                        }
-                    }
-                }
-            }
-        }
-    }
+    // NB: CW/RTTY (RBN) spots are intentionally NOT listed here — the operator works
+    // digital, so we don't surface CW/RTTY stations as needed contacts. Those spots
+    // instead feed the PROPAGATION engine (get_propagation, via the skimmer→grid
+    // table) as real reception geometry — they shape "what's open" reality, not the
+    // needed roster.
     Ok(propagation::rank_needs(&heard, &needs, needs.worked_zones()))
 }
 

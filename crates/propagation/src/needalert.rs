@@ -11,7 +11,8 @@ use crate::dxped::{NeedKind, OperatorNeeds};
 use crate::geo::{haversine_km, maidenhead_to_latlon};
 use crate::model::{Band, ModeClass, PathSpot, Side};
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::sync::LazyLock;
 
 /// Why a heard station is worth working — it may carry several at once (e.g. a new
 /// entity that is also a new CQ zone). Serializes as the variant name
@@ -256,41 +257,35 @@ pub fn workable_by_getting_out(reports: &[PathSpot], my_call: &str) -> Vec<Heard
     out
 }
 
-/// US call-area regional centroids (lat, lon), indexed by the call-area digit 0–9.
-const US_CALL_AREA: [(f64, f64); 10] = [
-    (42.0, -97.0),  // 0 — Plains / Upper Midwest
-    (43.0, -71.5),  // 1 — New England
-    (41.0, -74.5),  // 2 — NY / NJ
-    (40.0, -77.0),  // 3 — PA / MD / DE
-    (33.0, -82.0),  // 4 — Southeast
-    (32.0, -97.0),  // 5 — South-central
-    (37.0, -120.0), // 6 — California
-    (44.0, -114.0), // 7 — Northwest / Mountain
-    (40.5, -82.5),  // 8 — MI / OH / WV
-    (42.0, -89.0),  // 9 — IL / IN / WI
-];
+/// The real RBN active-skimmer → grid table, bundled from RBN's own node endpoint.
+/// See `skimmers.csv` for provenance. Parsed once into a base-call → 6-char grid map.
+static SKIMMER_GRIDS: LazyLock<HashMap<String, &'static str>> = LazyLock::new(|| {
+    include_str!("skimmers.csv")
+        .lines()
+        .filter(|l| !l.trim_start().starts_with('#') && !l.trim().is_empty())
+        .filter_map(|l| {
+            let (call, grid) = l.split_once(',')?;
+            Some((skimmer_base(call), grid.trim()))
+        })
+        .collect()
+});
 
-/// Approximate location of a spotter/skimmer by callsign, for near-me geometry.
-/// The continental US is ONE DXCC over a whole continent, so its country centroid is
-/// useless here — refine to the call-area digit's regional centroid. Every other
-/// entity (incl. KH6 Hawaii / KL7 Alaska / NP_ Puerto Rico, which are their own
-/// DXCC) uses the entity centroid. RBN/portable suffixes are ignored. `None` if
-/// unresolvable.
-pub fn skimmer_latlon(call: &str) -> Option<(f64, f64)> {
-    let info = dxcc::resolve(call)?;
-    if info.entity == "United States" {
-        let base = call.split(['-', '/']).next().unwrap_or(call);
-        if let Some(d) = base.bytes().find(|b| b.is_ascii_digit()) {
-            return Some(US_CALL_AREA[(d - b'0') as usize]);
-        }
-    }
-    Some((info.lat, info.lon))
+/// Normalize a skimmer/spotter call to its table key: drop the RBN `-#` reporter
+/// suffix (and any trailing-token after a space), uppercase, but KEEP a portable `/`
+/// token since RBN registers those as distinct skimmer identities (e.g. `EA8/DF4UE`,
+/// `OH0K/6`). So `W3LPL-#` → `W3LPL` and `EA8/DF4UE-#` → `EA8/DF4UE`.
+fn skimmer_base(call: &str) -> String {
+    call.split([' ', '-']).next().unwrap_or(call).to_uppercase()
 }
 
-/// True when a spotter/skimmer is within the band-aware "local to me" radius — used
-/// to fold RBN (CW/RTTY) spots whose SKIMMER is near you into the needed board.
-pub fn skimmer_near_me(spotter: &str, me: (f64, f64), band: Band) -> bool {
-    skimmer_latlon(spotter).is_some_and(|s| haversine_km(me, s) <= near_me_radius_km(band))
+/// Precise grid of an RBN skimmer by callsign, from the real published skimmer table.
+/// This is what lets a CW/RTTY (RBN) reception carry real reception geometry into the
+/// propagation engine (opening detection + advisor) — *not* the needed roster. RBN
+/// telnet gives the skimmer call but no grid, so we resolve it here. Returns `None`
+/// for a skimmer not in the table (the spot still counts for activity, but without
+/// near/far geometry — we don't guess a location).
+pub fn skimmer_grid(call: &str) -> Option<&'static str> {
+    SKIMMER_GRIDS.get(&skimmer_base(call)).copied()
 }
 
 #[cfg(test)]
@@ -307,15 +302,29 @@ mod tests {
     }
 
     #[test]
-    fn skimmer_near_me_uses_us_call_area() {
-        let me = maidenhead_to_latlon("EN61").unwrap(); // Chicago / W9 area
-        let b20 = Band::from_label("20m").unwrap();
-        // A W9 skimmer (Midwest) is near; a W6 skimmer (California) is far — the
-        // country centroid would call BOTH "near", so this proves call-area refinement.
-        assert!(skimmer_near_me("W9XYZ", me, b20), "W9 skimmer near a W9 op");
-        assert!(!skimmer_near_me("W6ABC", me, b20), "W6 (CA) skimmer is not near");
-        // RBN suffix stripped.
-        assert!(skimmer_near_me("K9CT-#", me, b20), "RBN suffix ignored");
+    fn skimmer_grid_resolves_from_real_table() {
+        // Real, verified entries from the bundled RBN node table.
+        assert_eq!(skimmer_grid("W3LPL"), Some("FM19LG"));
+        assert_eq!(skimmer_grid("KM3T"), Some("FN42ET"));
+        assert_eq!(skimmer_grid("N6TV"), Some("CM97CF")); // California
+        // RBN reporter suffix is stripped before lookup.
+        assert_eq!(skimmer_grid("W3LPL-#"), Some("FM19LG"));
+        // Portable-token skimmers keep their token.
+        assert_eq!(skimmer_grid("EA8/DF4UE-#"), Some("IL38BP"));
+        // A skimmer not in the table resolves to None — we never guess a location.
+        assert_eq!(skimmer_grid("ZZ9ZZ"), None);
+    }
+
+    #[test]
+    fn skimmer_grids_are_valid_maidenhead() {
+        // Every bundled grid must parse — a malformed row would silently drop geometry.
+        for (call, grid) in SKIMMER_GRIDS.iter() {
+            assert!(
+                maidenhead_to_latlon(grid).is_some(),
+                "skimmer {call} has unparseable grid {grid}"
+            );
+        }
+        assert!(SKIMMER_GRIDS.len() > 150, "expected the full skimmer table");
     }
 
     #[test]
