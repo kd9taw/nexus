@@ -56,10 +56,11 @@ export interface FeatureDef {
   intents: Intent[]
   /** For `section` features, the View this renders (=== id). */
   view?: View
-  /** Top-level operating area this section belongs to. `'dx'` = FT8/FT4 structured
-   * DX; `'msg'` = FT1/DX1 free-text. Omitted = shown in BOTH areas (Logbook,
-   * Settings). Drives the workspace pill-tab nav filter. */
-  workspace?: 'dx' | 'msg' | 'connect'
+  /** Operate MODE this section is specific to: `'dx'` = the FT8/FT4 cockpit and its
+   * features; `'msg'` = the Tempo two-way-calling cockpit and its features. Omitted
+   * = GLOBAL: shown in both modes (Connect, Map, Propagation, Logbook, Awards,
+   * Settings). The FT8/FT4 ⇄ Tempo switch only swaps the mode-specific sections. */
+  workspace?: 'dx' | 'msg'
   /** Achievement id whose unlock *suggests* enabling this (adaptive reveal —
    * a follow-on; recorded here so the data model is ready). */
   revealOn?: string
@@ -203,11 +204,11 @@ export const FEATURES: FeatureDef[] = [
     label: 'Connect',
     kind: 'section',
     category: 'Propagation',
-    core: true, // the spine of the Connect area — always available
+    core: true, // global situational-awareness surface — present in both modes
     dependsOn: [],
     intents: ['casual', 'dx', 'vhf', 'pota'],
     view: 'connect',
-    workspace: 'connect',
+    // global (no workspace): Connect is shared across FT8/FT4 and Tempo.
     oneLine: 'Situational awareness — the grayline map + live propagation in one view.',
   },
   {
@@ -219,7 +220,7 @@ export const FEATURES: FeatureDef[] = [
     dependsOn: [],
     intents: ['dx', 'vhf'],
     view: 'propagation',
-    workspace: 'connect',
+    // global (no workspace): propagation is shared across modes.
     oneLine: "What's open now, 6m openings, and DXpedition windows.",
   },
   {
@@ -231,7 +232,7 @@ export const FEATURES: FeatureDef[] = [
     dependsOn: [],
     intents: ['dx', 'vhf', 'pota'],
     view: 'map',
-    workspace: 'connect',
+    // global (no workspace): the map is shared across modes.
     oneLine: 'Azimuthal beam map — headings, range rings, openings, DXpeditions.',
   },
   {
@@ -243,7 +244,7 @@ export const FEATURES: FeatureDef[] = [
     dependsOn: ['logbook'],
     intents: ['dx'],
     view: 'awards',
-    workspace: 'dx',
+    // global (no workspace): awards/log progress is shared across modes.
     revealOn: 'dx-first',
     oneLine: 'DXCC / Challenge / Honor Roll / WAZ progress and the confirmation chase.',
   },

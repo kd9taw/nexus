@@ -168,39 +168,43 @@ export default function App() {
     }
   }, [])
 
-  // Top-level operating AREA: 'dx' (FT8/FT4 structured), 'msg' (FT1/DX1 chat), or
-  // 'connect' (the situational-awareness map + propagation surface). The pill tabs
-  // swap the nav. DX/MSG also bind the radio tier+mode; 'connect' is awareness-only
-  // and must NOT retune the radio. Default DX (the 80% case).
-  const [area, setArea] = useState<'dx' | 'msg' | 'connect'>(() => {
+  // Operate MODE: 'dx' (FT8/FT4 structured cockpit) or 'msg' (Tempo two-way
+  // calling). The FT8/FT4 ⇄ Tempo switch binds the radio tier+mode and swaps only
+  // the cockpit; Connect/Map/Prop/Logbook/Awards are GLOBAL views selected from the
+  // sidebar (they never retune the radio). Default FT8/FT4 (the 80% case).
+  const [area, setArea] = useState<'dx' | 'msg'>(() => {
     try {
       const v = localStorage.getItem('nexus.workspace')
-      if (v === 'dx' || v === 'msg' || v === 'connect') return v
+      if (v === 'dx' || v === 'msg') return v
+      // Migrate the retired 'connect' area to FT8/FT4 (Connect is now a global view).
     } catch {
       /* unreadable — fall through */
     }
     return 'dx'
   })
-  // Sync the engine to the persisted area once on load (atomic tier+mode). Connect
-  // doesn't bind a tier, so never push it to the engine.
+  // Sync the engine to the persisted mode once on load (atomic tier+mode).
   const areaSyncedRef = useRef(false)
   useEffect(() => {
     if (areaSyncedRef.current || !snap) return
     areaSyncedRef.current = true
-    if (area !== 'connect') void apiSetArea(area).then((s) => s && setSnap(s))
+    void apiSetArea(area).then((s) => s && setSnap(s))
+    // Reconcile the cockpit view with the mode (a persisted Tempo mode must not
+    // open on the FT8/FT4 cockpit, and vice-versa). Global views are left alone.
+    setView((v) =>
+      area === 'msg' && v === 'operate' ? 'chat' : area === 'dx' && v === 'chat' ? 'operate' : v,
+    )
   }, [snap, area])
 
-  const handleWorkspace = useCallback((w: 'dx' | 'msg' | 'connect') => {
+  const handleWorkspace = useCallback((w: 'dx' | 'msg') => {
     setArea(w)
     try {
       localStorage.setItem('nexus.workspace', w)
     } catch {
       /* ignore */
     }
-    setView(w === 'connect' ? 'connect' : w === 'dx' ? 'operate' : 'chat')
-    // Connect is awareness-only: leave the radio on whatever tier it was.
-    if (w === 'connect') return
-    void withErrorToast(() => apiSetArea(w), 'Could not switch area').then((s) => {
+    // Switching mode lands on that mode's cockpit (FT8/FT4 → Operate, Tempo → Chat).
+    setView(w === 'dx' ? 'operate' : 'chat')
+    void withErrorToast(() => apiSetArea(w), 'Could not switch mode').then((s) => {
       if (s) setSnap(s)
     })
   }, [])

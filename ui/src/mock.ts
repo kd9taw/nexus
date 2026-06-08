@@ -1116,12 +1116,7 @@ class MockEngine {
   }
 
   /** Switch the operating area (mock: set the area's tier + mode). */
-  setArea(area: 'dx' | 'msg' | 'connect'): AppSnapshot {
-    if (area === 'connect') {
-      // Awareness-only: never retune the radio (matches the backend guard).
-      this.emit()
-      return this.snap
-    }
+  setArea(area: 'dx' | 'msg'): AppSnapshot {
     if (area === 'msg') {
       const tier = this.snap.link.tier === 'DX1' ? 'DX1' : 'FT1'
       this.snap = { ...this.snap, mode: 'chat', link: { ...this.snap.link, tier } }

@@ -30,10 +30,11 @@ interface Props {
   /** Enabled-set from the feature system — disabled sections are hidden. */
   enabled: Record<FeatureId, boolean>
   onSelect: (view: View) => void
-  /** Active top-level area: 'dx' (FT8/FT4), 'msg' (FT1/DX1), or 'connect'
-   * (map + propagation situational awareness). Filters the nav. */
-  workspace: 'dx' | 'msg' | 'connect'
-  onWorkspace: (w: 'dx' | 'msg' | 'connect') => void
+  /** Operate MODE: 'dx' (FT8/FT4 structured cockpit) or 'msg' (Tempo two-way
+   * calling). Only swaps the mode-specific sections; Connect/Map/Prop/Logbook/
+   * Awards are global and always shown. */
+  workspace: 'dx' | 'msg'
+  onWorkspace: (w: 'dx' | 'msg') => void
 }
 
 interface Item {
@@ -78,16 +79,18 @@ export function ModeNav({ view, mode, enabled, onSelect, workspace, onWorkspace 
   return (
     <TooltipProvider>
       <nav className="mode-nav" aria-label="Operating mode">
-        <div className="mode-nav-areas" role="tablist" aria-label="Operating area">
+        {/* Operate-mode switch: swaps ONLY the cockpit + its mode-specific sections.
+            Connect / Map / Prop / Logbook / Awards stay visible in both modes. */}
+        <div className="mode-nav-areas" role="tablist" aria-label="Operate mode">
           <button
             type="button"
             role="tab"
             aria-selected={workspace === 'dx'}
             className={`area-pill${workspace === 'dx' ? ' active' : ''}`}
             onClick={() => onWorkspace('dx')}
-            title="DX — FT8 / FT4 structured operating"
+            title="FT8 / FT4 — structured weak-signal operating"
           >
-            DX
+            FT8/FT4
           </button>
           <button
             type="button"
@@ -95,19 +98,9 @@ export function ModeNav({ view, mode, enabled, onSelect, workspace, onWorkspace 
             aria-selected={workspace === 'msg'}
             className={`area-pill${workspace === 'msg' ? ' active' : ''}`}
             onClick={() => onWorkspace('msg')}
-            title="MSG — FT1 / DX1 free-text messaging"
+            title="Tempo — two-way free-text calling (FT1 / DX1)"
           >
-            MSG
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={workspace === 'connect'}
-            className={`area-pill${workspace === 'connect' ? ' active' : ''}`}
-            onClick={() => onWorkspace('connect')}
-            title="Connect — grayline map + live propagation situational awareness"
-          >
-            CONNECT
+            Tempo
           </button>
         </div>
         <div className="mode-nav-top">
