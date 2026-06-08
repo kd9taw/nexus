@@ -36,18 +36,28 @@ fn qso_mode_completes_through_the_engine() {
     let mut b = Engine::new("K2DEF", "FN31", 1);
     a.set_tier(Tier::Ft1); // FT1-modem loopback (default tier is now FT8)
     b.set_tier(Tier::Ft1);
-    a.set_mode("qso-run").unwrap();
+    a.set_mode("qso-run").unwrap(); // A RUNS (calls CQ)
     b.set_mode("qso-monitor").unwrap();
 
-    let qso_done = |e: &Engine| e.snapshot().qso.map(|q| q.state == "Done").unwrap_or(false);
-    run(&mut a, &mut b, 40, |a, b| qso_done(a) && qso_done(b));
+    let b_done = |e: &Engine| e.snapshot().qso.map(|q| q.state == "Done").unwrap_or(false);
+    let a_logged = |e: &Engine| e.get_log().iter().any(|q| q.call == "K2DEF");
+    run(&mut a, &mut b, 60, |a, b| a_logged(a) && b_done(b));
 
-    let sa = a.snapshot();
-    let sb = b.snapshot();
-    assert!(qso_done(&a), "A qso: {:?}", sa.qso);
-    assert!(qso_done(&b), "B qso: {:?}", sb.qso);
-    assert_eq!(sa.qso.unwrap().dxcall.as_deref(), Some("K2DEF"));
-    assert_eq!(sb.qso.unwrap().dxcall.as_deref(), Some("W9XYZ"));
+    // The answerer (monitor) reaches Done with the runner as its DX.
+    assert!(b_done(&b), "B qso: {:?}", b.snapshot().qso);
+    assert_eq!(b.snapshot().qso.unwrap().dxcall.as_deref(), Some("W9XYZ"));
+    // The runner logged the contact...
+    assert!(a_logged(&a), "A logged K2DEF: {:?}", a.get_log());
+    // ...and, because it was RUNNING, returns to calling CQ to work the next caller
+    // (WSJT-X run workflow) — give it a few more periods to process its own RR73.
+    run(&mut a, &mut b, 12, |a, _| {
+        a.snapshot().qso.map(|q| q.state == "CallingCq").unwrap_or(false)
+    });
+    assert_eq!(
+        a.snapshot().qso.unwrap().state,
+        "CallingCq",
+        "A resumed calling CQ after the QSO"
+    );
 }
 
 #[test]

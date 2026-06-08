@@ -309,7 +309,10 @@ impl Station {
     /// been retransmitted [`MAX_TX_PER_STEP`] times without acknowledgement (the
     /// step has failed — the caller should time out or return to listening).
     pub fn outgoing_rv(&self) -> Option<(Msg, u8)> {
-        if self.tx_count >= MAX_TX_PER_STEP {
+        // A CQ is not an ARQ step awaiting an ACK — it repeats indefinitely until a
+        // station answers (or the operator / Tx watchdog stops it), exactly like
+        // WSJT-X. Only the in-QSO steps honor the per-step retransmission cap.
+        if self.state != State::CallingCq && self.tx_count >= MAX_TX_PER_STEP {
             return None;
         }
         self.pending.clone().map(|m| (m, self.rv_count))
@@ -319,7 +322,9 @@ impl Station {
     /// partner advancing — i.e. we have an outgoing message but [`outgoing_rv`]
     /// is withholding it. The app may time out the QSO at this point.
     pub fn stalled(&self) -> bool {
-        self.pending.is_some() && self.tx_count >= MAX_TX_PER_STEP
+        self.state != State::CallingCq
+            && self.pending.is_some()
+            && self.tx_count >= MAX_TX_PER_STEP
     }
 
     /// The current outgoing message as on-air text (the "Now sending" readout),
@@ -369,6 +374,17 @@ impl Station {
         self.transcript.push(s);
     }
 
+    /// True when `sender` is the station we're working (or we haven't locked one
+    /// yet). Once a QSO is in progress, the auto-sequencer must only advance on
+    /// messages FROM the worked DX — a reply from a different station must not
+    /// hijack the sequence (WSJT-X checks the sender against DX Call). Compared on
+    /// base calls so a portable suffix still matches.
+    fn from_dx(&self, sender: &str) -> bool {
+        self.dxcall
+            .as_deref()
+            .map_or(true, |dx| crate::message::same_call(sender, dx))
+    }
+
     /// Process the signals decoded this RX slot and advance the sequence.
     pub fn observe(&mut self, decodes: &[Decode]) {
         let state_before = self.state;
@@ -398,7 +414,9 @@ impl Station {
                     self.state = State::AwaitRoger;
                     self.log(format!("{de} answered → sending report {rpt}"));
                 }
-                (State::AwaitReport, Msg::Report { to, de, snr }) if crate::message::same_call(to, &self.mycall) => {
+                (State::AwaitReport, Msg::Report { to, de, snr })
+                    if crate::message::same_call(to, &self.mycall) && self.from_dx(de) =>
+                {
                     self.rx_report = Some(*snr);
                     self.pending = Some(Msg::RReport {
                         to: de.clone(),
@@ -411,7 +429,9 @@ impl Station {
                         crate::message::fmt_report(rpt)
                     ));
                 }
-                (State::AwaitRoger, Msg::RReport { to, de, snr }) if crate::message::same_call(to, &self.mycall) => {
+                (State::AwaitRoger, Msg::RReport { to, de, snr })
+                    if crate::message::same_call(to, &self.mycall) && self.from_dx(de) =>
+                {
                     self.rx_report = Some(*snr);
                     // RR73 (combined roger+73, modern default) unless the operator
                     // prefers a bare RRR (roger only; partner still owes a 73).
@@ -434,7 +454,7 @@ impl Station {
                 }
                 (State::AwaitRr73, Msg::Rr73 { to, de })
                 | (State::AwaitRr73, Msg::Rrr { to, de })
-                    if crate::message::same_call(to, &self.mycall) =>
+                    if crate::message::same_call(to, &self.mycall) && self.from_dx(de) =>
                 {
                     self.pending = Some(Msg::Bye73 {
                         to: de.clone(),
@@ -443,7 +463,9 @@ impl Station {
                     self.state = State::Done;
                     self.log("got RR73 → sending 73, QSO complete".into());
                 }
-                (State::Confirming, Msg::Bye73 { to, .. }) if crate::message::same_call(to, &self.mycall) => {
+                (State::Confirming, Msg::Bye73 { to, de })
+                    if crate::message::same_call(to, &self.mycall) && self.from_dx(de) =>
+                {
                     self.pending = None;
                     self.state = State::Done;
                     self.log("got 73 → QSO complete".into());
@@ -688,6 +710,48 @@ mod start_context_tests {
         assert_eq!(s.state, State::Done);
         assert_eq!(s.pending_text().as_deref(), Some("W9XYZ KD9TAW 73"));
     }
+
+    fn dec(text: &str, snr: i32) -> Decode {
+        Decode {
+            message: text.into(),
+            sync: 1.0,
+            snr,
+            dt: 0.0,
+            freq: 1500.0,
+            nap: 0,
+            qual: 1.0,
+            rv: None,
+            mode: None,
+        }
+    }
+
+    #[test]
+    fn locked_qso_ignores_a_different_station() {
+        // Working W9XYZ (we sent our grid, awaiting their report). A REPORT from a
+        // DIFFERENT station addressed to us must NOT advance our sequence — only the
+        // station we're working can (WSJT-X sender check). Then the real DX's report
+        // does advance it.
+        let mut s = Station::answering(ME, MY_GRID, DX); // dxcall = W9XYZ, AwaitReport
+        assert_eq!(s.state, State::AwaitReport);
+        s.observe(&[dec("KD9TAW N0ABC -05", -5)]); // a different station reports us
+        assert_eq!(s.state, State::AwaitReport, "a non-DX reply must not advance");
+        s.observe(&[dec("KD9TAW W9XYZ -12", -8)]); // the worked DX reports us
+        assert_eq!(s.state, State::AwaitRr73, "the worked DX advances the sequence");
+        assert_eq!(s.pending_text().as_deref(), Some("W9XYZ KD9TAW R-08"));
+    }
+
+    #[test]
+    fn running_cq_never_stalls() {
+        // A bare CQ repeats indefinitely — it must NOT be withheld after
+        // MAX_TX_PER_STEP like an in-QSO step would be.
+        let mut s = Station::calling_cq(ME, MY_GRID);
+        for _ in 0..(MAX_TX_PER_STEP + 4) {
+            assert!(s.outgoing_rv().is_some(), "CQ keeps repeating");
+            assert!(!s.stalled(), "CQ never stalls");
+            s.after_tx();
+        }
+        assert_eq!(s.pending_text().as_deref(), Some("CQ KD9TAW EN61"));
+    }
 }
 
 #[cfg(test)]
@@ -754,7 +818,9 @@ mod harq_seq_tests {
 
     #[test]
     fn step_stalls_after_max_tx_without_ack() {
-        let mut s = Station::calling_cq("W9XYZ", "EN37");
+        // An IN-QSO step (not a CQ) honors the cap: answering K2DEF, our grid (Tx1)
+        // is withheld after MAX_TX_PER_STEP unacked sends.
+        let mut s = Station::answering("W9XYZ", "EN37", "K2DEF");
         for i in 0..MAX_TX_PER_STEP {
             assert!(
                 s.outgoing_rv().is_some(),
@@ -771,7 +837,7 @@ mod harq_seq_tests {
 
     #[test]
     fn resend_clears_a_stall_and_re_arms() {
-        let mut s = Station::calling_cq("W9XYZ", "EN37");
+        let mut s = Station::answering("W9XYZ", "EN37", "K2DEF");
         for _ in 0..MAX_TX_PER_STEP {
             s.after_tx();
         }
@@ -784,7 +850,7 @@ mod harq_seq_tests {
             Some(0),
             "resend re-arms at RV0"
         );
-        assert_eq!(s.pending_text().as_deref(), Some("CQ W9XYZ EN37"));
+        assert_eq!(s.pending_text().as_deref(), Some("K2DEF W9XYZ EN37"));
     }
 
     #[test]

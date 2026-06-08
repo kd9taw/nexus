@@ -145,6 +145,12 @@ pub struct Engine {
     /// Whether the active QSO has already been auto-logged (so it logs exactly
     /// once when the sequencer reaches `Done`). Reset when a new QSO starts.
     qso_logged: bool,
+    /// Whether the operator is RUNNING (called CQ) vs answering a specific station.
+    /// When running, a completed QSO returns to calling CQ (WSJT-X's run workflow).
+    cq_running: bool,
+    /// The slot index of the most recent decoded frame — used to set TX parity to
+    /// the OPPOSITE period when working a clicked station (WSJT-X double-click).
+    last_decode_slot: Option<u64>,
     /// Rolling window of the most recent captured audio, fed continuously by the
     /// radio loop (independent of the decoder) so the waterfall reflects LIVE
     /// sound-card input — not just the once-per-slot decoded frame.
@@ -259,6 +265,8 @@ impl Engine {
             qso_report_sent: None,
             pending_log: None,
             qso_logged: false,
+            cq_running: false,
+            last_decode_slot: None,
             spectrum_audio: Vec::new(),
             cat_status: (None, String::new()),
             cat_reprobe: false,
@@ -927,6 +935,14 @@ impl Engine {
         if matches!(self.mode, Mode::Chat) && matches!(self.app.tier(), Tier::Ft8 | Tier::Ft4) {
             self.set_tier(Tier::Ft1);
         }
+        // Running modes (Call CQ / Field-Day run) auto-call CQ, so entering one
+        // must ENABLE TX like WSJT-X's run start — otherwise, after a prior Halt Tx
+        // or a tripped watchdog, "Call CQ" would silently transmit nothing.
+        // `cq_running` marks a CQ-run session so a completed QSO returns to CQ.
+        self.cq_running = matches!(spec, "qso-run" | "fieldday-run");
+        if self.cq_running {
+            self.set_tx_enabled(true);
+        }
         self.reset_tx_watchdog();
         self.tx_queue.clear();
         self.broadcast_queue.clear();
@@ -1043,6 +1059,16 @@ impl Engine {
             station: Box::new(station),
             running: true,
         };
+        // A directed call is S&P, not a CQ run: a completed QSO does NOT auto-resume
+        // calling CQ.
+        self.cq_running = false;
+        // Set our TX period to the OPPOSITE of the period the DX was decoded in, so
+        // we transmit while they listen — WSJT-X's auto-Tx-1st/2nd on double-click.
+        // (The decode's audio is from the slot before `last_decode_slot`, so the
+        // opposite of the DX's period is exactly `last_decode_slot % 2`.)
+        if let Some(s) = self.last_decode_slot {
+            self.set_tx_even(s % 2 == 0);
+        }
         // Working a station implies transmit: enable TX (also clears a tripped
         // watchdog + resets the continuous-TX count, like the Monitor toggle) so
         // the auto-sequencer actually keys even if TX was toggled off.
@@ -1879,6 +1905,7 @@ impl Engine {
         }
         self.last_rx = Some(frame.to_vec());
         self.last_decodes = decodes;
+        self.last_decode_slot = Some(slot);
         n
     }
 
@@ -1930,6 +1957,36 @@ impl Engine {
                     self.log_qso(rec);
                 }
             }
+        }
+
+        // Run workflow: after a completed QSO while RUNNING (we called CQ), return
+        // to calling CQ to work the next caller in a pileup — WSJT-X's default Run
+        // behavior. Only once our closing RR73/73 has actually gone out (Confirming
+        // with ≥1 TX, or Done) so the DX still receives it; S&P/directed calls do
+        // NOT auto-resume CQ (cq_running is false there).
+        let resume_cq = self.cq_running
+            && self.qso_logged
+            && match &self.mode {
+                Mode::Qso { station, .. } => {
+                    matches!(station.state, QsoState::Done)
+                        || (matches!(station.state, QsoState::Confirming) && station.tx_count >= 1)
+                }
+                _ => false,
+            };
+        if resume_cq {
+            let mycall = self.settings.mycall.clone();
+            let mygrid = self.settings.mygrid.clone();
+            let mut s = QsoStation::calling_cq(&mycall, &mygrid);
+            s.confirm_with_rrr = self.settings.prefer_rrr;
+            self.mode = Mode::Qso {
+                station: Box::new(s),
+                running: true,
+            };
+            // Fresh auto-log window for the next contact; keep TX enabled so CQ
+            // keeps going out.
+            self.qso_logged = false;
+            self.qso_report_sent = None;
+            self.reset_tx_watchdog();
         }
     }
 
