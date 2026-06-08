@@ -6,8 +6,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { geoPath } from 'd3-geo'
 import { RotateCcw } from 'lucide-react'
-import type { NeedTag, PropagationSnapshot, Station, WorkableCard } from '../types'
+import type { AuroraPoint, NeedTag, PropagationSnapshot, Station, WorkableCard } from '../types'
 import type { Theme } from '../useTheme'
+import { getAurora } from '../api'
 import { gridToLatLon, haversineKm, bearingDeg, type LatLon } from '../grid'
 import {
   basemap,
@@ -83,6 +84,7 @@ function needColor(tag: NeedTag | undefined): string | null {
 type LayerKey =
   | 'daynight'
   | 'muf'
+  | 'aurora'
   | 'coast'
   | 'grid'
   | 'rings'
@@ -98,6 +100,7 @@ interface Layer {
 const DEFAULT_LAYERS: Record<LayerKey, Layer> = {
   daynight: { label: 'Day / night (greyline)', visible: true, opacity: 1 },
   muf: { label: 'MUF (modelled)', visible: false, opacity: 0.85 },
+  aurora: { label: 'Aurora oval', visible: false, opacity: 0.85 },
   coast: { label: 'Coastlines', visible: true, opacity: 0.85 },
   grid: { label: 'Grid (20°×10°)', visible: true, opacity: 0.5 },
   rings: { label: 'Range rings', visible: true, opacity: 0.55 },
@@ -217,6 +220,28 @@ export function MapView({
   // Static MUF grid cells (geometry never changes; colors recomputed per draw).
   const mufGrid = useMemo(() => mufCells(), [])
 
+  // Aurora oval — fetched only while the layer is on (polite; OVATION updates
+  // ~30–45 min, so a 10-min refresh is ample). Cleared when the layer is off.
+  const [auroraPts, setAuroraPts] = useState<AuroraPoint[]>([])
+  const auroraOn = layers.aurora.visible
+  useEffect(() => {
+    if (!auroraOn) {
+      setAuroraPts([])
+      return
+    }
+    let live = true
+    const load = () =>
+      getAurora()
+        .then((p) => live && setAuroraPts(p))
+        .catch(() => {})
+    load()
+    const id = setInterval(load, 600_000)
+    return () => {
+      live = false
+      clearInterval(id)
+    }
+  }, [auroraOn])
+
   // Draw.
   useEffect(() => {
     const canvas = canvasRef.current
@@ -300,6 +325,26 @@ export function MapView({
         ctx.globalAlpha = layers.muf.opacity * 0.34
         ctx.beginPath()
         path(cell.poly)
+        ctx.fillStyle = `rgb(${r}, ${g}, ${b})`
+        ctx.fill()
+      }
+      ctx.globalAlpha = 1
+    }
+
+    // Aurora oval (OVATION nowcast) — green (low) → red (high) by probability.
+    // High aurora = degraded high-lat/polar HF paths, so it's both pretty and
+    // operationally meaningful. Drawn over the field layers, under spots.
+    if (layers.aurora.visible) {
+      for (const a of auroraPts) {
+        const p = project(proj, { lat: a.lat, lon: a.lon })
+        if (!p) continue
+        const t = Math.max(0, Math.min(1, (a.prob - 8) / (90 - 8)))
+        const r = Math.round(80 + 175 * t)
+        const g = Math.round(255 - 120 * t)
+        const b = Math.round(120 - 40 * t)
+        ctx.globalAlpha = layers.aurora.opacity * (0.25 + 0.45 * t)
+        ctx.beginPath()
+        ctx.arc(p[0], p[1], 2.5, 0, Math.PI * 2)
         ctx.fillStyle = `rgb(${r}, ${g}, ${b})`
         ctx.fill()
       }
@@ -432,7 +477,7 @@ export function MapView({
     }
     // theme is a draw dependency so colors refresh on theme switch.
     void theme
-  }, [me, kind, colorBy, pathMode, size, layers, placed, mufGrid, prop, dxCards, selStation, selectedCall, needByCall, theme, nowMs])
+  }, [me, kind, colorBy, pathMode, size, layers, placed, mufGrid, auroraPts, prop, dxCards, selStation, selectedCall, needByCall, theme, nowMs])
 
   if (!me) {
     return (

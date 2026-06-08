@@ -31,7 +31,7 @@ import type {
   Tier,
 } from './types'
 import { mockEngine, nextSpectrumRow, demoPropagation } from './mock'
-import type { PropagationSnapshot, PathPrediction, GettingOut } from './types'
+import type { PropagationSnapshot, PathPrediction, GettingOut, AuroraPoint } from './types'
 
 interface TauriInvoke {
   invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T>
@@ -101,6 +101,13 @@ export async function getGettingOut(): Promise<GettingOut> {
   const invoke = tauriInvoke()
   if (invoke) return invoke<GettingOut>('get_getting_out')
   return { count: 0, maxKm: 0, reports: [] }
+}
+
+/** The current OVATION aurora oval for the map overlay. Empty in the mock. */
+export async function getAurora(): Promise<AuroraPoint[]> {
+  const invoke = tauriInvoke()
+  if (invoke) return invoke<AuroraPoint[]>('get_aurora')
+  return []
 }
 
 export async function sendMessage(peer: string, text: string): Promise<void> {

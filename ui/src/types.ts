@@ -106,6 +106,12 @@ export interface GettingOut {
   maxKm: number
   reports: HeardMe[]
 }
+/** One OVATION aurora-oval sample (probability 0..100 %) for the map overlay. */
+export interface AuroraPoint {
+  lat: number
+  lon: number
+  prob: number
+}
 /** A forward-calendar entry — an announced DXpedition to plan for. */
 export interface CalendarEntry {
   call: string

@@ -43,6 +43,9 @@ type SharedEngine = Arc<Mutex<Engine>>;
 /// Cached propagation nowcast: `(fetched_at, snapshot)`. Caching enforces PSK
 /// Reporter's ≥5-minute-per-dataset query limit across UI polls.
 type PropCache = Arc<Mutex<Option<(std::time::Instant, propagation::PropagationSnapshot)>>>;
+/// TTL cache for the OVATION aurora oval (distinct payload type from PropCache, so
+/// a distinct TypeId for `.manage()`).
+type AuroraCache = Arc<Mutex<Option<(std::time::Instant, Vec<propagation::live::aurora::AuroraPoint>)>>>;
 
 /// Recent DX-cluster / RBN spots, fed by the background cluster thread and read
 /// by `get_need_alerts`.
@@ -604,6 +607,36 @@ fn get_getting_out(
         .map(|b| b.recent(now, 1800))
         .unwrap_or_default();
     Ok(propagation::getting_out(&mycall, &mygrid, &spots, now))
+}
+
+/// The current OVATION aurora oval (downsampled prob ≥ 8 %), for the map overlay.
+/// Cached `AURORA_TTL_SECS`; serves the last-good set on a fetch failure.
+#[tauri::command]
+fn get_aurora(
+    cache: State<'_, AuroraCache>,
+) -> Result<Vec<propagation::live::aurora::AuroraPoint>, String> {
+    const AURORA_TTL_SECS: u64 = 600;
+    {
+        let g = cache.lock().map_err(|e| e.to_string())?;
+        if let Some((when, pts)) = g.as_ref() {
+            if when.elapsed().as_secs() < AURORA_TTL_SECS {
+                return Ok(pts.clone());
+            }
+        }
+    }
+    match propagation::live::aurora::fetch_aurora() {
+        Ok(pts) => {
+            if let Ok(mut g) = cache.lock() {
+                *g = Some((std::time::Instant::now(), pts.clone()));
+            }
+            Ok(pts)
+        }
+        Err(_) => {
+            // Serve a stale oval rather than nothing; empty if we never had one.
+            let g = cache.lock().map_err(|e| e.to_string())?;
+            Ok(g.as_ref().map(|(_, p)| p.clone()).unwrap_or_default())
+        }
+    }
 }
 
 /// One waterfall row (Goertzel power spectrum of the last received frame).
@@ -2234,10 +2267,12 @@ pub fn run() {
     }
 
     let prop_cache: PropCache = Arc::new(Mutex::new(None));
+    let aurora_cache: AuroraCache = Arc::new(Mutex::new(None));
 
     tauri::Builder::default()
         .manage(engine)
         .manage(prop_cache)
+        .manage(aurora_cache)
         .manage(spots)
         .manage(live_paths)
         .manage(region_paths)
@@ -2312,6 +2347,7 @@ pub fn run() {
             get_propagation,
             get_path_outlook,
             get_getting_out,
+            get_aurora,
             get_feed_health,
             qsy_set_enabled,
             qsy_configure,
