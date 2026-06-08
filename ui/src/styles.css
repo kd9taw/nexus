@@ -932,6 +932,35 @@ button.nb-chip:hover {
   box-shadow: var(--elev-2);
   z-index: 5;
 }
+/* Persistent selected-path readout (bearing + distance, SP/LP) — top-right so it
+   never collides with the bottom-left legend. */
+.map-path {
+  position: absolute;
+  top: var(--space-3);
+  right: var(--space-3);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 4px var(--space-2);
+  font-size: var(--fs-micro);
+  box-shadow: var(--elev-2);
+  z-index: 6;
+}
+.map-path-call {
+  font-weight: 600;
+  color: var(--accent);
+}
+.map-path-fig {
+  font-family: var(--font-mono);
+  color: var(--text);
+}
+.map-path-toggle button {
+  font-size: 10px;
+  padding: 1px 6px;
+}
 .map-legend {
   position: absolute;
   left: var(--space-3);

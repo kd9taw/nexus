@@ -86,6 +86,7 @@ export function MapView({ myGrid, theme, stations, prop, selectedCall, onSelectC
   const wrapRef = useRef<HTMLDivElement>(null)
   const [kind, setKind] = useState<Projection>('aeqd')
   const [colorBy, setColorBy] = useState<'need' | 'snr'>('need')
+  const [pathMode, setPathMode] = useState<'sp' | 'lp'>('sp')
   const [layers, setLayers] = useState(DEFAULT_LAYERS)
   const [size, setSize] = useState({ w: 0, h: 0 })
   const [hover, setHover] = useState<{ x: number; y: number; text: string } | null>(null)
@@ -109,6 +110,22 @@ export function MapView({ myGrid, theme, stations, prop, selectedCall, onSelectC
     () => stations.find((s) => s.call === selectedCall) ?? null,
     [stations, selectedCall],
   )
+  // Persistent bearing+distance to the selected station, short- and long-path.
+  // (Bearings are TRUE north — the rotator/beam convention. Magnetic needs a WMM
+  // model; that's a later add.) Long path = the same great circle the other way:
+  // reverse bearing, ~40 075 km − short-path.
+  const EARTH_CIRC_KM = 40_075
+  const pathInfo = useMemo(() => {
+    if (!me || !selStation?.grid) return null
+    const sll = gridToLatLon(selStation.grid)
+    if (!sll) return null
+    const spKm = haversineKm(me, sll)
+    const spBrg = bearingDeg(me, sll)
+    return {
+      sp: { brg: Math.round(spBrg), km: Math.round(spKm) },
+      lp: { brg: Math.round((spBrg + 180) % 360), km: Math.round(EARTH_CIRC_KM - spKm) },
+    }
+  }, [me, selStation])
 
   // Track container size.
   useEffect(() => {
@@ -224,15 +241,38 @@ export function MapView({ myGrid, theme, stations, prop, selectedCall, onSelectC
       }
     }
 
-    // Selected great-circle path.
+    // Selected path: short-path = the geodesic (geoPath clips it cleanly); long-
+    // path = the same great circle the other way, sampled along the reversed
+    // bearing and dashed to distinguish it. (A manual polyline can jump the
+    // antimeridian in the world view, so break the line on a big screen-x jump.)
     if (layers.paths.visible && selStation?.grid) {
       const sll = gridToLatLon(selStation.grid)
       if (sll) {
-        ctx.beginPath()
-        path(greatCircle(me, sll))
         ctx.strokeStyle = cssVar('--accent')
         ctx.lineWidth = 1.5
-        ctx.stroke()
+        if (pathMode === 'sp') {
+          ctx.beginPath()
+          path(greatCircle(me, sll))
+          ctx.stroke()
+        } else {
+          const lpKm = EARTH_CIRC_KM - haversineKm(me, sll)
+          const lpBrg = (bearingDeg(me, sll) + 180) % 360
+          ctx.setLineDash([5, 4])
+          ctx.beginPath()
+          let prevX: number | null = null
+          for (let i = 0; i <= 48; i++) {
+            const p = project(proj, destinationPoint(me, lpBrg, (lpKm * i) / 48))
+            if (!p) {
+              prevX = null
+              continue
+            }
+            if (prevX === null || Math.abs(p[0] - prevX) > w * 0.5) ctx.moveTo(p[0], p[1])
+            else ctx.lineTo(p[0], p[1])
+            prevX = p[0]
+          }
+          ctx.stroke()
+          ctx.setLineDash([])
+        }
       }
     }
 
@@ -308,7 +348,7 @@ export function MapView({ myGrid, theme, stations, prop, selectedCall, onSelectC
     }
     // theme is a draw dependency so colors refresh on theme switch.
     void theme
-  }, [me, kind, colorBy, size, layers, placed, prop, dxCards, selStation, selectedCall, needByCall, theme, nowMs])
+  }, [me, kind, colorBy, pathMode, size, layers, placed, prop, dxCards, selStation, selectedCall, needByCall, theme, nowMs])
 
   if (!me) {
     return (
@@ -392,6 +432,23 @@ export function MapView({ myGrid, theme, stations, prop, selectedCall, onSelectC
           {hover && (
             <div className="map-hover" style={{ left: hover.x + 12, top: hover.y + 12 }}>
               {hover.text}
+            </div>
+          )}
+          {selStation && pathInfo && (
+            <div className="map-path">
+              <span className="map-path-call">{selStation.call}</span>
+              <span className="map-path-fig">
+                {(pathMode === 'sp' ? pathInfo.sp : pathInfo.lp).brg}° ·{' '}
+                {(pathMode === 'sp' ? pathInfo.sp : pathInfo.lp).km.toLocaleString()} km
+              </span>
+              <div className="map-proj map-path-toggle" role="group" aria-label="Path">
+                <button className={pathMode === 'sp' ? 'active' : ''} onClick={() => setPathMode('sp')} title="Short path">
+                  SP
+                </button>
+                <button className={pathMode === 'lp' ? 'active' : ''} onClick={() => setPathMode('lp')} title="Long path">
+                  LP
+                </button>
+              </div>
             </div>
           )}
           {placed.length === 0 && (
