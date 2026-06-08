@@ -441,7 +441,7 @@ fn get_propagation(
     opening_tracker: State<'_, SharedOpeningTracker>,
     spots: State<'_, SharedSpots>,
 ) -> Result<propagation::PropagationSnapshot, String> {
-    let (mycall, mygrid, needs) = {
+    let (mycall, mygrid, needs, local_spots) = {
         let eng = state.lock().map_err(|e| e.to_string())?;
         let s = eng.settings();
         let (mycall, mygrid) = (s.mycall.clone(), s.mygrid.clone());
@@ -452,7 +452,32 @@ fn get_propagation(
             // A "needs confirmation" must be award-grade (LoTW/paper), not eQSL.
             needs.add(&q.call, &q.band, &q.mode, q.award_confirmed);
         }
-        (mycall, mygrid, needs)
+        // The operator's OWN decoded roster on the current band → "I heard X"
+        // PathSpots. This feeds the opening detector + advisor from MONITORING
+        // alone — a band the operator can SEE open in their decode window now lights
+        // up even with zero PSKR/cluster coverage (the highest-leverage fix for
+        // "I can see 6m is open but get no alert").
+        let mut local_spots: Vec<propagation::PathSpot> = Vec::new();
+        if !mycall.trim().is_empty() {
+            let snap = eng.snapshot();
+            if let Some(band) = propagation::model::Band::from_label(&snap.radio.band) {
+                let t = now_unix();
+                let me_grid = (!mygrid.trim().is_empty()).then(|| mygrid.clone());
+                for st in &snap.stations {
+                    local_spots.push(propagation::PathSpot {
+                        time: t,
+                        tx_call: st.call.to_uppercase(),
+                        tx_grid: st.grid.clone(),
+                        rx_call: mycall.to_uppercase(),
+                        rx_grid: me_grid.clone(),
+                        band,
+                        mode: None,
+                        snr: Some(st.snr as f32),
+                    });
+                }
+            }
+        }
+        (mycall, mygrid, needs, local_spots)
     };
 
     let now = now_unix();
@@ -558,6 +583,10 @@ fn get_propagation(
             }
         }
     }
+    // The operator's own decodes (collected above): IHeard spots that drive the
+    // operator-anchored opening gate + the band ladder from monitoring alone.
+    let had_local = !local_spots.is_empty();
+    wide.extend(local_spots);
     if let Ok(mut tr) = opening_tracker.lock() {
         snap.openings = propagation::detect_openings_tracked(
             &mycall,
@@ -575,7 +604,7 @@ fn get_propagation(
     // reflects activity AROUND the operator, not only bands they've personally
     // been heard on. (The cached snapshot's advisory was built from own-call spots
     // alone, which is why bands you weren't using all read "Closed".)
-    if regional_scope {
+    if regional_scope || had_local {
         snap.advisory = propagation::PropAdvisor::new(&mycall, &mygrid).advise(now, &wide, &wx);
     }
 

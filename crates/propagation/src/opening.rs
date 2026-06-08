@@ -208,12 +208,24 @@ impl BandFeatures {
         if self.anomaly_z < cfg.z_open {
             return false;
         }
+        // VHF/Es bands (6/4/2 m) open SUDDENLY with FEW stations and no cross-band
+        // breadth — a real Es burst shows 2–3 far stations, not the 5/3 + reciprocity
+        // + cross-band-share an HF F2 opening needs. The HF-tuned thresholds were
+        // effectively disabling 6 m detection, so loosen them on VHF (never tighten).
+        let vhf = self.band.is_vhf();
+        let (far_rx, far_tx) = if vhf {
+            (cfg.min_far_rx.min(3), cfg.min_far_tx.min(2))
+        } else {
+            (cfg.min_far_rx, cfg.min_far_tx)
+        };
         // Operator-anchored gate (v1): enough far stations on either direction.
-        let op_gate = self.unique_far_rx >= cfg.min_far_rx || self.unique_far_tx >= cfg.min_far_tx;
+        let op_gate = self.unique_far_rx >= far_rx || self.unique_far_tx >= far_tx;
         // Regional gate (Phase 2, opt-in): a band-wide surge near the operator.
         // Multi-condition so neither a single loud station (needs two-way pairs)
         // nor a uniform contest/Es lifting every band (needs band-specificity)
-        // can fabricate an opening.
+        // can fabricate an opening. Left band-agnostic: the cross-band-share
+        // dilution by HF own-call traffic is a DENOMINATOR fix (engine.rs), not a
+        // threshold relax — relaxing it here would defeat contest rejection.
         let regional_gate = cfg.regional_scope
             && self.unique_stations >= cfg.min_regional_stations
             && self.reciprocal_pairs_regional >= cfg.min_regional_reciprocal
@@ -879,6 +891,27 @@ mod tests {
     const NOW: i64 = 1_700_000_000;
     const ME: &str = "KD9TAW";
     const ME_GRID: &str = "EN52";
+
+    #[test]
+    fn vhf_gate_opens_on_few_stations_where_hf_would_not() {
+        // A modest real 6m Es burst: anomaly is up, and the operator has heard
+        // just 2 far stations (typical of a fresh opening). On 6m this must OPEN
+        // (loosened VHF gate); the identical evidence on 20m must NOT (HF needs 3
+        // tx / 5 rx). This is the fix for "I see 6m open but get no alert."
+        let cfg = OpeningConfig::default();
+        let mut six = BandFeatures::empty(Band::B6);
+        six.anomaly_z = cfg.z_open + 1.0;
+        six.unique_far_tx = 2; // I heard 2 far stations on 6m
+        assert!(six.raw_open(&cfg), "6m should open on 2 far stations during an anomaly");
+
+        let mut twenty = BandFeatures::empty(Band::B20);
+        twenty.anomaly_z = cfg.z_open + 1.0;
+        twenty.unique_far_tx = 2; // same evidence on HF
+        assert!(
+            !twenty.raw_open(&cfg),
+            "20m must NOT open on only 2 far stations (HF needs the full gate)"
+        );
+    }
 
     fn heard_me(far: &str, fg: &str, band: Band, dt: i64) -> PathSpot {
         PathSpot {
