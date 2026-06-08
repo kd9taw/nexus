@@ -1302,6 +1302,7 @@ async fn get_need_alerts(
     state: State<'_, SharedEngine>,
     live_paths: State<'_, SharedLivePaths>,
     region_paths: State<'_, SharedRegionPaths>,
+    spots: State<'_, SharedSpots>,
 ) -> Result<Vec<propagation::NeedAlert>, String> {
     let eng = state.lock().map_err(|e| e.to_string())?;
     let mut needs = propagation::LogNeeds::new();
@@ -1341,6 +1342,37 @@ async fn get_need_alerts(
     if let Some(me) = me_ll {
         if let Ok(buf) = region_paths.0.lock() {
             heard.extend(propagation::heard_near_me(&buf.recent(now, 900), me));
+        }
+    }
+    // RBN (CW/RTTY) spots whose SKIMMER is near you — folds CW/RTTY needs in
+    // alongside PSK. RBN telnet carries the skimmer call but no grid, so we
+    // geolocate the skimmer (US call-area centroid / DXCC centroid) and keep only
+    // spots from a skimmer within the band-aware radius of you.
+    if let Some(me) = me_ll {
+        if let Ok(buf) = spots.lock() {
+            for cs in buf.recent_within(
+                std::time::Instant::now(),
+                std::time::Duration::from_secs(900),
+            ) {
+                let mode = cs
+                    .comment
+                    .split_whitespace()
+                    .find(|t| {
+                        matches!(
+                            t.to_ascii_uppercase().as_str(),
+                            "CW" | "RTTY" | "PSK" | "FT8" | "FT4" | "SSB" | "USB" | "LSB"
+                                | "JT65" | "JT9" | "MFSK"
+                        )
+                    })
+                    .unwrap_or("CW"); // RBN is overwhelmingly CW
+                if let Some(h) = propagation::heard_from_freq(&cs.dx_call, cs.freq_mhz(), mode) {
+                    if let Some(b) = propagation::model::Band::from_label(&h.band) {
+                        if propagation::skimmer_near_me(&cs.spotter, me, b) {
+                            heard.push(h);
+                        }
+                    }
+                }
+            }
         }
     }
     Ok(propagation::rank_needs(&heard, &needs, needs.worked_zones()))

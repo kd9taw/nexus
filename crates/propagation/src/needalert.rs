@@ -256,6 +256,43 @@ pub fn workable_by_getting_out(reports: &[PathSpot], my_call: &str) -> Vec<Heard
     out
 }
 
+/// US call-area regional centroids (lat, lon), indexed by the call-area digit 0–9.
+const US_CALL_AREA: [(f64, f64); 10] = [
+    (42.0, -97.0),  // 0 — Plains / Upper Midwest
+    (43.0, -71.5),  // 1 — New England
+    (41.0, -74.5),  // 2 — NY / NJ
+    (40.0, -77.0),  // 3 — PA / MD / DE
+    (33.0, -82.0),  // 4 — Southeast
+    (32.0, -97.0),  // 5 — South-central
+    (37.0, -120.0), // 6 — California
+    (44.0, -114.0), // 7 — Northwest / Mountain
+    (40.5, -82.5),  // 8 — MI / OH / WV
+    (42.0, -89.0),  // 9 — IL / IN / WI
+];
+
+/// Approximate location of a spotter/skimmer by callsign, for near-me geometry.
+/// The continental US is ONE DXCC over a whole continent, so its country centroid is
+/// useless here — refine to the call-area digit's regional centroid. Every other
+/// entity (incl. KH6 Hawaii / KL7 Alaska / NP_ Puerto Rico, which are their own
+/// DXCC) uses the entity centroid. RBN/portable suffixes are ignored. `None` if
+/// unresolvable.
+pub fn skimmer_latlon(call: &str) -> Option<(f64, f64)> {
+    let info = dxcc::resolve(call)?;
+    if info.entity == "United States" {
+        let base = call.split(['-', '/']).next().unwrap_or(call);
+        if let Some(d) = base.bytes().find(|b| b.is_ascii_digit()) {
+            return Some(US_CALL_AREA[(d - b'0') as usize]);
+        }
+    }
+    Some((info.lat, info.lon))
+}
+
+/// True when a spotter/skimmer is within the band-aware "local to me" radius — used
+/// to fold RBN (CW/RTTY) spots whose SKIMMER is near you into the needed board.
+pub fn skimmer_near_me(spotter: &str, me: (f64, f64), band: Band) -> bool {
+    skimmer_latlon(spotter).is_some_and(|s| haversine_km(me, s) <= near_me_radius_km(band))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -267,6 +304,18 @@ mod tests {
             band: band.into(),
             mode: "FT8".into(),
         }
+    }
+
+    #[test]
+    fn skimmer_near_me_uses_us_call_area() {
+        let me = maidenhead_to_latlon("EN61").unwrap(); // Chicago / W9 area
+        let b20 = Band::from_label("20m").unwrap();
+        // A W9 skimmer (Midwest) is near; a W6 skimmer (California) is far — the
+        // country centroid would call BOTH "near", so this proves call-area refinement.
+        assert!(skimmer_near_me("W9XYZ", me, b20), "W9 skimmer near a W9 op");
+        assert!(!skimmer_near_me("W6ABC", me, b20), "W6 (CA) skimmer is not near");
+        // RBN suffix stripped.
+        assert!(skimmer_near_me("K9CT-#", me, b20), "RBN suffix ignored");
     }
 
     #[test]
