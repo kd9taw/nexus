@@ -4660,6 +4660,16 @@ select.settings-input {
   flex-direction: column;
   gap: 5px;
 }
+/* Notes spans the whole form row and is comfortable to type into mid-QSO. */
+.logbook-field-wide {
+  grid-column: 1 / -1;
+}
+.logbook-notes {
+  resize: vertical;
+  min-height: 58px;
+  font-family: inherit;
+  line-height: 1.4;
+}
 .logbook-field > span {
   font-size: 11px;
   font-weight: 700;

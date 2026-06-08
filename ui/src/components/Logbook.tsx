@@ -37,6 +37,10 @@ interface DraftQso {
   mode: string
   rstSent: string
   rstRcvd: string
+  name: string
+  qth: string
+  comment: string
+  notes: string
 }
 
 /** The word the operator must type to arm the full-log purge (irreversible). */
@@ -50,16 +54,14 @@ function fmtUtc(whenUnix: number): string {
   )}:${p(d.getUTCMinutes())}Z`
 }
 
-function fmtReport(v: number | null): string {
-  if (v === null || v === undefined) return '—'
-  return `${v > 0 ? '+' : ''}${v}`
+function fmtReport(v: string | null): string {
+  return v && v.trim() !== '' ? v : '—'
 }
 
-function parseReport(s: string): number | null {
+// RST is a free string now (CW "599" / phone "59" / digital "-12"); just trim.
+function parseReport(s: string): string | null {
   const t = s.trim()
-  if (t === '') return null
-  const n = Number(t)
-  return Number.isNaN(n) ? null : n
+  return t === '' ? null : t
 }
 
 export function Logbook({
@@ -80,6 +82,10 @@ export function Logbook({
     mode: defaultMode,
     rstSent: '',
     rstRcvd: '',
+    name: '',
+    qth: '',
+    comment: '',
+    notes: '',
   }))
   const [err, setErr] = useState<string | null>(null)
   const [qrzBusy, setQrzBusy] = useState(false)
@@ -105,6 +111,7 @@ export function Logbook({
     setQrzBusy(false)
     if (r) {
       if (r.grid && !draft.grid.trim()) setField('grid', r.grid)
+      if (r.name && !draft.name.trim()) setField('name', r.name)
       const detail = [r.name, r.grid && `grid ${r.grid}`, r.state].filter(Boolean).join(' · ')
       const note = r.grid ? '' : ' · grid/state need a QRZ subscription'
       pushToast(`QRZ ${r.call}: ${detail || r.country || 'found'}${note}`, 'info')
@@ -195,8 +202,12 @@ export function Logbook({
       band: q.band,
       freq: q.freqMhz.toFixed(4),
       mode: q.mode,
-      rstSent: q.rstSent != null ? String(q.rstSent) : '',
-      rstRcvd: q.rstRcvd != null ? String(q.rstRcvd) : '',
+      rstSent: q.rstSent ?? '',
+      rstRcvd: q.rstRcvd ?? '',
+      name: q.name ?? '',
+      qth: q.qth ?? '',
+      comment: q.comment ?? '',
+      notes: q.notes ?? '',
     })
     setShowForm(true)
   }
@@ -266,6 +277,10 @@ export function Logbook({
       mode: draft.mode.trim(),
       rstSent: parseReport(draft.rstSent),
       rstRcvd: parseReport(draft.rstRcvd),
+      name: draft.name.trim() || null,
+      qth: draft.qth.trim() || null,
+      comment: draft.comment.trim() || null,
+      notes: draft.notes.trim() || null,
       // Editing preserves the original time + confirmation/upload state (the engine
       // re-applies the latter regardless); a new entry is stamped now.
       whenUnix: existing ? existing.whenUnix : Math.floor(Date.now() / 1000),
@@ -279,7 +294,7 @@ export function Logbook({
       if (snap) {
         pushToast(`Updated ${record.call}`, 'success')
         cancelForm()
-        setDraft((prev) => ({ ...prev, call: '', grid: '', rstSent: '', rstRcvd: '' }))
+        setDraft((prev) => ({ ...prev, call: '', grid: '', rstSent: '', rstRcvd: '', name: '', qth: '', comment: '', notes: '' }))
         load()
       }
       return
@@ -288,7 +303,7 @@ export function Logbook({
     if (snap) {
       load()
       setShowForm(false)
-      setDraft((prev) => ({ ...prev, call: '', grid: '', rstSent: '', rstRcvd: '' }))
+      setDraft((prev) => ({ ...prev, call: '', grid: '', rstSent: '', rstRcvd: '', name: '', qth: '', comment: '', notes: '' }))
       // Auto-upload to QRZ (best-effort; the QSO is already logged locally).
       if (qrzUpload) {
         const r = await withErrorToast(() => qrzPushQso(record), 'QRZ upload failed')
@@ -466,11 +481,33 @@ export function Logbook({
             </label>
             <label className="logbook-field">
               <span>RST Sent</span>
-              <input className="settings-input" value={draft.rstSent} onChange={(e) => setField('rstSent', e.target.value)} placeholder="-09" autoComplete="off" />
+              <input className="settings-input" value={draft.rstSent} onChange={(e) => setField('rstSent', e.target.value)} placeholder="59 / 599 / -09" autoComplete="off" />
             </label>
             <label className="logbook-field">
               <span>RST Rcvd</span>
-              <input className="settings-input" value={draft.rstRcvd} onChange={(e) => setField('rstRcvd', e.target.value)} placeholder="-11" autoComplete="off" />
+              <input className="settings-input" value={draft.rstRcvd} onChange={(e) => setField('rstRcvd', e.target.value)} placeholder="59 / 599 / -11" autoComplete="off" />
+            </label>
+            <label className="logbook-field">
+              <span>Name</span>
+              <input className="settings-input" value={draft.name} onChange={(e) => setField('name', e.target.value)} placeholder="Jim" autoComplete="off" />
+            </label>
+            <label className="logbook-field">
+              <span>QTH</span>
+              <input className="settings-input" value={draft.qth} onChange={(e) => setField('qth', e.target.value)} placeholder="Dayton, OH" autoComplete="off" />
+            </label>
+            <label className="logbook-field">
+              <span>Comment</span>
+              <input className="settings-input" value={draft.comment} onChange={(e) => setField('comment', e.target.value)} placeholder="Shared on the QSL" autoComplete="off" />
+            </label>
+            <label className="logbook-field logbook-field-wide">
+              <span>Notes</span>
+              <textarea
+                className="settings-input logbook-notes"
+                value={draft.notes}
+                onChange={(e) => setField('notes', e.target.value)}
+                placeholder="Rig / antenna / weather / what you talked about…"
+                rows={3}
+              />
             </label>
           </div>
           <div className="logbook-form-actions">

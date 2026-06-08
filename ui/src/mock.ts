@@ -305,10 +305,10 @@ const recentDecodes: DecodeRow[] = [
 
 const NOW = Math.floor(Date.now() / 1000)
 const logbook: LoggedQso[] = [
-  { call: 'K2DEF', grid: 'FN20', country: 'United States', band: '20m', freqMhz: 14.0905, mode: 'FT1', rstSent: -9, rstRcvd: -11, whenUnix: NOW - 3600, confirmed: false, awardConfirmed: false },
-  { call: 'KD8MNO', grid: 'EN82', country: 'United States', band: '40m', freqMhz: 7.0445, mode: 'FT1', rstSent: -15, rstRcvd: -18, whenUnix: NOW - 7200, confirmed: true, awardConfirmed: true },
+  { call: 'K2DEF', grid: 'FN20', country: 'United States', band: '20m', freqMhz: 14.0905, mode: 'FT1', rstSent: '-9', rstRcvd: '-11', whenUnix: NOW - 3600, confirmed: false, awardConfirmed: false },
+  { call: 'KD8MNO', grid: 'EN82', country: 'United States', band: '40m', freqMhz: 7.0445, mode: 'FT1', rstSent: '-15', rstRcvd: '-18', whenUnix: NOW - 7200, confirmed: true, awardConfirmed: true },
   // Confirmed only via eQSL → NOT award-eligible (shows the distinction).
-  { call: 'W1AW', grid: 'FN31', country: 'United States', band: '20m', freqMhz: 14.0905, mode: 'DX1', rstSent: -3, rstRcvd: -5, whenUnix: NOW - 86400, confirmed: true, awardConfirmed: false },
+  { call: 'W1AW', grid: 'FN31', country: 'United States', band: '20m', freqMhz: 14.0905, mode: 'DX1', rstSent: '-3', rstRcvd: '-5', whenUnix: NOW - 86400, confirmed: true, awardConfirmed: false },
 ]
 
 // ---------------------------------------------------------------------------
@@ -1084,8 +1084,8 @@ class MockEngine {
         band: this.settings.band,
         freqMhz: this.settings.dialMhz,
         mode: this.snap.link.tier,
-        rstSent: -7,
-        rstRcvd: this.snap.qso?.rxReport ?? null,
+        rstSent: '-7',
+        rstRcvd: this.snap.qso?.rxReport != null ? String(this.snap.qso.rxReport) : null,
         whenUnix: Math.floor(Date.now() / 1000),
         confirmed: false,
         awardConfirmed: false,
@@ -1839,8 +1839,8 @@ class MockEngine {
           band: this.settings.band,
           freqMhz: this.settings.dialMhz,
           mode: this.snap.link.tier,
-          rstSent: -7,
-          rstRcvd: qso.rxReport ?? null,
+          rstSent: '-7',
+          rstRcvd: qso.rxReport != null ? String(qso.rxReport) : null,
           whenUnix: Math.floor(Date.now() / 1000),
           confirmed: false,
           awardConfirmed: false,

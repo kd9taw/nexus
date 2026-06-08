@@ -2098,8 +2098,14 @@ impl Engine {
             band: self.settings.band.clone(),
             freq_mhz: self.settings.dial_mhz,
             mode,
-            rst_sent: self.qso_report_sent,
-            rst_rcvd: rx_report,
+            // Digital dB SNR reports → ADIF string form ("-12").
+            rst_sent: self.qso_report_sent.map(|v| v.to_string()),
+            rst_rcvd: rx_report.map(|v| v.to_string()),
+            name: None,
+            qth: None,
+            comment: None,
+            notes: None,
+            tx_power: None,
             when_unix: now_unix_secs(),
             confirmed: false,
             award_confirmed: false,
@@ -2676,8 +2682,8 @@ mod tests {
         assert_eq!(r.call, "W9XYZ");
         assert_eq!(r.band, "20m");
         assert_eq!(r.mode, "FT1");
-        assert_eq!(r.rst_rcvd, Some(-10), "report received about our signal");
-        assert_eq!(r.rst_sent, Some(-7), "report we sent the DX");
+        assert_eq!(r.rst_rcvd.as_deref(), Some("-10"), "report received about our signal");
+        assert_eq!(r.rst_sent.as_deref(), Some("-7"), "report we sent the DX");
 
         // worked_before now true (reflected in the snapshot's worked flag).
         let snap = e.snapshot();
@@ -2743,6 +2749,11 @@ mod tests {
             mode: "FT8".into(),
             rst_sent: None,
             rst_rcvd: None,
+            name: None,
+            qth: None,
+            comment: None,
+            notes: None,
+            tx_power: None,
             when_unix: 0,
             confirmed: false,
             award_confirmed: false,
@@ -2889,7 +2900,7 @@ mod tests {
         let log = e.get_log();
         assert_eq!(log.len(), 1, "CQ-side QSO auto-logs at RR73");
         assert_eq!(log[0].call, "K2DEF");
-        assert_eq!(log[0].rst_rcvd, Some(-12), "report they sent us");
+        assert_eq!(log[0].rst_rcvd.as_deref(), Some("-12"), "report they sent us");
         // Idempotent: a later 73 (or re-observe) doesn't double-log.
         e.ingest_decodes_for_test(&[dec_snr("W9XYZ K2DEF 73", -8)], 5);
         assert_eq!(e.get_log().len(), 1, "no double-log on a late 73");

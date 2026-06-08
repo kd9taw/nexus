@@ -376,8 +376,19 @@ export interface LoggedQso {
   band: string
   freqMhz: number
   mode: string
-  rstSent: number | null
-  rstRcvd: number | null
+  /** Signal report as a string: CW "599" / phone "59" / digital "-12" dB. */
+  rstSent: string | null
+  rstRcvd: string | null
+  /** Operator name (ADIF NAME) — callbook autofill / ragchew logging. */
+  name?: string | null
+  /** QSO location / city (ADIF QTH). */
+  qth?: string | null
+  /** Short sharable remark (ADIF COMMENT). */
+  comment?: string | null
+  /** Free-form multi-line operator notes (ADIF NOTES). */
+  notes?: string | null
+  /** Transmit power in watts (ADIF TX_PWR). */
+  txPower?: number | null
   /** Contact time, seconds since the Unix epoch (UTC). */
   whenUnix: number
   /** Confirmed via ANY channel (LoTW / eQSL / paper QSL). */

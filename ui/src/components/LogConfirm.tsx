@@ -19,9 +19,10 @@ export function LogConfirm({ record, onConfirm, onDiscard }: Props) {
   const [rstSent, setRstSent] = useState(record.rstSent?.toString() ?? '')
   const [rstRcvd, setRstRcvd] = useState(record.rstRcvd?.toString() ?? '')
 
-  const parseRst = (v: string): number | null => {
-    const n = parseInt(v, 10)
-    return Number.isFinite(n) ? n : null
+  // RST is a free string now (CW "599" / phone "59" / digital "-12"); just trim.
+  const parseRst = (v: string): string | null => {
+    const t = v.trim()
+    return t === '' ? null : t
   }
 
   const confirm = () => {

@@ -1310,7 +1310,13 @@ async fn get_journey(
             // Award-eligible confirmation (LoTW/paper — not eQSL), matching the
             // awards + "first confirmation" semantics.
             confirmed: r.award_confirmed,
-            rst_rcvd: r.rst_rcvd,
+            // The Journey "strongest signal" stat is a digital dB SNR concept; parse
+            // the numeric report only for DIGITAL QSOs (a phone "59"/CW "599" isn't dB).
+            rst_rcvd: if ModeClass::from_adif(&r.mode) == ModeClass::Digital {
+                r.rst_rcvd.as_deref().and_then(|s| s.trim().parse::<i32>().ok())
+            } else {
+                None
+            },
             pota: r
                 .ota
                 .their_program

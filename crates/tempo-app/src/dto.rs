@@ -436,11 +436,26 @@ pub struct LoggedQso {
     pub state: Option<String>,
     pub band: String,
     pub freq_mhz: f64,
-    /// Tempo tier / mode label ("FT1" | "DX1").
+    /// Mode / tier label ("FT1" | "FT8" | "CW" | "SSB" | "USB" | "LSB" | "FM" …).
     pub mode: String,
-    /// Signal report sent / received (dB SNR for digital), if known.
-    pub rst_sent: Option<i32>,
-    pub rst_rcvd: Option<i32>,
+    /// Signal report sent / received as a string: CW "599" / phone "59" / digital "-12".
+    pub rst_sent: Option<String>,
+    pub rst_rcvd: Option<String>,
+    /// Operator name (ADIF NAME) — callbook autofill / ragchew logging.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// QSO location / city (ADIF QTH).
+    #[serde(default)]
+    pub qth: Option<String>,
+    /// Short sharable remark (ADIF COMMENT).
+    #[serde(default)]
+    pub comment: Option<String>,
+    /// Free-form multi-line operator notes (ADIF NOTES).
+    #[serde(default)]
+    pub notes: Option<String>,
+    /// Transmit power in watts (ADIF TX_PWR).
+    #[serde(default)]
+    pub tx_power: Option<f64>,
     /// Contact time, Unix seconds (UTC).
     pub when_unix: u64,
     /// Confirmed via ANY channel (LoTW / eQSL / paper QSL).
@@ -473,6 +488,11 @@ impl From<tempo_core::logbook::QsoRecord> for LoggedQso {
             mode: r.mode,
             rst_sent: r.rst_sent,
             rst_rcvd: r.rst_rcvd,
+            name: r.name,
+            qth: r.qth,
+            comment: r.comment,
+            notes: r.notes,
+            tx_power: r.tx_power,
             when_unix: r.when_unix,
             confirmed: r.confirmed,
             award_confirmed: r.award_confirmed,
@@ -495,6 +515,11 @@ impl From<LoggedQso> for tempo_core::logbook::QsoRecord {
             mode: q.mode,
             rst_sent: q.rst_sent,
             rst_rcvd: q.rst_rcvd,
+            name: q.name,
+            qth: q.qth,
+            comment: q.comment,
+            notes: q.notes,
+            tx_power: q.tx_power,
             when_unix: q.when_unix,
             confirmed: q.confirmed,
             award_confirmed: q.award_confirmed,

@@ -22,11 +22,26 @@ pub struct QsoRecord {
     pub state: Option<String>,
     pub band: String,
     pub freq_mhz: f64,
-    /// Tempo tier / mode label ("FT1" | "DX1").
+    /// Mode / tier label ("FT1" | "DX1" | "FT8" | "CW" | "SSB" | "USB" | "LSB" | "FM" …).
     pub mode: String,
-    /// Signal report sent / received (dB SNR for digital), if known.
-    pub rst_sent: Option<i32>,
-    pub rst_rcvd: Option<i32>,
+    /// Signal report SENT / RECEIVED, as a string (ADIF `RST_SENT`/`RST_RCVD` are
+    /// type String). Holds a CW RST ("599"), a phone RS ("59"), OR a digital dB SNR
+    /// ("-12") — the digital path's signed-int report is already a valid string, so
+    /// this is a non-breaking generalization. Digital consumers parse the signed int
+    /// back out (gated on mode), e.g. the Journey "strongest signal" stat.
+    pub rst_sent: Option<String>,
+    pub rst_rcvd: Option<String>,
+    /// Operator's name (ADIF `NAME`) — callbook autofill / ragchew logging.
+    pub name: Option<String>,
+    /// QSO location / city (ADIF `QTH`).
+    pub qth: Option<String>,
+    /// Short, sharable remark about the contact (ADIF `COMMENT`).
+    pub comment: Option<String>,
+    /// Operator's own free-form, multi-line notes (ADIF `NOTES`) — rig/antenna/
+    /// weather/conversation. The field ragchew operators love most.
+    pub notes: Option<String>,
+    /// Transmit power in watts (ADIF `TX_PWR`), if recorded.
+    pub tx_power: Option<f64>,
     /// Contact time, Unix seconds (UTC).
     pub when_unix: u64,
     /// Confirmed by ANY channel — LoTW, eQSL, or paper (`*_QSL_RCVD`). For
@@ -393,7 +408,7 @@ impl Logbook {
     /// The whole logbook as RFC-4180 CSV (for spreadsheet / quick export).
     pub fn csv(&self) -> String {
         let mut s =
-            String::from("Call,Grid,Band,Freq_MHz,Mode,RST_Sent,RST_Rcvd,DateTimeUTC,Confirmed\n");
+            String::from("Call,Grid,Band,Freq_MHz,Mode,RST_Sent,RST_Rcvd,Name,QTH,Comment,DateTimeUTC,Confirmed\n");
         for r in &self.records {
             let (y, mo, d, h, mi, se) = datetime_utc(r.when_unix);
             let dt = format!("{y:04}-{mo:02}-{d:02}T{h:02}:{mi:02}:{se:02}Z");
@@ -403,8 +418,11 @@ impl Logbook {
                 csv_cell(&r.band),
                 format!("{:.6}", r.freq_mhz),
                 csv_cell(&r.mode),
-                r.rst_sent.map(|v| v.to_string()).unwrap_or_default(),
-                r.rst_rcvd.map(|v| v.to_string()).unwrap_or_default(),
+                csv_cell(r.rst_sent.as_deref().unwrap_or("")),
+                csv_cell(r.rst_rcvd.as_deref().unwrap_or("")),
+                csv_cell(r.name.as_deref().unwrap_or("")),
+                csv_cell(r.qth.as_deref().unwrap_or("")),
+                csv_cell(r.comment.as_deref().unwrap_or("")),
                 dt,
                 if r.confirmed { "Y" } else { "N" }.to_string(),
             ];
@@ -464,11 +482,26 @@ pub fn adif_record(r: &QsoRecord) -> String {
     out.push_str(&field("MODE", &r.mode));
     out.push_str(&field("QSO_DATE", &format!("{y:04}{mo:02}{d:02}")));
     out.push_str(&field("TIME_ON", &format!("{h:02}{mi:02}{s:02}")));
-    if let Some(rs) = r.rst_sent {
-        out.push_str(&field("RST_SENT", &rs.to_string()));
+    if let Some(rs) = &r.rst_sent {
+        out.push_str(&field("RST_SENT", rs));
     }
-    if let Some(rr) = r.rst_rcvd {
-        out.push_str(&field("RST_RCVD", &rr.to_string()));
+    if let Some(rr) = &r.rst_rcvd {
+        out.push_str(&field("RST_RCVD", rr));
+    }
+    if let Some(n) = &r.name {
+        out.push_str(&field("NAME", n));
+    }
+    if let Some(q) = &r.qth {
+        out.push_str(&field("QTH", q));
+    }
+    if let Some(c) = &r.comment {
+        out.push_str(&field("COMMENT", c));
+    }
+    if let Some(n) = &r.notes {
+        out.push_str(&field("NOTES", n));
+    }
+    if let Some(p) = r.tx_power {
+        out.push_str(&field("TX_PWR", &format!("{p}")));
     }
     // Preserve award-eligibility on round-trip: award-confirmed → LoTW; a
     // confirmation that ISN'T award-eligible (eQSL-only) → eQSL.
@@ -670,8 +703,14 @@ fn record_from(f: &std::collections::HashMap<String, String>) -> Option<QsoRecor
         band: f.get("BAND").cloned().unwrap_or_default(),
         freq_mhz: f.get("FREQ").and_then(|s| s.parse().ok()).unwrap_or(0.0),
         mode: f.get("MODE").cloned().unwrap_or_default(),
-        rst_sent: f.get("RST_SENT").and_then(|s| s.parse().ok()),
-        rst_rcvd: f.get("RST_RCVD").and_then(|s| s.parse().ok()),
+        // RST is a string (CW "599" / phone "59" / digital "-12") per ADIF.
+        rst_sent: f.get("RST_SENT").map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
+        rst_rcvd: f.get("RST_RCVD").map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
+        name: f.get("NAME").map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
+        qth: f.get("QTH").map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
+        comment: f.get("COMMENT").map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
+        notes: f.get("NOTES").map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
+        tx_power: f.get("TX_PWR").and_then(|s| s.trim().parse().ok()),
         when_unix: unix_from_ymdhms(y, mo, d, h, mi, s),
         confirmed,
         award_confirmed,
@@ -752,8 +791,13 @@ mod tests {
             band: band.into(),
             freq_mhz: 14.0905,
             mode: "FT1".into(),
-            rst_sent: Some(-10),
-            rst_rcvd: Some(-12),
+            rst_sent: Some("-10".into()),
+            rst_rcvd: Some("-12".into()),
+            name: None,
+            qth: None,
+            comment: None,
+            notes: None,
+            tx_power: None,
             when_unix: when,
             confirmed: false,
             award_confirmed: false,
@@ -924,7 +968,7 @@ mod tests {
         assert_eq!(back.len(), 2);
         assert_eq!(back[0].call, "W9XYZ");
         assert_eq!(back[0].band, "20m");
-        assert_eq!(back[0].rst_rcvd, Some(-12));
+        assert_eq!(back[0].rst_rcvd.as_deref(), Some("-12"));
         assert!((back[0].freq_mhz - 14.0905).abs() < 1e-6);
         // time round-trips to the same unix second
         assert_eq!(back[0].when_unix, 1_700_000_000);
@@ -1072,10 +1116,33 @@ mod tests {
         let mut lines = csv.lines();
         assert_eq!(
             lines.next().unwrap(),
-            "Call,Grid,Band,Freq_MHz,Mode,RST_Sent,RST_Rcvd,DateTimeUTC,Confirmed"
+            "Call,Grid,Band,Freq_MHz,Mode,RST_Sent,RST_Rcvd,Name,QTH,Comment,DateTimeUTC,Confirmed"
         );
         let row = lines.next().unwrap();
-        assert!(row.starts_with("W9XYZ,EN37,20m,14.090500,FT1,-10,-12,2023-11-14T22:13:20Z,N"));
+        assert!(row.starts_with("W9XYZ,EN37,20m,14.090500,FT1,-10,-12,,,,2023-11-14T22:13:20Z,N"));
+    }
+
+    #[test]
+    fn multimode_report_and_notes_round_trip_through_adif() {
+        let mut r = rec("K2DEF", "20m", 1_700_000_000);
+        r.mode = "SSB".into();
+        r.rst_sent = Some("59".into()); // phone RS
+        r.rst_rcvd = Some("599".into()); // (a CW-style RST, proving free strings)
+        r.name = Some("Jim".into());
+        r.qth = Some("Dayton, OH".into());
+        r.comment = Some("nice signal".into());
+        r.notes = Some("IC-7300, 100W, G5RV — talked antennas".into());
+        r.tx_power = Some(100.0);
+        let back = parse_adif(&(adif_header() + &adif_record(&r)));
+        assert_eq!(back.len(), 1);
+        let b = &back[0];
+        assert_eq!(b.rst_sent.as_deref(), Some("59"));
+        assert_eq!(b.rst_rcvd.as_deref(), Some("599"));
+        assert_eq!(b.name.as_deref(), Some("Jim"));
+        assert_eq!(b.qth.as_deref(), Some("Dayton, OH"));
+        assert_eq!(b.comment.as_deref(), Some("nice signal"));
+        assert_eq!(b.notes.as_deref(), Some("IC-7300, 100W, G5RV — talked antennas"));
+        assert_eq!(b.tx_power, Some(100.0));
     }
 
     #[test]
