@@ -250,6 +250,15 @@ export async function deleteQso(index: number): Promise<AppSnapshot> {
   return mockEngine.deleteQso(index)
 }
 
+/** Purge the ENTIRE logbook — delete every contact and truncate the ADIF file.
+ * Irreversible; the UI gates this behind a typed confirmation. Returns the number
+ * of contacts removed. */
+export async function purgeLog(): Promise<number> {
+  const invoke = tauriInvoke()
+  if (invoke) return invoke<number>('purge_log')
+  return Promise.resolve(mockEngine.purgeLog())
+}
+
 /** DXCC-first award progress computed from the logbook (cty.dat-resolved). */
 export async function getAwards(): Promise<AwardSummary> {
   const invoke = tauriInvoke()

@@ -8,6 +8,7 @@ import {
   getLog,
   importAdif,
   logQso,
+  purgeLog,
   qrzLookup,
   qrzPushQso,
   syncLotwReport,
@@ -37,6 +38,9 @@ interface DraftQso {
   rstSent: string
   rstRcvd: string
 }
+
+/** The word the operator must type to arm the full-log purge (irreversible). */
+const PURGE_WORD = 'DELETE'
 
 function fmtUtc(whenUnix: number): string {
   const d = new Date(whenUnix * 1000)
@@ -81,6 +85,11 @@ export function Logbook({
   const [qrzBusy, setQrzBusy] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [search, setSearch] = useState('')
+  // Purge-the-whole-log confirmation modal. `purgeText` must equal PURGE_WORD to
+  // arm the danger button — a deliberate, typed gate for an irreversible wipe.
+  const [showPurge, setShowPurge] = useState(false)
+  const [purgeText, setPurgeText] = useState('')
+  const [purging, setPurging] = useState(false)
   // Index (in the loaded `log` array) being edited; null = the form logs a NEW QSO.
   const [editIndex, setEditIndex] = useState<number | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -204,6 +213,26 @@ export function Logbook({
     if (snap) {
       pushToast(`Deleted ${q.call}`, 'success')
       if (editIndex === i) cancelForm()
+      load()
+    }
+  }
+
+  const closePurge = () => {
+    setShowPurge(false)
+    setPurgeText('')
+  }
+
+  // Wipe the ENTIRE logbook (truncates the ADIF file). Armed only once the operator
+  // types the confirmation word — an irreversible action gets a deliberate gate.
+  const onPurge = async () => {
+    if (purgeText.trim().toUpperCase() !== PURGE_WORD) return
+    setPurging(true)
+    const removed = await withErrorToast(() => purgeLog(), 'Could not purge the log')
+    setPurging(false)
+    if (removed !== null && removed !== undefined) {
+      pushToast(`Purged ${removed} contact${removed === 1 ? '' : 's'} from the log`, 'success')
+      closePurge()
+      cancelForm()
       load()
     }
   }
@@ -366,6 +395,15 @@ export function Logbook({
           >
             {showForm ? 'Close' : 'Log QSO'}
           </button>
+          <button
+            type="button"
+            className="export-btn danger"
+            onClick={() => setShowPurge(true)}
+            disabled={log.length === 0}
+            title="Delete every contact in the local logbook (irreversible)"
+          >
+            Purge log
+          </button>
         </div>
       </div>
 
@@ -520,6 +558,60 @@ export function Logbook({
           })()}
         </div>
       </div>
+
+      {showPurge && (
+        <div
+          className="logconfirm-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Purge logbook"
+          onClick={closePurge}
+        >
+          <div className="logconfirm purge-confirm" onClick={(e) => e.stopPropagation()}>
+            <div className="logconfirm-head">
+              <h2>Purge the entire logbook?</h2>
+              <span className="logconfirm-sub danger">Irreversible</span>
+            </div>
+            <p className="purge-warn">
+              This permanently deletes <strong>all {log.length} contact{log.length === 1 ? '' : 's'}</strong>{' '}
+              from your local logbook and rewrites the ADIF file to empty. It does <strong>not</strong> remove
+              anything you've already uploaded to LoTW, QRZ, eQSL, or ClubLog. There is no undo — export an
+              ADIF backup first if you might want it.
+            </p>
+            <label className="purge-field">
+              <span>
+                Type <strong>{PURGE_WORD}</strong> to confirm
+              </span>
+              <input
+                className="settings-input mono"
+                value={purgeText}
+                autoFocus
+                onChange={(e) => setPurgeText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && purgeText.trim().toUpperCase() === PURGE_WORD) void onPurge()
+                  if (e.key === 'Escape') closePurge()
+                }}
+                placeholder={PURGE_WORD}
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </label>
+            <div className="logconfirm-actions">
+              <button type="button" className="logconfirm-discard" onClick={closePurge}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="logconfirm-log danger"
+                onClick={onPurge}
+                disabled={purging || purgeText.trim().toUpperCase() !== PURGE_WORD}
+              >
+                {purging ? 'Purging…' : `Purge ${log.length} contact${log.length === 1 ? '' : 's'}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   )
 }

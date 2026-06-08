@@ -708,6 +708,23 @@ impl Engine {
         ok
     }
 
+    /// Purge the ENTIRE logbook (operator-confirmed, destructive, irreversible).
+    /// Clears every contact in memory, rewrites the ADIF file to an empty log, and
+    /// recomputes the worked-entity/grid sets (so the roster B4 highlighting and
+    /// the needs/awards model reset too). Returns the number of contacts removed.
+    pub fn clear_logbook(&mut self) -> usize {
+        let n = self.logbook.clear();
+        if n > 0 {
+            if let Some(path) = &self.log_path {
+                if let Err(e) = self.logbook.save(path) {
+                    eprintln!("tempo: clear_logbook save failed: {e}");
+                }
+            }
+            self.refresh_worked_index();
+        }
+        n
+    }
+
     /// Import an external ADIF logbook: merge (deduped) into the persistent log,
     /// append the newly-added records to the ADIF file, and return
     /// `(added, skipped, total)`. The next propagation snapshot derives real

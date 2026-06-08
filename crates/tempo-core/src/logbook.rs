@@ -202,6 +202,15 @@ impl Logbook {
         }
     }
 
+    /// Remove EVERY record (the operator-confirmed "purge log" action). Returns the
+    /// number removed. Persist with [`save`](Self::save) to truncate the ADIF file
+    /// to an empty (header-only) log.
+    pub fn clear(&mut self) -> usize {
+        let n = self.records.len();
+        self.records.clear();
+        n
+    }
+
     /// Merge external ADIF `text` into the log, skipping records already present
     /// (deduped by call+band+mode+UTC-day). Returns the newly-added records (so
     /// the caller can persist exactly those) and the count skipped as dupes.
@@ -857,6 +866,19 @@ mod tests {
         let calls: Vec<_> = lb.records().iter().map(|r| r.call.as_str()).collect();
         assert_eq!(calls, vec!["A", "C"], "B removed, C shifted down");
         assert!(!lb.delete(5), "out-of-range is false");
+    }
+
+    #[test]
+    fn clear_purges_all_and_reports_count() {
+        let mut lb = Logbook::new();
+        lb.add(rec("A", "20m", 1));
+        lb.add(rec("B", "40m", 2));
+        lb.add(rec("C", "15m", 3));
+        assert_eq!(lb.clear(), 3, "returns the number removed");
+        assert!(lb.is_empty(), "every record gone");
+        // ADIF of an empty log is header-only — saving truncates the file cleanly.
+        assert!(!lb.adif().contains("<CALL:"), "no QSO records remain in the ADIF");
+        assert_eq!(lb.clear(), 0, "purging an empty log removes nothing");
     }
 
     #[test]

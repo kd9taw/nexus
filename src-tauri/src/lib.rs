@@ -1251,6 +1251,15 @@ fn delete_qso(state: State<'_, SharedEngine>, index: usize) -> Result<AppSnapsho
     Ok(eng.snapshot())
 }
 
+/// Purge the ENTIRE logbook — delete every contact and truncate the ADIF file to
+/// an empty log. Destructive and irreversible; the UI gates this behind an explicit
+/// confirmation dialog. Returns the number of contacts removed (for the toast).
+#[tauri::command]
+fn purge_log(state: State<'_, SharedEngine>) -> Result<usize, String> {
+    let mut eng = state.lock().map_err(|e| e.to_string())?;
+    Ok(eng.clear_logbook())
+}
+
 /// DXCC-first award progress from the logbook (cty.dat-resolved): entities +
 /// entity×band "Challenge" slots worked/confirmed, the per-band breakdown, and
 /// the worked-but-unconfirmed "new one" chase. Pure/offline — online LoTW/eQSL/
@@ -2435,6 +2444,7 @@ pub fn run() {
             get_log,
             edit_qso,
             delete_qso,
+            purge_log,
             get_awards,
             get_confirmation_diagnostics,
             import_adif,

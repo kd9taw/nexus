@@ -1189,6 +1189,13 @@ class MockEngine {
     return this.snap
   }
 
+  purgeLog(): number {
+    const n = this.logbook.length
+    this.logbook = []
+    this.emit()
+    return n
+  }
+
   // A mid-level DXer's award progress (past the 100-entity DXCC milestone,
   // chasing the rest + Challenge band slots), so the demo dashboard is alive.
   getAwards(): Promise<AwardSummary> {
