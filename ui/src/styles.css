@@ -5280,6 +5280,20 @@ select.settings-input {
   color: var(--text-dim);
   font-variant-numeric: tabular-nums;
 }
+/* The transmit-period indicator is a clickable toggle (Tx 1st/even ↔ 2nd/odd). */
+.cockpit-status button.cs-period {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elev-2);
+  padding: 2px 8px;
+  cursor: pointer;
+  letter-spacing: 0.02em;
+}
+.cockpit-status button.cs-period:hover {
+  color: var(--text);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
 
 /* DXCC country on a roster row. */
 .station-country {

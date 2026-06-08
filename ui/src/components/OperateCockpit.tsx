@@ -21,6 +21,8 @@ interface Props {
   onSetTxLevel: (level: number) => void
   /** Switch the QSO sequencer role (Call CQ / Monitor). */
   onSetMode: (mode: ModeRequest) => void
+  /** Set the transmit period (Tx 1st/even vs Tx 2nd/odd). */
+  onSetTxEven: (even: boolean) => void
   /** Re-arm the current QSO message. */
   onResend: () => void
   /** Send in-QSO free text (Tx5). */
@@ -66,6 +68,7 @@ export function OperateCockpit({
   onCall,
   onSetTxLevel,
   onSetMode,
+  onSetTxEven,
   onResend,
   onFreetext,
   onLog,
@@ -199,9 +202,14 @@ export function OperateCockpit({
           <span className="cs-msg mono">{snap.qso.txNow}</span>
         )}
         <span className="cs-spacer" />
-        <span className="cs-period" title="Your transmit period">
-          {snap.radio.txEven ? 'EVEN / 1st' : 'ODD / 2nd'}
-        </span>
+        <button
+          type="button"
+          className="cs-period"
+          onClick={() => onSetTxEven(!snap.radio.txEven)}
+          title="Your transmit period — click to switch. The station you work must be on the OPPOSITE period (auto-set when you double-click a decode)."
+        >
+          {snap.radio.txEven ? 'TX EVEN / 1st' : 'TX ODD / 2nd'}
+        </button>
         <span className="cs-next" title="Time to the next slot">
           next {nextSlotSec}s
         </span>

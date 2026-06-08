@@ -817,6 +817,7 @@ export default function App() {
           onCall={handleCall}
           onSetTxLevel={handleSetTxLevel}
           onSetMode={handleSetMode}
+          onSetTxEven={handleSetTxEven}
           onResend={handleQsoResend}
           onFreetext={handleQsoFreetext}
           onLog={handleLogCurrent}

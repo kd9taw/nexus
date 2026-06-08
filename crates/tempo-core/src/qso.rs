@@ -309,10 +309,12 @@ impl Station {
     /// been retransmitted [`MAX_TX_PER_STEP`] times without acknowledgement (the
     /// step has failed — the caller should time out or return to listening).
     pub fn outgoing_rv(&self) -> Option<(Msg, u8)> {
-        // A CQ is not an ARQ step awaiting an ACK — it repeats indefinitely until a
-        // station answers (or the operator / Tx watchdog stops it), exactly like
-        // WSJT-X. Only the in-QSO steps honor the per-step retransmission cap.
-        if self.state != State::CallingCq && self.tx_count >= MAX_TX_PER_STEP {
+        // Operating policy: a CQ stops after MAX_TX_PER_STEP calls (don't spam an
+        // empty band — the operator re-arms to call again), but a directed call /
+        // in-QSO step you're working repeats INDEFINITELY until the station
+        // responds (or the operator / Tx watchdog stops it). So the cap applies
+        // ONLY to CallingCq.
+        if self.state == State::CallingCq && self.tx_count >= MAX_TX_PER_STEP {
             return None;
         }
         self.pending.clone().map(|m| (m, self.rv_count))
@@ -322,7 +324,9 @@ impl Station {
     /// partner advancing — i.e. we have an outgoing message but [`outgoing_rv`]
     /// is withholding it. The app may time out the QSO at this point.
     pub fn stalled(&self) -> bool {
-        self.state != State::CallingCq
+        // Only a CQ "stalls" (stops after its call budget); a station you're
+        // working keeps calling until it answers or the watchdog trips.
+        self.state == State::CallingCq
             && self.pending.is_some()
             && self.tx_count >= MAX_TX_PER_STEP
     }
@@ -741,16 +745,30 @@ mod start_context_tests {
     }
 
     #[test]
-    fn running_cq_never_stalls() {
-        // A bare CQ repeats indefinitely — it must NOT be withheld after
-        // MAX_TX_PER_STEP like an in-QSO step would be.
+    fn running_cq_stops_after_its_call_budget() {
+        // Operating policy: a CQ stops after MAX_TX_PER_STEP calls (don't spam an
+        // empty band) — the operator re-arms to call again.
         let mut s = Station::calling_cq(ME, MY_GRID);
-        for _ in 0..(MAX_TX_PER_STEP + 4) {
-            assert!(s.outgoing_rv().is_some(), "CQ keeps repeating");
-            assert!(!s.stalled(), "CQ never stalls");
+        for _ in 0..MAX_TX_PER_STEP {
+            assert!(s.outgoing_rv().is_some(), "CQ calls within the budget");
             s.after_tx();
         }
-        assert_eq!(s.pending_text().as_deref(), Some("CQ KD9TAW EN61"));
+        assert!(s.outgoing_rv().is_none(), "CQ stops after its budget");
+        assert!(s.stalled(), "a finished CQ reports stalled (Resend re-arms)");
+    }
+
+    #[test]
+    fn calling_a_station_repeats_indefinitely() {
+        // A station you're working (here: answering — sending your grid, awaiting
+        // their report) keeps calling FAR past the CQ budget, until they respond or
+        // the Tx watchdog stops it.
+        let mut s = Station::answering(ME, MY_GRID, DX);
+        for _ in 0..(MAX_TX_PER_STEP * 3 + 5) {
+            assert!(s.outgoing_rv().is_some(), "keeps calling the station");
+            assert!(!s.stalled(), "calling a station never auto-stalls");
+            s.after_tx();
+        }
+        assert_eq!(s.pending_text().as_deref(), Some("W9XYZ KD9TAW EN61"));
     }
 }
 
@@ -818,9 +836,8 @@ mod harq_seq_tests {
 
     #[test]
     fn step_stalls_after_max_tx_without_ack() {
-        // An IN-QSO step (not a CQ) honors the cap: answering K2DEF, our grid (Tx1)
-        // is withheld after MAX_TX_PER_STEP unacked sends.
-        let mut s = Station::answering("W9XYZ", "EN37", "K2DEF");
+        // A CQ stops after its call budget (the only step that auto-stalls).
+        let mut s = Station::calling_cq("W9XYZ", "EN37");
         for i in 0..MAX_TX_PER_STEP {
             assert!(
                 s.outgoing_rv().is_some(),
@@ -837,7 +854,7 @@ mod harq_seq_tests {
 
     #[test]
     fn resend_clears_a_stall_and_re_arms() {
-        let mut s = Station::answering("W9XYZ", "EN37", "K2DEF");
+        let mut s = Station::calling_cq("W9XYZ", "EN37");
         for _ in 0..MAX_TX_PER_STEP {
             s.after_tx();
         }
@@ -850,7 +867,7 @@ mod harq_seq_tests {
             Some(0),
             "resend re-arms at RV0"
         );
-        assert_eq!(s.pending_text().as_deref(), Some("K2DEF W9XYZ EN37"));
+        assert_eq!(s.pending_text().as_deref(), Some("CQ W9XYZ EN37"));
     }
 
     #[test]
