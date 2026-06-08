@@ -5,6 +5,7 @@ import {
   Radar,
   Sun,
   Globe,
+  Target,
   MessageSquare,
   Tent,
   RadioTower,
@@ -47,6 +48,7 @@ interface Item {
 const ITEMS: Item[] = [
   { id: 'operate', label: 'FT8/FT4', icon: Radio, title: 'FT8/FT4 Operations — waterfall-first cockpit' },
   { id: 'connect', label: 'Connect', icon: Radar, title: 'Connect — situational awareness: grayline map + live propagation in one view' },
+  { id: 'needed', label: 'Needed', icon: Target, title: 'Needed — what you still need that’s on the air now; single-click to QSY' },
   { id: 'propagation', label: 'Prop', icon: Sun, title: 'Propagation & opening intelligence — what’s open now, 6m openings, DXpeditions' },
   { id: 'map', label: 'Map', icon: Globe, title: 'Map — azimuthal beam map: great-circle headings, range rings, openings, DXpeditions' },
   { id: 'chat', label: 'Chat', icon: MessageSquare, title: 'Chat — free-form QSO' },

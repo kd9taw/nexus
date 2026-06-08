@@ -57,7 +57,8 @@ import { MapView } from './components/MapView'
 import { ConnectView } from './components/ConnectView'
 import { getPropagation, getFeedHealth, getNeedAlerts } from './api'
 import { setStatus } from './status'
-import type { PropagationSnapshot, FeedHealth, NeedTag } from './types'
+import type { PropagationSnapshot, FeedHealth, NeedTag, NeedAlert } from './types'
+import { NeededPanel } from './components/NeededPanel'
 import { QsoPanel } from './components/QsoPanel'
 import { LogConfirm } from './components/LogConfirm'
 import { FieldDayView } from './components/FieldDayView'
@@ -278,12 +279,14 @@ export default function App() {
   // Same scoring the Propagation "need heard now" list uses (get_need_alerts), keyed
   // by callsign for the roster; refreshed on the prop cadence.
   const [needByCall, setNeedByCall] = useState<Map<string, NeedTag>>(new Map())
+  const [needAlerts, setNeedAlerts] = useState<NeedAlert[]>([])
   useEffect(() => {
     let live = true
     const load = () =>
       getNeedAlerts()
         .then((alerts) => {
           if (!live) return
+          setNeedAlerts(alerts)
           const m = new Map<string, NeedTag>()
           for (const a of alerts) {
             if (a.tags.length > 0) m.set(a.call.toUpperCase(), a.tags[0])
@@ -509,6 +512,27 @@ export default function App() {
       if (s) setSnap(s)
     })
   }, [])
+
+  // QSY from the Needed panel: move the rig to that band's channel and listen.
+  const handleQsy = useCallback(
+    (band: string) => {
+      const ch = bandPlan.find((c) => c.band === band)
+      if (!ch) {
+        pushToast(`No channel for ${band} in the band plan`, 'error', 3000)
+        return
+      }
+      void withErrorToast(
+        () => apiSetFrequency(ch.dialMhz, ch.band, ch.mode),
+        `Could not QSY to ${band}`,
+      ).then((s) => {
+        if (s) {
+          setSnap(s)
+          pushToast(`QSY ${band} — listening`, 'success', 2500)
+        }
+      })
+    },
+    [bandPlan],
+  )
 
   const handleSetMode = useCallback((mode: ModeRequest) => {
     void withErrorToast(() => apiSetMode(mode), 'Could not switch mode').then((s) => {
@@ -760,6 +784,17 @@ export default function App() {
             eqslUpload={settings?.eqslUpload ?? false}
           />
         </main>
+      )
+      break
+    case 'needed':
+      workspace = (
+        <NeededPanel
+          alerts={needAlerts}
+          bandPlan={bandPlan}
+          selectedCall={activePeer}
+          onQsy={handleQsy}
+          onSelect={handleSelect}
+        />
       )
       break
     case 'awards':

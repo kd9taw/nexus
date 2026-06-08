@@ -15,6 +15,7 @@ export type View =
   | 'connect'
   | 'propagation'
   | 'map'
+  | 'needed'
   | 'chat'
   | 'qso'
   | 'fieldDay'
@@ -210,6 +211,18 @@ export const FEATURES: FeatureDef[] = [
     view: 'connect',
     // global (no workspace): Connect is shared across FT8/FT4 and Tempo.
     oneLine: 'Situational awareness — the grayline map + live propagation in one view.',
+  },
+  {
+    id: 'needed',
+    label: 'Needed',
+    kind: 'section',
+    category: 'DX & Awards',
+    core: true, // flagship situational board — global, always available
+    dependsOn: [],
+    intents: ['casual', 'dx', 'contest', 'pota', 'vhf'],
+    view: 'needed',
+    // global (no workspace): what you need, on the air now, in both modes.
+    oneLine: "What you still need that's on the air now — single-click to QSY.",
   },
   {
     id: 'propagation',

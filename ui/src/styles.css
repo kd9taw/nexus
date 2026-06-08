@@ -5101,6 +5101,135 @@ select.settings-input {
   min-width: 0;
 }
 
+/* ── Needed panel (the N1MM-style "what's needed now" board) ────────────────── */
+.layout.single.needed-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  padding: 12px 14px;
+  gap: 10px;
+}
+.np-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.np-head h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+.np-count {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 800;
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-radius: 999px;
+  padding: 1px 9px;
+}
+.np-hint {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}
+.np-grid {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.np-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 200px) minmax(72px, 1fr) minmax(90px, 1.4fr) 56px 52px minmax(140px, 2fr);
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  font-size: 0.86rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+}
+.np-row.np-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg-elev-2);
+  border-bottom: 1px solid var(--border);
+}
+.np-th,
+.np-th-static {
+  background: none;
+  border: none;
+  text-align: left;
+  padding: 2px;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.np-th-static {
+  cursor: default;
+}
+.np-th:hover {
+  color: var(--text);
+}
+.np-th.active {
+  color: var(--accent);
+}
+.np-row:not(.np-header) {
+  cursor: pointer;
+}
+.np-row:not(.np-header):hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.np-row.selected {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+/* A bold left edge in the row's need color so the board reads at a glance. */
+.np-row.need-entity {
+  box-shadow: inset 3px 0 0 var(--need-entity);
+}
+.np-row.need-zone {
+  box-shadow: inset 3px 0 0 var(--need-zone);
+}
+.np-row.need-band {
+  box-shadow: inset 3px 0 0 var(--need-band);
+}
+.np-row.need-mode {
+  box-shadow: inset 3px 0 0 var(--need-mode);
+}
+.np-row.need-confirm {
+  box-shadow: inset 3px 0 0 var(--need-confirm);
+}
+.np-need {
+  display: inline-flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.np-call {
+  font-family: var(--font-mono);
+  font-weight: 700;
+}
+.np-entity,
+.np-why {
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.np-band,
+.np-zone {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+}
+.np-empty {
+  padding: 22px 14px;
+  color: var(--text-faint);
+  text-align: center;
+}
+
 /* ── Call Roster (the GridTracker-style sortable table) ─────────────────────── */
 .operate-roster {
   flex: 1;
