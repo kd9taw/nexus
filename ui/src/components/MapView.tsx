@@ -17,6 +17,7 @@ import {
   rangeRing,
   destinationPoint,
   greatCircle,
+  terminator,
   type Projection,
 } from '../mapGeo'
 import { sampleLut } from '../colormaps'
@@ -53,13 +54,14 @@ function needColor(tag: NeedTag | undefined): string | null {
   }
 }
 
-type LayerKey = 'coast' | 'grid' | 'rings' | 'stations' | 'paths' | 'openings' | 'dxped'
+type LayerKey = 'daynight' | 'coast' | 'grid' | 'rings' | 'stations' | 'paths' | 'openings' | 'dxped'
 interface Layer {
   label: string
   visible: boolean
   opacity: number
 }
 const DEFAULT_LAYERS: Record<LayerKey, Layer> = {
+  daynight: { label: 'Day / night (greyline)', visible: true, opacity: 1 },
   coast: { label: 'Coastlines', visible: true, opacity: 0.85 },
   grid: { label: 'Grid (20°×10°)', visible: true, opacity: 0.5 },
   rings: { label: 'Range rings', visible: true, opacity: 0.55 },
@@ -86,6 +88,12 @@ export function MapView({ myGrid, theme, stations, prop, selectedCall, onSelectC
   const [layers, setLayers] = useState(DEFAULT_LAYERS)
   const [size, setSize] = useState({ w: 0, h: 0 })
   const [hover, setHover] = useState<{ x: number; y: number; text: string } | null>(null)
+  // Ticking clock for the greyline (it drifts ~0.25°/min; a 60 s tick is plenty).
+  const [nowMs, setNowMs] = useState(() => Date.now())
+  useEffect(() => {
+    const id = setInterval(() => setNowMs(Date.now()), 60_000)
+    return () => clearInterval(id)
+  }, [])
 
   const me = useMemo(() => gridToLatLon(myGrid), [myGrid])
   const dxCards: WorkableCard[] = useMemo(() => {
@@ -172,6 +180,29 @@ export function MapView({ myGrid, theme, stations, prop, selectedCall, onSelectC
       ctx.setLineDash([])
     }
     ctx.globalAlpha = 1
+
+    // Day/night terminator (greyline): shade the night hemisphere with graduated
+    // civil/nautical/astronomical twilight (nested caps around the antisolar point,
+    // alpha accumulating toward full night), then stroke the day/night line in warm
+    // gold — the twice-daily greyline DX window. Drawn over the basemap but UNDER
+    // spots/openings so stations stay bright on the dark side.
+    if (layers.daynight.visible) {
+      const term = terminator(nowMs)
+      ctx.fillStyle = 'rgb(10, 18, 42)' // deep navy "night"
+      for (const cap of term.caps) {
+        ctx.globalAlpha = layers.daynight.opacity * 0.12 // stacks: ~0.12 twilight → ~0.4 core
+        ctx.beginPath()
+        path(cap)
+        ctx.fill()
+      }
+      ctx.globalAlpha = layers.daynight.opacity * 0.7
+      ctx.beginPath()
+      path(term.line)
+      ctx.strokeStyle = 'rgba(255, 200, 110, 0.9)' // greyline glow (prime DX zone)
+      ctx.lineWidth = 1.1
+      ctx.stroke()
+      ctx.globalAlpha = 1
+    }
 
     // Openings — bearing wedge out to maxKm, colored by probability (LUT).
     if (layers.openings.visible && prop) {
@@ -269,7 +300,7 @@ export function MapView({ myGrid, theme, stations, prop, selectedCall, onSelectC
     }
     // theme is a draw dependency so colors refresh on theme switch.
     void theme
-  }, [me, kind, size, layers, placed, prop, dxCards, selStation, selectedCall, needByCall, theme])
+  }, [me, kind, size, layers, placed, prop, dxCards, selStation, selectedCall, needByCall, theme, nowMs])
 
   if (!me) {
     return (

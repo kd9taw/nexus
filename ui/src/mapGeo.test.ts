@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { makeProjection, project, destinationPoint } from './mapGeo'
+import { makeProjection, project, destinationPoint, subsolarPoint, terminator } from './mapGeo'
 import { gridToLatLon, haversineKm } from './grid'
 
 const W = 800
@@ -47,5 +47,35 @@ describe('mapGeo (AEQD beam map)', () => {
     const b = project(there, EN52)!
     expect(Math.hypot(a[0] - W / 2, a[1] - H / 2)).toBeLessThan(2)
     expect(Math.hypot(b[0] - W / 2, b[1] - H / 2)).toBeGreaterThan(50)
+  })
+})
+
+describe('mapGeo (greyline / terminator)', () => {
+  it('puts the subsolar point near (0,0) at the March equinox ~12:00 UTC', () => {
+    // 2024-03-20 12:00 UTC — equinox: declination ~0; subsolar lon ~0 at UTC noon.
+    const ms = Date.UTC(2024, 2, 20, 12, 0, 0)
+    const ss = subsolarPoint(ms)
+    expect(Math.abs(ss.lat)).toBeLessThan(1.5) // declination ~0 at equinox
+    expect(Math.abs(ss.lon)).toBeLessThan(5) // ~Greenwich meridian at 12 UTC (eq-of-time)
+  })
+
+  it('tracks the sun westward ~15°/hour', () => {
+    const noon = subsolarPoint(Date.UTC(2024, 2, 20, 12, 0, 0))
+    const oneLater = subsolarPoint(Date.UTC(2024, 2, 20, 13, 0, 0))
+    // an hour later the subsolar point is ~15° further west (more negative lon)
+    expect(oneLater.lon).toBeLessThan(noon.lon)
+    expect(noon.lon - oneLater.lon).toBeCloseTo(15, 0)
+  })
+
+  it('puts the subsolar latitude in the northern hemisphere at the June solstice', () => {
+    const ss = subsolarPoint(Date.UTC(2024, 5, 21, 12, 0, 0))
+    expect(ss.lat).toBeGreaterThan(20) // ~+23.4° at the solstice
+  })
+
+  it('builds four nested night caps + a day/night line', () => {
+    const t = terminator(Date.UTC(2024, 2, 20, 12, 0, 0))
+    expect(t.caps).toHaveLength(4)
+    expect(t.line).toBeTruthy()
+    expect(t.subsolar).toEqual(subsolarPoint(Date.UTC(2024, 2, 20, 12, 0, 0)))
   })
 })

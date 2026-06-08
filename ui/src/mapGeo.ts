@@ -96,3 +96,59 @@ export function greatCircle(a: LatLon, b: LatLon): GeoPermissibleObjects {
     ],
   } as unknown as GeoPermissibleObjects
 }
+
+// ── Day/night terminator (greyline) ───────────────────────────────────────────
+// The subsolar point + twilight bands. Formulas MIRROR the Rust source of truth
+// in crates/propagation/src/geo.rs (Cooper's declination + equation of time), so
+// the map's terminator and the engine's solar elevation never disagree.
+
+const norm180 = (deg: number) => ((deg + 540) % 360) - 180
+
+/** Day-of-year (1–366) in UTC. */
+function dayOfYearUtc(ms: number): number {
+  const d = new Date(ms)
+  const start = Date.UTC(d.getUTCFullYear(), 0, 1)
+  return Math.floor((ms - start) / 86_400_000) + 1
+}
+
+/**
+ * The subsolar point (sun directly overhead) at `nowMs` — latitude = solar
+ * declination, longitude where the hour angle is zero. ±~0.5° (plenty for a map).
+ * Mirrors geo.rs `solar_declination_deg` + `equation_of_time_min`.
+ */
+export function subsolarPoint(nowMs: number): LatLon {
+  const b = ((2 * Math.PI) / 365) * (dayOfYearUtc(nowMs) - 81)
+  const declDeg = 23.45 * Math.sin(b)
+  const eqMin = 9.87 * Math.sin(2 * b) - 7.53 * Math.cos(b) - 1.5 * Math.sin(b)
+  const d = new Date(nowMs)
+  const utcHours = d.getUTCHours() + d.getUTCMinutes() / 60 + d.getUTCSeconds() / 3600
+  // solar elevation uses hra = ((utcHours + eq/60 − 12)·15 + lon); subsolar lon
+  // is where hra = 0.
+  const lon = norm180(-(utcHours + eqMin / 60 - 12) * 15)
+  return { lat: declDeg, lon }
+}
+
+/** A twilight band of the night side, as a great-circle cap around the
+ * antisolar point. A point's solar elevation = 90° − (its angular distance from
+ * the subsolar point), so "elevation < e" is the cap of angular radius (90+e)
+ * around the ANTIsolar point: 90°=civil/day-line, 84°=−6° nautical, 78°=−12°
+ * astronomical, 72°=−18° full night. */
+export interface Terminator {
+  /** Nested night caps, lightest (day/night line) first → darkest (full night). */
+  caps: GeoPermissibleObjects[]
+  /** The day/night line itself (90° cap boundary) — the greyline DX window. */
+  line: GeoPermissibleObjects
+  subsolar: LatLon
+}
+
+export function terminator(nowMs: number): Terminator {
+  const ss = subsolarPoint(nowMs)
+  const anti: [number, number] = [norm180(ss.lon + 180), -ss.lat]
+  const cap = (radiusDeg: number) =>
+    geoCircle().center(anti).radius(radiusDeg)() as unknown as GeoPermissibleObjects
+  return {
+    caps: [cap(90), cap(84), cap(78), cap(72)],
+    line: cap(90),
+    subsolar: ss,
+  }
+}
