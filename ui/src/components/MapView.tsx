@@ -24,6 +24,11 @@ import { sampleLut } from '../colormaps'
 import { needMeta } from '../propViz'
 import { StateBlock } from './StateBlock'
 
+/** Connect intent presets — beginner picks a goal once; the map configures
+ * itself (projection + default color-by + which layers are on). Soft: the user
+ * can still tweak any control afterwards without leaving the intent. */
+export type MapIntent = 'dx' | 'pota' | 'casual' | 'vhf'
+
 interface Props {
   myGrid: string
   theme: Theme
@@ -34,6 +39,25 @@ interface Props {
   /** Top award-need tier per heard callsign (uppercased) — colors the map dots
    * the same way the roster/decodes do, so the map shows WHAT you need WHERE. */
   needByCall: Map<string, NeedTag>
+  /** Expert mode reveals the per-layer panel (toggles + opacity). Simple (false)
+   * keeps a clean map with just the essential toolbar. Default true (standalone). */
+  expert?: boolean
+  /** Connect intent preset — applied (soft) on change. Omitted = no preset. */
+  intent?: MapIntent
+}
+
+const INTENT_PRESETS: Record<
+  MapIntent,
+  { kind: Projection; colorBy: 'need' | 'snr'; layers: Partial<Record<LayerKey, boolean>> }
+> = {
+  // Chase DX: beam map, need-colored, openings + DXpeditions + rings on.
+  dx: { kind: 'aeqd', colorBy: 'need', layers: { openings: true, dxped: true, rings: true } },
+  // POTA/SOTA: world view, need-colored activators; de-emphasize openings/rings.
+  pota: { kind: 'world', colorBy: 'need', layers: { openings: false, dxped: false, rings: false } },
+  // Ragchew: beam map, who-can-I-hear (signal), calm — openings/dxped off.
+  casual: { kind: 'aeqd', colorBy: 'snr', layers: { openings: false, dxped: false, rings: true } },
+  // 6m/VHF: beam map, signal-colored, openings ON (the whole point).
+  vhf: { kind: 'aeqd', colorBy: 'snr', layers: { openings: true, dxped: false, rings: true } },
 }
 
 /** Need tier → a dot color (matches the decode/roster palette). `null` = no
@@ -81,7 +105,17 @@ function snrToken(snr: number): { v: string; r: number } {
   return { v: '--snr-weak', r: 3 }
 }
 
-export function MapView({ myGrid, theme, stations, prop, selectedCall, onSelectCall, needByCall }: Props) {
+export function MapView({
+  myGrid,
+  theme,
+  stations,
+  prop,
+  selectedCall,
+  onSelectCall,
+  needByCall,
+  expert = true,
+  intent,
+}: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
   const [kind, setKind] = useState<Projection>('aeqd')
@@ -96,6 +130,22 @@ export function MapView({ myGrid, theme, stations, prop, selectedCall, onSelectC
     const id = setInterval(() => setNowMs(Date.now()), 60_000)
     return () => clearInterval(id)
   }, [])
+  // Apply the Connect intent preset (soft) whenever it changes — sets projection,
+  // default color-by, and which optional layers are on. The user can still tweak
+  // any control afterwards; switching intent re-applies.
+  useEffect(() => {
+    if (!intent) return
+    const p = INTENT_PRESETS[intent]
+    setKind(p.kind)
+    setColorBy(p.colorBy)
+    setLayers((L) => {
+      const next = { ...L }
+      for (const k of Object.keys(p.layers) as LayerKey[]) {
+        next[k] = { ...next[k], visible: p.layers[k]! }
+      }
+      return next
+    })
+  }, [intent])
 
   const me = useMemo(() => gridToLatLon(myGrid), [myGrid])
   const dxCards: WorkableCard[] = useMemo(() => {
@@ -460,6 +510,7 @@ export function MapView({ myGrid, theme, stations, prop, selectedCall, onSelectC
           <MapLegend />
         </div>
 
+        {expert && (
         <aside className="map-layers">
           <h3>Layers</h3>
           {(Object.keys(layers) as LayerKey[]).map((k) => (
@@ -484,6 +535,7 @@ export function MapView({ myGrid, theme, stations, prop, selectedCall, onSelectC
             </div>
           ))}
         </aside>
+        )}
       </div>
     </div>
   )

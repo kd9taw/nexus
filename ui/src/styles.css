@@ -802,10 +802,25 @@ button.nb-chip:hover {
 
 /* Connect — unified situational-awareness surface: grayline map (fills) + a
    scrollable live-propagation sidebar (two views of one shared state). */
+.connect-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.connect-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border);
+}
 .connect {
   display: flex;
   gap: var(--space-2);
-  height: 100%;
+  flex: 1;
   min-height: 0;
 }
 .connect-map {
