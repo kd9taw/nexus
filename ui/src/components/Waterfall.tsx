@@ -103,24 +103,45 @@ export function Waterfall({ transmitting, rxOffsetHz, txOffsetHz, theme, onTune 
     let rowImg: ImageData | null = null
     let rowBufW = 0
 
-    // device-pixel backing store; only re-init on an ACTUAL size change (setting
-    // canvas.width clears it, so a no-op ResizeObserver tick must not realloc).
-    let devW = 0
-    let devH = 0
-    const resize = () => {
-      const rect = canvas.getBoundingClientRect()
+    // Backing-store + CSS↔device mapping. The app scales the whole UI with CSS
+    // `zoom` (90/110/125%), so `getBoundingClientRect() × devicePixelRatio` does
+    // NOT equal the real device-pixel count — under zoom the two never line up, so
+    // the old sizing oscillated and the resize re-cleared the canvas every frame
+    // (the flicker, present only at zoom ≠ 100%). The fix: size the backing store
+    // from the ResizeObserver's `devicePixelContentBoxSize` — the EXACT device
+    // pixels the canvas occupies, correct under any zoom × dpr — and derive the
+    // draw scale (device px per CSS px) from it for the overlay transform.
+    let devW = 0 // backing-store width  (device px)
+    let devH = 0 // backing-store height (device px)
+    let cssW = 1 // CSS px width  (for overlay coords)
+    let cssH = 1 // CSS px height
+    let scaleX = 1 // device px per CSS px (= zoom × dpr)
+    let scaleY = 1
+    const measure = (entry?: ResizeObserverEntry): { dW: number; dH: number } => {
+      const dpcb = entry?.devicePixelContentBoxSize?.[0]
+      if (dpcb) return { dW: Math.max(1, dpcb.inlineSize), dH: Math.max(1, dpcb.blockSize) }
+      // Fallback (no device-pixel-content-box support): rect × dpr.
       const dpr = window.devicePixelRatio || 1
-      const w = Math.max(1, Math.round(rect.width * dpr))
-      const h = Math.max(1, Math.round(rect.height * dpr))
-      if (w === devW && h === devH) return
-      // canvas.width/height assignment CLEARS the backing store. On mount the
-      // layout often settles in a couple of ResizeObserver ticks; without care
-      // each tick would wipe the accumulating waterfall to blank — the flicker.
-      // So: (1) snapshot the current history, (2) repaint a colormap-floor field
-      // so a fresh/cleared canvas reads as a quiet band (not a transparent flash),
-      // (3) re-blit the old history bottom-anchored (newest rows stay at the
-      // bottom, new space appears at the top). All in device pixels (identity
-      // transform after a width assignment; putImageData ignores the transform).
+      return {
+        dW: Math.max(1, Math.round(cssW * dpr)),
+        dH: Math.max(1, Math.round(cssH * dpr)),
+      }
+    }
+    const resize = (entry?: ResizeObserverEntry) => {
+      const rect = canvas.getBoundingClientRect()
+      cssW = Math.max(1, rect.width)
+      cssH = Math.max(1, rect.height)
+      const { dW, dH } = measure(entry)
+      // Keep the draw scale fresh even when the pixel size is unchanged.
+      scaleX = dW / cssW
+      scaleY = dH / cssH
+      if (dW === devW && dH === devH) return // exact-integer size stable → no reclear
+      // canvas.width/height assignment CLEARS the backing store. Preserve the
+      // accumulating waterfall across a (rare, real) size change: (1) snapshot,
+      // (2) repaint a colormap-floor field so a fresh canvas reads as a quiet band
+      // (not a transparent flash), (3) re-blit the old history bottom-anchored. All
+      // in device pixels (identity transform after a width assignment; the spectrum
+      // path uses putImageData, which ignores the 2-D transform entirely).
       let prev: ImageData | null = null
       if (devW > 0 && devH > 0) {
         try {
@@ -129,25 +150,30 @@ export function Waterfall({ transmitting, rxOffsetHz, txOffsetHz, theme, onTune 
           prev = null
         }
       }
-      canvas.width = w
-      canvas.height = h
+      canvas.width = dW
+      canvas.height = dH
       const lut = lutRef.current
       ctx.fillStyle = `rgb(${lut[0]},${lut[1]},${lut[2]})`
-      ctx.fillRect(0, 0, w, h)
+      ctx.fillRect(0, 0, dW, dH)
       if (prev) {
         try {
-          ctx.putImageData(prev, 0, h - devH)
+          ctx.putImageData(prev, 0, dH - devH)
         } catch {
           // ignore — start fresh on the floor field
         }
       }
-      devW = w
-      devH = h
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+      devW = dW
+      devH = dH
     }
     resize()
-    const ro = new ResizeObserver(resize)
-    ro.observe(canvas)
+    const ro = new ResizeObserver((entries) => resize(entries[0]))
+    // Observe in device-pixel-content-box so we get the exact backing-store size
+    // under CSS zoom; fall back to the default box if unsupported.
+    try {
+      ro.observe(canvas, { box: 'device-pixel-content-box' })
+    } catch {
+      ro.observe(canvas)
+    }
 
     // Bottom freq-axis strip (CSS px) — thinner when the waterfall is a short
     // horizontal strip (top layout) so it doesn't eat the limited height.
@@ -166,19 +192,14 @@ export function Waterfall({ transmitting, rxOffsetHz, txOffsetHz, theme, onTune 
       const row = spec.row
       if (!row || row.length === 0) return
 
-      // Read dimensions AFTER the await so a resize landing mid-fetch can't make
-      // us blit at stale dimensions against a cleared/resized backing store.
-      const rect = canvas.getBoundingClientRect()
-      const W = rect.width
-      const H = rect.height
-      const AXIS_H = axisHFor(H)
-      const wfH = H - AXIS_H
-      if (W <= 0 || wfH <= 0) return
-      const dpr = window.devicePixelRatio || 1
-      const Wd = Math.max(1, Math.round(W * dpr))
-      const wfHd = Math.max(1, Math.round(wfH * dpr))
-      // If a resize landed during the fetch (RO not yet reconciled), our dims may
-      // exceed the live store — skip this row; the next tick repaints cleanly.
+      // Read dimensions AFTER the await (from the resize-maintained device-pixel
+      // backing store, which is exact under CSS zoom — NOT recomputed from
+      // gBCR × dpr, which zoom would desync). The spectrum scrolls in device px.
+      const axisDp = Math.round(axisHFor(cssH) * scaleY)
+      const Wd = devW
+      const wfHd = Math.max(1, devH - axisDp)
+      if (Wd <= 0 || wfHd <= 0) return
+      // Guard against a stale buffer if a resize is mid-flight.
       if (Wd > canvas.width || wfHd > canvas.height) return
 
       // visual-AGC: percentile floor/ceil of this row, EMA-smoothed across frames.
@@ -242,9 +263,12 @@ export function Waterfall({ transmitting, rxOffsetHz, txOffsetHz, theme, onTune 
     }
 
     const drawOverlay = () => {
-      const rect = canvas.getBoundingClientRect()
-      const W = rect.width
-      const H = rect.height
+      // Draw in CSS px; map to the device-pixel store via the measured scale
+      // (= zoom × dpr), so the axis + markers stay aligned with the spectrum at
+      // any UI zoom. (The spectrum path blits in device px and ignores this.)
+      ctx.setTransform(scaleX, 0, 0, scaleY, 0, 0)
+      const W = cssW
+      const H = cssH
       const AXIS_H = axisHFor(H)
       const wfH = H - AXIS_H
       const th = themeRef.current
