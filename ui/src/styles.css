@@ -1547,6 +1547,11 @@ body.resizing {
    it reads as a primary control, not a subtle toggle. */
 .mode-nav-areas {
   display: flex;
+  /* Stack the area pills vertically — in the narrow (88px) vertical rail a
+     horizontal row gives each ~20px and "CONNECT" overflows right onto the
+     content header. Column gives each the full rail width. (Re-rowed at the
+     900px breakpoint where the rail becomes a horizontal top bar.) */
+  flex-direction: column;
   gap: 5px;
   margin-bottom: 12px;
   padding-bottom: 12px;
@@ -1554,6 +1559,10 @@ body.resizing {
 }
 .area-pill {
   flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   padding: 9px 0;
   border: 1px solid var(--accent);
   border-radius: var(--radius-sm);
@@ -3688,6 +3697,13 @@ select.settings-input {
     flex-direction: row;
     gap: 6px;
     align-items: center;
+  }
+  .mode-nav-areas {
+    /* Horizontal top bar at this breakpoint → re-row the area pills. */
+    flex-direction: row;
+    margin-bottom: 0;
+    padding-bottom: 0;
+    border-bottom: none;
   }
   .mode-btn {
     flex-direction: row;

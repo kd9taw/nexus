@@ -126,13 +126,21 @@ fn now_unix() -> i64 {
         .unwrap_or(0)
 }
 
-/// A usable operator callsign: non-empty and not the shipped `KD9TAW` placeholder
-/// ("operator hasn't set their call yet"). Network features that log in to public
-/// services (DX cluster / RBN, PSK Reporter MQTT) must never run under it, so they
-/// would key a third party's call on a public service.
+/// A plausibly-real operator callsign — checked by SHAPE, not a denylist. Network
+/// features that log in to public services (DX cluster / RBN, PSK Reporter MQTT)
+/// gate on this so they never key an unset/garbage call on a public service.
+///
+/// The old check denylisted exactly `"KD9TAW"` (the shipped placeholder) — but
+/// that is also a real operator's call, so it left every feed permanently OFF for
+/// that operator. The default is now empty (`""`), and "configured" = a real call
+/// has been entered (3–10 chars, has a letter AND a digit, alnum/`/` only).
 fn is_real_call(call: &str) -> bool {
     let c = call.trim();
-    !c.is_empty() && !c.eq_ignore_ascii_case("KD9TAW")
+    let len = c.chars().count();
+    (3..=10).contains(&len)
+        && c.chars().any(|ch| ch.is_ascii_digit())
+        && c.chars().any(|ch| ch.is_ascii_alphabetic())
+        && c.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '/')
 }
 
 /// Spawn the DX-cluster / RBN daemon thread once per process (the [`CLUSTER_STARTED`]
@@ -431,6 +439,7 @@ fn get_propagation(
     live_paths: State<'_, SharedLivePaths>,
     region_paths: State<'_, SharedRegionPaths>,
     opening_tracker: State<'_, SharedOpeningTracker>,
+    spots: State<'_, SharedSpots>,
 ) -> Result<propagation::PropagationSnapshot, String> {
     let (mycall, mygrid, needs) = {
         let eng = state.lock().map_err(|e| e.to_string())?;
@@ -521,6 +530,32 @@ fn get_propagation(
         if !regional.is_empty() {
             regional_scope = true;
             wide.extend(regional);
+        }
+    }
+    // Bridge the DX-cluster / RBN firehose (a continent-wide who-hears-whom stream
+    // on every band) into the SAME window so the band ladder + opening detector see
+    // real band activity, not just the operator's own-call traffic. RBN/cluster
+    // lines rarely carry grids, so these light up band LIVENESS (the "activity"
+    // census) even if region/bearing still needs gridded PSKR spots.
+    if let Ok(buf) = spots.lock() {
+        let cluster = buf.recent_within(
+            std::time::Instant::now(),
+            std::time::Duration::from_secs(cfg.base_w as u64),
+        );
+        for cs in cluster {
+            if let Some(band) = propagation::model::Band::from_mhz(cs.freq_mhz()) {
+                wide.push(propagation::PathSpot {
+                    time: now,
+                    tx_call: cs.dx_call.to_uppercase(),
+                    tx_grid: None,
+                    rx_call: cs.spotter.to_uppercase(),
+                    rx_grid: None,
+                    band,
+                    mode: None,
+                    snr: None,
+                });
+                regional_scope = true; // we now have wide-area data → advisor uses it
+            }
         }
     }
     if let Ok(mut tr) = opening_tracker.lock() {

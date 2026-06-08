@@ -13,7 +13,7 @@ import {
   type GeoPermissibleObjects,
 } from 'd3-geo'
 import { feature } from 'topojson-client'
-import countriesTopo from 'world-atlas/countries-110m.json'
+import countriesTopo from 'world-atlas/countries-50m.json'
 import type { LatLon } from './grid'
 
 export type Projection = 'aeqd' | 'world'

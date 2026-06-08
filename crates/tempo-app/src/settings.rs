@@ -220,8 +220,11 @@ impl Default for Macros {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            mycall: "KD9TAW".to_string(),
-            mygrid: "EN52".to_string(),
+            // Empty by default — "configured" means the operator entered a real
+            // call (drives feed-gating + first-run onboarding). Must NOT default to
+            // a real call: that call's owner would then have every feed gated off.
+            mycall: String::new(),
+            mygrid: String::new(),
             band: "20m".to_string(),
             dial_mhz: 14.074, // FT8 20m — the default mode/band
             sideband: "USB".to_string(),
@@ -241,8 +244,11 @@ impl Default for Settings {
             wsjtx_udp_addr: "127.0.0.1:2237".to_string(),
             companion_addr: "127.0.0.1:2237".to_string(),
             source: SourceKind::Native,
-            pskreporter: false,
-            cluster_enabled: false,
+            // Live by default (once a real call is set) — a ham dashboard should
+            // arrive connected, like HamClock/GridTracker. Both are public read
+            // feeds; cluster_host is the RBN endpoint, so this gives RBN spots free.
+            pskreporter: true,
+            cluster_enabled: true,
             cluster_host: "telnet.reversebeacon.net:7001".to_string(),
             audio_in: String::new(),
             audio_out: String::new(),
@@ -315,7 +321,7 @@ mod tests {
     fn roundtrips_through_json_camelcase() {
         let s = Settings::default();
         let json = serde_json::to_string(&s).unwrap();
-        assert!(json.contains("\"mycall\":\"KD9TAW\""));
+        assert!(json.contains("\"mycall\":\"\"")); // default is empty (set on first run)
         assert!(json.contains("\"fdClass\"") && json.contains("\"pttMethod\""));
         assert!(json.contains("\"wsjtxUdpAddr\"") && json.contains("\"rigModel\""));
         assert!(json.contains("\"txEven\"") && json.contains("\"rxOffsetHz\""));
