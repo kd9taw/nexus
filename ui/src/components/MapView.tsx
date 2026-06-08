@@ -58,13 +58,13 @@ const INTENT_PRESETS: Record<
   { kind: Projection; colorBy: 'need' | 'snr'; layers: Partial<Record<LayerKey, boolean>> }
 > = {
   // Chase DX: spinnable globe, need-colored, openings + DXpeditions + rings on.
-  dx: { kind: 'globe', colorBy: 'need', layers: { openings: true, dxped: true, rings: true } },
-  // POTA/SOTA: world view, need-colored activators; de-emphasize openings/rings.
-  pota: { kind: 'world', colorBy: 'need', layers: { openings: false, dxped: false, rings: false } },
-  // Ragchew: globe, who-can-I-hear (signal), calm — openings/dxped off.
-  casual: { kind: 'globe', colorBy: 'snr', layers: { openings: false, dxped: false, rings: true } },
-  // 6m/VHF: globe, signal-colored, openings ON (the whole point).
-  vhf: { kind: 'globe', colorBy: 'snr', layers: { openings: true, dxped: false, rings: true } },
+  dx: { kind: 'globe', colorBy: 'need', layers: { dxped: true, rings: true } },
+  // POTA/SOTA: world view, need-colored activators; de-emphasize rings.
+  pota: { kind: 'world', colorBy: 'need', layers: { dxped: false, rings: false } },
+  // Ragchew: globe, who-can-I-hear (signal), calm — dxped off.
+  casual: { kind: 'globe', colorBy: 'snr', layers: { dxped: false, rings: true } },
+  // 6m/VHF: globe, signal-colored, rings on.
+  vhf: { kind: 'globe', colorBy: 'snr', layers: { dxped: false, rings: true } },
 }
 
 /** Need tier → a dot color (matches the decode/roster palette). `null` = no
@@ -99,7 +99,6 @@ type LayerKey =
   | 'liveSpots'
   | 'stations'
   | 'paths'
-  | 'openings'
   | 'dxped'
 interface Layer {
   label: string
@@ -117,7 +116,6 @@ const DEFAULT_LAYERS: Record<LayerKey, Layer> = {
   liveSpots: { label: 'Live spots (cluster/RBN)', visible: true, opacity: 0.9 },
   stations: { label: 'My decodes', visible: true, opacity: 1 },
   paths: { label: 'Selected path', visible: true, opacity: 1 },
-  openings: { label: 'Openings', visible: true, opacity: 0.7 },
   dxped: { label: 'DXpeditions', visible: true, opacity: 1 },
 }
 const RINGS_KM = [1000, 3000, 5000, 10000]
@@ -129,6 +127,12 @@ const MAP_OCEAN = '#0f2334' // deep sea
 const MAP_LAND = '#364a3c' // muted continental green
 const MAP_COAST = '#6f8a98' // coastline / borders, visible but quiet
 const MAP_RIM = '#2a4254' // the globe's edge (AEQD reads as a sphere)
+// Globe (orthographic) 3D shading: a lit ocean highlight toward the top-left light
+// source, deepening to a dark limb, plus an atmospheric rim glow and a star field —
+// turns the flat disc into a planet floating in space without any WebGL.
+const MAP_OCEAN_LIT = '#1c4a66' // lit ocean highlight (toward the light source)
+const MAP_OCEAN_DEEP = '#06101c' // sphere limb (dark edge)
+const MAP_ATMO = 'rgba(104, 168, 226, 0.55)' // atmosphere glow at the limb
 
 // Per-band spot colors (low bands cool → high bands warm), so the live-spot
 // firehose reads by band at a glance. "Heard me" spots override to green.
@@ -183,6 +187,18 @@ export function MapView({
   const [view, setView] = useState<MapView3>(DEFAULT_VIEW)
   const dragRef = useRef<{ x: number; y: number; base: MapView3; moved: boolean } | null>(null)
   useEffect(() => setView(DEFAULT_VIEW), [kind]) // eslint-disable-line react-hooks/exhaustive-deps
+  // Star field for the globe's space backdrop: fixed relative positions generated
+  // once (so they don't twinkle/jump on every redraw), scaled to the canvas at draw.
+  const stars = useMemo(
+    () =>
+      Array.from({ length: 170 }, () => ({
+        x: Math.random(),
+        y: Math.random(),
+        r: 0.3 + Math.random() * 0.9,
+        a: 0.18 + Math.random() * 0.6,
+      })),
+    [],
+  )
   // Shaded-relief basemap image (loaded once, drawn behind the World view).
   const reliefRef = useRef<HTMLImageElement | null>(null)
   const [reliefReady, setReliefReady] = useState(false)
@@ -326,12 +342,57 @@ export function MapView({
     const path = geoPath(proj, ctx)
     const c = project(proj, me)
 
-    // Ocean: fill the globe/sphere body so the map has substance (and AEQD reads
-    // as a globe, not floating coastlines). A soft rim defines the disc edge.
+    // Globe space backdrop: a star field + an atmospheric halo, so the orthographic
+    // disc reads as a planet in space rather than a flat green coin. Read the disc
+    // geometry straight off the projection so everything aligns with the sphere path
+    // under any zoom/spin (orthographic: screen radius = scale, center = translate).
+    const isGlobe = kind === 'globe'
+    const [gcx, gcy] = proj.translate()
+    const gR = proj.scale()
+    if (isGlobe) {
+      for (const s of stars) {
+        ctx.globalAlpha = s.a
+        ctx.beginPath()
+        ctx.arc(s.x * w, s.y * h, s.r, 0, Math.PI * 2)
+        ctx.fillStyle = '#cdd9ec'
+        ctx.fill()
+      }
+      ctx.globalAlpha = 1
+      // Atmosphere: a soft blue halo just outside the limb, drawn BEFORE the body so
+      // the sphere covers the inner half and only the outer glow shows.
+      const atmo = ctx.createRadialGradient(gcx, gcy, gR * 0.92, gcx, gcy, gR * 1.14)
+      atmo.addColorStop(0, 'rgba(104, 168, 226, 0)')
+      atmo.addColorStop(0.5, MAP_ATMO)
+      atmo.addColorStop(1, 'rgba(104, 168, 226, 0)')
+      ctx.beginPath()
+      ctx.arc(gcx, gcy, gR * 1.14, 0, Math.PI * 2)
+      ctx.fillStyle = atmo
+      ctx.fill()
+    }
+
+    // Ocean / sphere body so the map has substance (and AEQD reads as a globe, not
+    // floating coastlines). On the globe a radial gradient (lit toward a top-left
+    // light source, deepening to a dark limb) gives the disc real spherical depth;
+    // AEQD/World keep the flat sea fill. A soft rim defines the disc edge.
     ctx.globalAlpha = 1
     ctx.beginPath()
     path({ type: 'Sphere' } as unknown as Parameters<typeof path>[0])
-    ctx.fillStyle = MAP_OCEAN
+    if (isGlobe) {
+      const sea = ctx.createRadialGradient(
+        gcx - gR * 0.38,
+        gcy - gR * 0.38,
+        gR * 0.05,
+        gcx,
+        gcy,
+        gR * 1.02,
+      )
+      sea.addColorStop(0, MAP_OCEAN_LIT)
+      sea.addColorStop(0.55, MAP_OCEAN)
+      sea.addColorStop(1, MAP_OCEAN_DEEP)
+      ctx.fillStyle = sea
+    } else {
+      ctx.fillStyle = MAP_OCEAN
+    }
     ctx.fill()
     ctx.strokeStyle = MAP_RIM
     ctx.lineWidth = 1
@@ -371,6 +432,21 @@ export function MapView({
         ctx.stroke()
         ctx.globalAlpha = 1
       }
+    }
+    // Globe limb darkening: deepen the sphere toward its edge (over ocean AND land)
+    // so the curvature reads as 3-D. Clipped to the disc; drawn under greyline/spots
+    // so stations stay bright.
+    if (isGlobe) {
+      const limb = ctx.createRadialGradient(gcx, gcy, gR * 0.6, gcx, gcy, gR)
+      limb.addColorStop(0, 'rgba(2, 6, 14, 0)')
+      limb.addColorStop(1, 'rgba(2, 6, 14, 0.5)')
+      ctx.save()
+      ctx.beginPath()
+      path({ type: 'Sphere' } as unknown as Parameters<typeof path>[0])
+      ctx.clip()
+      ctx.fillStyle = limb
+      ctx.fillRect(gcx - gR * 1.1, gcy - gR * 1.1, gR * 2.2, gR * 2.2)
+      ctx.restore()
     }
     if (layers.grid.visible) {
       ctx.globalAlpha = layers.grid.opacity
@@ -454,25 +530,6 @@ export function MapView({
         ctx.fill()
       }
       ctx.globalAlpha = 1
-    }
-
-    // Openings — bearing wedge out to maxKm, colored by probability (LUT).
-    if (layers.openings.visible && prop) {
-      ctx.globalAlpha = layers.openings.opacity
-      for (const o of prop.openings) {
-        const [r, g, b] = sampleLut('inferno', Math.max(0.2, o.probability))
-        ctx.fillStyle = `rgb(${r}, ${g}, ${b})`
-        ctx.beginPath()
-        if (c) ctx.moveTo(c[0], c[1])
-        for (let a = -16; a <= 16; a += 4) {
-          const p = project(proj, destinationPoint(me, o.bearingDeg + a, o.maxKm))
-          if (p) ctx.lineTo(p[0], p[1])
-        }
-        ctx.closePath()
-        ctx.globalAlpha = layers.openings.opacity * 0.5
-        ctx.fill()
-        ctx.globalAlpha = 1
-      }
     }
 
     // Live spots — the cluster/RBN/PSKR firehose + own decodes, placed by grid or
