@@ -37,6 +37,7 @@ import type {
   Station,
   Tier,
   AwardSummary,
+  JourneySummary,
   DiagnosticsReport,
 } from './types'
 
@@ -1194,6 +1195,182 @@ class MockEngine {
     this.logbook = []
     this.emit()
     return n
+  }
+
+  // A mid-journey operator (a few dozen entities/states, some firsts), so the demo
+  // Journey board reads as alive and aspirational.
+  getJourney(): Promise<JourneySummary> {
+    const first = (
+      id: string,
+      title: string,
+      meaning: string,
+      unlocked: boolean,
+      detail: string | null = null,
+    ) => ({ id, title, meaning, heritage: '', unlocked, whenUnix: unlocked ? 1_700_000_000 : null, detail })
+    const ladder = (
+      id: string,
+      title: string,
+      worked: number,
+      confirmed: number,
+      rungs: [string, number][],
+      max: number,
+    ) => {
+      const r = rungs.map(([label, target], i) => ({
+        label,
+        target,
+        tier: (['bronze', 'bronze', 'silver', 'silver', 'gold', 'platinum'][i] ?? 'gold') as
+          | 'bronze'
+          | 'silver'
+          | 'gold'
+          | 'platinum'
+          | 'legendary',
+      }))
+      return {
+        id,
+        title,
+        meaning: '',
+        heritage: '',
+        worked,
+        confirmed,
+        rungs: r,
+        nextRung: r.find((x) => worked < x.target) ?? null,
+        max,
+      }
+    }
+    const cells = (n: number, total: number, label: (i: number) => string) =>
+      Array.from({ length: total }, (_, i) => ({
+        key: String(i),
+        label: label(i),
+        worked: i < n,
+        confirmed: i < Math.floor(n * 0.8),
+      }))
+    return Promise.resolve({
+      level: 6,
+      xp: 5240,
+      xpIntoLevel: 240,
+      xpForLevel: 1750,
+      totalQsos: 312,
+      nextMilestone: {
+        ladderId: 'was',
+        title: 'States (toward WAS) — Forty States',
+        current: 37,
+        target: 40,
+        remaining: 3,
+      },
+      firsts: [
+        first('first-qso', 'First Contact', 'Your very first logged QSO.', true, 'W1AW'),
+        first('first-dx', 'First DX', 'Your first foreign country.', true, 'Germany'),
+        first('first-digital', 'First Digital', 'Your first FT8/FT4 contact.', true, 'EA3XYZ'),
+        first('first-1000mi', 'First 1,000-Mile Contact', 'You reached 1,000+ miles.', true),
+        first('first-5000mi', 'First 5,000-Mile Contact', 'You spanned 5,000+ miles.', false),
+        first('first-cw', 'First CW', 'A contact in Morse code.', false),
+        first('first-vhf', 'First VHF (6 m+)', 'Your first 6 m+ contact.', false),
+        first('first-pota', 'First POTA Contact', 'Worked a park activator.', true, 'K-1234'),
+      ],
+      ladders: [
+        ladder(
+          'dxcc',
+          'Countries (toward DXCC)',
+          48,
+          39,
+          [
+            ['First DX', 1],
+            ['Five Countries', 5],
+            ['Globetrotter', 10],
+            ['Quarter Century', 25],
+            ['Half Century', 50],
+            ['DXCC', 100],
+          ],
+          100,
+        ),
+        ladder(
+          'was',
+          'States (toward WAS)',
+          37,
+          31,
+          [
+            ['First State', 1],
+            ['Five States', 5],
+            ['Ten States', 10],
+            ['Twenty-Five', 25],
+            ['Forty States', 40],
+            ['WAS', 50],
+          ],
+          50,
+        ),
+        ladder(
+          'wac',
+          'Continents (toward WAC)',
+          5,
+          4,
+          [
+            ['First Continent', 1],
+            ['Three Continents', 3],
+            ['WAC', 6],
+          ],
+          6,
+        ),
+      ],
+      collections: [
+        {
+          id: 'states',
+          title: 'Worked All States',
+          meaning: 'Fill in all 50.',
+          cells: cells(37, 50, (i) => String(i)),
+          worked: 37,
+          total: 50,
+        },
+        {
+          id: 'continents',
+          title: 'Worked All Continents',
+          meaning: 'Six continents.',
+          cells: ['NA', 'SA', 'EU', 'AS', 'OC', 'AF'].map((c, i) => ({
+            key: c,
+            label: c,
+            worked: i < 5,
+            confirmed: i < 4,
+          })),
+          worked: 5,
+          total: 6,
+        },
+      ],
+      feats: [
+        {
+          id: 'mode-slam',
+          title: 'Mode Slam',
+          meaning: 'CW + Phone + Digital.',
+          heritage: '',
+          tier: 'silver',
+          unlocked: false,
+          current: 2,
+          target: 3,
+          unit: 'modes',
+          detail: null,
+          gated: false,
+          gateHint: null,
+        },
+        {
+          id: 'miles-per-watt',
+          title: '1000 Miles-per-Watt',
+          meaning: 'Cover 1,000 miles per watt.',
+          heritage: '',
+          tier: 'legendary',
+          unlocked: false,
+          current: 0,
+          target: 1000,
+          unit: 'mi/W',
+          detail: null,
+          gated: true,
+          gateHint: 'Set your station power in Settings to unlock miles-per-watt.',
+        },
+      ],
+      bests: [
+        { id: 'longest', title: 'Longest distance', value: '7,420 mi', detail: 'ZL3ABC' },
+        { id: 'best-snr', title: 'Strongest signal', value: '+19 dB', detail: 'W1AW' },
+        { id: 'busiest-day', title: 'Most QSOs in a day', value: '34', detail: '2024-06-22' },
+      ],
+      streak: { enabled: true, weeks: 4, activeThisWeek: true },
+    })
   }
 
   // A mid-level DXer's award progress (past the 100-entity DXCC milestone,

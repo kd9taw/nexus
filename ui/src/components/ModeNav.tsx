@@ -13,6 +13,7 @@ import {
   ArrowLeftRight,
   BookOpen,
   Trophy,
+  Sparkles,
   ClipboardList,
   Settings,
 } from 'lucide-react'
@@ -61,6 +62,7 @@ const ITEMS: Item[] = [
   { id: 'roam', label: 'Roam', icon: ArrowLeftRight, title: 'Coordinated QSY — move together off QRM (announced in the clear)' },
   { id: 'logbook', label: 'Logbook', icon: BookOpen, title: 'Logbook — your ADIF contacts' },
   { id: 'awards', label: 'Awards', icon: Trophy, title: 'Awards — DXCC progress, band slots, and the confirmation chase' },
+  { id: 'journey', label: 'Journey', icon: Sparkles, title: 'Journey — your climb: firsts, sub-award ladders, collections and milestones' },
   { id: 'log', label: 'Field Log', icon: ClipboardList, title: 'Field Log — Field Day / activity export' },
 ]
 

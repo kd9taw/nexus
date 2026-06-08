@@ -474,6 +474,114 @@ export interface Achievement {
   critical: boolean
 }
 
+// --- Journey: the in-app, beginner-first achievement layer (get_journey) ---
+
+export type JourneyTier = 'bronze' | 'silver' | 'gold' | 'platinum' | 'legendary'
+
+/** An auto-detected "first" — the hobby's biggest unfilled recognition gap. */
+export interface JourneyFirst {
+  id: string
+  title: string
+  /** Plain "what it means for the operator". */
+  meaning: string
+  /** A sentence of ham heritage/context. */
+  heritage: string
+  unlocked: boolean
+  /** When it happened (Unix s), once unlocked. */
+  whenUnix: number | null
+  detail: string | null
+}
+
+/** A named rung on a sub-award ladder. */
+export interface JourneyRung {
+  label: string
+  target: number
+  tier: JourneyTier
+}
+
+/** A tiered ladder climbing toward a big official award. */
+export interface JourneyLadder {
+  id: string
+  title: string
+  meaning: string
+  heritage: string
+  worked: number
+  confirmed: number
+  rungs: JourneyRung[]
+  /** Nearest unmet rung by worked count (the "N to go" target). */
+  nextRung: JourneyRung | null
+  max: number
+}
+
+export interface JourneyCell {
+  key: string
+  label: string
+  worked: boolean
+  confirmed: boolean
+}
+
+export interface JourneyCollection {
+  id: string
+  title: string
+  meaning: string
+  cells: JourneyCell[]
+  worked: number
+  total: number
+}
+
+export interface JourneyFeat {
+  id: string
+  title: string
+  meaning: string
+  heritage: string
+  tier: JourneyTier
+  unlocked: boolean
+  current: number
+  target: number
+  unit: string
+  detail: string | null
+  /** True when it can't be evaluated yet (e.g. miles-per-watt with no power set). */
+  gated: boolean
+  gateHint: string | null
+}
+
+export interface JourneyPersonalBest {
+  id: string
+  title: string
+  value: string
+  detail: string | null
+}
+
+export interface JourneyStreak {
+  enabled: boolean
+  weeks: number
+  activeThisWeek: boolean
+}
+
+export interface JourneyNextMilestone {
+  ladderId: string
+  title: string
+  current: number
+  target: number
+  remaining: number
+}
+
+/** The full Journey snapshot (the in-app achievement layer). */
+export interface JourneySummary {
+  level: number
+  xp: number
+  xpIntoLevel: number
+  xpForLevel: number
+  totalQsos: number
+  nextMilestone: JourneyNextMilestone | null
+  firsts: JourneyFirst[]
+  ladders: JourneyLadder[]
+  collections: JourneyCollection[]
+  feats: JourneyFeat[]
+  bests: JourneyPersonalBest[]
+  streak: JourneyStreak
+}
+
 /** DXCC-first award progress, computed from the logbook (cty.dat-resolved). */
 /** Why a heard station is worth working (need-aware spotting). */
 export type NeedTag = 'NewEntity' | 'NewZone' | 'NewBand' | 'NewMode' | 'Confirm'

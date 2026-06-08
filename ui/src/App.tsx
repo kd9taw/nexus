@@ -52,6 +52,7 @@ import { ModeNav, type View } from './components/ModeNav'
 import { OperateCockpit } from './components/OperateCockpit'
 import { NowBar } from './components/NowBar'
 import { AwardsView } from './components/AwardsView'
+import { JourneyView } from './components/JourneyView'
 import { PotaSotaView } from './components/PotaSotaView'
 import { PropagationView } from './components/PropagationView'
 import { MapView } from './components/MapView'
@@ -805,6 +806,9 @@ export default function App() {
           <AwardsView showGamification={features.isOn('gamification')} />
         </main>
       )
+      break
+    case 'journey':
+      workspace = <JourneyView />
       break
     case 'pota':
       workspace = (

@@ -3042,6 +3042,451 @@ body.resizing {
 }
 
 /* ===========================================================================
+   Journey — the in-app, beginner-first achievement layer (separate from Awards)
+   =========================================================================== */
+.journey-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  padding: var(--space-5);
+  overflow-y: auto;
+  min-height: 0;
+}
+/* Tier accents (a rarity ramp the eye reads at a glance). */
+.journey-view {
+  --jy-bronze: #cd7f32;
+  --jy-silver: #b8c2cf;
+  --jy-gold: var(--band-marginal);
+  --jy-platinum: #8fd6e6;
+  --jy-legendary: var(--need-entity);
+}
+.jy-tier-bronze {
+  --jy-tier: var(--jy-bronze);
+}
+.jy-tier-silver {
+  --jy-tier: var(--jy-silver);
+}
+.jy-tier-gold {
+  --jy-tier: var(--jy-gold);
+}
+.jy-tier-platinum {
+  --jy-tier: var(--jy-platinum);
+}
+.jy-tier-legendary {
+  --jy-tier: var(--jy-legendary);
+}
+
+/* Shared bar (XP, ladders, feats). */
+.jy-bar {
+  position: relative;
+  height: 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-faint) 22%, transparent);
+  overflow: hidden;
+}
+.jy-bar-fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width var(--transition);
+}
+.jy-bar-fill.worked {
+  background: color-mix(in srgb, var(--accent) 38%, transparent);
+}
+.jy-bar-fill.confirmed {
+  background: var(--state-good);
+}
+.jy-dim {
+  color: var(--text-faint);
+  font-weight: 400;
+}
+
+/* Hero: level + XP + next milestone. */
+.jy-hero {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-6);
+  padding: var(--space-5);
+  flex-wrap: wrap;
+}
+.jy-level {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex: 1 1 360px;
+  min-width: 0;
+}
+.jy-level-badge {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, color-mix(in srgb, var(--accent) 40%, var(--bg-elev-2)), var(--bg-elev-2));
+  border: 2px solid var(--accent);
+  flex: none;
+}
+.jy-level-num {
+  font-size: 26px;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--text);
+}
+.jy-level-cap {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+}
+.jy-level-bar-wrap {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.jy-level-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 6px;
+  gap: var(--space-3);
+}
+.jy-xp {
+  font-size: var(--fs-label);
+  color: var(--text-dim);
+}
+.jy-hero-meta {
+  display: flex;
+  gap: var(--space-4);
+  margin-top: 8px;
+  font-size: var(--fs-label);
+  color: var(--text-dim);
+  flex-wrap: wrap;
+}
+.jy-streak {
+  color: var(--accent);
+}
+.jy-next {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  flex: 0 1 280px;
+}
+.jy-next-cap {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent);
+  font-weight: 700;
+}
+.jy-next-title {
+  font-size: var(--fs-body);
+}
+.jy-next-go {
+  font-size: var(--fs-label);
+  color: var(--text-dim);
+}
+
+/* Section scaffolding. */
+.jy-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.jy-section-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+}
+.jy-section-head h2 {
+  margin: 0;
+  font-size: var(--fs-title);
+}
+.jy-count {
+  font-family: var(--font-mono);
+  font-size: var(--fs-label);
+  color: var(--text-dim);
+}
+.jy-section-note {
+  font-size: var(--fs-label);
+  color: var(--text-faint);
+}
+
+/* Firsts. */
+.jy-firsts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: var(--space-3);
+}
+.jy-first {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  opacity: 0.6;
+  transition: var(--transition);
+}
+.jy-first.done {
+  opacity: 1;
+  border-color: color-mix(in srgb, var(--band-marginal) 55%, transparent);
+  background: color-mix(in srgb, var(--band-marginal) 8%, var(--bg-elev));
+}
+.jy-first:hover {
+  transform: translateY(-1px);
+}
+.jy-first-mark {
+  font-size: 18px;
+  color: var(--text-faint);
+  flex: none;
+}
+.jy-first.done .jy-first-mark {
+  color: var(--band-marginal);
+}
+.jy-first-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.jy-first-title {
+  font-weight: 700;
+  font-size: var(--fs-body);
+}
+.jy-first-detail {
+  font-size: var(--fs-micro);
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Ladders. */
+.jy-ladders {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: var(--space-4);
+}
+.jy-ladder {
+  padding: var(--space-4);
+  border-radius: var(--radius);
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+}
+.jy-ladder.complete {
+  border-color: color-mix(in srgb, var(--jy-platinum) 60%, transparent);
+}
+.jy-ladder-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--space-3);
+}
+.jy-ladder-count {
+  font-family: var(--font-mono);
+  font-size: var(--fs-label);
+  color: var(--text);
+}
+.jy-ladder-meaning {
+  margin: 4px 0 14px;
+  font-size: var(--fs-label);
+  color: var(--text-dim);
+}
+.jy-ladder-track {
+  position: relative;
+  padding: 8px 0;
+}
+.jy-rung {
+  position: absolute;
+  top: 4px;
+  width: 2px;
+  height: 16px;
+  margin-left: -1px;
+  background: color-mix(in srgb, var(--text-faint) 50%, transparent);
+  border-radius: 1px;
+}
+.jy-rung.hit {
+  background: var(--jy-tier, var(--state-good));
+  box-shadow: 0 0 5px var(--jy-tier, var(--state-good));
+}
+.jy-ladder-next {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: 10px;
+}
+.jy-tier-pill {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  color: var(--jy-tier, var(--accent));
+  background: color-mix(in srgb, var(--jy-tier, var(--accent)) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--jy-tier, var(--accent)) 45%, transparent);
+}
+.jy-ladder-go {
+  font-size: var(--fs-label);
+  color: var(--text-dim);
+}
+
+/* Collections (fill-the-map). */
+.jy-collections {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: var(--space-4);
+}
+.jy-collection {
+  padding: var(--space-4);
+  border-radius: var(--radius);
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+}
+.jy-collection-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--space-3);
+}
+.jy-collection-count {
+  font-family: var(--font-mono);
+  font-size: var(--fs-label);
+  color: var(--text-dim);
+}
+.jy-collection-meaning {
+  margin: 4px 0 12px;
+  font-size: var(--fs-micro);
+  color: var(--text-faint);
+}
+.jy-cells {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(16px, 1fr));
+  gap: 4px;
+}
+.jy-cells.labelled {
+  grid-template-columns: repeat(auto-fill, minmax(58px, 1fr));
+}
+.jy-cell {
+  aspect-ratio: 1;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--text-faint) 14%, transparent);
+  border: 1px solid transparent;
+}
+.jy-cells.labelled .jy-cell {
+  aspect-ratio: auto;
+  padding: 4px 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--fs-micro);
+  color: var(--text-dim);
+}
+.jy-cell.worked {
+  background: color-mix(in srgb, var(--accent) 35%, transparent);
+  color: var(--text);
+}
+.jy-cell.confirmed {
+  background: var(--state-good);
+  color: var(--accent-ink);
+}
+
+/* Feats. */
+.jy-feats {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--space-4);
+}
+.jy-feat {
+  padding: var(--space-4);
+  border-radius: var(--radius);
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+}
+.jy-feat.done {
+  border-color: color-mix(in srgb, var(--jy-tier, var(--accent)) 60%, transparent);
+  background: color-mix(in srgb, var(--jy-tier, var(--accent)) 8%, var(--bg-elev));
+}
+.jy-feat.gated {
+  opacity: 0.7;
+}
+.jy-feat-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: 4px;
+}
+.jy-feat-head strong {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.jy-feat-mark {
+  flex: none;
+}
+.jy-feat.done .jy-feat-mark {
+  color: var(--jy-tier, var(--state-good));
+}
+.jy-feat-meaning {
+  margin: 0 0 12px;
+  font-size: var(--fs-label);
+  color: var(--text-dim);
+}
+.jy-feat-gate {
+  margin: 0;
+  font-size: var(--fs-label);
+  color: var(--alert-warning);
+}
+.jy-feat-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-top: 6px;
+  font-size: var(--fs-micro);
+  font-family: var(--font-mono);
+  color: var(--text-dim);
+}
+
+/* Personal bests. */
+.jy-bests {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: var(--space-3);
+}
+.jy-best {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+}
+.jy-best-k {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-dim);
+  font-weight: 700;
+}
+.jy-best-v {
+  font-size: 22px;
+  font-weight: 800;
+  font-family: var(--font-mono);
+}
+.jy-best-d {
+  font-size: var(--fs-micro);
+  color: var(--text-faint);
+}
+
+/* ===========================================================================
    Field Day workspace (center, Field Day mode)
    =========================================================================== */
 .fieldday {

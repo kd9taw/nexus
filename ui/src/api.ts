@@ -18,6 +18,7 @@ import type {
   DiagnosticsReport,
   FeedHealth,
   ImportStats,
+  JourneySummary,
   LoggedQso,
   LotwSyncResult,
   UploadReport,
@@ -264,6 +265,14 @@ export async function getAwards(): Promise<AwardSummary> {
   const invoke = tauriInvoke()
   if (invoke) return invoke<AwardSummary>('get_awards')
   return mockEngine.getAwards()
+}
+
+/** The Journey snapshot — the in-app, beginner-first achievement layer (firsts,
+ * sub-award ladders, collections, feats, personal bests, XP/level, streak). */
+export async function getJourney(): Promise<JourneySummary> {
+  const invoke = tauriInvoke()
+  if (invoke) return invoke<JourneySummary>('get_journey')
+  return mockEngine.getJourney()
 }
 
 export async function getConfirmationDiagnostics(): Promise<DiagnosticsReport> {
