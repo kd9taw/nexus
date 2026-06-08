@@ -31,7 +31,7 @@ use crate::dto::{
 use crate::settings::Settings;
 use crate::AppState;
 use modes::{NativeSource, SignalSource, WsjtxUdpSource};
-use tempo_core::message::Msg;
+use tempo_core::message::{same_call, Msg};
 
 /// Default waterfall resolution (bins).
 pub const SPECTRUM_BINS: usize = 120;
@@ -1019,7 +1019,7 @@ impl Engine {
                             .map(|d| d.snr)
                     })
                     .unwrap_or(0)
-                    .clamp(-30, 30);
+                    .clamp(-30, 49);
                 Some((Msg::parse(text), snr))
             }
             _ => self.latest_reply_from(dxcall, &mycall),
@@ -1054,22 +1054,37 @@ impl Engine {
         ft1::harq_reset(); // fresh exchange: drop stale receive-side IR-HARQ state
     }
 
-    /// The most recent decode from `dxcall` addressed to `mycall` in this slot,
-    /// parsed with the SNR we heard it at — the QSO context for resuming a directed
-    /// call when no specific line was clicked.
+    /// The best resume point from `dxcall` addressed to `mycall` in this slot, for
+    /// a roster/spot/typed call that carried no specific clicked line. Among this
+    /// slot's decodes from the DX to me, pick the FURTHEST-progressed one (grid <
+    /// report < R-report) so we resume at the right step deterministically, and
+    /// IGNORE terminal messages (RRR/RR73/73): a roster click on a station that
+    /// just signed off is a fresh call (grid start), not a lone 73. Matching is
+    /// base-call/case-insensitive so portable calls still resolve.
     fn latest_reply_from(&self, dxcall: &str, mycall: &str) -> Option<(Msg, i32)> {
-        self.last_decodes.iter().rev().find_map(|d| {
-            let m = Msg::parse(&d.message);
-            let from_dx = m
-                .sender()
-                .map(|s| s.eq_ignore_ascii_case(dxcall))
-                .unwrap_or(false);
-            let to_me = m
-                .addressee()
-                .map(|a| a.eq_ignore_ascii_case(mycall))
-                .unwrap_or(false);
-            (from_dx && to_me).then(|| (m, d.snr.clamp(-30, 30)))
-        })
+        // Resume rank — only the non-terminal, addressed-to-me steps qualify.
+        fn resume_rank(m: &Msg) -> Option<u8> {
+            match m {
+                Msg::Grid { .. } => Some(1),
+                Msg::Report { .. } => Some(2),
+                Msg::RReport { .. } => Some(3),
+                _ => None, // CQ / RRR / RR73 / 73 / other → not a resume point
+            }
+        }
+        self.last_decodes
+            .iter()
+            .filter_map(|d| {
+                let m = Msg::parse(&d.message);
+                let from_dx = m.sender().map(|s| same_call(s, dxcall)).unwrap_or(false);
+                let to_me = m.addressee().map(|a| same_call(a, mycall)).unwrap_or(false);
+                if from_dx && to_me {
+                    resume_rank(&m).map(|r| (r, m, d.snr.clamp(-30, 49)))
+                } else {
+                    None
+                }
+            })
+            .max_by_key(|(r, _, _)| *r)
+            .map(|(_, m, snr)| (m, snr))
     }
 
     /// Confirm-and-log a QSO held by the prompt-to-log popup. `rec` is the

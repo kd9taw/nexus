@@ -203,9 +203,10 @@ impl Station {
 
         // Only a message addressed to *us* advances the start state; a CQ or a
         // message to someone else means we're initiating, so we start at the grid.
+        // Base-call comparison so portable/compound calls (KD9TAW/P) still match.
         let to_me = context
             .and_then(|(m, _)| m.addressee())
-            .map(|to| to.eq_ignore_ascii_case(&mycall_s))
+            .map(|to| crate::message::same_call(to, &mycall_s))
             .unwrap_or(false);
 
         let (state, pending, log_line) = match context {
@@ -373,7 +374,7 @@ impl Station {
         let state_before = self.state;
         for d in decodes {
             let m = Msg::parse(&d.message);
-            let rpt = d.snr.clamp(-30, 30);
+            let rpt = d.snr.clamp(-30, 49);
             match (self.state, &m) {
                 (State::Listening, Msg::Cq { de, grid }) => {
                     self.dxcall = Some(de.clone());
@@ -386,7 +387,7 @@ impl Station {
                     self.state = State::AwaitReport;
                     self.log(format!("heard CQ {de} → answering with grid"));
                 }
-                (State::CallingCq, Msg::Grid { to, de, grid }) if to == &self.mycall => {
+                (State::CallingCq, Msg::Grid { to, de, grid }) if crate::message::same_call(to, &self.mycall) => {
                     self.dxcall = Some(de.clone());
                     self.dxgrid = Some(grid.clone());
                     self.pending = Some(Msg::Report {
@@ -397,7 +398,7 @@ impl Station {
                     self.state = State::AwaitRoger;
                     self.log(format!("{de} answered → sending report {rpt}"));
                 }
-                (State::AwaitReport, Msg::Report { to, de, snr }) if to == &self.mycall => {
+                (State::AwaitReport, Msg::Report { to, de, snr }) if crate::message::same_call(to, &self.mycall) => {
                     self.rx_report = Some(*snr);
                     self.pending = Some(Msg::RReport {
                         to: de.clone(),
@@ -410,7 +411,7 @@ impl Station {
                         crate::message::fmt_report(rpt)
                     ));
                 }
-                (State::AwaitRoger, Msg::RReport { to, de, snr }) if to == &self.mycall => {
+                (State::AwaitRoger, Msg::RReport { to, de, snr }) if crate::message::same_call(to, &self.mycall) => {
                     self.rx_report = Some(*snr);
                     // RR73 (combined roger+73, modern default) unless the operator
                     // prefers a bare RRR (roger only; partner still owes a 73).
@@ -433,7 +434,7 @@ impl Station {
                 }
                 (State::AwaitRr73, Msg::Rr73 { to, de })
                 | (State::AwaitRr73, Msg::Rrr { to, de })
-                    if to == &self.mycall =>
+                    if crate::message::same_call(to, &self.mycall) =>
                 {
                     self.pending = Some(Msg::Bye73 {
                         to: de.clone(),
@@ -442,7 +443,7 @@ impl Station {
                     self.state = State::Done;
                     self.log("got RR73 → sending 73, QSO complete".into());
                 }
-                (State::Confirming, Msg::Bye73 { to, .. }) if to == &self.mycall => {
+                (State::Confirming, Msg::Bye73 { to, .. }) if crate::message::same_call(to, &self.mycall) => {
                     self.pending = None;
                     self.state = State::Done;
                     self.log("got 73 → QSO complete".into());
@@ -643,6 +644,16 @@ mod start_context_tests {
         assert_eq!(s.state, State::Done);
         assert!(s.pending.is_none());
         assert!(s.done());
+    }
+
+    #[test]
+    fn portable_mycall_still_matches_a_reply_to_the_base_call() {
+        // I operate as KD9TAW/P; the DX reports my base call KD9TAW. The QSO must
+        // still resume (send R-report), not stall at the grid.
+        let m = Msg::parse("KD9TAW W9XYZ -09");
+        let s = Station::start("KD9TAW/P", MY_GRID, DX, Some((&m, -11)), false);
+        assert_eq!(s.state, State::AwaitRr73);
+        assert_eq!(s.pending_text().as_deref(), Some("W9XYZ KD9TAW/P R-11"));
     }
 
     #[test]

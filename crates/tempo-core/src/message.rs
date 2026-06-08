@@ -41,9 +41,57 @@ pub enum Msg {
     Other(String),
 }
 
-/// Format a signal report the way WSJT-X does: sign + two digits, clamped.
+/// Valid signal-report range for standard messages — WSJT-X's report field runs
+/// from the -50/-31 specials region up to +49. A numeric token outside this range
+/// is NOT a report (so a stray "R73" is free text, not a phantom +73 dB report).
+pub const REPORT_MIN: i32 = -50;
+pub const REPORT_MAX: i32 = 49;
+
+/// True when `n` is a plausible signal report (within [`REPORT_MIN`]..=[`REPORT_MAX`]).
+pub fn is_report(n: i32) -> bool {
+    (REPORT_MIN..=REPORT_MAX).contains(&n)
+}
+
+/// Format a signal report the way WSJT-X does: sign + two digits. Clamped to the
+/// valid report ceiling (+49) so a strong-signal report like +35 is faithful
+/// (the old +30 cap truncated it); the floor stays at the practical decode floor.
 pub fn fmt_report(snr: i32) -> String {
-    format!("{:+03}", snr.clamp(-30, 30))
+    format!("{:+03}", snr.clamp(-30, REPORT_MAX))
+}
+
+/// The base callsign for matching — uppercased, with a portable prefix/suffix
+/// stripped (`W9XYZ/4` → `W9XYZ`, `KH8/W1AW` → `W1AW`), mirroring WSJT-X's
+/// `Radio::base_callsign`. Used so an "addressed to me" / "from the DX" test still
+/// works under compound/portable operation instead of silently stalling the QSO.
+pub fn base_call(call: &str) -> String {
+    let up = call.trim().to_ascii_uppercase();
+    if !up.contains('/') {
+        return up;
+    }
+    // The base is the '/'-segment shaped like a full call — a letter that comes
+    // AFTER a digit (W1AW, W9XYZ) — unlike a bare prefix (KH8) or affix (P, MM, 4).
+    let looks_full = |s: &str| {
+        let b = s.as_bytes();
+        b.iter()
+            .position(|c| c.is_ascii_digit())
+            .map(|d| b[d + 1..].iter().any(|c| c.is_ascii_alphabetic()))
+            .unwrap_or(false)
+    };
+    // Prefer the LAST full-looking segment: for prefix-portable (KH8/W1AW,
+    // VP2E/AA9A) the home call comes last; for suffix-portable (W9XYZ/P, /4) the
+    // affix isn't full-looking so the home call (first) still wins.
+    up.split('/')
+        .filter(|s| looks_full(s))
+        .last()
+        .or_else(|| up.split('/').filter(|s| !s.is_empty()).max_by_key(|s| s.len()))
+        .map(|s| s.to_string())
+        .unwrap_or(up)
+}
+
+/// Two callsigns refer to the same station — base-call (portable) and
+/// case-insensitive comparison, the WSJT-X way.
+pub fn same_call(a: &str, b: &str) -> bool {
+    base_call(a) == base_call(b)
 }
 
 impl Msg {
@@ -96,12 +144,19 @@ impl Msg {
                 _ => {}
             }
             if let Some(rest) = p.strip_prefix('R') {
+                // Only a value in the report range is an R-report; "R73" (n=73) is
+                // NOT a report — fall through so it routes as free text, not a
+                // phantom +73 dB RST.
                 if let Ok(n) = rest.parse::<i32>() {
-                    return Msg::RReport { to, de, snr: n };
+                    if is_report(n) {
+                        return Msg::RReport { to, de, snr: n };
+                    }
                 }
             }
             if let Ok(n) = p.parse::<i32>() {
-                return Msg::Report { to, de, snr: n };
+                if is_report(n) {
+                    return Msg::Report { to, de, snr: n };
+                }
             }
             if is_grid(p) {
                 return Msg::Grid {
@@ -192,8 +247,51 @@ fn is_grid(s: &str) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
+mod fidelity_tests {
     use super::*;
+
+    #[test]
+    fn base_call_strips_portable_affixes() {
+        assert_eq!(base_call("W9XYZ"), "W9XYZ");
+        assert_eq!(base_call("w9xyz"), "W9XYZ");
+        assert_eq!(base_call("W9XYZ/P"), "W9XYZ");
+        assert_eq!(base_call("W9XYZ/4"), "W9XYZ");
+        assert_eq!(base_call("KD9TAW/MM"), "KD9TAW");
+        // Prefix-portable: the home call (letter after the digit) is the base.
+        assert_eq!(base_call("KH8/W1AW"), "W1AW");
+        assert_eq!(base_call("VP2E/AA9A"), "AA9A");
+    }
+
+    #[test]
+    fn same_call_matches_across_portable_and_case() {
+        assert!(same_call("KD9TAW", "kd9taw/p"));
+        assert!(same_call("KD9TAW/P", "KD9TAW"));
+        assert!(!same_call("KD9TAW", "KD9TAX"));
+    }
+
+    #[test]
+    fn r73_is_not_a_phantom_report() {
+        // "R73" must NOT become RReport{snr:73}; it routes to free text.
+        assert!(matches!(Msg::parse("K2DEF W9XYZ R73"), Msg::Other(_)));
+        // Out-of-range bare numbers are not reports either.
+        assert!(matches!(Msg::parse("K2DEF W9XYZ 99"), Msg::Other(_)));
+    }
+
+    #[test]
+    fn strong_signal_reports_are_faithful_to_wsjtx() {
+        // +35 must survive (the old +30 cap truncated it).
+        assert_eq!(fmt_report(35), "+35");
+        assert_eq!(fmt_report(49), "+49");
+        assert_eq!(fmt_report(60), "+49"); // clamped at the WSJT-X ceiling
+        assert!(matches!(
+            Msg::parse("K2DEF W9XYZ +35"),
+            Msg::Report { snr: 35, .. }
+        ));
+        assert!(matches!(
+            Msg::parse("K2DEF W9XYZ R+35"),
+            Msg::RReport { snr: 35, .. }
+        ));
+    }
 
     #[test]
     fn forms_roundtrip_through_text() {

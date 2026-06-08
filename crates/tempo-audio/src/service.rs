@@ -431,9 +431,14 @@ impl RadioLoop {
                             eng.broadcast(t);
                         }
                     }
-                    WsjtxInbound::Reply { message, .. } => {
-                        if let Some(sender) = Msg::parse(&message).sender() {
-                            eng.call_station(sender);
+                    WsjtxInbound::Reply { message, snr, .. } => {
+                        // The Reply datagram (a logger/JTAlert/companion double-click)
+                        // carries the exact clicked line + its SNR — pass both so the
+                        // sequencer resumes from that message (WSJT-X double-click
+                        // semantics), not always from the grid.
+                        let parsed = Msg::parse(&message);
+                        if let Some(sender) = parsed.sender() {
+                            eng.call_station_ctx(sender, None, Some(&message), Some(snr));
                         }
                     }
                     _ => {}
