@@ -94,6 +94,14 @@ pub struct Settings {
     /// Tx audio level (0.0–1.0) applied to outgoing samples before they reach
     /// the sound card.
     pub tx_level: f32,
+    /// Station transmit power in WATTS (RF out), used by the Journey miles-per-watt
+    /// + QRP feats. `None` until the operator sets it (those feats stay gated).
+    #[serde(default)]
+    pub station_power_w: Option<f64>,
+    /// Opt-in: track a gentle weekly "on the air" streak in the Journey view.
+    /// Off by default (the achievement layer is opt-in, never coercive).
+    #[serde(default)]
+    pub journey_streak_enabled: bool,
     /// Transmit watchdog: auto-halt TX after this many minutes of continuous
     /// keying. 0 = off.
     pub tx_watchdog_min: u32,
@@ -268,6 +276,8 @@ impl Default for Settings {
             audio_in: String::new(),
             audio_out: String::new(),
             tx_level: 0.9,
+            station_power_w: None,
+            journey_streak_enabled: false,
             tx_watchdog_min: 6,
             tx_even: true,
             rx_offset_hz: 1500.0,

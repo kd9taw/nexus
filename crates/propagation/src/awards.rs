@@ -22,7 +22,7 @@ const MODE_CLASSES: [ModeClass; 3] = [ModeClass::Cw, ModeClass::Phone, ModeClass
 
 /// The classic 5-Band DXCC bands. The WORK chase + 5BDXCC metric use these (the
 /// bands an "all-band" chaser most wants every entity on).
-const AWARD_BANDS: [Band; 5] = [Band::B80, Band::B40, Band::B20, Band::B15, Band::B10];
+pub(crate) const AWARD_BANDS: [Band; 5] = [Band::B80, Band::B40, Band::B20, Band::B15, Band::B10];
 /// An entity must be worked on at least this many award bands to appear in the
 /// WORK chase (so it surfaces "almost-complete" entities, not every partial).
 const WORK_CHASE_MIN_BANDS: usize = 3;
@@ -30,7 +30,7 @@ const WORK_CHASE_MIN_BANDS: usize = 3;
 /// The 50 US states (ADIF `STATE` postal codes) for Worked All States. WAS keys
 /// on these codes directly — Hawaii/Alaska count even though they're separate
 /// DXCC entities; DC and territories are not WAS states.
-const WAS_STATES: [&str; 50] = [
+pub(crate) const WAS_STATES: [&str; 50] = [
     "AK", "AL", "AR", "AZ", "CA", "CO", "CT", "DE", "FL", "GA", "HI", "IA", "ID", "IL", "IN", "KS",
     "KY", "LA", "MA", "MD", "ME", "MI", "MN", "MO", "MS", "MT", "NC", "ND", "NE", "NH", "NJ", "NM",
     "NV", "NY", "OH", "OK", "OR", "PA", "RI", "SC", "SD", "TN", "TX", "UT", "VA", "VT", "WA", "WI",
@@ -39,7 +39,7 @@ const WAS_STATES: [&str; 50] = [
 
 /// Canonicalize an ADIF state code to one of the 50 WAS states, or `None` for a
 /// junk/territory/empty code (which never advances WAS).
-fn valid_state(s: &str) -> Option<&'static str> {
+pub(crate) fn valid_state(s: &str) -> Option<&'static str> {
     let up = s.trim().to_ascii_uppercase();
     WAS_STATES.iter().copied().find(|st| *st == up)
 }

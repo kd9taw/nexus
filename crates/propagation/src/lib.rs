@@ -25,6 +25,7 @@ pub mod dxped;
 pub mod engine;
 pub mod geo;
 pub mod gettingout;
+pub mod journey;
 pub mod likelihood;
 pub mod mapspots;
 pub mod model;
@@ -56,6 +57,11 @@ pub use engine::{
 pub use likelihood::{BandOutlook, PathModel, PropParams, Workability};
 pub use predict::{HeuristicEngine, PathPredictor, PathPrediction};
 pub use gettingout::{getting_out, GettingOut, HeardMe};
+pub use journey::{
+    compute as compute_journey, Cell as JourneyCell, Collection as JourneyCollection, Feat,
+    First, JourneyQso, JourneySummary, Ladder, NextMilestone, PersonalBest, Rung, Streak,
+    Tier as JourneyTier,
+};
 pub use mapspots::{build_map_spots, MapSpot};
 pub use model::{
     classify_vhf_mode, ActivityTier, Band, Confidence, ModeClass, PathSpot, PropMode, Region, Side,

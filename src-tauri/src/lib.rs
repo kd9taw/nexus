@@ -1285,6 +1285,55 @@ fn get_awards(state: State<'_, SharedEngine>) -> Result<propagation::AwardSummar
     Ok(awards.summary())
 }
 
+/// The Journey snapshot — the in-app, beginner-first achievement layer (auto-detected
+/// firsts, tiered sub-award ladders toward the big awards, fill-the-map collections,
+/// novel ham feats, personal bests, an XP/level spine, and an opt-in weekly streak),
+/// computed locally from the log + the operator's grid/power. Async (off the main
+/// thread; the log scan can be large). Local-only — no network.
+#[tauri::command]
+async fn get_journey(
+    state: State<'_, SharedEngine>,
+) -> Result<propagation::JourneySummary, String> {
+    use propagation::model::{Band, ModeClass};
+    let eng = state.lock().map_err(|e| e.to_string())?;
+    let s = eng.settings();
+    let qsos: Vec<propagation::JourneyQso> = eng
+        .get_log()
+        .into_iter()
+        .map(|r| propagation::JourneyQso {
+            call: r.call,
+            grid: r.grid,
+            state: r.state,
+            band: Band::from_label(&r.band),
+            mode: ModeClass::from_adif(&r.mode),
+            when_unix: r.when_unix as i64,
+            // Award-eligible confirmation (LoTW/paper — not eQSL), matching the
+            // awards + "first confirmation" semantics.
+            confirmed: r.award_confirmed,
+            rst_rcvd: r.rst_rcvd,
+            pota: r
+                .ota
+                .their_program
+                .as_deref()
+                .is_some_and(|p| p.eq_ignore_ascii_case("POTA")),
+            sota: r
+                .ota
+                .their_program
+                .as_deref()
+                .is_some_and(|p| p.eq_ignore_ascii_case("SOTA")),
+        })
+        .collect();
+    let grid = (!s.mygrid.is_empty()).then_some(s.mygrid.as_str());
+    Ok(propagation::compute_journey(
+        &qsos,
+        &s.mycall,
+        grid,
+        s.station_power_w,
+        s.journey_streak_enabled,
+        now_unix(),
+    ))
+}
+
 /// Silent match-failure diagnostics: per-QSO "why isn't this confirmed, and what's
 /// the one fix?" + a leverage-ranked rollup, from the log + the last LoTW/eQSL
 /// reconcile orphans (this session). Pure/offline; cty.dat resolves each call's
@@ -2446,6 +2495,7 @@ pub fn run() {
             delete_qso,
             purge_log,
             get_awards,
+            get_journey,
             get_confirmation_diagnostics,
             import_adif,
             sync_lotw_report,
