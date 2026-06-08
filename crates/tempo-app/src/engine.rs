@@ -255,6 +255,10 @@ impl Engine {
             source: Box::new(NativeSource::from_kind(modes::ModeKind::Ft8)),
             source_kind: SourceKind::Native,
             mode: Mode::Chat,
+            // Transmit is permitted, but nothing is auto-queued at launch: the
+            // beacon is forced off above, and Monitor is PASSIVE (no auto-answer),
+            // so the rig never keys until the operator acts (Call CQ, double-click a
+            // station, or arm the beacon). That's what fixed the launch auto-call.
             tx_enabled: true,
             tuning: false,
             tx_watchdog: false,

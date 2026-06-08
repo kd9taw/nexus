@@ -396,17 +396,11 @@ impl Station {
             let m = Msg::parse(&d.message);
             let rpt = d.snr.clamp(-30, 49);
             match (self.state, &m) {
-                (State::Listening, Msg::Cq { de, grid }) => {
-                    self.dxcall = Some(de.clone());
-                    self.dxgrid = Some(grid.clone());
-                    self.pending = Some(Msg::Grid {
-                        to: de.clone(),
-                        de: self.mycall.clone(),
-                        grid: self.mygrid.clone(),
-                    });
-                    self.state = State::AwaitReport;
-                    self.log(format!("heard CQ {de} → answering with grid"));
-                }
+                // NOTE: there is intentionally NO (Listening, Cq) auto-answer arm.
+                // "Monitor" is passive RX — it must NEVER key up on its own (an
+                // unsolicited transmission is unacceptable, and it's not how WSJT-X
+                // works). The operator works a station explicitly by double-clicking
+                // a decode, which builds an `answering`/`start(..)` station.
                 (State::CallingCq, Msg::Grid { to, de, grid }) if crate::message::same_call(to, &self.mycall) => {
                     self.dxcall = Some(de.clone());
                     self.dxgrid = Some(grid.clone());

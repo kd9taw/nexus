@@ -37,7 +37,9 @@ fn qso_mode_completes_through_the_engine() {
     a.set_tier(Tier::Ft1); // FT1-modem loopback (default tier is now FT8)
     b.set_tier(Tier::Ft1);
     a.set_mode("qso-run").unwrap(); // A RUNS (calls CQ)
-    b.set_mode("qso-monitor").unwrap();
+    // B works A explicitly (Monitor is now passive — no auto-answer; the operator
+    // double-clicks a decode, which is call_station).
+    b.call_station("W9XYZ");
 
     let b_done = |e: &Engine| e.snapshot().qso.map(|q| q.state == "Done").unwrap_or(false);
     let a_logged = |e: &Engine| e.get_log().iter().any(|q| q.call == "K2DEF");
