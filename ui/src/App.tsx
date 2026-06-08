@@ -745,7 +745,7 @@ export default function App() {
     </main>
   )
 
-  let workspace: JSX.Element
+  let workspace: JSX.Element | null
   switch (effectiveView) {
     case 'qso':
       workspace = threePane(
@@ -853,29 +853,10 @@ export default function App() {
       )
       break
     case 'operate':
-      workspace = (
-        <OperateCockpit
-          snap={snap}
-          theme={theme}
-          tier={tier}
-          onTierChange={handleTier}
-          onSourceChange={handleSourceChange}
-          onTune={handleTune}
-          onCall={handleCall}
-          onSetTxLevel={handleSetTxLevel}
-          onSetMode={handleSetMode}
-          onSetTxEven={handleSetTxEven}
-          onResend={handleQsoResend}
-          onFreetext={handleQsoFreetext}
-          onLog={handleLogCurrent}
-          roster={stationsPanel}
-          needByCall={needByCall}
-          selectedCall={activePeer}
-          onSelect={handleSelect}
-          layoutMode={operateLayout}
-          onLayoutMode={handleOperateLayout}
-        />
-      )
+      // The Operate cockpit is NOT rendered here — it stays permanently mounted in
+      // a persistent host below (so its waterfall + Band Activity keep accumulating
+      // in the background across navigation). This case renders nothing in the slot.
+      workspace = null
       break
     case 'connect':
       workspace = (
@@ -985,6 +966,36 @@ export default function App() {
           workspace={area}
           onWorkspace={handleWorkspace}
         />
+        {/* Operate cockpit lives here PERMANENTLY (mounted once, hidden when you're
+            on another section) so the waterfall + Band Activity keep decoding and
+            accumulating in the background — navigate away and back and your decodes
+            are exactly where you left them, plus everything heard while away. The
+            host is display:contents when shown (so the inner <main> flexes exactly
+            as before) and display:none when hidden. */}
+        <div className="operate-host" hidden={effectiveView !== 'operate'}>
+          <OperateCockpit
+            snap={snap}
+            theme={theme}
+            tier={tier}
+            onTierChange={handleTier}
+            onSourceChange={handleSourceChange}
+            onTune={handleTune}
+            onCall={handleCall}
+            onSetTxLevel={handleSetTxLevel}
+            onSetMode={handleSetMode}
+            onSetTxEven={handleSetTxEven}
+            onResend={handleQsoResend}
+            onFreetext={handleQsoFreetext}
+            onLog={handleLogCurrent}
+            roster={stationsPanel}
+            needByCall={needByCall}
+            selectedCall={activePeer}
+            onSelect={handleSelect}
+            layoutMode={operateLayout}
+            onLayoutMode={handleOperateLayout}
+            active={effectiveView === 'operate'}
+          />
+        </div>
         {workspace}
       </div>
 

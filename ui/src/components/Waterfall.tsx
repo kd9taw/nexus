@@ -13,6 +13,10 @@ interface Props {
   /** Click to tune: `shift` = set TX offset, otherwise set RX offset. */
   /** Tune from a waterfall click: set the TX offset, the RX offset, or both. */
   onTune?: (freqHz: number, target: 'tx' | 'rx' | 'both') => void
+  /** False while the Operate cockpit is navigated away (kept mounted but hidden):
+   * pause the spectrum fetch/scroll/overlay and preserve the canvas backing store
+   * so returning shows the accumulated waterfall intact (no CPU spent while away). */
+  active?: boolean
 }
 
 // Audio passband shown on the waterfall (matches the engine's 200–2900 Hz band).
@@ -33,7 +37,7 @@ function xToFreq(x: number, width: number): number {
   return F_MIN + (x / width) * (F_MAX - F_MIN)
 }
 
-export function Waterfall({ transmitting, rxOffsetHz, txOffsetHz, theme, onTune }: Props) {
+export function Waterfall({ transmitting, rxOffsetHz, txOffsetHz, theme, onTune, active = true }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const rafRef = useRef<number | null>(null)
   // refs so the animation loop always reads current props without re-subscribing
@@ -41,6 +45,7 @@ export function Waterfall({ transmitting, rxOffsetHz, txOffsetHz, theme, onTune 
   const themeRef = useRef(theme)
   const rxOffRef = useRef(rxOffsetHz)
   const txOffRef = useRef(txOffsetHz)
+  const activeRef = useRef(active)
   // pre-baked colormap LUT (256×RGBA) for the render hot path; rebuilt on theme.
   const lutRef = useRef<Uint8ClampedArray>(bakeLut(themeColormap(theme)))
   // live legend readout (updated directly, no React re-render at 8 Hz)
@@ -50,6 +55,7 @@ export function Waterfall({ transmitting, rxOffsetHz, txOffsetHz, theme, onTune 
   themeRef.current = theme
   rxOffRef.current = rxOffsetHz
   txOffRef.current = txOffsetHz
+  activeRef.current = active
 
   // Rebuild the LUT synchronously before paint (useLayoutEffect, not useEffect)
   // so it changes atomically with the legend gradient (a sync useMemo below) on
@@ -130,6 +136,13 @@ export function Waterfall({ transmitting, rxOffsetHz, txOffsetHz, theme, onTune 
     }
     const resize = (entry?: ResizeObserverEntry) => {
       const rect = canvas.getBoundingClientRect()
+      // While the cockpit is hidden (kept mounted but display:none across nav) the
+      // canvas measures ~0. Do NOT reclear/shrink the backing store to 1×1 — keep
+      // the accumulated waterfall so it's intact when we navigate back. (A genuine
+      // 0-size only happens when hidden or mid-layout; never resize away real history.)
+      if ((canvas.offsetParent === null || rect.width < 2 || rect.height < 2) && devW > 0 && devH > 0) {
+        return
+      }
       cssW = Math.max(1, rect.width)
       cssH = Math.max(1, rect.height)
       const { dW, dH } = measure(entry)
@@ -312,6 +325,16 @@ export function Waterfall({ transmitting, rxOffsetHz, txOffsetHz, theme, onTune 
 
     const loop = (now: number) => {
       if (!running) return
+      // Paused while the cockpit is navigated away (kept mounted but hidden): skip
+      // the spectrum fetch + scroll + overlay entirely so no CPU is spent and the
+      // backing store is left untouched. Keep `last` current and `acc` at 0 so the
+      // scroll resumes cleanly (no time-debt burst) the moment we return.
+      if (!activeRef.current) {
+        last = now
+        acc = 0
+        rafRef.current = requestAnimationFrame(loop)
+        return
+      }
       acc += now - last
       last = now
       const rowMs = reducedMotion() ? ROW_MS_REDUCED : ROW_MS

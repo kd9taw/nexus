@@ -1382,6 +1382,18 @@ h2 {
   display: flex;
 }
 
+/* The Operate cockpit is mounted permanently (kept alive across navigation so its
+   waterfall + Band Activity keep accumulating in the background). When shown,
+   `display: contents` makes this wrapper vanish from the box tree so the inner
+   `<main class="layout">` flexes inside `.shell` exactly as any other view. When
+   hidden, `[hidden]` collapses it to `display: none` (overrides `contents`). */
+.operate-host {
+  display: contents;
+}
+.operate-host[hidden] {
+  display: none;
+}
+
 .layout {
   flex: 1;
   min-height: 0;

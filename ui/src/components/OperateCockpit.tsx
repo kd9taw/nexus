@@ -41,6 +41,10 @@ interface Props {
    * 'roster' (GridTracker — the full sortable Call Roster dominant). */
   layoutMode: 'classic' | 'roster'
   onLayoutMode: (m: 'classic' | 'roster') => void
+  /** True when the cockpit is the active view. The cockpit stays MOUNTED across
+   * navigation (so Band Activity keeps accumulating in the background); this flag
+   * pauses the waterfall's render loop while it's hidden. */
+  active?: boolean
 }
 
 /** Mode chips, in the order the cockpit presents them (popular modes first). */
@@ -78,6 +82,7 @@ export function OperateCockpit({
   onSelect,
   layoutMode,
   onLayoutMode,
+  active = true,
 }: Props) {
   const source = snap.radio.source
   const catOk = snap.radio.catOk
@@ -225,6 +230,7 @@ export function OperateCockpit({
             txOffsetHz={snap.radio.txOffsetHz}
             theme={theme}
             onTune={onTune}
+            active={active}
           />
         </section>
 
