@@ -113,8 +113,34 @@ export function Waterfall({ transmitting, rxOffsetHz, txOffsetHz, theme, onTune 
       const w = Math.max(1, Math.round(rect.width * dpr))
       const h = Math.max(1, Math.round(rect.height * dpr))
       if (w === devW && h === devH) return
+      // canvas.width/height assignment CLEARS the backing store. On mount the
+      // layout often settles in a couple of ResizeObserver ticks; without care
+      // each tick would wipe the accumulating waterfall to blank — the flicker.
+      // So: (1) snapshot the current history, (2) repaint a colormap-floor field
+      // so a fresh/cleared canvas reads as a quiet band (not a transparent flash),
+      // (3) re-blit the old history bottom-anchored (newest rows stay at the
+      // bottom, new space appears at the top). All in device pixels (identity
+      // transform after a width assignment; putImageData ignores the transform).
+      let prev: ImageData | null = null
+      if (devW > 0 && devH > 0) {
+        try {
+          prev = ctx.getImageData(0, 0, devW, devH)
+        } catch {
+          prev = null
+        }
+      }
       canvas.width = w
       canvas.height = h
+      const lut = lutRef.current
+      ctx.fillStyle = `rgb(${lut[0]},${lut[1]},${lut[2]})`
+      ctx.fillRect(0, 0, w, h)
+      if (prev) {
+        try {
+          ctx.putImageData(prev, 0, h - devH)
+        } catch {
+          // ignore — start fresh on the floor field
+        }
+      }
       devW = w
       devH = h
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
