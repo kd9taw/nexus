@@ -37,7 +37,7 @@ describe('feature registry', () => {
 
   it('lists exactly the known core spine', () => {
     const core = FEATURES.filter((f) => f.core).map((f) => f.id).sort()
-    expect(core).toEqual(['connect', 'logbook', 'nowBar', 'operate', 'settings'])
+    expect(core).toEqual(['chat', 'connect', 'logbook', 'nowBar', 'operate', 'settings'])
   })
 
   it('section features correspond 1:1 with the views', () => {

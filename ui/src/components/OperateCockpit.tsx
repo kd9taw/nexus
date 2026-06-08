@@ -130,6 +130,10 @@ export function OperateCockpit({
               ⇄ Companion
             </button>
           </div>
+          <span className="cockpit-source-label" title="Active decode source">
+            {snap.radio.sourceLabel || 'Native'}
+            {source === 'companion' && ' · listening :2237'}
+          </span>
           <span className="cockpit-offsets" title="Receive / transmit audio offsets (Hz)">
             RX {Math.round(snap.radio.rxOffsetHz)} · TX {Math.round(snap.radio.txOffsetHz)} Hz
           </span>

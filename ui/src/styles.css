@@ -4882,6 +4882,12 @@ select.settings-input {
   color: var(--accent-ink);
   background: var(--accent);
 }
+.cockpit-source-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
 .cockpit-offsets {
   font-family: var(--font-mono);
   color: var(--text-faint);

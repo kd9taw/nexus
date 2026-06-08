@@ -547,7 +547,17 @@ export default function App() {
     // Companion bind can fail (port busy) → withErrorToast surfaces it and the
     // backend stays on the previous source.
     void withErrorToast(() => apiSetSource(k), 'Could not switch signal source').then((s) => {
-      if (s) setSnap(s)
+      if (s) {
+        setSnap(s)
+        // Confirm the switch even when no decodes follow (e.g. Companion idle).
+        pushToast(
+          k === 'companion'
+            ? `Source: ${s.radio.sourceLabel} — listening for WSJT-X/JTDX/MSHV on :2237`
+            : `Source: ${s.radio.sourceLabel}`,
+          'success',
+          3500,
+        )
+      }
     })
   }, [])
 

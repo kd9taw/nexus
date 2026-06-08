@@ -167,7 +167,7 @@ export async function discardPendingLog(): Promise<AppSnapshot> {
 
 /** Switch the top-level operating area: 'dx' (FT8/FT4) or 'msg' (FT1/DX1 chat).
  * Atomically sets the area's tier + mode. Returns the fresh snapshot. */
-export async function setArea(area: 'dx' | 'msg'): Promise<AppSnapshot> {
+export async function setArea(area: 'dx' | 'msg' | 'connect'): Promise<AppSnapshot> {
   const invoke = tauriInvoke()
   if (invoke) return invoke<AppSnapshot>('set_area', { area })
   return mockEngine.setArea(area)

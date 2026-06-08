@@ -139,9 +139,9 @@ export const FEATURES: FeatureDef[] = [
     label: 'Chat',
     kind: 'section',
     category: 'Operate',
-    core: false,
+    core: true, // the spine of the MSG area — the original Tempo FT1/DX1 chat, always available
     dependsOn: [],
-    intents: ['casual'],
+    intents: ['casual', 'dx', 'contest', 'pota', 'vhf'],
     view: 'chat',
     workspace: 'msg',
     oneLine: 'Free-form QSO text (FT1/DX1).',
