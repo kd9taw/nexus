@@ -23,7 +23,6 @@ export type View =
   | 'roam'
   | 'logbook'
   | 'awards'
-  | 'journey'
   | 'pota'
   | 'log'
   | 'settings'
@@ -258,23 +257,12 @@ export const FEATURES: FeatureDef[] = [
     dependsOn: ['logbook'],
     intents: ['dx'],
     view: 'awards',
-    // global (no workspace): awards/log progress is shared across modes.
-    revealOn: 'dx-first',
-    oneLine: 'DXCC / Challenge / Honor Roll / WAZ progress and the confirmation chase.',
-  },
-  {
-    id: 'journey',
-    label: 'Journey',
-    kind: 'section',
-    category: 'DX & Awards',
-    core: false,
-    dependsOn: ['logbook'],
-    intents: ['casual', 'dx'],
-    view: 'journey',
-    // global (no workspace): the for-fun climb toward the official awards. Revealed
-    // on the very first QSO — this is the layer that recognizes a beginner's start.
+    // global (no workspace): awards/log progress is shared across modes. Combines the
+    // for-fun Journey layer (firsts/ladders/collections) with the official DXCC/WAS/…
+    // tracker under one tabbed section. Reveal-nudged on the first QSO (not auto-on in
+    // the lean starter surface) so a beginner is invited to the Journey tab early.
     revealOn: 'qso-1',
-    oneLine: 'Your climb — firsts, sub-award ladders, collections and milestones.',
+    oneLine: 'Journey + official awards — firsts, sub-award ladders, DXCC/WAZ/WAS progress.',
   },
   {
     id: 'pota',

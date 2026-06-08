@@ -8,10 +8,11 @@ const REVEALERS = FEATURES.filter((f) => f.revealOn)
 
 describe('adaptive reveal — pickReveal', () => {
   it('suggests a feature when its trigger is unlocked, it is off, and not dismissed', () => {
-    // awards.revealOn = 'dx-first'. Start from a profile where awards is OFF.
+    // awards (now Awards + Journey) reveals on 'qso-1'. Start from a profile where
+    // awards is OFF (gamification is already on in starter, so it won't be picked).
     const en = resolveEnabled('starter')
     expect(en.awards).toBe(false)
-    const f = pickReveal(['dx-first'], en, [])
+    const f = pickReveal(['qso-1'], en, [])
     expect(f?.id).toBe('awards')
   })
 

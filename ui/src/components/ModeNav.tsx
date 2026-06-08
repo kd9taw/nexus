@@ -13,7 +13,6 @@ import {
   ArrowLeftRight,
   BookOpen,
   Trophy,
-  Sparkles,
   ClipboardList,
   Settings,
 } from 'lucide-react'
@@ -61,8 +60,7 @@ const ITEMS: Item[] = [
   { id: 'pota', label: 'POTA/SOTA', icon: Trees, title: 'POTA / SOTA — parks & summits: who’s on now (hunt) + tag your activation' },
   { id: 'roam', label: 'Roam', icon: ArrowLeftRight, title: 'Coordinated QSY — move together off QRM (announced in the clear)' },
   { id: 'logbook', label: 'Logbook', icon: BookOpen, title: 'Logbook — your ADIF contacts' },
-  { id: 'awards', label: 'Awards', icon: Trophy, title: 'Awards — DXCC progress, band slots, and the confirmation chase' },
-  { id: 'journey', label: 'Journey', icon: Sparkles, title: 'Journey — your climb: firsts, sub-award ladders, collections and milestones' },
+  { id: 'awards', label: 'Awards', icon: Trophy, title: 'Awards — your Journey (firsts, ladders, milestones) + official DXCC/WAS/WAZ progress' },
   { id: 'log', label: 'Field Log', icon: ClipboardList, title: 'Field Log — Field Day / activity export' },
 ]
 

@@ -3044,13 +3044,50 @@ body.resizing {
 /* ===========================================================================
    Journey — the in-app, beginner-first achievement layer (separate from Awards)
    =========================================================================== */
+/* Combined Awards section: one workspace, a fixed tab bar (Journey + Official) over
+   a shared scroll body. */
+.awards-journey {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.aj-tabs {
+  display: flex;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4) 0;
+  border-bottom: 1px solid var(--border);
+  flex: none;
+}
+.aj-tab {
+  padding: 8px 16px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: var(--fs-body);
+  font-weight: 700;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: var(--transition);
+}
+.aj-tab:hover {
+  color: var(--text);
+}
+.aj-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+.aj-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--gap);
+}
+
 .journey-view {
   display: flex;
   flex-direction: column;
   gap: var(--space-5);
-  padding: var(--space-5);
-  overflow-y: auto;
-  min-height: 0;
 }
 /* Tier accents (a rarity ramp the eye reads at a glance). */
 .journey-view {
@@ -3149,15 +3186,15 @@ body.resizing {
 /* Hero: level + XP + next milestone. */
 .jy-hero {
   display: flex;
-  align-items: stretch;
-  gap: var(--space-6);
-  padding: var(--space-5);
+  align-items: center;
+  gap: var(--space-5);
+  padding: var(--space-4);
   flex-wrap: wrap;
 }
 .jy-level {
   display: flex;
   align-items: center;
-  gap: var(--space-4);
+  gap: var(--space-3);
   flex: 1 1 360px;
   min-width: 0;
 }
@@ -3166,23 +3203,23 @@ body.resizing {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  width: 64px;
-  height: 64px;
+  width: 44px;
+  height: 44px;
   border-radius: 50%;
   background: radial-gradient(circle at 35% 30%, color-mix(in srgb, var(--accent) 40%, var(--bg-elev-2)), var(--bg-elev-2));
   border: 2px solid var(--accent);
   flex: none;
 }
 .jy-level-num {
-  font-size: 26px;
+  font-size: 18px;
   font-weight: 800;
   line-height: 1;
   color: var(--text);
 }
 .jy-level-cap {
-  font-size: 9px;
+  font-size: 7px;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.06em;
   color: var(--text-dim);
 }
 .jy-level-bar-wrap {

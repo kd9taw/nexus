@@ -29,7 +29,6 @@ const EXPECTED_SECTIONS: FeatureId[] = [
   'propagation',
   'map',
   'awards',
-  'journey',
 ]
 
 describe('feature registry', () => {
@@ -64,8 +63,8 @@ describe('feature registry', () => {
   })
 
   it('removeWithDependents cascades to everything depending on the removed id', () => {
-    // logbook ← awards, journey, log, pota all depend on it.
-    expect(directDependents('logbook').sort()).toEqual(['awards', 'journey', 'log', 'pota'])
+    // logbook ← awards, log, pota all depend on it.
+    expect(directDependents('logbook').sort()).toEqual(['awards', 'log', 'pota'])
     const set = new Set<FeatureId>(['logbook', 'awards', 'log', 'pota', 'operate'])
     removeWithDependents(set, 'logbook')
     expect(set.has('logbook')).toBe(false)

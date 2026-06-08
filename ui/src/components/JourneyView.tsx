@@ -34,22 +34,22 @@ export function JourneyView() {
 
   if (err)
     return (
-      <main className="layout single">
+      <div className="journey-view">
         <StateBlock kind="error" title="Couldn't load your Journey" detail={err} />
-      </main>
+      </div>
     )
   if (!j)
     return (
-      <main className="layout single">
+      <div className="journey-view">
         <StateBlock kind="loading" title="Loading your Journey…" detail="Reading your log." />
-      </main>
+      </div>
     )
 
   const xpPct = j.xpForLevel > 0 ? Math.min(100, (j.xpIntoLevel / j.xpForLevel) * 100) : 0
   const firstsDone = j.firsts.filter((f) => f.unlocked).length
 
   return (
-    <main className="layout single journey-view">
+    <div className="journey-view">
       {/* Hero: level + XP + the single most-attainable next milestone (goal-gradient) */}
       <section className="jy-hero panel">
         <div className="jy-level">
@@ -161,7 +161,7 @@ export function JourneyView() {
           </div>
         </section>
       )}
-    </main>
+    </div>
   )
 }
 

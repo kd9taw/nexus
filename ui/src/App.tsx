@@ -52,8 +52,7 @@ import { LinkPill } from './components/LinkPill'
 import { ModeNav, type View } from './components/ModeNav'
 import { OperateCockpit } from './components/OperateCockpit'
 import { NowBar } from './components/NowBar'
-import { AwardsView } from './components/AwardsView'
-import { JourneyView } from './components/JourneyView'
+import { AwardsJourney } from './components/AwardsJourney'
 import { PotaSotaView } from './components/PotaSotaView'
 import { PropagationView } from './components/PropagationView'
 import { MapView } from './components/MapView'
@@ -803,14 +802,8 @@ export default function App() {
       )
       break
     case 'awards':
-      workspace = (
-        <main className="layout single">
-          <AwardsView showGamification={features.isOn('gamification')} />
-        </main>
-      )
-      break
-    case 'journey':
-      workspace = <JourneyView />
+      // Awards + Journey combined: one section, tabbed (Journey + Official Awards).
+      workspace = <AwardsJourney showGamification={features.isOn('gamification')} />
       break
     case 'pota':
       workspace = (
