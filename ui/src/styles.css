@@ -4957,9 +4957,10 @@ select.settings-input {
   grid-template-rows: minmax(0, 1fr);
   gap: var(--gap);
 }
-/* Roster mode (GridTracker-style): the Call Roster column becomes dominant. */
+/* Roster mode (GridTracker-style): the Call Roster pane (first child) is dominant,
+   Band Activity + Rx Frequency ride a narrow side rail. */
 .cockpit-lower.roster {
-  grid-template-columns: minmax(0, 1fr) minmax(280px, 1.7fr);
+  grid-template-columns: minmax(0, 1.9fr) minmax(240px, 1fr);
 }
 .cockpit-side {
   display: flex;
@@ -5050,6 +5051,175 @@ select.settings-input {
 .cockpit-roster > * {
   flex: 1;
   min-width: 0;
+}
+/* Roster-layout panes: the dominant Call Roster + the side Band Activity. */
+.cockpit-roster-main {
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+  padding: 6px 8px;
+}
+.cockpit-roster-main > .operate-roster {
+  flex: 1;
+  min-width: 0;
+}
+.cockpit-decodes-side {
+  flex: 1 1 0;
+  min-height: 120px;
+  display: flex;
+  overflow: hidden;
+  padding: 6px 10px;
+}
+.cockpit-decodes-side > .operate-decodes {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ── Call Roster (the GridTracker-style sortable table) ─────────────────────── */
+.operate-roster {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.or-filters {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 2px 6px 8px;
+  font-size: 0.8rem;
+  flex-wrap: wrap;
+}
+.or-filters > strong {
+  font-size: 0.82rem;
+  letter-spacing: 0.02em;
+}
+.or-count {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-weight: 800;
+}
+.or-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-dim);
+  cursor: pointer;
+  user-select: none;
+}
+.or-filter input {
+  accent-color: var(--accent);
+}
+.or-grid {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  border-top: 1px solid var(--border);
+}
+.or-row {
+  display: grid;
+  grid-template-columns: 52px minmax(72px, 1.3fr) minmax(56px, 1fr) 58px 60px 52px 46px 50px;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  font-size: 0.82rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+}
+.or-row.or-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg-elev-2);
+  border-bottom: 1px solid var(--border);
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+.or-th,
+.or-th-static {
+  background: none;
+  border: none;
+  text-align: left;
+  padding: 2px 2px;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.or-th-static {
+  cursor: default;
+}
+.or-th:hover {
+  color: var(--text);
+}
+.or-th.active {
+  color: var(--accent);
+}
+.or-row:not(.or-header) {
+  cursor: pointer;
+}
+.or-row:not(.or-header):hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.or-row.selected {
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.or-row.worked {
+  opacity: 0.72;
+}
+.or-call {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.or-country,
+.or-gridc,
+.or-dist,
+.or-brg,
+.or-age {
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.or-gridc,
+.or-dist,
+.or-brg,
+.or-snr,
+.or-age {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+}
+.or-snr {
+  font-weight: 700;
+  text-align: right;
+}
+.or-snr.snr-good {
+  color: var(--ok, #5fd38d);
+}
+.or-snr.snr-ok {
+  color: var(--text);
+}
+.or-snr.snr-weak {
+  color: var(--text-faint);
+}
+.or-empty {
+  padding: 18px 12px;
+  color: var(--text-faint);
+  font-size: 0.85rem;
+  text-align: center;
 }
 
 /* TX/RX status strip — the at-a-glance "is it working" line under the cockpit

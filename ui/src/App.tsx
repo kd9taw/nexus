@@ -815,6 +815,9 @@ export default function App() {
           onFreetext={handleQsoFreetext}
           onLog={handleLogCurrent}
           roster={stationsPanel}
+          needByCall={needByCall}
+          selectedCall={activePeer}
+          onSelect={handleSelect}
           layoutMode={operateLayout}
           onLayoutMode={handleOperateLayout}
         />

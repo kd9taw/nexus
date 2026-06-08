@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import type { AppSnapshot, ModeRequest, SourceKind, Tier } from '../types'
+import type { AppSnapshot, ModeRequest, NeedTag, SourceKind, Tier } from '../types'
 import { Waterfall } from './Waterfall'
 import { OperateDecodes } from './OperateDecodes'
 import { OperateQsoStrip } from './OperateQsoStrip'
+import { OperateRoster } from './OperateRoster'
 
 interface Props {
   snap: AppSnapshot
@@ -26,10 +27,16 @@ interface Props {
   onFreetext: (text: string) => void
   /** Log the active QSO now (inline button). */
   onLog: () => void
-  /** The Call Roster (a wired StationList), placed in the cockpit side column. */
+  /** The compact Call Roster (a wired StationList) shown in the Classic side column. */
   roster: ReactNode
-  /** Side-column layout: 'classic' (WSJT-X — Band Activity dominant) or 'roster'
-   * (GridTracker — Call Roster dominant). */
+  /** Award-need tier per call — drives the Roster layout's Need column + sort. */
+  needByCall: Map<string, NeedTag>
+  /** Currently selected/open station (highlighted in the Roster layout). */
+  selectedCall: string | null
+  /** Select (open) a station from the Roster layout (single click). */
+  onSelect: (call: string) => void
+  /** Layout: 'classic' (WSJT-X — Band Activity dominant + compact roster aside) or
+   * 'roster' (GridTracker — the full sortable Call Roster dominant). */
   layoutMode: 'classic' | 'roster'
   onLayoutMode: (m: 'classic' | 'roster') => void
 }
@@ -63,6 +70,9 @@ export function OperateCockpit({
   onFreetext,
   onLog,
   roster,
+  needByCall,
+  selectedCall,
+  onSelect,
   layoutMode,
   onLayoutMode,
 }: Props) {
@@ -220,30 +230,77 @@ export function OperateCockpit({
         />
 
         <div className={`cockpit-lower ${layoutMode}`}>
-          <div className="cockpit-decodes panel">
-            <OperateDecodes
-              decodes={snap.recentDecodes}
-              slot={snap.radio.slot}
-              rxOffsetHz={snap.radio.rxOffsetHz}
-              harqRescues={snap.harqRescues}
-              onCall={onCall}
-            />
-          </div>
-          <aside className="cockpit-side">
-            <div className="cockpit-rxfreq panel">
-              <OperateDecodes
-                decodes={snap.recentDecodes}
-                slot={snap.radio.slot}
-                rxOffsetHz={snap.radio.rxOffsetHz}
-                harqRescues={snap.harqRescues}
-                onCall={onCall}
-                lockedFilter="rx"
-                compact
-                title={`Rx Frequency · ${Math.round(snap.radio.rxOffsetHz)} Hz`}
-              />
-            </div>
-            <div className="cockpit-roster panel">{roster}</div>
-          </aside>
+          {layoutMode === 'roster' ? (
+            <>
+              {/* Roster layout (GridTracker-style): the full sortable Call Roster is
+                  the centerpiece; Band Activity + Rx Frequency move to a side rail. */}
+              <div className="cockpit-roster-main panel">
+                <OperateRoster
+                  stations={snap.stations}
+                  myGrid={snap.mygrid}
+                  currentSlot={snap.radio.slot}
+                  needByCall={needByCall}
+                  selectedCall={selectedCall}
+                  onSelect={onSelect}
+                  onCall={onCall}
+                />
+              </div>
+              <aside className="cockpit-side">
+                <div className="cockpit-decodes-side panel">
+                  <OperateDecodes
+                    decodes={snap.recentDecodes}
+                    slot={snap.radio.slot}
+                    rxOffsetHz={snap.radio.rxOffsetHz}
+                    harqRescues={snap.harqRescues}
+                    onCall={onCall}
+                    compact
+                    title="Band Activity"
+                  />
+                </div>
+                <div className="cockpit-rxfreq panel">
+                  <OperateDecodes
+                    decodes={snap.recentDecodes}
+                    slot={snap.radio.slot}
+                    rxOffsetHz={snap.radio.rxOffsetHz}
+                    harqRescues={snap.harqRescues}
+                    onCall={onCall}
+                    lockedFilter="rx"
+                    compact
+                    title={`Rx Frequency · ${Math.round(snap.radio.rxOffsetHz)} Hz`}
+                  />
+                </div>
+              </aside>
+            </>
+          ) : (
+            <>
+              {/* Classic layout (WSJT-X-style): Band Activity dominant; the compact
+                  roster + Rx Frequency ride the side column. */}
+              <div className="cockpit-decodes panel">
+                <OperateDecodes
+                  decodes={snap.recentDecodes}
+                  slot={snap.radio.slot}
+                  rxOffsetHz={snap.radio.rxOffsetHz}
+                  harqRescues={snap.harqRescues}
+                  onCall={onCall}
+                />
+              </div>
+              <aside className="cockpit-side">
+                <div className="cockpit-rxfreq panel">
+                  <OperateDecodes
+                    decodes={snap.recentDecodes}
+                    slot={snap.radio.slot}
+                    rxOffsetHz={snap.radio.rxOffsetHz}
+                    harqRescues={snap.harqRescues}
+                    onCall={onCall}
+                    lockedFilter="rx"
+                    compact
+                    title={`Rx Frequency · ${Math.round(snap.radio.rxOffsetHz)} Hz`}
+                  />
+                </div>
+                <div className="cockpit-roster panel">{roster}</div>
+              </aside>
+            </>
+          )}
         </div>
       </div>
     </main>
