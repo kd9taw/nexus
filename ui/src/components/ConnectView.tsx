@@ -5,9 +5,10 @@
 // sidebar's hero verdict + space-wx + band ladder answer "what's open, where to
 // point, what do I need" at a glance. Map deep-dive + full Propagation panel
 // remain available as their own sections within the Connect area.
-import { useState } from 'react'
-import type { NeedTag, PropagationSnapshot, Station } from '../types'
+import { useState, useEffect, useMemo } from 'react'
+import type { NeedTag, PathPrediction, PropagationSnapshot, Station } from '../types'
 import type { Theme } from '../useTheme'
+import { getPathOutlook } from '../api'
 import { MapView, type MapIntent } from './MapView'
 import { StateBlock } from './StateBlock'
 import { SpaceWxGauges } from './prop/SpaceWxGauges'
@@ -83,6 +84,28 @@ export function ConnectView({
       /* ignore */
     }
   }
+  // Per-path outlook for the selected station (the PathPredictor seam): fetch when
+  // the selected station's grid changes. Keyed on the grid so it doesn't refetch
+  // on every spot-roster poll.
+  const selGrid = useMemo(
+    () => (selectedCall ? (stations.find((s) => s.call === selectedCall)?.grid ?? null) : null),
+    [selectedCall, stations],
+  )
+  const [pathPred, setPathPred] = useState<PathPrediction | null>(null)
+  useEffect(() => {
+    if (!selGrid) {
+      setPathPred(null)
+      return
+    }
+    let live = true
+    getPathOutlook(selGrid)
+      .then((p) => live && setPathPred(p))
+      .catch(() => {})
+    return () => {
+      live = false
+    }
+  }, [selGrid])
+  const pathOpen = pathPred?.bands.filter((b) => b.workability !== 'Closed') ?? []
   return (
     <main className="layout single">
       <div className="connect-shell">
@@ -140,6 +163,27 @@ export function ConnectView({
                   {b}
                 </div>
               ))}
+              {selectedCall && pathPred && (
+                <section className="connect-path panel">
+                  <h3>
+                    Path to {selectedCall}
+                    <span className="cp-engine">{pathPred.engine === 'heuristic' ? 'modelled' : pathPred.engine}</span>
+                  </h3>
+                  {pathOpen.length === 0 ? (
+                    <p className="cp-none">No HF band modelled workable on this path right now.</p>
+                  ) : (
+                    <ul className="connect-path-list">
+                      {pathOpen.slice(0, 6).map((b) => (
+                        <li key={b.band}>
+                          <span className="cp-band">{b.band}</span>
+                          <span className={`cp-work w-${b.workability.toLowerCase()}`}>{b.workability}</span>
+                          <span className="cp-win">{b.window}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </section>
+              )}
               <OpeningStrip openings={prop.openings} />
               <SpaceWxGauges wx={prop.spaceWx} gloss={!expert} />
               <BandAdvisor bands={prop.advisory.bands} />

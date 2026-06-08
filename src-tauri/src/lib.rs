@@ -544,6 +544,47 @@ fn get_propagation(
     Ok(snap)
 }
 
+/// Per-path HF outlook to a selected station's `grid` — the heuristic
+/// PathPredictor (the VOACAP-ready seam) over the operator↔DX great circle, under
+/// the current space weather. Answers "is THIS path workable, which band, when"
+/// for a station you may have no live spots on. Empty bands if either grid is
+/// unknown (operator hasn't set a grid, or the station has none).
+#[tauri::command]
+fn get_path_outlook(
+    grid: String,
+    state: State<'_, SharedEngine>,
+    cache: State<'_, PropCache>,
+) -> Result<propagation::PathPrediction, String> {
+    let mygrid = {
+        let eng = state.lock().map_err(|e| e.to_string())?;
+        eng.settings().mygrid.clone()
+    };
+    let me = propagation::geo::maidenhead_to_latlon(&mygrid);
+    let Some(dx) = propagation::geo::maidenhead_to_latlon(grid.trim()) else {
+        return Ok(propagation::PathPrediction {
+            engine: "heuristic".to_string(),
+            bands: Vec::new(),
+        });
+    };
+    // Current space weather from the propagation cache's last snapshot (the same
+    // SWPC-fed values get_propagation uses); benign defaults if the cache is cold.
+    let wx = {
+        let guard = cache.lock().map_err(|e| e.to_string())?;
+        guard
+            .as_ref()
+            .map(|(_, s)| propagation::SpaceWx {
+                sfi: s.space_wx.sfi,
+                kp: s.space_wx.kp,
+                a_index: s.space_wx.a_index,
+                xray_long: if s.space_wx.flare { 1e-5 } else { 1e-7 },
+            })
+            .unwrap_or_default()
+    };
+    use propagation::PathPredictor as _; // bring the trait's `predict` into scope
+    let eng = propagation::HeuristicEngine::new(me);
+    Ok(eng.predict(dx, now_unix(), &wx))
+}
+
 /// One waterfall row (Goertzel power spectrum of the last received frame).
 #[tauri::command]
 fn get_spectrum_row(state: State<'_, SharedEngine>) -> Result<Spectrum, String> {
@@ -2248,6 +2289,7 @@ pub fn run() {
             get_activation,
             get_need_alerts,
             get_propagation,
+            get_path_outlook,
             get_feed_health,
             qsy_set_enabled,
             qsy_configure,

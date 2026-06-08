@@ -31,7 +31,7 @@ import type {
   Tier,
 } from './types'
 import { mockEngine, nextSpectrumRow, demoPropagation } from './mock'
-import type { PropagationSnapshot } from './types'
+import type { PropagationSnapshot, PathPrediction } from './types'
 
 interface TauriInvoke {
   invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T>
@@ -86,6 +86,14 @@ export async function getPropagation(): Promise<PropagationSnapshot> {
   const invoke = tauriInvoke()
   if (invoke) return invoke<PropagationSnapshot>('get_propagation')
   return demoPropagation()
+}
+
+/** Per-path HF outlook to a station's grid (the PathPredictor seam). Empty in the
+ *  in-browser mock (no prediction engine). */
+export async function getPathOutlook(grid: string): Promise<PathPrediction> {
+  const invoke = tauriInvoke()
+  if (invoke) return invoke<PathPrediction>('get_path_outlook', { grid })
+  return { engine: 'demo', bands: [] }
 }
 
 export async function sendMessage(peer: string, text: string): Promise<void> {

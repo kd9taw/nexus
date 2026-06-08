@@ -859,6 +859,60 @@ button.nb-chip:hover {
   font-weight: 600;
   line-height: 1.35;
 }
+/* Per-path outlook panel (selected station) — the PathPredictor seam surfaced. */
+.connect-path h3 {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-2);
+  font-size: var(--fs-small, 0.85rem);
+}
+.connect-path .cp-engine {
+  font-size: var(--fs-micro);
+  font-weight: 400;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.connect-path-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.connect-path-list li {
+  display: grid;
+  grid-template-columns: 3.2em 5.5em 1fr;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-size: var(--fs-micro);
+}
+.connect-path-list .cp-band {
+  font-weight: 600;
+  font-family: var(--font-mono);
+}
+.connect-path-list .cp-win {
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+}
+.cp-work.w-excellent,
+.cp-work.w-good {
+  color: var(--band-open);
+}
+.cp-work.w-fair {
+  color: var(--band-marginal);
+}
+.cp-work.w-marginal {
+  color: var(--text-dim);
+}
+.connect-path .cp-none {
+  margin: 0;
+  font-size: var(--fs-micro);
+  color: var(--text-dim);
+}
 @media (max-width: 900px) {
   .connect {
     flex-direction: column;

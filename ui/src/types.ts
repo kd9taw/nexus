@@ -83,6 +83,12 @@ export interface BandOutlook {
   /** Per-UTC-hour likelihood (24 values, hour 0..23) — the heatmap row. */
   hourly: number[]
 }
+/** Per-path HF prediction (the PathPredictor seam): operator↔DX, best-first. */
+export interface PathPrediction {
+  /** Engine that produced it: "heuristic" today; "voacap"/"p533" later. */
+  engine: string
+  bands: BandOutlook[]
+}
 /** A forward-calendar entry — an announced DXpedition to plan for. */
 export interface CalendarEntry {
   call: string
