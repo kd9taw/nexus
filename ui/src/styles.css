@@ -823,30 +823,41 @@ button.nb-chip:hover {
   padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--border);
 }
+/* World-first: the map is a full-bleed surface and the propagation info FLOATS
+   over it as a translucent card (HamClock/Geochron model — everything around the
+   world), instead of a co-equal side column. */
 .connect {
-  display: flex;
-  gap: var(--space-2);
+  position: relative;
   flex: 1;
   min-height: 0;
 }
 .connect-map {
-  flex: 1 1 auto;
-  min-width: 0;
-  min-height: 0;
+  position: absolute;
+  inset: 0;
   display: flex;
 }
 .connect-map > .map-view {
   flex: 1;
 }
 .connect-side {
-  flex: 0 0 340px;
-  min-height: 0;
+  position: absolute;
+  top: 3rem; /* clear the map toolbar */
+  left: var(--space-3);
+  bottom: var(--space-3);
+  width: 332px;
+  max-width: 42%;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
   padding: var(--space-3);
-  border-left: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--elev-2);
+  z-index: 4;
 }
 .connect-hero-row {
   display: flex;
@@ -960,13 +971,16 @@ button.nb-chip:hover {
   text-align: right;
 }
 @media (max-width: 900px) {
-  .connect {
-    flex-direction: column;
-  }
+  /* Narrow: the floating card becomes a bottom sheet so it never crowds the map. */
   .connect-side {
-    flex: 0 0 auto;
-    border-left: none;
-    border-top: 1px solid var(--border);
+    top: auto;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: auto;
+    max-width: none;
+    max-height: 48%;
+    border-radius: var(--radius) var(--radius) 0 0;
   }
 }
 .map-toolbar {
@@ -1084,7 +1098,8 @@ button.nb-chip:hover {
 }
 .map-legend {
   position: absolute;
-  left: var(--space-3);
+  left: 50%;
+  transform: translateX(-50%);
   bottom: var(--space-3);
   display: flex;
   align-items: center;
