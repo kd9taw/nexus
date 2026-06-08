@@ -3,12 +3,12 @@
   "private": true,
   "version": "0.2.0",
   "type": "module",
-  "description": "Tempo web UI — chat-first off-grid ham radio text communication",
+  "description": "Nexus web UI — unified ham digital-ops nerve center",
   "author": "Seth McCallister (KD9TAW) <kd9taw@protonmail.com>",
   "license": "GPL-3.0-or-later",
   "repository": {
     "type": "git",
-    "url": "https://github.com/kd9taw/tempo"
+    "url": "https://github.com/kd9taw/nexus"
   },
   "scripts": {
     "dev": "vite",

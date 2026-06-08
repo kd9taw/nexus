@@ -152,7 +152,7 @@ pub fn run_radio(engine: Arc<Mutex<Engine>>, cfg: RadioConfig) -> Result<(), Str
         match cfg.wsjtx_addr.parse::<std::net::SocketAddr>() {
             Ok(target) => match WsjtxServer::new("0.0.0.0:0".parse().unwrap(), target) {
                 Ok(s) => {
-                    let _ = s.send_heartbeat(3, env!("CARGO_PKG_VERSION"), "tempo");
+                    let _ = s.send_heartbeat(3, env!("CARGO_PKG_VERSION"), "Nexus");
                     Some(s)
                 }
                 Err(e) => {

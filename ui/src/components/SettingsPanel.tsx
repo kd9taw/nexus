@@ -890,7 +890,7 @@ export function SettingsPanel({
                   onChange={(e) => update('rigctldPort', e.target.value)}
                   autoComplete="off"
                 />
-                <span className="settings-hint">Port Tempo launches rigctld on.</span>
+                <span className="settings-hint">Port Nexus launches rigctld on.</span>
               </label>
 
               <div className="settings-field">
@@ -955,7 +955,7 @@ export function SettingsPanel({
             </div>
             <p className="settings-note">
               Saving applies your rig settings live (no restart). <strong>Test CAT</strong> saves,
-              launches the bundled <code>rigctld</code> (Hamlib ships with Tempo on Windows — no
+              launches the bundled <code>rigctld</code> (Hamlib ships with Nexus on Windows — no
               separate install), and reads your rig&apos;s frequency to confirm CAT. For CAT, pick
               your <em>Rig Model</em> and <em>Serial Port</em>; serial RTS/DTR and VOX need no model.
             </p>
@@ -1060,7 +1060,7 @@ export function SettingsPanel({
                   </button>
                 </label>
                 <span className="settings-hint">
-                  Off = passive (hunt &amp; pounce): Tempo listens and only transmits when you act.
+                  Off = passive (hunt &amp; pounce): Nexus listens and only transmits when you act.
                   On = periodically calls CQ to announce you&apos;re on frequency.
                 </span>
               </div>

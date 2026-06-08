@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Tempo",
+  "productName": "Nexus",
   "version": "0.2.0",
   "identifier": "com.kd9taw.tempo",
   "build": {
@@ -13,7 +13,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "Tempo",
+        "title": "Nexus",
         "label": "main",
         "width": 1280,
         "height": 800,
@@ -32,8 +32,8 @@
     "active": true,
     "targets": "all",
     "category": "Utility",
-    "shortDescription": "Ham-aware chat-first HF transceiver",
-    "longDescription": "Tempo is a ham-aware, chat-first HF digital transceiver UI built on the FT1 modem (libft1). It keeps the technical data a ham operator expects — SNR, audio offset, dT, dial freq/band/sideband, mode/tier, RV, T/R + slot timing — as first-class information in a clean, single-window design.",
+    "shortDescription": "Unified ham digital-ops nerve center (FT8/FT4 + Tempo)",
+    "longDescription": "Nexus is a unified, native ham digital-operations nerve center — FT8/FT4 decode, waterfall, spots, map, propagation, logbook, and awards in one app, plus Tempo two-way free-text calling. It keeps the technical data a ham operator expects — SNR, audio offset, dT, dial freq/band/sideband, mode/tier, T/R + slot timing — as first-class information, and makes station setup and propagation intelligence automatic.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

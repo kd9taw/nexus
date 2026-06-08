@@ -88,7 +88,7 @@ export function TopBar({
   return (
     <header className="topbar">
       <div className="topbar-group brand">
-        <span className="logo">Tempo</span>
+        <span className="logo">Nexus</span>
         <span className="mycall">
           {mycall}
           <span className="mygrid">{mygrid}</span>

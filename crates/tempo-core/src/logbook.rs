@@ -410,7 +410,7 @@ impl Logbook {
 /// as `adif_header()` + N×`adif_record()` (TQSL needs a full ADIF file, not bare
 /// records).
 pub fn adif_header() -> String {
-    "Tempo logbook\n<ADIF_VER:5>3.1.4\n<PROGRAMID:5>Tempo\n<EOH>\n".to_string()
+    "Nexus logbook\n<ADIF_VER:5>3.1.4\n<PROGRAMID:5>Nexus\n<EOH>\n".to_string()
 }
 
 /// One `<FIELD:len>value` tag.

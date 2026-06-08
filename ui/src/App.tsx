@@ -595,7 +595,7 @@ export default function App() {
   if (!snap) {
     return (
       <div className="app loading">
-        <span>Connecting to Tempo…</span>
+        <span>Connecting to Nexus…</span>
       </div>
     )
   }

@@ -103,7 +103,7 @@ impl FieldDayLog {
 
     /// Export the log as ADIF records (one `<EOR>` per QSO).
     pub fn adif(&self) -> String {
-        let mut s = String::from("ADIF Export from Tempo\n<PROGRAMID:5>Tempo\n<EOH>\n");
+        let mut s = String::from("ADIF Export from Nexus\n<PROGRAMID:5>Nexus\n<EOH>\n");
         for q in &self.qsos {
             s.push_str(&adif_field("CALL", &q.call));
             s.push_str(&adif_field("MODE", "FT1"));

@@ -571,7 +571,7 @@ function toCabrillo(fd: FieldDayStatus, settings: Settings): string {
     `CATEGORY: ${fd.myClass}`,
     `LOCATION: ${fd.mySection}`,
     `CLAIMED-SCORE: ${fd.points}`,
-    'CREATED-BY: Tempo (mock export)',
+    'CREATED-BY: Nexus (mock export)',
   ]
   for (const q of fd.log) {
     const freqKhz = (Number(FD_BAND_MHZ[q.band] ?? '14.074') * 1000).toFixed(0)
@@ -584,7 +584,7 @@ function toCabrillo(fd: FieldDayStatus, settings: Settings): string {
 }
 
 function toAdif(fd: FieldDayStatus): string {
-  const header = ['Tempo log export (mock)', '<ADIF_VER:5>3.1.0', '<PROGRAMID:5>Tempo', '<EOH>']
+  const header = ['Nexus log export (mock)', '<ADIF_VER:5>3.1.0', '<PROGRAMID:5>Nexus', '<EOH>']
   const records = fd.log.map((q) => {
     const freq = FD_BAND_MHZ[q.band] ?? '14.074'
     const fields = [
@@ -819,7 +819,7 @@ class MockEngine {
     // The live demo has no real rig; be honest about it.
     return Promise.resolve({
       ok: false,
-      detail: 'Demo mode — no radio connected. Install Tempo and connect your rig to test CAT.',
+      detail: 'Demo mode — no radio connected. Install Nexus and connect your rig to test CAT.',
     })
   }
 
