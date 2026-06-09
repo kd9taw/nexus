@@ -22,13 +22,16 @@ pub enum SerialLine {
     Dtr,
 }
 
-/// How transmit keying is performed.
-#[derive(Debug, Clone)]
+/// How transmit keying is performed — INDEPENDENT of CAT control. The WSJT-X model:
+/// a rig can have full CAT freq/mode control while keying via VOX or a serial line,
+/// so PTT and control are separate concerns (see [`Rig`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PttMode {
-    /// No CAT — rely on the rig's VOX. Keying calls are no-ops.
+    /// Key via the CAT control channel (rigctld `T`). Requires a control channel;
+    /// with none configured this no-ops (like VOX).
+    Cat,
+    /// No CAT keying — rely on the rig's VOX (audio-triggered TX).
     Vox,
-    /// Key + tune via `rigctld` at this `host:port` (e.g. `127.0.0.1:4532`).
-    Rigctld { addr: String },
     /// Key directly by asserting a serial control line (RTS or DTR) on `port`.
     ///
     /// With the `serial` feature this drives the line via `serialport`; without
@@ -39,9 +42,7 @@ pub enum PttMode {
 
 impl Default for PttMode {
     fn default() -> Self {
-        PttMode::Rigctld {
-            addr: "127.0.0.1:4532".to_string(),
-        }
+        PttMode::Vox
     }
 }
 
@@ -95,10 +96,21 @@ pub fn reply_ok(reply: &str) -> bool {
     reply.lines().any(|l| l.trim() == "RPRT 0")
 }
 
-/// A handle to the rig's keying/tuning.
+/// A handle to the rig's keying + CAT tuning.
+///
+/// CAT control (freq/mode/split/RIT/power/morse) and PTT keying are SEPARATE concerns.
+/// The `control` channel is present whenever a CAT rig is configured — independent of
+/// how PTT is keyed — so a rig keyed by VOX or a serial line still receives freq/mode
+/// commands (the WSJT-X model). `control == None` means no CAT (every CAT verb is a
+/// quiet no-op); PTT then keys via [`PttMode`].
 pub struct Rig {
-    mode: PttMode,
+    /// CAT control channel — rigctld `host:port` (e.g. `127.0.0.1:4532`). `Some` =
+    /// a CAT rig is configured; drives all freq/mode/CAT verbs AND `PttMode::Cat`.
+    control: Option<String>,
+    /// Lazily-opened TCP connection to `control`.
     stream: Option<TcpStream>,
+    /// How PTT is keyed (independent of `control`).
+    ptt_mode: PttMode,
     /// Lazily-opened serial port for [`PttMode::Serial`] (feature `serial`).
     #[cfg(feature = "serial")]
     serial: Option<Box<dyn serialport::SerialPort>>,
@@ -107,34 +119,36 @@ pub struct Rig {
 }
 
 impl Rig {
-    pub fn new(mode: PttMode) -> Self {
+    /// General constructor: an optional CAT control channel + a PTT method. This is
+    /// the seam that decouples control from keying — pass `Some(addr)` for a CAT rig
+    /// regardless of whether `ptt_mode` is `Cat`, `Vox`, or `Serial`.
+    pub fn with_control(control: Option<String>, ptt_mode: PttMode) -> Self {
         Self {
-            mode,
+            control,
             stream: None,
+            ptt_mode,
             #[cfg(feature = "serial")]
             serial: None,
             keyed: false,
         }
     }
+    /// No CAT control, no keying — rely on the rig's VOX.
     pub fn vox() -> Self {
-        Self::new(PttMode::Vox)
+        Self::with_control(None, PttMode::Vox)
     }
+    /// A CAT rig keyed via CAT: control + PTT both over rigctld at `addr`.
     pub fn rigctld(addr: &str) -> Self {
-        Self::new(PttMode::Rigctld {
-            addr: addr.to_string(),
-        })
+        Self::with_control(Some(addr.to_string()), PttMode::Cat)
     }
-    /// Key directly via a serial control line (RTS or DTR) on `port`.
+    /// Serial-line PTT (RTS/DTR) with NO CAT control. For serial PTT alongside CAT,
+    /// use [`with_control`](Self::with_control) and pass a control address.
     pub fn serial(port: &str, line: SerialLine) -> Self {
-        Self::new(PttMode::Serial {
-            port: port.to_string(),
-            line,
-        })
+        Self::with_control(None, PttMode::Serial { port: port.to_string(), line })
     }
 
     fn ensure_connected(&mut self) -> std::io::Result<&mut TcpStream> {
         if self.stream.is_none() {
-            if let PttMode::Rigctld { addr } = &self.mode {
+            if let Some(addr) = &self.control {
                 let s = TcpStream::connect(addr)?;
                 s.set_read_timeout(Some(Duration::from_millis(500)))?;
                 s.set_write_timeout(Some(Duration::from_millis(500)))?;
@@ -155,13 +169,17 @@ impl Rig {
         Ok(String::from_utf8_lossy(&buf[..n]).to_string())
     }
 
-    /// Key (true) or unkey (false) the transmitter. No-op under VOX.
+    /// Key (true) or unkey (false) the transmitter. No-op under VOX (and under CAT
+    /// keying when no control channel is configured — degrades to VOX).
     pub fn ptt(&mut self, on: bool) -> std::io::Result<()> {
         self.keyed = on;
-        match &self.mode {
+        match &self.ptt_mode {
             PttMode::Vox => Ok(()),
             PttMode::Serial { .. } => self.serial_ptt(on),
-            PttMode::Rigctld { .. } => {
+            PttMode::Cat => {
+                if self.control.is_none() {
+                    return Ok(()); // CAT keying chosen but no CAT channel → VOX fallback
+                }
                 let reply = self.command(&ptt_line(on))?;
                 if reply_ok(&reply) || reply.is_empty() {
                     Ok(())
@@ -181,7 +199,7 @@ impl Rig {
     /// still run (effectively VOX) on a build with no serial backend.
     #[cfg(feature = "serial")]
     fn serial_ptt(&mut self, on: bool) -> std::io::Result<()> {
-        let (port, line) = match &self.mode {
+        let (port, line) = match &self.ptt_mode {
             PttMode::Serial { port, line } => (port.clone(), *line),
             _ => return Ok(()),
         };
@@ -203,7 +221,7 @@ impl Rig {
     /// Serial PTT no-op fallback when built without the `serial` feature.
     #[cfg(not(feature = "serial"))]
     fn serial_ptt(&mut self, on: bool) -> std::io::Result<()> {
-        if let PttMode::Serial { port, line } = &self.mode {
+        if let PttMode::Serial { port, line } = &self.ptt_mode {
             eprintln!(
                 "tempo-audio: serial PTT requested ({line:?} on {port}, key={on}) but the \
                  `serial` feature is not enabled — treating as VOX (no-op)."
@@ -212,9 +230,9 @@ impl Rig {
         Ok(())
     }
 
-    /// Set the dial frequency (Hz). No-op unless under rigctld CAT.
+    /// Set the dial frequency (Hz). No-op unless a CAT control channel is configured.
     pub fn set_freq(&mut self, hz: u64) -> std::io::Result<()> {
-        if !matches!(self.mode, PttMode::Rigctld { .. }) {
+        if self.control.is_none() {
             return Ok(());
         }
         self.command(&freq_line(hz)).map(|_| ())
@@ -222,15 +240,29 @@ impl Rig {
 
     /// Set the operating mode (e.g. "USB") + passband. A BLANK mode is a no-op —
     /// the caller is choosing to OBEY the radio's current mode (max compatibility),
-    /// so Nexus sends no `M` command. Also a no-op unless under rigctld CAT.
+    /// so Nexus sends no `M` command. Also a no-op unless a CAT control channel is
+    /// configured (works even when PTT is keyed by VOX/serial — control is separate).
+    /// Surfaces a rig REJECTION (`RPRT -1`, e.g. a rig with no DATA/PKT submode) as
+    /// an `Err`, so the radio loop's bounded retry can give up instead of looping.
     pub fn set_mode(&mut self, mode: &str, passband_hz: u32) -> std::io::Result<()> {
         if mode.trim().is_empty() {
             return Ok(());
         }
-        if !matches!(self.mode, PttMode::Rigctld { .. }) {
+        if self.control.is_none() {
             return Ok(());
         }
-        self.command(&mode_line(mode, passband_hz)).map(|_| ())
+        let reply = self.command(&mode_line(mode, passband_hz))?;
+        if reply_ok(&reply) || reply.is_empty() {
+            Ok(())
+        } else {
+            Err(std::io::Error::other(format!("rigctld mode error: {reply:?}")))
+        }
+    }
+
+    /// Whether a CAT control channel is configured (so the freq/mode/CAT verbs are
+    /// live). Lets callers distinguish "no CAT" from "CAT present but the rig is mute".
+    pub fn has_control(&self) -> bool {
+        self.control.is_some()
     }
 
     /// Probe the rig by reading its current dial frequency (Hz) over CAT — the
@@ -238,9 +270,9 @@ impl Rig {
     /// which replies with the frequency on its own line. Returns a descriptive
     /// error when rigctld is unreachable (connection refused) or the rig itself
     /// doesn't answer (bad baud / serial port / CAT disabled → no numeric reply).
-    /// Only valid under [`PttMode::Rigctld`].
+    /// Only valid with a CAT control channel.
     pub fn read_freq(&mut self) -> std::io::Result<u64> {
-        if !matches!(self.mode, PttMode::Rigctld { .. }) {
+        if self.control.is_none() {
             return Err(std::io::Error::other("not a CAT rig"));
         }
         let reply = self.command("f\n")?;
@@ -259,7 +291,7 @@ impl Rig {
     /// Read the rig's current mode (e.g. "USB"/"CW"). `None` if not a CAT rig or the
     /// rig didn't answer. The `m` reply is the mode on one line, passband on the next.
     pub fn read_mode(&mut self) -> Option<String> {
-        if !matches!(self.mode, PttMode::Rigctld { .. }) {
+        if self.control.is_none() {
             return None;
         }
         let reply = self.command("m\n").ok()?;
@@ -315,9 +347,9 @@ impl Rig {
     }
 
     /// Send a rigctld command, succeeding on `RPRT 0` (or an empty reply); no-op when
-    /// not under CAT. Shared by the all-mode control verbs above.
+    /// no CAT control channel is configured. Shared by the all-mode control verbs above.
     fn cat(&mut self, line: &str) -> std::io::Result<()> {
-        if !matches!(self.mode, PttMode::Rigctld { .. }) {
+        if self.control.is_none() {
             return Ok(());
         }
         let reply = self.command(line)?;
@@ -406,9 +438,10 @@ mod tests {
     fn serial_constructor_sets_mode() {
         let rig = Rig::serial("COM5", SerialLine::Dtr);
         assert!(matches!(
-            rig.mode,
+            rig.ptt_mode,
             PttMode::Serial { ref port, line: SerialLine::Dtr } if port == "COM5"
         ));
+        assert!(rig.control.is_none(), "serial PTT alone has no CAT control");
         assert!(!rig.keyed);
     }
 
@@ -481,6 +514,54 @@ mod tests {
             *log.lock().unwrap(),
             vec!["F 7074000", "M USB 0", "T 1", "T 0"]
         );
+    }
+
+    #[test]
+    fn cat_control_works_with_vox_ptt() {
+        // The keystone decoupling (WSJT-X model): a CAT rig keyed by VOX still receives
+        // freq + mode commands over the control channel — but PTT no-ops (VOX keys it).
+        // This is exactly the case that was silently broken: CAT rig + non-CAT PTT meant
+        // the rig never got an M/F command, so the mode never switched per section.
+        let (addr, log) = mock_rigctld(ok_reply(14_074_000));
+        let mut rig = Rig::with_control(Some(addr), PttMode::Vox);
+        rig.set_freq(14_074_000).unwrap();
+        rig.set_mode("PKTUSB", 0).unwrap();
+        rig.ptt(true).unwrap(); // VOX → no T command sent, but state is tracked
+        assert!(rig.keyed);
+        rig.ptt(false).unwrap();
+        assert!(!rig.keyed);
+        assert_eq!(*log.lock().unwrap(), vec!["F 14074000", "M PKTUSB 0"]);
+    }
+
+    #[test]
+    fn cat_ptt_without_a_control_channel_degrades_to_vox() {
+        // PttMode::Cat but no control configured must not panic or attempt a connection —
+        // it degrades to VOX (no-op keying) so the engine still runs.
+        let mut rig = Rig::with_control(None, PttMode::Cat);
+        rig.ptt(true).unwrap();
+        assert!(rig.keyed);
+        rig.ptt(false).unwrap();
+        assert!(!rig.keyed);
+    }
+
+    #[test]
+    fn set_mode_errors_when_rig_rejects_the_mode() {
+        // A rig with no DATA/PKT submode replies RPRT -1 to `M PKTUSB` — set_mode must
+        // surface that as Err so the radio loop's bounded retry can give up (not loop
+        // an `M` command every tick). A mode the rig accepts still returns Ok.
+        let (addr, _log) = mock_rigctld(|l| {
+            if l.starts_with('M') {
+                "RPRT -1\n".to_string()
+            } else {
+                "RPRT 0\n".to_string()
+            }
+        });
+        let mut rig = Rig::rigctld(&addr);
+        assert!(rig.set_mode("PKTUSB", 0).is_err());
+
+        let (addr2, _l2) = mock_rigctld(ok_reply(14_074_000));
+        let mut rig2 = Rig::rigctld(&addr2);
+        assert!(rig2.set_mode("USB", 0).is_ok());
     }
 
     #[test]

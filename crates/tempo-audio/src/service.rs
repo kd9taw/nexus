@@ -26,7 +26,7 @@ use tempo_core::timing::{now_unix_ms, SlotClock};
 use crate::backend::AudioBackend;
 use crate::device::CpalBackend;
 use crate::frames::RxRing;
-use crate::rig::{Rig, SerialLine};
+use crate::rig::{PttMode, Rig, SerialLine};
 use crate::rigctld_proc::{spawn_rigctld, RigctldProc};
 
 use tempo_app::dto::Tier;
@@ -55,6 +55,12 @@ const MAX_QSO_REC_MS: f64 = 2.0 * 60.0 * 60.0 * 1000.0;
 /// How often to poll the rig's live dial/mode over CAT (each is a blocking TCP round-trip,
 /// so we throttle well below the loop rate) — fast enough to track a manual VFO knob turn.
 const RIG_POLL_MS: f64 = 750.0;
+/// Max consecutive `set_mode` retries for one target mode before giving up (so a rig
+/// that rejects a submode doesn't get an `M` command every loop). Sized to ride out a
+/// rig/rigctld that's still settling (a failing CAT round-trip can block up to the
+/// 500 ms read timeout, so even a couple dozen tries spans seconds), then we stop
+/// retrying THAT mode until the target changes.
+const MODE_SET_MAX_TRIES: u32 = 30;
 
 /// Station configuration for the radio loop.
 ///
@@ -242,6 +248,17 @@ struct RadioLoop {
     rigctld_proc: Option<RigctldProc>,
     last_dial: u64,
     last_mode: String,
+    /// Consecutive failed `set_mode` attempts for the current target mode. Bounds the
+    /// retune retry so a rig that flatly rejects a mode (e.g. no DATA/PKT submode)
+    /// gets a budget of tries (covers a rig/rigctld still settling) then we give up
+    /// instead of spamming the CAT link every loop. Reset to 0 once a mode-set sticks.
+    mode_fail_count: u32,
+    /// The target mode we GAVE UP retrying (rig kept rejecting it). Suppresses further
+    /// `set_mode` of exactly this mode WITHOUT corrupting `last_mode` (which tracks the
+    /// last mode actually applied). Cleared on any successful set_mode, so a later
+    /// section change that re-selects this mode (after a different mode succeeded) tries
+    /// again. `None` = nothing suppressed.
+    mode_giveup: Option<String>,
     /// Last CW keyer speed (WPM) pushed to the rig, so we only `set_keyspd` on change.
     last_cw_wpm: u32,
     /// Last manual-PTT (live phone) state we applied to the rig — only key on change.
@@ -283,6 +300,8 @@ impl RadioLoop {
             rigctld_proc,
             last_dial: cfg.dial_hz,
             last_mode: cfg.mode.clone(),
+            mode_fail_count: 0,
+            mode_giveup: None,
             last_cw_wpm: 0, // 0 = unset → first send pushes the speed
             manual_ptt_applied: false,
             last_rf_power: None,
@@ -348,6 +367,8 @@ impl RadioLoop {
                 self.rigctld_proc = proc;
                 self.last_dial = dial;
                 self.last_mode = md.clone();
+                self.mode_fail_count = 0; // fresh rig — the retune retry budget resets
+                self.mode_giveup = None; // and a fresh rig may well accept what the old rejected
                 self.cat_ok = ok;
                 if let Ok(mut eng) = engine.lock() {
                     eng.set_cat_status(ok, detail);
@@ -388,9 +409,32 @@ impl RadioLoop {
                     self.last_dial = dial;
                     retuned = true;
                 }
-                if md != self.last_mode && rig.set_mode(&md, 0).is_ok() {
-                    self.last_mode = md.clone();
-                    retuned = true;
+                // Apply the section's mode — unless it's the one we already gave up on
+                // (rig kept rejecting it). `last_mode` only ever holds a mode actually
+                // applied, so a give-up never masquerades as success.
+                if md != self.last_mode && self.mode_giveup.as_deref() != Some(md.as_str()) {
+                    if rig.set_mode(&md, 0).is_ok() {
+                        self.last_mode = md.clone();
+                        self.mode_fail_count = 0;
+                        self.mode_giveup = None; // a success clears any prior give-up
+                        retuned = true;
+                    } else {
+                        // Retries cover a rig/rigctld still settling; past the budget the
+                        // rig is rejecting this mode (e.g. no DATA/PKT submode) — stop
+                        // retrying THIS mode so we don't spam the CAT link every loop. A
+                        // later section change to a different mode still tries (md flips),
+                        // and once any mode sticks the give-up is cleared.
+                        self.mode_fail_count += 1;
+                        if self.mode_fail_count >= MODE_SET_MAX_TRIES {
+                            eprintln!(
+                                "tempo-audio: set_mode({md:?}) failed {} times — giving up \
+                                 (the rig may not support this mode).",
+                                self.mode_fail_count
+                            );
+                            self.mode_giveup = Some(md.clone());
+                            self.mode_fail_count = 0;
+                        }
+                    }
                 }
             }
 
@@ -1032,67 +1076,85 @@ type RigOpen = (Rig, Option<RigctldProc>, Option<bool>, String);
 /// `None` (not applicable). Mirrors WSJT-X's Test CAT.
 fn open_rig(t: &Transport, dial_hz: u64, mode: &str) -> RigOpen {
     match t.ptt_method.as_str() {
-        "cat" if t.rig_model != 0 => {
-            let addr = format!("127.0.0.1:{}", t.rigctld_port);
-            if t.broker_self_port == Some(t.rigctld_port) {
-                // Misconfig: our own CAT broker and the launched rigctld want the same
-                // port. Don't connect to ourselves, and don't try to spawn (it can't
-                // bind) — tell the operator to fix the ports.
-                (
-                    Rig::vox(),
-                    None,
-                    Some(false),
-                    format!(
-                        "CAT broker and rigctld are both on :{} — give them different ports, or turn the broker off.",
-                        t.rigctld_port
-                    ),
-                )
-            } else if crate::rigctld_server::probe_rigctld(&addr, Duration::from_millis(400)) {
-                // Auto-coexist: a rigctld is ALREADY here (e.g. WSJT-X launched one).
-                // Connect THROUGH it instead of fighting for the serial port.
-                let mut rig = Rig::rigctld(&addr);
-                let _ = rig.set_freq(dial_hz);
-                let _ = rig.set_mode(mode, 0);
-                let (ok, detail) = probe_cat(&mut rig, t.rigctld_port);
-                (
-                    rig,
-                    None, // we didn't spawn it — leave the existing daemon alone
-                    ok,
-                    format!("Sharing the rigctld already on :{} — {detail}", t.rigctld_port),
-                )
-            } else {
-                match spawn_rigctld(t.rig_model, &t.serial_port, t.baud, t.rigctld_port) {
-                    Ok(proc) => {
-                        // Give the daemon a moment to bind its TCP port before connecting.
-                        std::thread::sleep(Duration::from_millis(700));
-                        let mut rig = Rig::rigctld(&addr);
-                        let _ = rig.set_freq(dial_hz);
-                        let _ = rig.set_mode(mode, 0);
-                        let (ok, detail) = probe_cat(&mut rig, t.rigctld_port);
-                        (rig, Some(proc), ok, detail)
-                    }
-                    Err(e) => (
-                        Rig::vox(),
-                        None,
-                        Some(false),
-                        format!("Could not launch the bundled rigctld (Hamlib): {e}"),
-                    ),
-                }
-            }
-        }
+        // CAT PTT: control + keying both over rigctld.
+        "cat" if t.rig_model != 0 => open_cat(t, dial_hz, mode, PttMode::Cat),
         "cat" => (
             Rig::vox(),
             None,
             Some(false),
             "CAT selected but no rig model is set — pick your rig in Settings.".to_string(),
         ),
+        // Serial-line PTT (RTS/DTR). Keying owns the serial port directly, so we don't
+        // also launch rigctld on it (that would fight for the same port). A rig that
+        // needs CAT freq/mode control AND a serial PTT line should key via CAT or VOX.
         "rts" => probe_serial(&t.serial_port, SerialLine::Rts),
         "dtr" => probe_serial(&t.serial_port, SerialLine::Dtr),
+        // VOX: the rig is keyed by its own VOX. But if a CAT rig is configured we STILL
+        // open the control channel so freq/mode track the section — control is
+        // INDEPENDENT of keying (the WSJT-X model). THIS is the fix for "the rig doesn't
+        // change mode when I move between sections": before, a CAT rig keyed by VOX got
+        // no `M`/`F` command at all because CAT was fused to the PTT method. (Matched
+        // explicitly, not via the catch-all, so a typo'd/legacy ptt_method string
+        // degrades safely to pure VOX below rather than silently grabbing the port.)
+        "vox" if t.rig_model != 0 => open_cat(t, dial_hz, mode, PttMode::Vox),
         _ => (
             Rig::vox(),
             None,
             None,
             "VOX — no CAT; the rig is keyed by transmit audio.".to_string(),
+        ),
+    }
+}
+
+/// Open a CAT control channel via the bundled `rigctld` (launching it, or sharing one
+/// already running), set the dial/mode, and probe it — layering `ptt_mode` on top so
+/// keying (CAT vs VOX) stays independent of control. Used for BOTH a CAT-PTT rig and a
+/// VOX-keyed rig that still has CAT freq/mode control.
+fn open_cat(t: &Transport, dial_hz: u64, mode: &str, ptt_mode: PttMode) -> RigOpen {
+    let addr = format!("127.0.0.1:{}", t.rigctld_port);
+    if t.broker_self_port == Some(t.rigctld_port) {
+        // Misconfig: our own CAT broker and the launched rigctld want the same port.
+        // Don't connect to ourselves, and don't try to spawn (it can't bind) — tell the
+        // operator to fix the ports.
+        return (
+            Rig::vox(),
+            None,
+            Some(false),
+            format!(
+                "CAT broker and rigctld are both on :{} — give them different ports, or turn the broker off.",
+                t.rigctld_port
+            ),
+        );
+    }
+    if crate::rigctld_server::probe_rigctld(&addr, Duration::from_millis(400)) {
+        // Auto-coexist: a rigctld is ALREADY here (e.g. WSJT-X launched one). Connect
+        // THROUGH it instead of fighting for the serial port.
+        let mut rig = Rig::with_control(Some(addr.clone()), ptt_mode);
+        let _ = rig.set_freq(dial_hz);
+        let _ = rig.set_mode(mode, 0);
+        let (ok, detail) = probe_cat(&mut rig, t.rigctld_port);
+        return (
+            rig,
+            None, // we didn't spawn it — leave the existing daemon alone
+            ok,
+            format!("Sharing the rigctld already on :{} — {detail}", t.rigctld_port),
+        );
+    }
+    match spawn_rigctld(t.rig_model, &t.serial_port, t.baud, t.rigctld_port) {
+        Ok(proc) => {
+            // Give the daemon a moment to bind its TCP port before connecting.
+            std::thread::sleep(Duration::from_millis(700));
+            let mut rig = Rig::with_control(Some(addr), ptt_mode);
+            let _ = rig.set_freq(dial_hz);
+            let _ = rig.set_mode(mode, 0);
+            let (ok, detail) = probe_cat(&mut rig, t.rigctld_port);
+            (rig, Some(proc), ok, detail)
+        }
+        Err(e) => (
+            Rig::vox(),
+            None,
+            Some(false),
+            format!("Could not launch the bundled rigctld (Hamlib): {e}"),
         ),
     }
 }
@@ -1135,7 +1197,7 @@ fn probe_serial(port: &str, line: SerialLine) -> RigOpen {
 /// doesn't fight the running rigctld for the serial port.
 fn reprobe(rig: &mut Rig, t: &Transport) -> (Option<bool>, String) {
     match t.ptt_method.as_str() {
-        "cat" if t.rig_model != 0 => probe_cat(rig, t.rigctld_port),
+        "cat" if t.rig_model != 0 => probe_cat_or_explain(rig, t.rigctld_port),
         "cat" => (
             Some(false),
             "CAT selected but no rig model is set — pick your rig in Settings.".to_string(),
@@ -1154,7 +1216,27 @@ fn reprobe(rig: &mut Rig, t: &Transport) -> (Option<bool>, String) {
                 ),
             }
         }
+        // VOX with a CAT rig configured: keying is VOX, but CAT control is live, so the
+        // Test-CAT button must probe the (real) control channel — not report "no CAT".
+        "vox" if t.rig_model != 0 => probe_cat_or_explain(rig, t.rigctld_port),
         _ => (None, "VOX — no CAT.".to_string()),
+    }
+}
+
+/// Probe the live rig's CAT channel — but if it has NO control channel (open_cat fell
+/// back to a control-less rig: serial-port conflict, or rigctld failed to launch),
+/// `read_freq` would return a misleading "not a CAT rig" error. Detect that up front
+/// and explain the real cause instead.
+fn probe_cat_or_explain(rig: &mut Rig, port: u16) -> (Option<bool>, String) {
+    if rig.has_control() {
+        probe_cat(rig, port)
+    } else {
+        (
+            Some(false),
+            "CAT rig configured, but the control channel didn't open — check the rig model, \
+             serial port, and that the bundled rigctld could start (or a port conflict)."
+                .to_string(),
+        )
     }
 }
 
