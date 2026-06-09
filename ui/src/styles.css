@@ -3866,6 +3866,12 @@ body.resizing {
   color: var(--state-weak);
   font-weight: 800;
 }
+.ph-nocat {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--state-weak, #e0a030);
+  white-space: nowrap;
+}
 .ph-rec {
   display: inline-flex;
   align-items: center;

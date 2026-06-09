@@ -32,8 +32,13 @@ export function PhoneCockpit({ snap, theme, pendingWork, onConsumeWork, onSnap }
   const [lock, setLock] = useState(false) // hands-free PTT (toggle instead of hold)
   const [recBusy, setRecBusy] = useState(false) // in-flight guard for the record toggle
 
-  // Band-aware sideband, mirroring the engine's rig-mode policy (LSB <10 MHz).
-  const sideband = snap.radio.dialMhz < 10 ? 'LSB' : 'USB'
+  // Show the rig's ACTUAL mode when CAT is connected (read back from the rig); otherwise
+  // fall back to the policy intent (LSB <10 MHz, else USB) that the app would command.
+  const guessSideband = snap.radio.dialMhz < 10 ? 'LSB' : 'USB'
+  const sideband = snap.radio.catOk && snap.radio.sideband ? snap.radio.sideband : guessSideband
+  // Whether the app can actually control + read the rig. Without CAT (VOX/serial PTT) the
+  // dial + mode can't be set or read back — surface that so it's clear, not silently broken.
+  const catOk = snap.radio.catOk === true
 
   const key = (on: boolean) => {
     setKeyed(on)
@@ -103,6 +108,17 @@ export function PhoneCockpit({ snap, theme, pendingWork, onConsumeWork, onSnap }
         <span className="ph-freq mono">
           {snap.radio.dialMhz.toFixed(3)} MHz · {snap.radio.band}
         </span>
+        {!catOk && (
+          <span
+            className="ph-nocat"
+            title={
+              snap.radio.catDetail ||
+              'No CAT link — set a rigctld/CAT rig in Settings so the app can switch the mode and follow the dial. On VOX/RTS-DTR PTT the rig has no command channel.'
+            }
+          >
+            ⚠ no rig control
+          </span>
+        )}
         <label className="ph-power" title="RF output power">
           <span>Power</span>
           <input

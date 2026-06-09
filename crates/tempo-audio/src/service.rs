@@ -52,6 +52,9 @@ const MAX_TUNE_MS: f64 = 12_000.0;
 /// Safety auto-stop for a forgotten QSO recording: cap a single recording at 2 hours so a
 /// recording the operator forgot to stop can't fill the disk unbounded (~86 MB/hour).
 const MAX_QSO_REC_MS: f64 = 2.0 * 60.0 * 60.0 * 1000.0;
+/// How often to poll the rig's live dial/mode over CAT (each is a blocking TCP round-trip,
+/// so we throttle well below the loop rate) — fast enough to track a manual VFO knob turn.
+const RIG_POLL_MS: f64 = 750.0;
 
 /// Station configuration for the radio loop.
 ///
@@ -252,6 +255,8 @@ struct RadioLoop {
     qso_started_ms: Option<f64>,
     psk_spots: Vec<Spot>,
     last_psk_flush: f64,
+    /// Last time we polled the rig's live dial/mode over CAT (ms), for throttling.
+    last_rig_poll: f64,
     last_fd_qsos: usize,
     /// Latest measured PC-clock-vs-UTC offset (ms, `local − UTC`), read from the
     /// engine each loop and SUBTRACTED from the system clock so TX/RX slots land
@@ -282,6 +287,7 @@ impl RadioLoop {
             qso_started_ms: None,
             psk_spots: Vec::new(),
             last_psk_flush: now_unix_ms(),
+            last_rig_poll: now_unix_ms(),
             last_fd_qsos: 0,
             clock_offset_ms: 0,
         }
@@ -376,6 +382,32 @@ impl RadioLoop {
                 }
                 if md != self.last_mode && rig.set_mode(&md, 0).is_ok() {
                     self.last_mode = md.clone();
+                }
+            }
+
+            // Live READ-BACK: poll the rig's actual dial + mode so a manual VFO knob turn
+            // (or another app on the CAT broker) is mirrored in the UI. CAT-only —
+            // read_freq/read_mode no-op (cheap) on VOX/serial. Throttled (each is a blocking
+            // TCP round-trip) and skipped while transmitting/tuning. The rig is authoritative
+            // for a change it reports: we adopt it AND advance last_dial so the retune block
+            // above doesn't immediately push the operator's knob change back.
+            if self.tx_until_ms.is_none()
+                && !self.tuning_keyed
+                && now - self.last_rig_poll >= RIG_POLL_MS
+            {
+                self.last_rig_poll = now;
+                if let Ok(hz) = rig.read_freq() {
+                    if hz != self.last_dial {
+                        self.last_dial = hz;
+                        if let Ok(mut eng) = engine.lock() {
+                            eng.observe_rig_freq(hz);
+                        }
+                    }
+                }
+                if let Some(m) = rig.read_mode() {
+                    if let Ok(mut eng) = engine.lock() {
+                        eng.observe_rig_mode(&m);
+                    }
                 }
             }
         }

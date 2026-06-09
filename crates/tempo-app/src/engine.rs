@@ -397,6 +397,33 @@ impl Engine {
         self.app.set_radio(dial_mhz, band, mode);
     }
 
+    /// The rig reported a dial frequency we did NOT set — the operator turned the VFO knob
+    /// (or another app moved it over the CAT broker). Adopt it as the live dial so the UI
+    /// mirrors the knob. Updates the band from the frequency; leaves the operating mode +
+    /// sideband to the rig-mode policy (the radio loop still owns what it commands).
+    pub fn observe_rig_freq(&mut self, hz: u64) {
+        let mhz = hz as f64 / 1_000_000.0;
+        self.settings.dial_mhz = mhz;
+        if let Some(band) = crate::bandplan::band_for_dial(mhz) {
+            self.settings.band = band.to_string();
+        }
+        self.app
+            .set_radio(self.settings.dial_mhz, &self.settings.band, &self.settings.sideband);
+    }
+
+    /// The rig reported its current mode — reflect it in the readout (snapshot sideband) so
+    /// the cockpit shows the rig's ACTUAL mode, not a guess. In Phone/CW the policy forces
+    /// the mode so this just confirms it; in Digital-obey it surfaces the real rig mode.
+    pub fn observe_rig_mode(&mut self, mode: &str) {
+        let m = mode.trim();
+        if m.is_empty() {
+            return;
+        }
+        self.settings.sideband = m.to_string();
+        self.app
+            .set_radio(self.settings.dial_mhz, &self.settings.band, &self.settings.sideband);
+    }
+
     /// Set the per-section operating mode (Digital / Phone / CW) — the rig-mode
     /// policy. Digital OBEYS the rig; Phone forces USB/LSB by band; CW forces CW.
     /// The radio loop re-applies `settings.rig_mode()` from settings each slot, so a
@@ -2583,6 +2610,22 @@ mod tests {
         assert!(!e.is_qso_recording());
         assert!(e.qso_record_path().is_none(), "path cleared on stop");
         assert!(!e.snapshot().radio.qso_recording);
+    }
+
+    #[test]
+    fn observe_rig_freq_and_mode_mirror_the_knob_into_the_snapshot() {
+        let mut e = Engine::new("W9XYZ", "EN61", 0);
+        // Operator turns the physical VFO to 14.213 MHz on the rig.
+        e.observe_rig_freq(14_213_000);
+        let s = e.snapshot();
+        assert!((s.radio.dial_mhz - 14.213).abs() < 1e-6, "dial mirrors the knob");
+        assert_eq!(s.radio.band, "20m", "band derived from the observed freq");
+        // The rig reports USB → reflected in the readout (not a guess).
+        e.observe_rig_mode("USB");
+        assert_eq!(e.snapshot().radio.sideband, "USB", "rig mode reflected in the readout");
+        // A blank mode read is ignored (don't wipe the readout).
+        e.observe_rig_mode("");
+        assert_eq!(e.snapshot().radio.sideband, "USB");
     }
 
     #[test]

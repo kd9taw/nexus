@@ -138,6 +138,31 @@ pub fn channel_for_dial(dial_mhz: f64) -> Option<BandChannel> {
         .find(|c| (c.dial_mhz - dial_mhz).abs() < 0.0005)
 }
 
+/// The amateur band label for an ARBITRARY dial frequency (MHz) — for live VFO read-back,
+/// where the operator may tune anywhere on a band, not just the band-plan watering holes.
+/// `None` if the frequency is off any ham band.
+pub fn band_for_dial(dial_mhz: f64) -> Option<&'static str> {
+    let b = match dial_mhz {
+        f if (1.8..2.0).contains(&f) => "160m",
+        f if (3.5..4.0).contains(&f) => "80m",
+        f if (5.3..5.5).contains(&f) => "60m",
+        f if (7.0..7.3).contains(&f) => "40m",
+        f if (10.1..10.15).contains(&f) => "30m",
+        f if (14.0..14.35).contains(&f) => "20m",
+        f if (18.06..18.17).contains(&f) => "17m",
+        f if (21.0..21.45).contains(&f) => "15m",
+        f if (24.89..24.99).contains(&f) => "12m",
+        f if (28.0..29.7).contains(&f) => "10m",
+        f if (50.0..54.0).contains(&f) => "6m",
+        f if (70.0..71.0).contains(&f) => "4m",
+        f if (144.0..148.0).contains(&f) => "2m",
+        f if (222.0..225.0).contains(&f) => "1.25m",
+        f if (420.0..450.0).contains(&f) => "70cm",
+        _ => return None,
+    };
+    Some(b)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
