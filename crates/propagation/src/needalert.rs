@@ -142,7 +142,14 @@ pub fn score(
         NeedTag::NewEntity => format!("New one — {}", info.entity),
         NeedTag::NewZone => format!("New CQ zone {} — {}", info.cq_zone, info.entity),
         NeedTag::NewBand => format!("New band — {} {}", info.entity, band),
-        NeedTag::NewMode => format!("New mode — {} {}", info.entity, band),
+        // Name the mode class — with CW/Phone needs flowing, a NewMode CW row and a
+        // NewMode Phone row for the same entity/band must read differently.
+        NeedTag::NewMode => format!(
+            "New mode — {} {} {}",
+            ModeClass::from_adif(mode).label(),
+            info.entity,
+            band
+        ),
         NeedTag::Confirm => format!("Confirm — {}", info.entity),
     };
     Some(NeedAlert {
@@ -502,6 +509,22 @@ mod tests {
         let a = score("JA1XYZ", "20m", "SSB", &needs, &HashSet::new()).unwrap();
         assert_eq!(a.mode, "Phone");
         assert_eq!(a.freq_mhz, None);
+    }
+
+    #[test]
+    fn rank_keeps_distinct_modes_for_same_call_band() {
+        // The whole point of the (call, band, mode) dedup key: a station workable on the
+        // same band via two modes is two distinct opportunities (different cockpits).
+        let needs = LogNeeds::new(); // empty log → any DX is a new one
+        let spots = vec![
+            Heard { call: "3Y0J".into(), band: "20m".into(), mode: "CW".into(), freq_mhz: Some(14.025) },
+            Heard { call: "3Y0J".into(), band: "20m".into(), mode: "FT8".into(), freq_mhz: None },
+        ];
+        let ranked = rank(&spots, &needs, &HashSet::new());
+        assert_eq!(ranked.len(), 2, "same call+band, two modes → two rows");
+        let modes: Vec<&str> = ranked.iter().map(|a| a.mode.as_str()).collect();
+        assert!(modes.contains(&"CW"), "CW opportunity kept: {modes:?}");
+        assert!(modes.contains(&"Digital"), "Digital opportunity kept: {modes:?}");
     }
 
     #[test]

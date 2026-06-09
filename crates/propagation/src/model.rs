@@ -162,16 +162,16 @@ pub fn classify_spot_mode(freq_mhz: f64, comment: &str) -> ModeClass {
     mode_from_comment(comment).unwrap_or_else(|| mode_from_freq(freq_mhz))
 }
 
-/// An explicit mode token in a cluster comment, if any. Only recognized tokens count
-/// (so a signal report / "CQ" / "UP 2" leaves the decision to the frequency). Agrees
-/// with [`ModeClass::from_adif`] for shared tokens.
+/// An explicit mode token in a cluster comment, if any. Only UNAMBIGUOUS tokens count:
+/// we deliberately don't match "AM"/"USB"/"LSB"/"FM"/"DV" because those are ordinary
+/// words/jargon in free-text comments ("op AM pile up", "via USB", "loud in FM") and
+/// would mislabel a CW/digital spot as phone. A signal report / "CQ" / "UP 2" leaves the
+/// decision to the frequency. Agrees with [`ModeClass::from_adif`] for shared tokens.
 fn mode_from_comment(comment: &str) -> Option<ModeClass> {
     for raw in comment.split(|c: char| !c.is_ascii_alphanumeric()) {
         let m = match raw.to_ascii_uppercase().as_str() {
             "CW" => ModeClass::Cw,
-            "SSB" | "USB" | "LSB" | "PHONE" | "FM" | "AM" | "DV" | "C4FM" | "DMR" => {
-                ModeClass::Phone
-            }
+            "SSB" | "PHONE" => ModeClass::Phone,
             "FT8" | "FT4" | "FT1" | "RTTY" | "PSK" | "PSK31" | "PSK63" | "JT65" | "JT9"
             | "JS8" | "MFSK" | "OLIVIA" | "DATA" | "DIGI" | "SSTV" => ModeClass::Digital,
             _ => continue,
@@ -183,11 +183,15 @@ fn mode_from_comment(comment: &str) -> Option<ModeClass> {
 
 /// Band-plan segment fallback: below the CW/data line → CW, at/above the phone line →
 /// Phone, the data middle → Digital. Coarse but reliable for routing (the comment
-/// handles the exceptions, e.g. an FT8 watering hole that sits in a phone segment).
+/// handles the exceptions). VHF/UHF is deliberately Digital-by-default here: the SSB DX
+/// windows are narrow and the FT8/MSK watering holes (6m 50.313, 2m 144.174) sit in what
+/// would otherwise be the "phone" region, so on VHF we only trust an explicit comment
+/// token for CW/Phone and never guess voice from the frequency alone — that keeps a 6m
+/// FT8 spot Digital (empirical), not a bogus voice need.
 fn mode_from_freq(freq_mhz: f64) -> ModeClass {
-    // (cw_top, phone_bottom) MHz per band. 30m has no phone allocation (CW + data only).
+    // (cw_top, phone_bottom) MHz per HF band. 30m has no phone allocation (CW + data).
     let (cw_top, phone_bottom) = match freq_mhz {
-        f if (1.8..2.0).contains(&f) => (1.843, 1.843),
+        f if (1.8..2.0).contains(&f) => (1.810, 1.843), // CW < .810, data .810–.843 (FT8 1.840)
         f if (3.5..4.0).contains(&f) => (3.570, 3.600),
         f if (7.0..7.3).contains(&f) => (7.040, 7.125),
         f if (10.1..10.15).contains(&f) => (10.130, 10.151), // CW < .130, data .130–.150
@@ -196,9 +200,8 @@ fn mode_from_freq(freq_mhz: f64) -> ModeClass {
         f if (21.0..21.45).contains(&f) => (21.070, 21.200),
         f if (24.89..24.99).contains(&f) => (24.915, 24.930),
         f if (28.0..29.7).contains(&f) => (28.070, 28.300),
-        f if (50.0..54.0).contains(&f) => (50.100, 50.100),
-        f if (144.0..148.0).contains(&f) => (144.100, 144.100),
-        _ => return ModeClass::Digital, // off the band plan → safe default
+        // VHF/UHF (and anything off the HF plan) → Digital unless the comment said otherwise.
+        _ => return ModeClass::Digital,
     };
     if freq_mhz < cw_top {
         ModeClass::Cw
@@ -504,6 +507,16 @@ mod tests {
         assert_eq!(classify_spot_mode(14.250, "CW UP"), ModeClass::Cw); // operator typo'd freq, said CW
         assert_eq!(classify_spot_mode(14.025, "SSB 59"), ModeClass::Phone);
         assert_eq!(classify_spot_mode(7.030, "RTTY"), ModeClass::Digital);
+        // An explicit SSB token routes a VHF spot to Phone even though VHF freq-only is Digital.
+        assert_eq!(classify_spot_mode(50.125, "SSB 59 cq"), ModeClass::Phone);
+    }
+
+    #[test]
+    fn classify_spot_mode_ignores_ambiguous_comment_words() {
+        // "AM"/"USB"/"FM" are ordinary words/jargon, not a mode declaration — fall to freq.
+        assert_eq!(classify_spot_mode(14.025, "QRV this AM"), ModeClass::Cw); // 20m CW, not AM-phone
+        assert_eq!(classify_spot_mode(14.020, "via USB cable"), ModeClass::Cw); // not USB-sideband
+        assert_eq!(classify_spot_mode(7.025, "loud in FM here"), ModeClass::Cw); // not FM
     }
 
     #[test]
@@ -517,6 +530,13 @@ mod tests {
         assert_eq!(classify_spot_mode(10.136, ""), ModeClass::Digital); // 30m: no phone, data
         assert_eq!(classify_spot_mode(3.510, ""), ModeClass::Cw); // 80m CW
         assert_eq!(classify_spot_mode(3.800, ""), ModeClass::Phone); // 80m phone
+        // 160m has a real data window now — FT8 at 1.840 is Digital, not CW.
+        assert_eq!(classify_spot_mode(1.805, ""), ModeClass::Cw); // 160m CW
+        assert_eq!(classify_spot_mode(1.840, ""), ModeClass::Digital); // 160m FT8 watering hole
+        // VHF freq-only is Digital — FT8/MSK watering holes must NOT become bogus voice needs.
+        assert_eq!(classify_spot_mode(50.313, ""), ModeClass::Digital); // 6m FT8
+        assert_eq!(classify_spot_mode(144.174, ""), ModeClass::Digital); // 2m FT8
+        assert_eq!(classify_spot_mode(146.520, "grid"), ModeClass::Digital); // 2m FM simplex → not admitted
         // Off the band plan → safe Digital default.
         assert_eq!(classify_spot_mode(5.350, "?"), ModeClass::Digital);
     }
