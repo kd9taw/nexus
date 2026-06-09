@@ -236,6 +236,8 @@ struct RadioLoop {
     rigctld_proc: Option<RigctldProc>,
     last_dial: u64,
     last_mode: String,
+    /// Last CW keyer speed (WPM) pushed to the rig, so we only `set_keyspd` on change.
+    last_cw_wpm: u32,
     psk_spots: Vec<Spot>,
     last_psk_flush: f64,
     last_fd_qsos: usize,
@@ -261,6 +263,7 @@ impl RadioLoop {
             rigctld_proc,
             last_dial: cfg.dial_hz,
             last_mode: cfg.mode.clone(),
+            last_cw_wpm: 0, // 0 = unset → first send pushes the speed
             psk_spots: Vec::new(),
             last_psk_flush: now_unix_ms(),
             last_fd_qsos: 0,
@@ -358,6 +361,25 @@ impl RadioLoop {
                 if md != self.last_mode && rig.set_mode(&md, 0).is_ok() {
                     self.last_mode = md.clone();
                 }
+            }
+        }
+
+        // CW keying (CAT send_morse path): drain the engine's CW queue and key it via
+        // the rig. Honor a one-shot abort and push the keyer speed only when it changes.
+        // Operator-initiated; the engine gates `poll_cw` on `tx_enabled` (Monitor).
+        {
+            let (abort, wpm, items) = {
+                let mut eng = engine.lock().map_err(|e| e.to_string())?;
+                (eng.take_cw_abort(), eng.cw_wpm(), eng.poll_cw())
+            };
+            if abort {
+                let _ = rig.stop_morse();
+            }
+            if !items.is_empty() && wpm != self.last_cw_wpm && rig.set_keyspd(wpm).is_ok() {
+                self.last_cw_wpm = wpm;
+            }
+            for text in items {
+                let _ = rig.send_morse(&text);
             }
         }
 

@@ -31,6 +31,9 @@ pub struct Settings {
     // --- identity / operating ---
     pub mycall: String,
     pub mygrid: String,
+    /// The operator's name (e.g. "Seth") — the `{NAME}` token in CW/voice macros and
+    /// a casual ragchew staple. Empty until set.
+    pub op_name: String,
     pub band: String,
     pub dial_mhz: f64,
     pub sideband: String,
@@ -264,6 +267,7 @@ impl Default for Settings {
             // a real call: that call's owner would then have every feed gated off.
             mycall: String::new(),
             mygrid: String::new(),
+            op_name: String::new(),
             band: "20m".to_string(),
             dial_mhz: 14.074, // FT8 20m — the default mode/band
             sideband: "USB".to_string(),

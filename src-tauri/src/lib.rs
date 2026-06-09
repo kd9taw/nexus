@@ -1069,6 +1069,32 @@ fn set_operating_mode(state: State<'_, SharedEngine>, mode: String) -> Result<Ap
     Ok(eng.snapshot())
 }
 
+/// Queue CW to transmit (CAT keyer path). `text` is an F-key macro template or literal
+/// type-ahead; the engine expands it (mycall/name/grid + the worked call + a 599 report)
+/// and the radio loop keys it via the rig. Operator-initiated; respects Monitor.
+#[tauri::command]
+fn send_cw(state: State<'_, SharedEngine>, text: String) -> Result<AppSnapshot, String> {
+    let mut eng = state.lock().map_err(|e| e.to_string())?;
+    eng.send_cw(&text);
+    Ok(eng.snapshot())
+}
+
+/// Set the CW keyer speed in WPM (5–50).
+#[tauri::command]
+fn set_cw_wpm(state: State<'_, SharedEngine>, wpm: u32) -> Result<AppSnapshot, String> {
+    let mut eng = state.lock().map_err(|e| e.to_string())?;
+    eng.set_cw_wpm(wpm);
+    Ok(eng.snapshot())
+}
+
+/// Abort CW in progress (Esc) — stops the rig keyer and clears the queue.
+#[tauri::command]
+fn stop_cw(state: State<'_, SharedEngine>) -> Result<AppSnapshot, String> {
+    let mut eng = state.lock().map_err(|e| e.to_string())?;
+    eng.stop_cw();
+    Ok(eng.snapshot())
+}
+
 /// Set the TX-slot period: `true` = transmit on even/"1st" slots, `false` =
 /// odd/"2nd". Two stations must use OPPOSITE periods to complete a QSO. Persists.
 #[tauri::command]
@@ -2493,6 +2519,9 @@ pub fn run() {
             get_band_plan,
             set_frequency,
             set_operating_mode,
+            send_cw,
+            set_cw_wpm,
+            stop_cw,
             set_tx_enabled,
             set_tx_level,
             set_tune,

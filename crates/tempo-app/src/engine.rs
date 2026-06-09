@@ -155,6 +155,14 @@ pub struct Engine {
     /// the CURRENT period immediately if it's our TX parity and the over still
     /// fits, instead of waiting a full T/R cycle for the next boundary. One-shot.
     immediate_tx: bool,
+    /// CW transmit queue (CAT keyer path): expanded CW text the radio loop drains and
+    /// keys via `rig.send_morse`. Operator-initiated; gated by `tx_enabled` (Monitor).
+    cw_queue: VecDeque<String>,
+    /// CW keyer speed in WPM (drives the rig's `KEYSPD`). Default 25.
+    cw_wpm: u32,
+    /// One-shot: the operator hit Abort — the radio loop calls `rig.stop_morse` and
+    /// clears the queue, then resets this.
+    cw_abort: bool,
     /// Rolling window of the most recent captured audio, fed continuously by the
     /// radio loop (independent of the decoder) so the waterfall reflects LIVE
     /// sound-card input — not just the once-per-slot decoded frame.
@@ -276,6 +284,9 @@ impl Engine {
             cq_running: false,
             last_decode_slot: None,
             immediate_tx: false,
+            cw_queue: VecDeque::new(),
+            cw_wpm: 25,
+            cw_abort: false,
             spectrum_audio: Vec::new(),
             cat_status: (None, String::new()),
             cat_reprobe: false,
@@ -366,6 +377,57 @@ impl Engine {
             "cw" => OperatingMode::Cw,
             _ => OperatingMode::Digital,
         };
+    }
+
+    // ----- CW transmit (CAT keyer path) — operator-initiated, gated by Monitor -----
+
+    /// Queue CW to transmit. `text` is an F-key macro template OR literal type-ahead;
+    /// it's expanded with the current QSO context (mycall/name/grid + the worked call +
+    /// a 599 report) and the radio loop keys it via `rig.send_morse`. See
+    /// `tasks/specs/cw-operating.md`.
+    pub fn send_cw(&mut self, text: &str) {
+        let hiscall = self.app.active_peer().map(|s| s.to_string()).unwrap_or_default();
+        let ctx = tempo_core::cw::CwContext {
+            mycall: &self.settings.mycall,
+            myname: &self.settings.op_name,
+            mygrid: &self.settings.mygrid,
+            hiscall: &hiscall,
+            rst: "599",
+        };
+        let expanded = tempo_core::cw::expand(text, &ctx);
+        if !expanded.trim().is_empty() {
+            self.cw_queue.push_back(expanded);
+        }
+    }
+
+    /// Set the CW keyer speed in WPM (clamped 5..=50).
+    pub fn set_cw_wpm(&mut self, wpm: u32) {
+        self.cw_wpm = wpm.clamp(5, 50);
+    }
+
+    /// Abort CW in progress: the radio loop stops the rig and the queue is cleared.
+    pub fn stop_cw(&mut self) {
+        self.cw_queue.clear();
+        self.cw_abort = true;
+    }
+
+    /// Drain queued CW for the radio loop to key. Empty while TX is disabled (Monitor) —
+    /// the queue is held until TX is re-enabled, so a stray macro never keys unexpectedly.
+    pub fn poll_cw(&mut self) -> Vec<String> {
+        if !self.tx_enabled {
+            return Vec::new();
+        }
+        self.cw_queue.drain(..).collect()
+    }
+
+    /// Take + reset the one-shot CW abort flag (the loop calls `rig.stop_morse`).
+    pub fn take_cw_abort(&mut self) -> bool {
+        std::mem::take(&mut self.cw_abort)
+    }
+
+    /// Current CW keyer speed (WPM) — for the radio loop's `set_keyspd` + the snapshot.
+    pub fn cw_wpm(&self) -> u32 {
+        self.cw_wpm
     }
 
     // ----- coordinated QSY ("move together") ------------------------------
@@ -2243,6 +2305,34 @@ mod tests {
             rv: None,
             mode: None,
         }
+    }
+
+    #[test]
+    fn cw_queue_expands_gates_and_aborts() {
+        let mut e = Engine::new("W9XYZ", "EN61", 0);
+        e.set_cw_wpm(28);
+        assert_eq!(e.cw_wpm(), 28);
+        e.set_cw_wpm(999); // out of range → clamps to 50
+        assert_eq!(e.cw_wpm(), 50);
+
+        // A macro expands using the operator's call, queues, and the loop drains it.
+        e.send_cw("CQ CQ DE {MYCALL} K");
+        assert_eq!(e.poll_cw(), vec!["CQ CQ DE W9XYZ K".to_string()]);
+        assert!(e.poll_cw().is_empty(), "drained");
+
+        // Gated by Monitor: with TX disabled nothing keys; the queue is held.
+        e.set_tx_enabled(false);
+        e.send_cw("TEST");
+        assert!(e.poll_cw().is_empty(), "no CW keyed while TX is disabled");
+        e.set_tx_enabled(true);
+        assert_eq!(e.poll_cw(), vec!["TEST".to_string()], "held until TX re-enabled");
+
+        // Abort clears the queue and raises the one-shot flag for the loop.
+        e.send_cw("A LONG MESSAGE");
+        e.stop_cw();
+        assert!(e.take_cw_abort());
+        assert!(!e.take_cw_abort(), "abort is one-shot");
+        assert!(e.poll_cw().is_empty(), "abort cleared the queue");
     }
 
     #[test]
