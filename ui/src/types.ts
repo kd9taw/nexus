@@ -295,6 +295,9 @@ export interface RadioStatus {
   rxLevel: number
   /** Whether transmit is enabled (Monitor on). Off = muted/listening only. */
   txEnabled: boolean
+  /** Whether the operator's license class permits TX at the current dial+mode. False = TX
+   * hard-blocked (outside privileges); the cockpit shows a lock indicator. */
+  txAllowed: boolean
   /** Whether a tune carrier is currently keyed. */
   tuning: boolean
   /** True if the TX watchdog has auto-halted transmit (needs a re-enable). */
@@ -854,6 +857,13 @@ export interface Settings {
   sideband: string
   fdClass: string
   fdSection: string
+  /** Amateur license class: 'technician' | 'general' | 'extra' | 'open' (no TX limits). */
+  licenseClass: string
+  /** Active operating mode ('digital' | 'phone' | 'cw') — set live via the section nav, but
+   * declared here so the settings round-trip ({...form}) preserves it on Save. */
+  operatingMode?: string
+  /** Phone voice-keyer slots — declared so a settings Save round-trips them (don't wipe). */
+  voiceMessages?: VoiceMessage[]
   // --- rig control ---
   /** PTT keying method: CAT (rigctld) / serial RTS / serial DTR / VOX. */
   pttMethod: string

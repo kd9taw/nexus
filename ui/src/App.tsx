@@ -65,6 +65,7 @@ import {
   getFeedHealth,
   getNeedAlerts,
   setOperatingMode,
+  setLicenseClass,
   stopQsoRecording,
 } from './api'
 import { setStatus } from './status'
@@ -701,9 +702,13 @@ export default function App() {
   }, [])
 
   const handleWizardApply = useCallback(
-    (ids: ProfileId[], landing: View, modes: FeatureId[]) => {
+    (ids: ProfileId[], landing: View, modes: FeatureId[], license: string) => {
       // Goal profiles + the chosen operating modes (CW/Phone) force-enabled on top.
       features.applyProfiles(ids, modes)
+      // Persist the declared license class (drives the TX-privilege lockout).
+      void setLicenseClass(license)
+        .then((s) => s && setSnap(s))
+        .catch(() => {})
       setView(landing)
       markWizardSeen()
       setShowWizard(false)
@@ -900,6 +905,7 @@ export default function App() {
           theme={theme}
           pendingWork={pendingWork?.view === 'cw' ? pendingWork : null}
           onConsumeWork={() => setPendingWork(null)}
+          onSnap={setSnap}
         />
       )
       break

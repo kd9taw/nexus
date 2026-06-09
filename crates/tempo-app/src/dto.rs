@@ -196,6 +196,11 @@ pub struct RadioStatus {
     /// transmit); the engine produces no TX waveforms while this is false.
     #[serde(default = "default_true")]
     pub tx_enabled: bool,
+    /// Whether the operator's license class permits transmitting at the current dial + mode.
+    /// False = TX hard-blocked (outside privileges); the cockpit shows a lock indicator.
+    /// Defaults true (Open / no-lockout) so an old snapshot never shows a phantom lock.
+    #[serde(default = "default_true")]
+    pub tx_allowed: bool,
     /// Whether the operator is holding a steady tune carrier (for ATU / amp
     /// tuning). While true the radio plays a continuous f0 sine instead of slots.
     #[serde(default)]

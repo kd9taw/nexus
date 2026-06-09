@@ -15,6 +15,7 @@
 pub mod bandplan;
 pub mod dto;
 pub mod engine;
+pub mod privileges;
 
 use std::collections::HashMap;
 
@@ -80,6 +81,7 @@ impl AppState {
                 rx_level: 0.0,
                 tx_level: 0.9,
                 tx_enabled: true,
+                tx_allowed: true,
                 tuning: false,
                 tx_watchdog: false,
                 qso_recording: false,

@@ -706,6 +706,23 @@ export function SettingsPanel({
                   </label>
                 )
               })}
+              <label className="settings-field">
+                <span className="settings-label">License Class</span>
+                <select
+                  className="settings-input"
+                  value={String(form.licenseClass ?? 'open')}
+                  onChange={(e) => update('licenseClass', e.target.value)}
+                >
+                  <option value="technician">Technician (US)</option>
+                  <option value="general">General (US)</option>
+                  <option value="extra">Amateur Extra (US)</option>
+                  <option value="open">Open — no transmit limits</option>
+                </select>
+                <span className="settings-hint">
+                  Sets your transmit privileges + the licensed-segment band dropdown. Open = no
+                  limits (outside the US).
+                </span>
+              </label>
             </div>
             <div className="settings-freq">
               <span className="settings-label">Band &amp; Frequency</span>

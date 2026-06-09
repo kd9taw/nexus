@@ -325,6 +325,7 @@ function defaultSettings(): Settings {
     sideband: 'USB',
     fdClass: '1D',
     fdSection: 'WI',
+    licenseClass: 'open',
     // rig control
     pttMethod: 'vox',
     rigModel: 0,
@@ -441,6 +442,7 @@ function baseSnapshot(settings: Settings): AppSnapshot {
       timeSyncOk: true,
       rxLevel: 0.55,
       txEnabled: true,
+      txAllowed: true,
       tuning: false,
       txWatchdog: false,
       qsoRecording: false,
@@ -1728,6 +1730,15 @@ class MockEngine {
       { call: 'VE3JKL', entity: 'Canada', band: '20m', zone: 4, tags: ['NewZone'], priority: 70, headline: 'New CQ zone 4 — Canada', mode: 'Digital', freqMhz: null },
       { call: 'N0GHI', entity: 'United States', band: '20m', zone: 4, tags: ['Confirm'], priority: 10, headline: 'Confirm — United States', mode: 'Digital', freqMhz: null },
     ])
+  }
+
+  setLicenseClass(_licenseClass: string): Promise<AppSnapshot> {
+    return Promise.resolve(this.snap)
+  }
+
+  getLicensedBandPlan(): Promise<BandChannel[]> {
+    // Demo: reuse the standard band plan (mock is Open → all bands available).
+    return this.getBandPlan()
   }
 
   startQsoRecording(): Promise<AppSnapshot> {

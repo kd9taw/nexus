@@ -23,6 +23,22 @@ pub enum OperatingMode {
     Cw,
 }
 
+/// The operator's amateur license class — drives the transmit-privilege lockout + the
+/// "jump to the start of my licensed segment" band dropdown. The US classes carry FCC
+/// Part 97 (Region 2) sub-band privileges; **Open** = no transmit restrictions (for
+/// operators outside the US — picked via the wizard's "Outside the US" choice). Defaults
+/// to **Open** so an upgrading install is never silently TX-locked; the lockout is
+/// operator-declared (wizard on first run, or Settings).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum LicenseClass {
+    Technician,
+    General,
+    Extra,
+    #[default]
+    Open,
+}
+
 /// How CW is transmitted. **Cat** = the rig's own keyer via Hamlib `send_morse` (rig
 /// in CW; zero extra hardware, but CAT-latency feel). **Soundcard** = the app keys an
 /// audio tone via the sound card (rig in USB; works on any rig). WinKeyer (a hardware
@@ -86,6 +102,10 @@ pub struct Settings {
     /// The active operating mode (Digital / Phone / CW) — the per-section rig-mode
     /// policy. Digital obeys the rig; Phone/CW force USB-LSB / CW. See [`rig_mode`].
     pub operating_mode: OperatingMode,
+    /// Amateur license class — drives the transmit-privilege lockout + the licensed-segment
+    /// band dropdown. `Open` (default) = no restrictions (non-US). See [`LicenseClass`].
+    #[serde(default)]
+    pub license_class: LicenseClass,
     /// How CW is keyed (CAT `send_morse` vs soundcard tone). Also picks the CW
     /// rig-mode: CAT → CW, Soundcard → USB (audio tone). See [`rig_mode`].
     pub cw_keyer: CwKeyerBackend,
@@ -327,6 +347,7 @@ impl Default for Settings {
             baud: 38400,
             set_rig_mode: false, // obey the radio's mode by default (max compat)
             operating_mode: OperatingMode::Digital, // digital obeys; phone/CW force
+            license_class: LicenseClass::Open, // no TX lockout until the operator declares a class
             cw_keyer: CwKeyerBackend::Cat, // rig keyer via send_morse (zero hardware)
             cw_pitch_hz: 600.0,
             rigctld_port: 4532,

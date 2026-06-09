@@ -4,8 +4,8 @@ import { PROFILE_LIST, PROFILES, type ProfileId } from '../features/profiles'
 import type { FeatureId, View } from '../features/registry'
 
 interface Props {
-  /** Apply the chosen goal profile(s) + operating modes and navigate to `landing`. */
-  onApply: (ids: ProfileId[], landing: View, modes: FeatureId[]) => void
+  /** Apply the chosen goal profile(s) + operating modes + license class and navigate. */
+  onApply: (ids: ProfileId[], landing: View, modes: FeatureId[], license: string) => void
   /** Close without changing the current feature set (also ESC / backdrop). */
   onSkip: () => void
 }
@@ -18,6 +18,16 @@ const GOALS = PROFILE_LIST.filter((p) => p.id !== 'everything')
 const MODES: { id: FeatureId; label: string; blurb: string }[] = [
   { id: 'phone', label: 'Phone (SSB)', blurb: 'Voice — PTT, sideband, panadapter' },
   { id: 'cw', label: 'CW', blurb: 'Morse — keyboard + macros, any rig' },
+]
+
+// License class → sets the transmit-privilege lockout + the licensed-segment band dropdown.
+// "Outside the US" = Open (no transmit limits). Single-select; defaults to Open so the
+// lockout is opt-in (a US op declares their class to turn it on).
+const LICENSE: { id: string; label: string; blurb: string }[] = [
+  { id: 'technician', label: 'Technician', blurb: 'US — limited HF + full VHF/UHF' },
+  { id: 'general', label: 'General', blurb: 'US — most HF privileges' },
+  { id: 'extra', label: 'Amateur Extra', blurb: 'US — full privileges' },
+  { id: 'open', label: 'Outside the US', blurb: 'No transmit limits' },
 ]
 
 /**
@@ -46,6 +56,9 @@ export function SetupWizard({ onApply, onSkip }: Props) {
       else n.add(id)
       return n
     })
+
+  // License class (single-select). Default Open = no transmit lockout until declared.
+  const [license, setLicense] = useState('open')
 
   const ids = [...selected]
   const landing: View = ids.length === 1 ? PROFILES[ids[0]].landing : 'operate'
@@ -107,11 +120,31 @@ export function SetupWizard({ onApply, onSkip }: Props) {
         ))}
       </div>
 
+      <h3 className="wizard-modes-title">What’s your license?</h3>
+      <p className="wizard-license-sub">
+        Sets your transmit privileges — the app parks the dial in your licensed band segments
+        and won’t let you transmit outside them. Pick “Outside the US” for no limits.
+      </p>
+      <div className="wizard-modes">
+        {LICENSE.map((l) => (
+          <button
+            key={l.id}
+            type="button"
+            className={`wizard-mode${license === l.id ? ' sel' : ''}`}
+            aria-pressed={license === l.id}
+            onClick={() => setLicense(l.id)}
+          >
+            <span className="wizard-mode-label">{l.label}</span>
+            <span className="wizard-mode-blurb">{l.blurb}</span>
+          </button>
+        ))}
+      </div>
+
       <div className="wizard-actions">
         <button
           type="button"
           className="wizard-everything"
-          onClick={() => onApply(['everything'], 'operate', [])}
+          onClick={() => onApply(['everything'], 'operate', [], license)}
         >
           Turn everything on (expert)
         </button>
@@ -123,7 +156,7 @@ export function SetupWizard({ onApply, onSkip }: Props) {
             type="button"
             className="wizard-go"
             disabled={ids.length === 0}
-            onClick={() => onApply(ids, landing, [...modes])}
+            onClick={() => onApply(ids, landing, [...modes], license)}
           >
             {goLabel}
           </button>

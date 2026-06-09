@@ -3872,6 +3872,44 @@ body.resizing {
   color: var(--state-weak, #e0a030);
   white-space: nowrap;
 }
+/* Licensed-band dropdown + TX-lock chip, shared by the CW/Phone cockpit bars. */
+.band-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.band-picker-select {
+  padding: 3px 8px;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+}
+.band-picker-select:hover {
+  border-color: var(--accent);
+}
+.tx-lock {
+  padding: 2px 8px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  color: var(--bg);
+  background: var(--danger, #e5484d);
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+}
+.ph-ptt:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.wizard-license-sub {
+  margin: 0 0 10px;
+  font-size: var(--fs-micro);
+  color: var(--text-faint);
+  line-height: 1.4;
+}
 .ph-rec {
   display: inline-flex;
   align-items: center;

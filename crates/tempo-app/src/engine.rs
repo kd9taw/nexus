@@ -424,6 +424,18 @@ impl Engine {
         };
     }
 
+    /// Set the operator's amateur license class (drives the TX-privilege lockout + the
+    /// licensed-segment band dropdown). Unknown strings fall back to Open (no lockout).
+    pub fn set_license_class(&mut self, class: &str) {
+        use crate::settings::LicenseClass;
+        self.settings.license_class = match class.to_ascii_lowercase().as_str() {
+            "technician" => LicenseClass::Technician,
+            "general" => LicenseClass::General,
+            "extra" => LicenseClass::Extra,
+            _ => LicenseClass::Open,
+        };
+    }
+
     // ----- CW transmit (CAT keyer path) — operator-initiated, gated by Monitor -----
 
     /// Queue CW to transmit. `text` is an F-key macro template OR literal type-ahead;
@@ -472,7 +484,7 @@ impl Engine {
     /// Drain queued CW for the radio loop to key. Empty while TX is disabled (Monitor) —
     /// the queue is held until TX is re-enabled, so a stray macro never keys unexpectedly.
     pub fn poll_cw(&mut self) -> Vec<String> {
-        if !self.tx_enabled {
+        if !self.tx_enabled || !self.tx_allowed() {
             return Vec::new();
         }
         self.cw_queue.drain(..).collect()
@@ -504,12 +516,14 @@ impl Engine {
     /// Manually key (true) / unkey (false) the rig for live phone. Gated by Monitor:
     /// a key request is ignored while TX is disabled. The radio loop applies it.
     pub fn set_ptt(&mut self, on: bool) {
-        self.manual_ptt = on && self.tx_enabled;
+        self.manual_ptt = on && self.tx_enabled && self.tx_allowed();
     }
 
-    /// Whether the operator is holding manual PTT (live phone) — read by the loop.
+    /// Whether the operator is holding manual PTT (live phone) — read by the loop. Also
+    /// masks on read, so a key that became out-of-privilege (knob turned to a locked
+    /// segment while holding PTT) drops the next loop pass.
     pub fn manual_ptt(&self) -> bool {
-        self.manual_ptt && self.tx_enabled
+        self.manual_ptt && self.tx_enabled && self.tx_allowed()
     }
 
     /// Set desired RF output power (0.0–1.0). The radio loop applies it via the rig.
@@ -528,14 +542,14 @@ impl Engine {
     /// while TX is disabled (Monitor), so a stray F-key never keys unexpectedly. Replaces
     /// any still-pending message (one voice over at a time).
     pub fn send_voice(&mut self, samples: Vec<f32>) {
-        if self.tx_enabled && !samples.is_empty() {
+        if self.tx_enabled && self.tx_allowed() && !samples.is_empty() {
             self.voice_tx = Some(samples);
         }
     }
 
-    /// Take the pending voice samples for the radio loop to play (gated on `tx_enabled`).
+    /// Take the pending voice samples for the radio loop to play (gated on Monitor + privileges).
     pub fn poll_voice(&mut self) -> Option<Vec<f32>> {
-        if !self.tx_enabled {
+        if !self.tx_enabled || !self.tx_allowed() {
             return None;
         }
         self.voice_tx.take()
@@ -1693,15 +1707,19 @@ impl Engine {
     /// suppressed (the radio loop plays a continuous f0 sine for ATU/amp tuning).
     /// Turning tuning on is an operator action and resets the watchdog count.
     pub fn set_tune(&mut self, on: bool) {
-        self.tuning = on;
-        if on {
+        // Tune is the one keying path that bypasses poll_tx (the loop keys PTT directly), so
+        // the privilege lockout must gate it here: never arm a tune carrier outside privileges.
+        self.tuning = on && self.tx_allowed();
+        if self.tuning {
             self.reset_tx_watchdog();
         }
     }
 
-    /// Whether the operator is holding a steady tune carrier.
+    /// Whether the operator is holding a steady tune carrier (read by the loop to key PTT).
+    /// Masked by privileges on READ too, so if the dial moves into a locked segment while a
+    /// tune is armed, the loop stops keying immediately.
     pub fn tuning(&self) -> bool {
-        self.tuning
+        self.tuning && self.tx_allowed()
     }
 
     /// Set the RX input audio level (0.0–1.0) shown in the UI meter. Driven by
@@ -1785,6 +1803,40 @@ impl Engine {
     }
     pub fn rx_offset_hz(&self) -> f32 {
         self.rx_offset_hz
+    }
+
+    /// Whether the operator's license class permits transmitting at the CURRENT dial + mode.
+    /// `Open` always permits. Judges the EMITTED RF, not the bare dial: for digital the signal
+    /// sits at the dial + the TX audio offset (≈+1.5 kHz on USB), so a dial just below a
+    /// higher-class-only edge can still emit inside it. Every TX path ANDs this in; the
+    /// snapshot exposes it so the cockpit can show a lockout indicator. See `privileges.rs`.
+    pub fn tx_allowed(&self) -> bool {
+        use crate::settings::OperatingMode;
+        let class = self.settings.license_class;
+        let dial = self.settings.dial_mhz;
+        let allow = |f: f64| crate::privileges::tx_allowed(class, f, self.settings.operating_mode);
+        match self.settings.operating_mode {
+            OperatingMode::Digital => {
+                // Narrow data signal at the audio offset: ABOVE the dial on USB, BELOW on LSB.
+                let off = self.tx_offset_hz as f64 / 1_000_000.0;
+                let lsb = self.settings.sideband.eq_ignore_ascii_case("LSB");
+                allow(if lsb { dial - off } else { dial + off })
+            }
+            OperatingMode::Phone => {
+                // SSB occupies ~2.8 kHz above the carrier (USB) / below it (LSB). The WHOLE
+                // passband must be in a privileged phone segment, so a dial within a passband
+                // of a band edge can't bleed out of band. Phone sideband is band-aware (LSB <10 MHz).
+                const SSB_BW: f64 = 0.0028;
+                let (lo, hi) = if dial < 10.0 {
+                    (dial - SSB_BW, dial)
+                } else {
+                    (dial, dial + SSB_BW)
+                };
+                allow(lo) && allow(hi)
+            }
+            // CW: the carrier sits at the dial.
+            OperatingMode::Cw => allow(dial),
+        }
     }
 
     /// Set the measured PC-clock-vs-UTC offset (ms) from the NTP probe (`None`
@@ -1888,6 +1940,7 @@ impl Engine {
         // time-sync health into the radio status the UI renders.
         s.radio.tx_enabled = self.tx_enabled;
         s.radio.qso_recording = self.qso_recording;
+        s.radio.tx_allowed = self.tx_allowed();
         s.radio.tuning = self.tuning;
         s.radio.tx_watchdog = self.tx_watchdog;
         s.radio.time_sync_ok = self.time_sync_ok();
@@ -2045,9 +2098,10 @@ impl Engine {
         // Coordinated QSY: execute a scheduled move the moment it comes due,
         // regardless of TX/RX/mute state (no-op while the feature is disabled).
         self.qsy_execute_due(slot);
-        // Monitor-off (transmit muted) or holding a tune carrier: no normal slot
-        // TX. The radio loop handles the steady tune carrier separately.
-        if !self.tx_enabled || self.tuning {
+        // Monitor-off (transmit muted), holding a tune carrier, or outside the operator's
+        // license privileges at this dial/mode: no slot TX. The radio loop handles the
+        // steady tune carrier separately (also privilege-gated at set_tune).
+        if !self.tx_enabled || self.tuning || !self.tx_allowed() {
             self.app.set_transmitting(false);
             return Vec::new();
         }
@@ -2609,6 +2663,56 @@ mod tests {
         assert_eq!(s.radio.band, "20m", "band derived from the observed freq");
         // The Hz→MHz→Hz round-trip is exact, so the retune block won't fight the knob.
         assert_eq!(e.settings().dial_hz(), 14_213_000, "dial_hz round-trips exactly");
+    }
+
+    #[test]
+    fn tx_lockout_blocks_all_paths_outside_license_privileges() {
+        let mut e = Engine::new("W9XYZ", "EN61", 0);
+        e.set_beacon(true);
+        // Default Open → no lockout, even on an Extra-only bottom + in any mode.
+        e.set_frequency(14.005, "20m", "USB");
+        assert!(e.tx_allowed());
+        assert!(!e.poll_tx(0).is_empty(), "Open: beacon transmits");
+
+        // Technician on 20 m → not authorized → blocked across every TX path.
+        e.set_license_class("technician");
+        assert!(!e.tx_allowed(), "Technician has no 20 m");
+        assert!(e.poll_tx(0).is_empty(), "slot TX blocked");
+        e.set_operating_mode("cw");
+        e.send_cw("TEST");
+        assert!(e.poll_cw().is_empty(), "CW blocked outside privileges");
+        e.set_operating_mode("phone");
+        e.set_ptt(true);
+        assert!(!e.manual_ptt(), "manual PTT blocked outside privileges");
+        e.set_tune(true);
+        assert!(!e.tuning(), "tune refused outside privileges");
+
+        // Move to a Technician-legal CW freq (40 m 7.030) → allowed again.
+        e.set_operating_mode("cw");
+        e.set_frequency(7.030, "40m", "USB");
+        assert!(e.tx_allowed(), "Technician CW on 40 m is allowed");
+    }
+
+    #[test]
+    fn tx_allowed_judges_emitted_rf_for_phone_passband_and_digital_sideband() {
+        let mut e = Engine::new("W9XYZ", "EN61", 0);
+        e.set_license_class("general");
+
+        // Phone (USB) upper-edge bleed: a 20 m dial within ~2.8 kHz of the 14.350 band top
+        // emits ABOVE it → blocked; mid-segment is fine.
+        e.set_operating_mode("phone");
+        e.set_frequency(14.349, "20m", "USB");
+        assert!(!e.tx_allowed(), "USB phone bleeding over the band top is blocked");
+        e.set_frequency(14.250, "20m", "USB");
+        assert!(e.tx_allowed(), "mid-segment phone is fine");
+
+        // Digital offset is sideband-signed: at the same dial just past the 80 m data ceiling
+        // (3.600), USB emits ABOVE (blocked) but LSB emits BELOW, back inside the segment.
+        e.set_operating_mode("digital");
+        e.set_frequency(3.601, "80m", "USB");
+        assert!(!e.tx_allowed(), "USB digital above the data ceiling is blocked");
+        e.set_frequency(3.601, "80m", "LSB");
+        assert!(e.tx_allowed(), "LSB digital emits below the dial → back in the data segment");
     }
 
     #[test]

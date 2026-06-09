@@ -657,6 +657,21 @@ export async function getVoiceMessages(): Promise<VoiceMessage[]> {
   return mockEngine.getVoiceMessages()
 }
 
+// --- license class + licensed band plan ---
+/** Set the operator's amateur license class (technician/general/extra/open). */
+export async function setLicenseClass(licenseClass: string): Promise<AppSnapshot> {
+  const invoke = tauriInvoke()
+  if (invoke) return invoke<AppSnapshot>('set_license_class', { class: licenseClass })
+  return mockEngine.setLicenseClass(licenseClass)
+}
+/** Bands the operator may use in `mode` ('phone' | 'cw' | 'digital'), parked at the licensed
+ * segment start. Mode is passed explicitly (not read from the engine) to avoid a mount race. */
+export async function getLicensedBandPlan(mode: string): Promise<BandChannel[]> {
+  const invoke = tauriInvoke()
+  if (invoke) return invoke<BandChannel[]>('get_licensed_band_plan', { mode })
+  return mockEngine.getLicensedBandPlan()
+}
+
 // --- QSO recording (audio bridge) ---
 /** Start streaming the live RX audio to a timestamped WAV on disk. */
 export async function startQsoRecording(): Promise<AppSnapshot> {

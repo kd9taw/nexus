@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import type { AppSnapshot } from '../types'
 import { Waterfall } from './Waterfall'
+import { BandPicker } from './BandPicker'
 import { LogEntry } from './LogEntry'
 import { sendCw, setCwKeyer, setCwWpm, stopCw } from '../api'
-import { withErrorToast } from '../toast'
+import { pushToast, withErrorToast } from '../toast'
 
 interface Props {
   snap: AppSnapshot
@@ -13,6 +14,8 @@ interface Props {
   pendingWork?: { call: string; ts: number } | null
   /** Called once the prefill has been applied, so the parent can clear it. */
   onConsumeWork?: () => void
+  /** Apply a snapshot returned by a command (e.g. a band QSY) without waiting for the poll. */
+  onSnap?: (snap: AppSnapshot) => void
 }
 
 /** Default CASUAL/ragchew macro set (no contest serial/exchange), per
@@ -38,7 +41,7 @@ const WPM_MAX = 50
  * strip logs the QSO into the multi-mode logbook (RST 599). Entering the section forces
  * the rig to CW (the rig-mode policy, wired in App). No contest scoring — by design.
  */
-export function CwCockpit({ snap, theme, pendingWork, onConsumeWork }: Props) {
+export function CwCockpit({ snap, theme, pendingWork, onConsumeWork, onSnap }: Props) {
   const [wpm, setWpm] = useState(25)
   const [keyer, setKeyer] = useState<'cat' | 'soundcard'>('cat')
   const [text, setText] = useState('')
@@ -49,7 +52,13 @@ export function CwCockpit({ snap, theme, pendingWork, onConsumeWork }: Props) {
     void setCwWpm(v)
   }
   const send = (t: string) => {
-    if (t.trim()) void withErrorToast(() => sendCw(t), 'CW send failed')
+    if (!t.trim()) return
+    // The engine blocks keying outside privileges anyway; surface why up front.
+    if (!snap.radio.txAllowed) {
+      pushToast('TX locked — this frequency is outside your license privileges', 'info', 3500)
+      return
+    }
+    void withErrorToast(() => sendCw(t), 'CW send failed')
   }
   const sendTyped = () => {
     send(text)
@@ -125,6 +134,7 @@ export function CwCockpit({ snap, theme, pendingWork, onConsumeWork }: Props) {
             Soundcard
           </button>
         </div>
+        <BandPicker snap={snap} mode="cw" onSnap={onSnap} />
         <span className="cw-spacer" />
         <span className={`cw-tx ${snap.radio.transmitting ? 'on' : ''}`}>
           {snap.radio.transmitting ? '▲ KEYING' : snap.radio.txEnabled ? '▼ RX' : '■ TX off'}

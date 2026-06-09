@@ -1056,6 +1056,67 @@ fn get_band_plan(state: State<'_, SharedEngine>) -> Result<Vec<tempo_app::bandpl
     Ok(tempo_app::bandplan::band_plan_for(tier))
 }
 
+/// Set the operator's amateur license class (Technician/General/Extra/Open) — drives the
+/// transmit-privilege lockout + the licensed-segment band dropdown. Used by the first-run
+/// wizard and Settings.
+#[tauri::command]
+fn set_license_class(state: State<'_, SharedEngine>, class: String) -> Result<AppSnapshot, String> {
+    let mut eng = state.lock().map_err(|e| e.to_string())?;
+    eng.set_license_class(&class);
+    if let Err(e) = eng.settings().save(&settings_path()) {
+        eprintln!("tempo: failed to persist license class: {e}");
+    }
+    Ok(eng.snapshot())
+}
+
+/// The bands the operator may use in the CURRENT operating mode, each parked at the START of
+/// their licensed segment (CW-segment start in CW, phone-segment start in Phone) — the
+/// per-cockpit band dropdown. Bands with no privilege for this class+mode are omitted; Open
+/// shows the conventional starts. (60 m is omitted — it's channelized; tune it manually.)
+#[tauri::command]
+fn get_licensed_band_plan(
+    state: State<'_, SharedEngine>,
+    mode: String,
+) -> Result<Vec<tempo_app::bandplan::BandChannel>, String> {
+    use tempo_app::bandplan::BandChannel;
+    use tempo_app::settings::OperatingMode;
+    const BANDS: &[(&str, &str)] = &[
+        ("160m", "HF"), ("80m", "HF"), ("40m", "HF"), ("30m", "HF"), ("20m", "HF"),
+        ("17m", "HF"), ("15m", "HF"), ("12m", "HF"), ("10m", "HF"), ("6m", "VHF"),
+        ("2m", "VHF"), ("1.25m", "VHF"), ("70cm", "UHF"),
+    ];
+    let eng = state.lock().map_err(|e| e.to_string())?;
+    let class = eng.settings().license_class;
+    // The caller (the cockpit) passes its mode explicitly — the engine's operating_mode is
+    // set asynchronously on section entry, so reading it here would race the first mount.
+    let mode = match mode.to_ascii_lowercase().as_str() {
+        "phone" => OperatingMode::Phone,
+        "cw" => OperatingMode::Cw,
+        _ => OperatingMode::Digital,
+    };
+    let mut out = Vec::new();
+    for (band, group) in BANDS {
+        if let Some(dial) = tempo_app::privileges::segment_start(class, band, mode) {
+            // Sideband stored: USB/LSB by band for phone; digital-safe USB otherwise (the
+            // rig-mode policy forces CW in the CW section regardless of this field).
+            let sideband = if matches!(mode, OperatingMode::Phone) && dial < 10.0 {
+                "LSB"
+            } else {
+                "USB"
+            };
+            out.push(BandChannel {
+                band: band.to_string(),
+                group: group.to_string(),
+                dial_mhz: dial,
+                mode: sideband.to_string(),
+                label: format!("{band} · {dial:.3} MHz"),
+                note: String::new(),
+            });
+        }
+    }
+    Ok(out)
+}
+
 /// Change band / dial frequency / mode live (does not reset the operating mode).
 /// `mode` is "USB" or "FM". Persists, retunes the rig, returns the snapshot.
 #[tauri::command]
@@ -2814,6 +2875,8 @@ pub fn run() {
             detect_rigs,
             get_rig_models,
             get_band_plan,
+            set_license_class,
+            get_licensed_band_plan,
             set_frequency,
             set_operating_mode,
             send_cw,

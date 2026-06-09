@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { AppSnapshot } from '../types'
 import { PhoneScope } from './PhoneScope'
+import { BandPicker } from './BandPicker'
 import { VoiceKeyer } from './VoiceKeyer'
 import { LevelMeter } from './LevelMeter'
 import { LogEntry } from './LogEntry'
@@ -40,6 +41,11 @@ export function PhoneCockpit({ snap, theme, pendingWork, onConsumeWork, onSnap }
   const catOk = snap.radio.catOk === true
 
   const key = (on: boolean) => {
+    // Don't key (or show ON-AIR) outside license privileges — the engine blocks it anyway.
+    if (on && !snap.radio.txAllowed) {
+      pushToast('TX locked — this frequency/mode is outside your license privileges', 'info', 3500)
+      return
+    }
     setKeyed(on)
     void setPtt(on)
   }
@@ -107,6 +113,7 @@ export function PhoneCockpit({ snap, theme, pendingWork, onConsumeWork, onSnap }
         <span className="ph-freq mono">
           {snap.radio.dialMhz.toFixed(3)} MHz · {snap.radio.band}
         </span>
+        <BandPicker snap={snap} mode="phone" onSnap={onSnap} />
         {!catOk && (
           <span
             className="ph-nocat"
@@ -164,9 +171,14 @@ export function PhoneCockpit({ snap, theme, pendingWork, onConsumeWork, onSnap }
           onPointerDown={onPttDown}
           onPointerUp={onPttUp}
           onPointerLeave={onPttUp}
-          title="Hold to talk (or Space). Toggle 'Lock' for hands-free."
+          disabled={!snap.radio.txAllowed}
+          title={
+            snap.radio.txAllowed
+              ? "Hold to talk (or Space). Toggle 'Lock' for hands-free."
+              : 'TX locked — outside your license privileges (pick a band, or change your license in Settings)'
+          }
         >
-          {keyed ? 'ON AIR — release to stop' : 'PUSH TO TALK'}
+          {!snap.radio.txAllowed ? '🔒 TX LOCKED' : keyed ? 'ON AIR — release to stop' : 'PUSH TO TALK'}
         </button>
         <label className="ph-lock" title="Hands-free: click PTT once to key, again to unkey">
           <input type="checkbox" checked={lock} onChange={(e) => setLock(e.target.checked)} />
