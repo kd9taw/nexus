@@ -101,7 +101,13 @@ export function CwCockpit({ snap, theme, pendingWork, onConsumeWork, onSnap }: P
   return (
     <main className="layout single cw-cockpit">
       <div className="cw-bar">
-        <span className="cw-mode-badge" title="The rig is set to CW while you're in this section">
+        <span
+          className="cw-mode-badge"
+          title={
+            snap.radio.catDetail ||
+            "The rig is set to CW while you're in this section"
+          }
+        >
           CW
         </span>
         <label className="cw-wpm" title="Keyer speed — PgUp/PgDn to nudge (Shift = ±4)">

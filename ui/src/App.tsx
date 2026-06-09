@@ -182,9 +182,15 @@ export default function App() {
     const operating = !!featureById(view as FeatureId)?.workspace || view === 'cw' || view === 'phone'
     if (!operating) return
     const mode = view === 'cw' ? 'cw' : view === 'phone' ? 'phone' : 'digital'
-    if (mode === lastOpModeRef.current) return
+    // ALWAYS (re)assert the rig mode on entering an operating view. We must NOT skip it with a
+    // same-value guard: the guard ref drifts out of sync with the real rig (handleDigitalMode
+    // and the Needed click set the mode without going through here), which left the rig stuck
+    // in the wrong mode while the VFO read-back kept working. The backend is idempotent and
+    // re-arms an immediate retune, so re-asserting is cheap. Only RE-HOME the frequency on a
+    // genuine mode change, so returning to a mode you were already in never yanks the VFO.
+    const changed = mode !== lastOpModeRef.current
     lastOpModeRef.current = mode
-    const followFreq = view === 'operate' || view === 'cw' || view === 'phone'
+    const followFreq = changed && (view === 'operate' || view === 'cw' || view === 'phone')
     void setOperatingMode(mode, followFreq)
       .then((s) => s && setSnap(s))
       .catch(() => {})
@@ -709,6 +715,15 @@ export default function App() {
         /* ignore */
       }
       setView('operate')
+      // The codec tier (FT8/FT4) is INDEPENDENT of the rig's CAT mode — switching tiers does
+      // NOT command the Yaesu into DATA-U. Assert the digital rig mode explicitly here:
+      // clicking a Digital sub-mode while already on the Operate screen doesn't change `view`,
+      // so the rig-mode view-effect never fires and the rig would stay in whatever (SSB/CW)
+      // mode it was last left in. follow_freq=false keeps the current digital frequency.
+      lastOpModeRef.current = 'digital'
+      void setOperatingMode('digital', false)
+        .then((s) => s && setSnap(s))
+        .catch(() => {})
       // Bind the dx workspace, THEN set the exact tier — each wrapped so a backend
       // failure surfaces a toast (matching handleTier) instead of failing silently
       // or leaving an unhandled rejection.
