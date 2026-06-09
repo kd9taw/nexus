@@ -163,6 +163,12 @@ pub struct Engine {
     /// One-shot: the operator hit Abort — the radio loop calls `rig.stop_morse` and
     /// clears the queue, then resets this.
     cw_abort: bool,
+    /// Manual PTT for live phone (operator push-to-talk): the radio loop keys the rig
+    /// while true. Gated by `tx_enabled` (Monitor). Operator-initiated only.
+    manual_ptt: bool,
+    /// Desired RF output power as a 0.0–1.0 fraction; `None` = leave the rig's power
+    /// alone. The radio loop applies it via `rig.set_power` when it changes.
+    rf_power: Option<f32>,
     /// Rolling window of the most recent captured audio, fed continuously by the
     /// radio loop (independent of the decoder) so the waterfall reflects LIVE
     /// sound-card input — not just the once-per-slot decoded frame.
@@ -287,6 +293,8 @@ impl Engine {
             cw_queue: VecDeque::new(),
             cw_wpm: 25,
             cw_abort: false,
+            manual_ptt: false,
+            rf_power: None,
             spectrum_audio: Vec::new(),
             cat_status: (None, String::new()),
             cat_reprobe: false,
@@ -452,6 +460,29 @@ impl Engine {
     /// CW tone pitch (Hz) for the soundcard keyer.
     pub fn cw_pitch_hz(&self) -> f32 {
         self.settings.cw_pitch_hz
+    }
+
+    // ----- Phone (voice) — manual PTT + RF power, applied by the radio loop -----
+
+    /// Manually key (true) / unkey (false) the rig for live phone. Gated by Monitor:
+    /// a key request is ignored while TX is disabled. The radio loop applies it.
+    pub fn set_ptt(&mut self, on: bool) {
+        self.manual_ptt = on && self.tx_enabled;
+    }
+
+    /// Whether the operator is holding manual PTT (live phone) — read by the loop.
+    pub fn manual_ptt(&self) -> bool {
+        self.manual_ptt && self.tx_enabled
+    }
+
+    /// Set desired RF output power (0.0–1.0). The radio loop applies it via the rig.
+    pub fn set_rf_power(&mut self, frac: f32) {
+        self.rf_power = Some(frac.clamp(0.0, 1.0));
+    }
+
+    /// Desired RF power, if the operator has set one (for the radio loop).
+    pub fn rf_power(&self) -> Option<f32> {
+        self.rf_power
     }
 
     // ----- coordinated QSY ("move together") ------------------------------

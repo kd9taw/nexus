@@ -238,6 +238,10 @@ struct RadioLoop {
     last_mode: String,
     /// Last CW keyer speed (WPM) pushed to the rig, so we only `set_keyspd` on change.
     last_cw_wpm: u32,
+    /// Last manual-PTT (live phone) state we applied to the rig — only key on change.
+    manual_ptt_applied: bool,
+    /// Last RF power fraction we pushed to the rig — only set on change.
+    last_rf_power: Option<f32>,
     psk_spots: Vec<Spot>,
     last_psk_flush: f64,
     last_fd_qsos: usize,
@@ -264,6 +268,8 @@ impl RadioLoop {
             last_dial: cfg.dial_hz,
             last_mode: cfg.mode.clone(),
             last_cw_wpm: 0, // 0 = unset → first send pushes the speed
+            manual_ptt_applied: false,
+            last_rf_power: None,
             psk_spots: Vec::new(),
             last_psk_flush: now_unix_ms(),
             last_fd_qsos: 0,
@@ -414,6 +420,24 @@ impl RadioLoop {
                     for text in &items {
                         let _ = rig.send_morse(text);
                     }
+                }
+            }
+        }
+
+        // Manual PTT (live phone) + RF power — applied via the rig on change. Only the
+        // Phone section drives these (the FT8 TX path is idle there), so no PTT clash.
+        {
+            let (ptt, power) = {
+                let eng = engine.lock().map_err(|e| e.to_string())?;
+                (eng.manual_ptt(), eng.rf_power())
+            };
+            if ptt != self.manual_ptt_applied {
+                let _ = rig.ptt(ptt);
+                self.manual_ptt_applied = ptt;
+            }
+            if let Some(p) = power {
+                if Some(p) != self.last_rf_power && rig.set_power(p).is_ok() {
+                    self.last_rf_power = Some(p);
                 }
             }
         }

@@ -2,6 +2,7 @@ import type { OpMode } from '../types'
 import type { LucideIcon } from 'lucide-react'
 import {
   Radio,
+  Mic,
   Radar,
   Sun,
   Globe,
@@ -49,6 +50,7 @@ interface Item {
 const ITEMS: Item[] = [
   { id: 'operate', label: 'FT8/FT4', icon: Radio, title: 'FT8/FT4 Operations — waterfall-first cockpit' },
   { id: 'cw', label: 'CW', icon: Zap, title: 'CW operating — keyboard + F-key macros, WPM, spectrum (casual)' },
+  { id: 'phone', label: 'Phone', icon: Mic, title: 'Phone (SSB) operating — PTT, sideband, RF power, panadapter (casual)' },
   { id: 'connect', label: 'Connect', icon: Radar, title: 'Connect — situational awareness: grayline map + live propagation in one view' },
   { id: 'needed', label: 'Needed', icon: Target, title: 'Needed — what you still need that’s on the air now; single-click to QSY' },
   { id: 'propagation', label: 'Prop', icon: Sun, title: 'Propagation & opening intelligence — what’s open now, 6m openings, DXpeditions' },

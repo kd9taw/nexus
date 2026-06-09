@@ -54,6 +54,7 @@ import { OperateCockpit } from './components/OperateCockpit'
 import { NowBar } from './components/NowBar'
 import { AwardsJourney } from './components/AwardsJourney'
 import { CwCockpit } from './components/CwCockpit'
+import { PhoneCockpit } from './components/PhoneCockpit'
 import { PotaSotaView } from './components/PotaSotaView'
 import { PropagationView } from './components/PropagationView'
 import { MapView } from './components/MapView'
@@ -156,7 +157,7 @@ export default function App() {
   // doesn't write settings on every nav. Phone joins this when its section lands.
   const lastOpModeRef = useRef<'digital' | 'phone' | 'cw'>('digital')
   useEffect(() => {
-    const mode = view === 'cw' ? 'cw' : 'digital'
+    const mode = view === 'cw' ? 'cw' : view === 'phone' ? 'phone' : 'digital'
     if (mode === lastOpModeRef.current) return
     lastOpModeRef.current = mode
     void setOperatingMode(mode)
@@ -820,6 +821,9 @@ export default function App() {
       break
     case 'cw':
       workspace = <CwCockpit snap={snap} theme={theme} />
+      break
+    case 'phone':
+      workspace = <PhoneCockpit snap={snap} theme={theme} />
       break
     case 'pota':
       workspace = (

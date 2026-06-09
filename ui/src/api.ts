@@ -582,6 +582,20 @@ export async function setCwKeyer(backend: 'cat' | 'soundcard', pitch = 0): Promi
   return mockEngine.getSnapshot()
 }
 
+/** Manual PTT for live phone — key (true) / unkey (false) the rig. */
+export async function setPtt(on: boolean): Promise<AppSnapshot> {
+  const invoke = tauriInvoke()
+  if (invoke) return invoke<AppSnapshot>('set_ptt', { on })
+  return mockEngine.getSnapshot()
+}
+
+/** Set RF output power as a 0.0–1.0 fraction. */
+export async function setRfPower(power: number): Promise<AppSnapshot> {
+  const invoke = tauriInvoke()
+  if (invoke) return invoke<AppSnapshot>('set_rf_power', { power })
+  return mockEngine.getSnapshot()
+}
+
 /** Enumerate available audio input + output devices. */
 export async function getAudioDevices(): Promise<AudioDevices> {
   const invoke = tauriInvoke()

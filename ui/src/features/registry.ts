@@ -13,6 +13,7 @@
 export type View =
   | 'operate'
   | 'cw'
+  | 'phone'
   | 'connect'
   | 'propagation'
   | 'map'
@@ -101,6 +102,18 @@ export const FEATURES: FeatureDef[] = [
     view: 'cw',
     // Global (no workspace): the CW operating cockpit — keyboard + macros key the rig.
     oneLine: 'CW operating — keyboard + F-key macros, WPM, spectrum, casual ragchew.',
+  },
+  {
+    id: 'phone',
+    label: 'Phone',
+    kind: 'section',
+    category: 'Operate',
+    core: false, // opt-in: turn on if you operate voice (Settings ▸ Features / wizard)
+    dependsOn: [],
+    intents: ['casual', 'dx'],
+    view: 'phone',
+    // Global (no workspace): the Phone (SSB/FM) cockpit — PTT + rig control + logging.
+    oneLine: 'Phone (SSB) operating — PTT, band-aware sideband, RF power, panadapter.',
   },
   {
     id: 'logbook',

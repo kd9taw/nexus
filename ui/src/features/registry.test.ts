@@ -16,6 +16,7 @@ import {
 const EXPECTED_SECTIONS: FeatureId[] = [
   'operate',
   'cw',
+  'phone',
   'connect',
   'needed',
   'logbook',

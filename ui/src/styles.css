@@ -3732,6 +3732,148 @@ body.resizing {
 }
 
 /* ===========================================================================
+   Phone (voice) operating cockpit (casual) — PTT + rig control + logging
+   =========================================================================== */
+.phone-cockpit {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  overflow-y: auto;
+  min-height: 0;
+}
+.ph-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+.ph-mode-badge {
+  font-weight: 800;
+  font-size: var(--fs-label);
+  letter-spacing: 0.08em;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  border-radius: var(--radius-sm);
+  padding: 3px 10px;
+}
+.ph-freq {
+  color: var(--text);
+  font-size: var(--fs-body);
+}
+.ph-power {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--fs-label);
+  color: var(--text-dim);
+}
+.ph-power input[type='range'] {
+  width: 140px;
+}
+.ph-power-val {
+  font-family: var(--font-mono);
+  color: var(--text);
+  min-width: 40px;
+}
+.ph-spacer {
+  flex: 1;
+}
+.ph-tx {
+  font-family: var(--font-mono);
+  font-size: var(--fs-label);
+  color: var(--text-dim);
+}
+.ph-tx.on {
+  color: var(--state-weak);
+  font-weight: 800;
+}
+.ph-waterfall {
+  min-height: 130px;
+  flex: 0 0 auto;
+}
+.ph-ptt-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+.ph-ptt {
+  flex: 1 1 auto;
+  min-height: 64px;
+  border-radius: var(--radius);
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: var(--accent-ink);
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  user-select: none;
+  transition: var(--transition);
+}
+.ph-ptt:hover {
+  filter: brightness(1.05);
+}
+.ph-ptt.keyed {
+  color: #fff;
+  background: var(--state-weak);
+  border-color: var(--state-weak);
+  box-shadow: 0 0 18px color-mix(in srgb, var(--state-weak) 60%, transparent);
+}
+.ph-lock {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-label);
+  color: var(--text-dim);
+}
+.ph-ptt-hint {
+  flex-basis: 100%;
+  font-size: var(--fs-micro);
+  color: var(--text-faint);
+}
+.ph-log {
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius);
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+}
+.ph-log h2 {
+  margin: 0 0 var(--space-2);
+  font-size: var(--fs-title);
+}
+.ph-log-row {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+.ph-log-row .settings-input {
+  flex: 1;
+}
+.ph-log-rst {
+  max-width: 70px;
+  flex: 0 0 auto !important;
+}
+.ph-log-btn {
+  padding: 8px 18px;
+  border-radius: var(--radius-sm);
+  font-weight: 800;
+  color: var(--accent-ink);
+  background: var(--accent);
+  border: 1px solid var(--accent);
+}
+.ph-log-btn:disabled {
+  opacity: 0.4;
+}
+.ph-log-hint {
+  display: block;
+  margin-top: 6px;
+  font-size: var(--fs-micro);
+  color: var(--text-faint);
+}
+
+/* ===========================================================================
    Field Day workspace (center, Field Day mode)
    =========================================================================== */
 .fieldday {

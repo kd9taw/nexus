@@ -1095,6 +1095,23 @@ fn stop_cw(state: State<'_, SharedEngine>) -> Result<AppSnapshot, String> {
     Ok(eng.snapshot())
 }
 
+/// Manual PTT for live phone — key (true) / unkey (false) the rig. Operator push-to-
+/// talk; respects Monitor (a key request is ignored while TX is disabled).
+#[tauri::command]
+fn set_ptt(state: State<'_, SharedEngine>, on: bool) -> Result<AppSnapshot, String> {
+    let mut eng = state.lock().map_err(|e| e.to_string())?;
+    eng.set_ptt(on);
+    Ok(eng.snapshot())
+}
+
+/// Set RF output power as a 0.0–1.0 fraction; the radio loop applies it to the rig.
+#[tauri::command]
+fn set_rf_power(state: State<'_, SharedEngine>, power: f32) -> Result<AppSnapshot, String> {
+    let mut eng = state.lock().map_err(|e| e.to_string())?;
+    eng.set_rf_power(power);
+    Ok(eng.snapshot())
+}
+
 /// Choose the CW keyer back-end ("cat" = rig send_morse / "soundcard" = keyed tone)
 /// and tone pitch (Hz; <=0 keeps the current pitch). Soundcard moves the rig to USB.
 #[tauri::command]
@@ -2539,6 +2556,8 @@ pub fn run() {
             set_cw_wpm,
             stop_cw,
             set_cw_keyer,
+            set_ptt,
+            set_rf_power,
             set_tx_enabled,
             set_tx_level,
             set_tune,
