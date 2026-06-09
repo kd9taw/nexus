@@ -468,6 +468,66 @@ impl Station {
                     self.state = State::Done;
                     self.log("got 73 → QSO complete".into());
                 }
+                // --- Out-of-order / step-skipping partners (mirror the `start()` resume
+                // table so a running QSO can't hang re-sending the same message forever
+                // when the DX skips a step — exactly what WSJT-X handles). ---
+                // A caller awaiting a report whose DX combines R + report (skips the bare
+                // report): capture it and send the roger.
+                (State::AwaitReport, Msg::RReport { to, de, snr })
+                    if crate::message::same_call(to, &self.mycall) && self.from_dx(de) =>
+                {
+                    self.rx_report = Some(*snr);
+                    self.pending = Some(if self.confirm_with_rrr {
+                        Msg::Rrr { to: de.clone(), de: self.mycall.clone() }
+                    } else {
+                        Msg::Rr73 { to: de.clone(), de: self.mycall.clone() }
+                    });
+                    self.state = State::Confirming;
+                    self.log(format!(
+                        "got R-report → sending {}",
+                        if self.confirm_with_rrr { "RRR" } else { "RR73" }
+                    ));
+                }
+                // A caller awaiting a report whose DX rogers directly (RR73/RRR, skipping
+                // the report entirely): the DX confirmed → send the final 73 and finish.
+                (State::AwaitReport, Msg::Rr73 { to, de })
+                | (State::AwaitReport, Msg::Rrr { to, de })
+                    if crate::message::same_call(to, &self.mycall) && self.from_dx(de) =>
+                {
+                    self.pending = Some(Msg::Bye73 {
+                        to: de.clone(),
+                        de: self.mycall.clone(),
+                    });
+                    self.state = State::Done;
+                    self.log("DX rogered after our grid → sending 73, QSO complete".into());
+                }
+                // We're rogering (AwaitRr73, expecting RR73) and the DX closes with a bare
+                // 73 instead: that's their roger+signoff → QSO complete.
+                (State::AwaitRr73, Msg::Bye73 { to, de })
+                    if crate::message::same_call(to, &self.mycall) && self.from_dx(de) =>
+                {
+                    self.pending = None;
+                    self.state = State::Done;
+                    self.log("got 73 → QSO complete".into());
+                }
+                // We're calling CQ and a station answers with a bare report (grid skipped):
+                // lock onto them, capture the report, and roger with R + our report.
+                (State::CallingCq, Msg::Report { to, de, snr })
+                    if crate::message::same_call(to, &self.mycall) =>
+                {
+                    self.dxcall = Some(de.clone());
+                    self.rx_report = Some(*snr);
+                    self.pending = Some(Msg::RReport {
+                        to: de.clone(),
+                        de: self.mycall.clone(),
+                        snr: rpt,
+                    });
+                    self.state = State::AwaitRr73;
+                    self.log(format!(
+                        "{de} answered with a report → R{}",
+                        crate::message::fmt_report(rpt)
+                    ));
+                }
                 _ => {}
             }
         }
@@ -736,6 +796,53 @@ mod start_context_tests {
         s.observe(&[dec("KD9TAW W9XYZ -12", -8)]); // the worked DX reports us
         assert_eq!(s.state, State::AwaitRr73, "the worked DX advances the sequence");
         assert_eq!(s.pending_text().as_deref(), Some("W9XYZ KD9TAW R-08"));
+    }
+
+    // --- Step-skipping partners: the sequencer must complete, not hang re-sending. ---
+
+    #[test]
+    fn dx_rogers_after_our_grid_skipping_the_report() {
+        // We answered a CQ (sent our grid, AwaitReport). The DX rogers directly with
+        // RR73 (skipping the bare report) → we send 73 and finish, NOT re-send the grid.
+        let mut s = Station::answering(ME, MY_GRID, DX);
+        assert_eq!(s.state, State::AwaitReport);
+        s.observe(&[dec("KD9TAW W9XYZ RR73", -8)]);
+        assert_eq!(s.state, State::Done, "an early RR73 completes the QSO");
+        assert_eq!(s.pending_text().as_deref(), Some("W9XYZ KD9TAW 73"));
+    }
+
+    #[test]
+    fn dx_sends_combined_r_report_after_our_grid() {
+        // AwaitReport, DX combines R + report → capture it and send the roger.
+        let mut s = Station::answering(ME, MY_GRID, DX);
+        s.observe(&[dec("KD9TAW W9XYZ R-13", -7)]);
+        assert_eq!(s.state, State::Confirming);
+        assert_eq!(s.rx_report, Some(-13));
+        assert_eq!(s.pending_text().as_deref(), Some("W9XYZ KD9TAW RR73"));
+    }
+
+    #[test]
+    fn dx_closes_with_bare_73_instead_of_rr73() {
+        // We sent our R-report (AwaitRr73). The DX closes with a plain 73 → QSO complete
+        // (instead of re-sending the R-report forever waiting for an RR73).
+        let mut s = Station::answering(ME, MY_GRID, DX);
+        s.observe(&[dec("KD9TAW W9XYZ -12", -8)]); // their report → AwaitRr73
+        assert_eq!(s.state, State::AwaitRr73);
+        s.observe(&[dec("KD9TAW W9XYZ 73", -8)]); // a bare 73 instead of RR73
+        assert_eq!(s.state, State::Done, "a bare 73 closes the QSO");
+    }
+
+    #[test]
+    fn cq_answered_with_a_bare_report_locks_and_rogers() {
+        // Calling CQ; a station answers with a bare report (grid skipped) → lock onto
+        // them, capture the report, and send R + our report.
+        let mut s = Station::calling_cq(ME, MY_GRID);
+        assert_eq!(s.state, State::CallingCq);
+        s.observe(&[dec("KD9TAW W9XYZ -15", -10)]);
+        assert_eq!(s.state, State::AwaitRr73);
+        assert_eq!(s.dxcall.as_deref(), Some("W9XYZ"));
+        assert_eq!(s.rx_report, Some(-15), "captured the report they gave us");
+        assert_eq!(s.pending_text().as_deref(), Some("W9XYZ KD9TAW R-10"));
     }
 
     #[test]
