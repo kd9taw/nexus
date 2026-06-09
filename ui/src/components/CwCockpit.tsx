@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
-import type { AppSnapshot, LoggedQso } from '../types'
+import type { AppSnapshot } from '../types'
 import { Waterfall } from './Waterfall'
-import { logQso, sendCw, setCwKeyer, setCwWpm, stopCw } from '../api'
-import { pushToast, withErrorToast } from '../toast'
+import { LogEntry } from './LogEntry'
+import { sendCw, setCwKeyer, setCwWpm, stopCw } from '../api'
+import { withErrorToast } from '../toast'
 
 interface Props {
   snap: AppSnapshot
@@ -41,21 +42,6 @@ export function CwCockpit({ snap, theme, pendingWork, onConsumeWork }: Props) {
   const [wpm, setWpm] = useState(25)
   const [keyer, setKeyer] = useState<'cat' | 'soundcard'>('cat')
   const [text, setText] = useState('')
-  const [logCall, setLogCall] = useState('')
-  const [logRst, setLogRst] = useState('599')
-  const [logName, setLogName] = useState('')
-  const rstRef = useRef<HTMLInputElement>(null)
-
-  // Click-to-work: a Needed-board click prefills the call and drops focus on RST, so the
-  // operator types the report and hits Enter to log. Keyed on `ts` to refire on re-click.
-  useEffect(() => {
-    if (!pendingWork) return
-    setLogCall(pendingWork.call.toUpperCase())
-    rstRef.current?.focus()
-    rstRef.current?.select()
-    onConsumeWork?.()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingWork?.ts])
 
   const changeWpm = (w: number) => {
     const v = Math.max(WPM_MIN, Math.min(WPM_MAX, Math.round(w)))
@@ -102,31 +88,6 @@ export function CwCockpit({ snap, theme, pendingWork, onConsumeWork }: Props) {
     return () => window.removeEventListener('keydown', onKey)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
-
-  const logIt = async () => {
-    const call = logCall.trim().toUpperCase()
-    if (!call) return
-    const rec: LoggedQso = {
-      call,
-      grid: null,
-      band: snap.radio.band,
-      freqMhz: snap.radio.dialMhz,
-      mode: 'CW',
-      rstSent: logRst.trim() || '599',
-      rstRcvd: logRst.trim() || '599',
-      name: logName.trim() || null,
-      whenUnix: Math.floor(Date.now() / 1000),
-      confirmed: false,
-      awardConfirmed: false,
-    }
-    const r = await withErrorToast(() => logQso(rec), 'Could not log the QSO')
-    if (r) {
-      pushToast(`Logged ${call} (CW)`, 'success')
-      setLogCall('')
-      setLogName('')
-      setLogRst('599')
-    }
-  }
 
   return (
     <main className="layout single cw-cockpit">
@@ -217,49 +178,13 @@ export function CwCockpit({ snap, theme, pendingWork, onConsumeWork }: Props) {
         </button>
       </div>
 
-      <div className="cw-log">
-        <h2>Log this QSO</h2>
-        <div className="cw-log-row">
-          <input
-            className="settings-input mono"
-            value={logCall}
-            onChange={(e) => setLogCall(e.target.value.toUpperCase())}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') void logIt()
-            }}
-            placeholder="Call"
-            autoComplete="off"
-            spellCheck={false}
-          />
-          <input
-            ref={rstRef}
-            className="settings-input mono cw-log-rst"
-            value={logRst}
-            onChange={(e) => setLogRst(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') void logIt()
-            }}
-            placeholder="RST"
-            autoComplete="off"
-          />
-          <input
-            className="settings-input"
-            value={logName}
-            onChange={(e) => setLogName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') void logIt()
-            }}
-            placeholder="Name"
-            autoComplete="off"
-          />
-          <button type="button" className="cw-log-btn" onClick={logIt} disabled={!logCall.trim()}>
-            Log
-          </button>
-        </div>
-        <span className="cw-log-hint">
-          Logs to the shared logbook as CW · {snap.radio.band} · {snap.radio.dialMhz.toFixed(3)} MHz
-        </span>
-      </div>
+      <LogEntry
+        snap={snap}
+        mode="CW"
+        defaultRst="599"
+        pendingWork={pendingWork}
+        onConsumeWork={onConsumeWork}
+      />
     </main>
   )
 }

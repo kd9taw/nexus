@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
-import type { AppSnapshot, LoggedQso } from '../types'
+import { useEffect, useState } from 'react'
+import type { AppSnapshot } from '../types'
 import { Waterfall } from './Waterfall'
 import { VoiceKeyer } from './VoiceKeyer'
 import { LevelMeter } from './LevelMeter'
-import { logQso, setPtt, setRfPower, startQsoRecording, stopQsoRecording } from '../api'
-import { pushToast, withErrorToast } from '../toast'
+import { LogEntry } from './LogEntry'
+import { setPtt, setRfPower, startQsoRecording, stopQsoRecording } from '../api'
+import { pushToast } from '../toast'
 
 interface Props {
   snap: AppSnapshot
@@ -30,21 +31,6 @@ export function PhoneCockpit({ snap, theme, pendingWork, onConsumeWork, onSnap }
   const [keyed, setKeyed] = useState(false)
   const [lock, setLock] = useState(false) // hands-free PTT (toggle instead of hold)
   const [recBusy, setRecBusy] = useState(false) // in-flight guard for the record toggle
-  const [logCall, setLogCall] = useState('')
-  const [logRst, setLogRst] = useState('59')
-  const [logName, setLogName] = useState('')
-  const rstRef = useRef<HTMLInputElement>(null)
-
-  // Click-to-work: a Needed-board click prefills the call and drops focus on RS, so the
-  // operator types the report and hits Enter to log. Keyed on `ts` to refire on re-click.
-  useEffect(() => {
-    if (!pendingWork) return
-    setLogCall(pendingWork.call.toUpperCase())
-    rstRef.current?.focus()
-    rstRef.current?.select()
-    onConsumeWork?.()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingWork?.ts])
 
   // Band-aware sideband, mirroring the engine's rig-mode policy (LSB <10 MHz).
   const sideband = snap.radio.dialMhz < 10 ? 'LSB' : 'USB'
@@ -107,31 +93,6 @@ export function PhoneCockpit({ snap, theme, pendingWork, onConsumeWork, onSnap }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lock])
-
-  const logIt = async () => {
-    const call = logCall.trim().toUpperCase()
-    if (!call) return
-    const rec: LoggedQso = {
-      call,
-      grid: null,
-      band: snap.radio.band,
-      freqMhz: snap.radio.dialMhz,
-      mode: 'SSB',
-      rstSent: logRst.trim() || '59',
-      rstRcvd: logRst.trim() || '59',
-      name: logName.trim() || null,
-      whenUnix: Math.floor(Date.now() / 1000),
-      confirmed: false,
-      awardConfirmed: false,
-    }
-    const r = await withErrorToast(() => logQso(rec), 'Could not log the QSO')
-    if (r) {
-      pushToast(`Logged ${call} (SSB)`, 'success')
-      setLogCall('')
-      setLogName('')
-      setLogRst('59')
-    }
-  }
 
   return (
     <main className="layout single phone-cockpit">
@@ -206,49 +167,13 @@ export function PhoneCockpit({ snap, theme, pendingWork, onConsumeWork, onSnap }
 
       <VoiceKeyer txEnabled={snap.radio.txEnabled} keyed={keyed} />
 
-      <div className="ph-log">
-        <h2>Log this QSO</h2>
-        <div className="ph-log-row">
-          <input
-            className="settings-input mono"
-            value={logCall}
-            onChange={(e) => setLogCall(e.target.value.toUpperCase())}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') void logIt()
-            }}
-            placeholder="Call"
-            autoComplete="off"
-            spellCheck={false}
-          />
-          <input
-            ref={rstRef}
-            className="settings-input mono ph-log-rst"
-            value={logRst}
-            onChange={(e) => setLogRst(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') void logIt()
-            }}
-            placeholder="RS"
-            autoComplete="off"
-          />
-          <input
-            className="settings-input"
-            value={logName}
-            onChange={(e) => setLogName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') void logIt()
-            }}
-            placeholder="Name"
-            autoComplete="off"
-          />
-          <button type="button" className="ph-log-btn" onClick={logIt} disabled={!logCall.trim()}>
-            Log
-          </button>
-        </div>
-        <span className="ph-log-hint">
-          Logs to the shared logbook as SSB · {sideband} · {snap.radio.band}
-        </span>
-      </div>
+      <LogEntry
+        snap={snap}
+        mode="SSB"
+        defaultRst="59"
+        pendingWork={pendingWork}
+        onConsumeWork={onConsumeWork}
+      />
     </main>
   )
 }

@@ -3704,8 +3704,7 @@ body.resizing {
   flex: 1;
   font-family: var(--font-mono);
 }
-.cw-send-btn,
-.cw-log-btn {
+.cw-send-btn {
   padding: 8px 18px;
   border-radius: var(--radius-sm);
   font-weight: 800;
@@ -3713,37 +3712,100 @@ body.resizing {
   background: var(--accent);
   border: 1px solid var(--accent);
 }
-.cw-send-btn:disabled,
-.cw-log-btn:disabled {
+.cw-send-btn:disabled {
   opacity: 0.4;
 }
-.cw-log {
+
+/* ---- Shared cockpit log strip (CW + Phone): rich entry — autofill, prior-QSO, notes ---- */
+.log-entry {
   padding: var(--space-3) var(--space-4);
   border-radius: var(--radius);
   background: var(--bg-elev);
   border: 1px solid var(--border);
 }
-.cw-log h2 {
+.log-entry h2 {
   margin: 0 0 var(--space-2);
   font-size: var(--fs-title);
 }
-.cw-log-row {
+.le-row {
   display: flex;
   gap: var(--space-2);
   align-items: center;
+  margin-bottom: var(--space-2);
 }
-.cw-log-row .settings-input {
+.le-row .settings-input {
   flex: 1;
 }
-.cw-log-rst {
+.le-rst {
   max-width: 80px;
   flex: 0 0 auto !important;
 }
-.cw-log-hint {
+.le-qrz {
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  font-weight: 700;
+  font-size: var(--fs-label);
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+}
+.le-qrz:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+.le-qrz:disabled {
+  opacity: 0.4;
+}
+.le-log-btn {
+  flex: 0 0 auto;
+  padding: 8px 18px;
+  border-radius: var(--radius-sm);
+  font-weight: 800;
+  color: var(--accent-ink);
+  background: var(--accent);
+  border: 1px solid var(--accent);
+}
+.le-log-btn:disabled {
+  opacity: 0.4;
+}
+.le-notes {
+  width: 100%;
+  resize: vertical;
+  min-height: 2.4em;
+  /* .settings-input is a single-line input (padding: 0 12px); a multi-line textarea needs
+     vertical padding + line-height so the first row isn't flush against the top border. */
+  padding: 6px 12px;
+  line-height: 1.4;
+  font-family: inherit;
+}
+.le-hint {
   display: block;
   margin-top: 6px;
   font-size: var(--fs-micro);
   color: var(--text-faint);
+}
+/* Prior-QSO panel: worked-before / dupe / last-contact summary above the row. */
+.le-prior {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: var(--space-2);
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  font-size: var(--fs-micro);
+  color: var(--text-dim);
+}
+.le-prior.dupe {
+  border-color: var(--state-weak, #e0a030);
+  color: var(--state-weak, #e0a030);
+}
+.le-prior.new {
+  color: var(--text-faint);
+}
+.le-prior-text {
+  flex: 1;
 }
 
 /* ===========================================================================
@@ -3882,45 +3944,7 @@ body.resizing {
   font-size: var(--fs-micro);
   color: var(--text-faint);
 }
-.ph-log {
-  padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius);
-  background: var(--bg-elev);
-  border: 1px solid var(--border);
-}
-.ph-log h2 {
-  margin: 0 0 var(--space-2);
-  font-size: var(--fs-title);
-}
-.ph-log-row {
-  display: flex;
-  gap: var(--space-2);
-  align-items: center;
-}
-.ph-log-row .settings-input {
-  flex: 1;
-}
-.ph-log-rst {
-  max-width: 70px;
-  flex: 0 0 auto !important;
-}
-.ph-log-btn {
-  padding: 8px 18px;
-  border-radius: var(--radius-sm);
-  font-weight: 800;
-  color: var(--accent-ink);
-  background: var(--accent);
-  border: 1px solid var(--accent);
-}
-.ph-log-btn:disabled {
-  opacity: 0.4;
-}
-.ph-log-hint {
-  display: block;
-  margin-top: 6px;
-  font-size: var(--fs-micro);
-  color: var(--text-faint);
-}
+/* (Phone + CW log strips now share the .log-entry styles above.) */
 
 /* ---- Phone voice keyer (F-key WAV messages) ------------------------------- */
 .vk {
