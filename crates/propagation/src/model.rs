@@ -151,6 +151,64 @@ impl ModeClass {
     }
 }
 
+/// Classify the operating-mode CLASS of a raw DX-cluster / RBN spot. Cluster spots
+/// carry no structured mode — it's either named in the free-text comment ("CW",
+/// "SSB", "FT8"…) or implied by where in the band the spot sits. We trust an explicit
+/// comment token first (human spotters and RBN both emit one), then fall back to the
+/// band-plan segment for the frequency (CW at the band bottom, phone at the top, the
+/// data middle → Digital). This is exactly how N1MM / DXLab route an unmoded cluster
+/// spot. Used to send a needed spot to the right operating cockpit (CW / Phone / Digital).
+pub fn classify_spot_mode(freq_mhz: f64, comment: &str) -> ModeClass {
+    mode_from_comment(comment).unwrap_or_else(|| mode_from_freq(freq_mhz))
+}
+
+/// An explicit mode token in a cluster comment, if any. Only recognized tokens count
+/// (so a signal report / "CQ" / "UP 2" leaves the decision to the frequency). Agrees
+/// with [`ModeClass::from_adif`] for shared tokens.
+fn mode_from_comment(comment: &str) -> Option<ModeClass> {
+    for raw in comment.split(|c: char| !c.is_ascii_alphanumeric()) {
+        let m = match raw.to_ascii_uppercase().as_str() {
+            "CW" => ModeClass::Cw,
+            "SSB" | "USB" | "LSB" | "PHONE" | "FM" | "AM" | "DV" | "C4FM" | "DMR" => {
+                ModeClass::Phone
+            }
+            "FT8" | "FT4" | "FT1" | "RTTY" | "PSK" | "PSK31" | "PSK63" | "JT65" | "JT9"
+            | "JS8" | "MFSK" | "OLIVIA" | "DATA" | "DIGI" | "SSTV" => ModeClass::Digital,
+            _ => continue,
+        };
+        return Some(m);
+    }
+    None
+}
+
+/// Band-plan segment fallback: below the CW/data line → CW, at/above the phone line →
+/// Phone, the data middle → Digital. Coarse but reliable for routing (the comment
+/// handles the exceptions, e.g. an FT8 watering hole that sits in a phone segment).
+fn mode_from_freq(freq_mhz: f64) -> ModeClass {
+    // (cw_top, phone_bottom) MHz per band. 30m has no phone allocation (CW + data only).
+    let (cw_top, phone_bottom) = match freq_mhz {
+        f if (1.8..2.0).contains(&f) => (1.843, 1.843),
+        f if (3.5..4.0).contains(&f) => (3.570, 3.600),
+        f if (7.0..7.3).contains(&f) => (7.040, 7.125),
+        f if (10.1..10.15).contains(&f) => (10.130, 10.151), // CW < .130, data .130–.150
+        f if (14.0..14.35).contains(&f) => (14.070, 14.150),
+        f if (18.06..18.17).contains(&f) => (18.095, 18.110),
+        f if (21.0..21.45).contains(&f) => (21.070, 21.200),
+        f if (24.89..24.99).contains(&f) => (24.915, 24.930),
+        f if (28.0..29.7).contains(&f) => (28.070, 28.300),
+        f if (50.0..54.0).contains(&f) => (50.100, 50.100),
+        f if (144.0..148.0).contains(&f) => (144.100, 144.100),
+        _ => return ModeClass::Digital, // off the band plan → safe default
+    };
+    if freq_mhz < cw_top {
+        ModeClass::Cw
+    } else if freq_mhz >= phone_bottom {
+        ModeClass::Phone
+    } else {
+        ModeClass::Digital
+    }
+}
+
 /// Coarse world region (for "point NE at Europe" style guidance).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Region {
@@ -436,6 +494,31 @@ mod tests {
         assert_eq!(ModeClass::from_adif("FT8"), ModeClass::Digital);
         assert_eq!(ModeClass::from_adif("RTTY"), ModeClass::Digital);
         assert_eq!(ModeClass::from_adif(""), ModeClass::Digital);
+    }
+
+    #[test]
+    fn classify_spot_mode_trusts_comment_first() {
+        // An explicit comment token wins over the frequency segment — an FT8 spot
+        // parked in a phone segment (6m 50.313) must still classify Digital.
+        assert_eq!(classify_spot_mode(50.313, "FT8 +03"), ModeClass::Digital);
+        assert_eq!(classify_spot_mode(14.250, "CW UP"), ModeClass::Cw); // operator typo'd freq, said CW
+        assert_eq!(classify_spot_mode(14.025, "SSB 59"), ModeClass::Phone);
+        assert_eq!(classify_spot_mode(7.030, "RTTY"), ModeClass::Digital);
+    }
+
+    #[test]
+    fn classify_spot_mode_falls_back_to_band_segment() {
+        // No recognized mode token in the comment → use the band plan.
+        assert_eq!(classify_spot_mode(14.025, "599 tnx"), ModeClass::Cw); // 20m CW segment
+        assert_eq!(classify_spot_mode(14.080, "up 1"), ModeClass::Digital); // 20m data middle
+        assert_eq!(classify_spot_mode(14.250, "loud"), ModeClass::Phone); // 20m phone segment
+        assert_eq!(classify_spot_mode(7.020, ""), ModeClass::Cw); // 40m CW
+        assert_eq!(classify_spot_mode(7.200, ""), ModeClass::Phone); // 40m phone
+        assert_eq!(classify_spot_mode(10.136, ""), ModeClass::Digital); // 30m: no phone, data
+        assert_eq!(classify_spot_mode(3.510, ""), ModeClass::Cw); // 80m CW
+        assert_eq!(classify_spot_mode(3.800, ""), ModeClass::Phone); // 80m phone
+        // Off the band plan → safe Digital default.
+        assert_eq!(classify_spot_mode(5.350, "?"), ModeClass::Digital);
     }
 
     #[test]

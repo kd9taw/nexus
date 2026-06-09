@@ -64,8 +64,8 @@ pub use journey::{
 };
 pub use mapspots::{build_map_spots, MapSpot};
 pub use model::{
-    classify_vhf_mode, ActivityTier, Band, Confidence, ModeClass, PathSpot, PropMode, Region, Side,
-    SpaceWx,
+    classify_spot_mode, classify_vhf_mode, ActivityTier, Band, Confidence, ModeClass, PathSpot,
+    PropMode, Region, Side, SpaceWx,
 };
 pub use needalert::{
     heard_from_freq, heard_near_me, near_me_radius_km, rank as rank_needs, skimmer_grid,

@@ -53,16 +53,22 @@ impl NeedTag {
     }
 }
 
-/// A heard station to score — a callsign plus the band/mode it's heard on.
+/// A heard station to score — a callsign plus the band/mode it's heard on, and the
+/// exact spot frequency when known (cluster/RBN spots carry one; band-level reception
+/// geometry does not).
 #[derive(Debug, Clone)]
 pub struct Heard {
     pub call: String,
     pub band: String,
     pub mode: String,
+    /// Exact spot frequency in MHz, when the source carried one (cluster/RBN). `None`
+    /// for band-level reception-report needs (near-me / getting-out).
+    pub freq_mhz: Option<f64>,
 }
 
 /// A scored need opportunity for a heard station.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+// No `Eq`: `freq_mhz` is an f64. `PartialEq` is enough for tests/assertions.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NeedAlert {
     pub call: String,
@@ -75,6 +81,12 @@ pub struct NeedAlert {
     pub priority: u32,
     /// One-line "why" for the UI (from the top tag).
     pub headline: String,
+    /// Operating-mode class — "CW" / "Phone" / "Digital". Routes a click-to-work to the
+    /// matching cockpit and drives the band's mode badge.
+    pub mode: String,
+    /// Exact spot frequency in MHz, when known (cluster/RBN) — lets click-to-work QSY to
+    /// the spot, not just the band's default. `None` for band-level reception needs.
+    pub freq_mhz: Option<f64>,
 }
 
 /// Build a [`Heard`] from a spot frequency (MHz) — maps the frequency to a band
@@ -86,6 +98,7 @@ pub fn heard_from_freq(call: &str, freq_mhz: f64, mode: &str) -> Option<Heard> {
         call: call.to_string(),
         band: band.label().to_string(),
         mode: mode.to_string(),
+        freq_mhz: Some(freq_mhz),
     })
 }
 
@@ -140,6 +153,10 @@ pub fn score(
         tags,
         priority,
         headline,
+        // The operating-mode class for routing/badging. `rank` attaches the exact
+        // frequency from the Heard (score is frequency-agnostic award logic).
+        mode: ModeClass::from_adif(mode).label().to_string(),
+        freq_mhz: None,
     })
 }
 
@@ -152,17 +169,27 @@ pub fn rank(
 ) -> Vec<NeedAlert> {
     let mut scored: Vec<NeedAlert> = spots
         .iter()
-        .filter_map(|s| score(&s.call, &s.band, &s.mode, needs, worked_zones))
+        .filter_map(|s| {
+            // score() owns the award logic + mode class; attach the exact frequency
+            // (when this Heard carried one) so click-to-work can QSY to the spot.
+            score(&s.call, &s.band, &s.mode, needs, worked_zones).map(|mut a| {
+                a.freq_mhz = s.freq_mhz;
+                a
+            })
+        })
         .collect();
     scored.sort_by(|a, b| {
         b.priority
             .cmp(&a.priority)
             .then_with(|| a.call.cmp(&b.call))
     });
-    let mut seen: HashSet<(String, String)> = HashSet::new();
+    // Dedup by (call, band, mode-class): the SAME station workable on 20m via both CW
+    // and FT8 is two distinct opportunities (different cockpits), so keep both — but
+    // collapse exact duplicates within a mode.
+    let mut seen: HashSet<(String, String, String)> = HashSet::new();
     scored
         .into_iter()
-        .filter(|a| seen.insert((a.call.clone(), a.band.clone())))
+        .filter(|a| seen.insert((a.call.clone(), a.band.clone(), a.mode.clone())))
         .collect()
 }
 
@@ -197,6 +224,7 @@ pub fn heard_near_me(reports: &[PathSpot], me: (f64, f64)) -> Vec<Heard> {
                     call: p.tx_call.clone(),
                     band,
                     mode: p.mode.clone().unwrap_or_else(|| "FT8".to_string()),
+                    freq_mhz: None, // reception geometry is band-level, not freq-precise
                 });
             }
         }
@@ -250,6 +278,7 @@ pub fn workable_by_getting_out(reports: &[PathSpot], my_call: &str) -> Vec<Heard
                     call: p.tx_call.clone(),
                     band,
                     mode: p.mode.clone().unwrap_or_else(|| "FT8".to_string()),
+                    freq_mhz: None, // reception geometry is band-level, not freq-precise
                 });
             }
         }
@@ -298,6 +327,7 @@ mod tests {
             call: call.into(),
             band: band.into(),
             mode: "FT8".into(),
+            freq_mhz: None,
         }
     }
 
@@ -448,8 +478,30 @@ mod tests {
         let h = heard_from_freq("3Y0J", 14.074, "FT8").unwrap();
         assert_eq!(h.band, "20m");
         assert_eq!(h.call, "3Y0J");
+        assert_eq!(h.freq_mhz, Some(14.074)); // exact freq carried for click-to-work
         // A frequency on no known band → None.
         assert!(heard_from_freq("X", 0.5, "FT8").is_none());
+    }
+
+    #[test]
+    fn alert_carries_mode_class_and_exact_freq() {
+        // A CW cluster spot (mode + exact freq) flows through score+rank onto the alert,
+        // so the UI can route it to the CW cockpit and QSY to the spot.
+        let needs = LogNeeds::new(); // empty log → any DX is a new one
+        let spots = vec![Heard {
+            call: "3Y0J".into(),
+            band: "20m".into(),
+            mode: "CW".into(),
+            freq_mhz: Some(14.025),
+        }];
+        let ranked = rank(&spots, &needs, &HashSet::new());
+        assert_eq!(ranked.len(), 1);
+        assert_eq!(ranked[0].mode, "CW");
+        assert_eq!(ranked[0].freq_mhz, Some(14.025));
+        // A band-level (geometry) need carries the class but no exact frequency.
+        let a = score("JA1XYZ", "20m", "SSB", &needs, &HashSet::new()).unwrap();
+        assert_eq!(a.mode, "Phone");
+        assert_eq!(a.freq_mhz, None);
     }
 
     #[test]

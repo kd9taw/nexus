@@ -1441,6 +1441,7 @@ async fn get_need_alerts(
     state: State<'_, SharedEngine>,
     live_paths: State<'_, SharedLivePaths>,
     region_paths: State<'_, SharedRegionPaths>,
+    spots: State<'_, SharedSpots>,
 ) -> Result<Vec<propagation::NeedAlert>, String> {
     let eng = state.lock().map_err(|e| e.to_string())?;
     let mut needs = propagation::LogNeeds::new();
@@ -1458,6 +1459,7 @@ async fn get_need_alerts(
             call: s.call.clone(),
             band: band.clone(),
             mode: "FT8".to_string(), // FT-family → Digital class; the band is what varies
+            freq_mhz: None,          // own decodes are band-level here
         })
         .collect();
     // The real value (empirical evidence, not a model): two complementary signals
@@ -1482,11 +1484,33 @@ async fn get_need_alerts(
             heard.extend(propagation::heard_near_me(&buf.recent(now, 900), me));
         }
     }
-    // NB: CW/RTTY (RBN) spots are intentionally NOT listed here — the operator works
-    // digital, so we don't surface CW/RTTY stations as needed contacts. Those spots
-    // instead feed the PROPAGATION engine (get_propagation, via the skimmer→grid
-    // table) as real reception geometry — they shape "what's open" reality, not the
-    // needed roster.
+    // VOICE / CW needs come from the DX-cluster + RBN spot firehose, which carries an
+    // EXACT frequency (→ click-to-work can QSY to the spot, not just the band). Cluster
+    // spots have no structured mode, so classify each from its comment token / band
+    // segment. We admit only CW and Phone here: Digital needs stay empirical (the
+    // near-me / getting-out geometry above), so a pure-digital operator's board is
+    // unchanged — the frontend then shows CW/Phone rows only when those features are on.
+    if let Ok(buf) = spots.lock() {
+        let recent = buf.recent_within(
+            std::time::Instant::now(),
+            std::time::Duration::from_secs(900),
+        );
+        for cs in recent {
+            let freq = cs.freq_mhz();
+            let Some(band_lbl) = propagation::Band::from_mhz(freq).map(|b| b.label()) else {
+                continue; // off the band plan → skip
+            };
+            let class = propagation::classify_spot_mode(freq, &cs.comment);
+            if matches!(class, propagation::ModeClass::Cw | propagation::ModeClass::Phone) {
+                heard.push(propagation::Heard {
+                    call: cs.dx_call.to_ascii_uppercase(),
+                    band: band_lbl.to_string(),
+                    mode: class.label().to_string(),
+                    freq_mhz: Some(freq),
+                });
+            }
+        }
+    }
     Ok(propagation::rank_needs(&heard, &needs, needs.worked_zones()))
 }
 
