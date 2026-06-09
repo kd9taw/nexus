@@ -253,9 +253,12 @@ fn is_grid(s: &str) -> bool {
 pub fn is_valid_grid(s: &str) -> bool {
     let s = s.trim();
     let b = s.as_bytes();
+    // Field letters are case-INSENSITIVE: the FT8 packer treats "en52" and "EN52"
+    // identically (byte-identical tones), and operators type either — so validating
+    // (and gating TX on) only uppercase would wrongly block a perfectly legal grid.
     let four = s.len() >= 4
-        && b[0].is_ascii_uppercase()
-        && b[1].is_ascii_uppercase()
+        && b[0].is_ascii_alphabetic()
+        && b[1].is_ascii_alphabetic()
         && b[2].is_ascii_digit()
         && b[3].is_ascii_digit();
     match s.len() {
@@ -284,6 +287,8 @@ mod fidelity_tests {
     #[test]
     fn valid_grid_accepts_4_and_6_char_rejects_blank_and_malformed() {
         assert!(is_valid_grid("EN52"));
+        assert!(is_valid_grid("en52"), "lowercase field letters are valid (encoder is case-insensitive)");
+        assert!(is_valid_grid("En52"));
         assert!(is_valid_grid("EN52aa")); // 6-char subsquare
         assert!(is_valid_grid(" EN52 ")); // trimmed
         assert!(!is_valid_grid(""), "blank grid (the bug) is rejected");

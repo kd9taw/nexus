@@ -1642,14 +1642,16 @@ impl Engine {
     /// keying FT8/FT4 mode (Call CQ / work a station) so the operator gets a concrete
     /// reason instead of a grid-less call or a silently-suppressed over. FT1/DX1
     /// free-text isn't grid-bound, so it returns `Ok`.
-    pub fn structured_tx_ready(&self) -> Result<(), String> {
+    pub fn structured_tx_ready(&self, needs_grid: bool) -> Result<(), String> {
         if !matches!(self.tier(), Tier::Ft8 | Tier::Ft4) {
             return Ok(());
         }
         if !tempo_core::message::is_callsign(&self.settings.mycall) {
             return Err("Set your callsign in Settings before transmitting FT8/FT4.".into());
         }
-        if !tempo_core::message::is_valid_grid(&self.settings.mygrid) {
+        // CQ/QSO messages carry the grid (Tx1); Field Day exchanges ("3A IL") do NOT,
+        // so only require a grid when the message actually sends one.
+        if needs_grid && !tempo_core::message::is_valid_grid(&self.settings.mygrid) {
             return Err(
                 "Set your Maidenhead grid (e.g. EN52) in Settings before transmitting FT8/FT4."
                     .into(),
@@ -1722,7 +1724,11 @@ impl Engine {
     /// used to decide whether a late (mid-slot) first over still fits the slot.
     pub fn tx_over_secs(&self) -> f64 {
         match self.app.tier() {
-            Tier::Ft8 | Tier::Dx1 => 12.64,
+            // FT8 = 0.5 s lead-in + 12.64 s tones (the slot-positioned wave the radio
+            // loop actually plays). Must include the lead-in so the "snappy first over"
+            // room check doesn't admit an over that overruns the next slot by 0.5 s.
+            Tier::Ft8 => 13.14,
+            Tier::Dx1 => 12.64, // no lead-in; a safe over-estimate of the ~9.9 s frame
             Tier::Ft4 => 4.48,
             Tier::Ft1 => 3.55,
         }
@@ -2144,10 +2150,10 @@ impl Engine {
         // grid-less call (the reported bug). FT1/DX1 free-text isn't grid-bound, so it's
         // exempt. This is the last line of defense — the command layer also blocks
         // entering a keying FT8/FT4 mode without a valid identity (with a clear message).
-        if matches!(self.app.tier(), Tier::Ft8 | Tier::Ft4)
-            && !(tempo_core::message::is_callsign(&self.settings.mycall)
-                && tempo_core::message::is_valid_grid(&self.settings.mygrid))
-        {
+        // (structured_tx_ready returns Ok off the FT8/FT4 tier, so FT1/DX1 free-text is
+        // exempt; Field Day exchanges carry no grid, so only the callsign is required.)
+        let needs_grid = !matches!(self.mode, Mode::FieldDay { .. });
+        if self.structured_tx_ready(needs_grid).is_err() {
             self.app.set_transmitting(false);
             return Vec::new();
         }
@@ -2794,28 +2800,48 @@ mod tests {
         // No grid → Call CQ refused at the command boundary + the slot backstop blocks.
         let mut e = Engine::new("W9XYZ", "", 0);
         e.set_tier(Tier::Ft8);
-        assert!(e.structured_tx_ready().is_err(), "FT8 not ready without a grid");
+        assert!(e.structured_tx_ready(true).is_err(), "FT8 not ready without a grid");
         e.set_mode("qso-run").unwrap(); // engine set_mode doesn't gate; arms TX + CallingCq
         assert!(e.poll_tx(0).is_empty(), "backstop: no FT8 CQ without a grid");
 
         // No callsign → blocked too.
         let mut e = Engine::new("", "EN52", 0);
         e.set_tier(Tier::Ft8);
-        assert!(e.structured_tx_ready().is_err(), "FT8 not ready without a call");
+        assert!(e.structured_tx_ready(true).is_err(), "FT8 not ready without a call");
         e.set_mode("qso-run").unwrap();
         assert!(e.poll_tx(0).is_empty(), "backstop: no FT8 CQ without a call");
 
         // Valid identity → ready, and the CQ keys.
         let mut e = Engine::new("W9XYZ", "EN52", 0);
         e.set_tier(Tier::Ft8);
-        assert!(e.structured_tx_ready().is_ok(), "valid call+grid → ready");
+        assert!(e.structured_tx_ready(true).is_ok(), "valid call+grid → ready");
         e.set_mode("qso-run").unwrap();
         assert!(!e.poll_tx(0).is_empty(), "FT8 CQ keys with a valid call+grid");
+
+        // A lowercase grid is valid (encoder is case-insensitive) — must NOT be blocked.
+        let mut e = Engine::new("W9XYZ", "en52", 0);
+        e.set_tier(Tier::Ft8);
+        assert!(e.structured_tx_ready(true).is_ok(), "lowercase grid is accepted");
+
+        // Field Day on FT8: the exchange carries NO grid, so a valid call alone is enough
+        // — a blank grid must NOT suppress the FD over.
+        let mut e = Engine::new("W9XYZ", "", 0);
+        e.set_tier(Tier::Ft8);
+        assert!(e.structured_tx_ready(false).is_ok(), "FD needs only a callsign");
+        {
+            let mut s = e.settings().clone();
+            s.fd_class = "3A".into();
+            s.fd_section = "WI".into();
+            e.apply_settings(s);
+        }
+        e.set_tier(Tier::Ft8);
+        e.set_mode("fieldday-run").unwrap(); // arms TX
+        assert!(!e.poll_tx(0).is_empty(), "FT8 Field Day keys without a grid");
 
         // FT1 free-text is exempt from the standard-message grid contract.
         let mut e = Engine::new("W9XYZ", "", 0);
         e.set_tier(Tier::Ft1);
-        assert!(e.structured_tx_ready().is_ok(), "FT1 is not grid-bound");
+        assert!(e.structured_tx_ready(true).is_ok(), "FT1 is not grid-bound");
     }
 
     #[test]
@@ -3667,11 +3693,10 @@ mod tests {
         assert!(!tones.is_empty(), "{} encode failed", kind.as_str());
         let wave = mode.gen_wave(&tones, ft1::SAMPLE_RATE, f0);
         let n = mode.frame_samples();
-        let off = if kind == modes::ModeKind::Ft8 {
-            6_000
-        } else {
-            0
-        };
+        // FT8/FT4 gen_wave is now slot-positioned (includes the 0.5 s lead-in), so place
+        // it at the slot start — no manual offset (a stale +6000 here would push FT8 to
+        // 1.0 s, double-offsetting it).
+        let off = 0;
         let mut frame = vec![0f32; n];
         for (i, &s) in wave.iter().enumerate() {
             if off + i < n {
