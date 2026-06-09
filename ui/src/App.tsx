@@ -50,7 +50,7 @@ import { StationList } from './components/StationList'
 import { Conversation } from './components/Conversation'
 import { Waterfall } from './components/Waterfall'
 import { LinkPill } from './components/LinkPill'
-import { ModeNav, type View } from './components/ModeNav'
+import { ModeNav, type View, type DigitalMode } from './components/ModeNav'
 import { OperateCockpit } from './components/OperateCockpit'
 import { NowBar } from './components/NowBar'
 import { AwardsJourney } from './components/AwardsJourney'
@@ -673,6 +673,39 @@ export default function App() {
     })
   }, [])
 
+  // Pick a Digital sub-mode from the rail. Tempo → the FT1/DX1 free-text cockpit
+  // (reuse the workspace bind). FT8/FT4 → the weak-signal cockpit on that tier: bind
+  // the dx workspace (tier + QSO mode) THEN set the exact tier, sequentially, so
+  // set_area's default-FT8 can't race past a requested FT4.
+  const handleDigitalMode = useCallback(
+    (m: DigitalMode) => {
+      if (m === 'tempo') {
+        handleWorkspace('msg')
+        return
+      }
+      const wantTier: Tier = m === 'ft8' ? 'FT8' : 'FT4'
+      setArea('dx')
+      try {
+        localStorage.setItem('nexus.workspace', 'dx')
+      } catch {
+        /* ignore */
+      }
+      setView('operate')
+      // Bind the dx workspace, THEN set the exact tier — each wrapped so a backend
+      // failure surfaces a toast (matching handleTier) instead of failing silently
+      // or leaving an unhandled rejection.
+      void withErrorToast(() => apiSetArea('dx'), 'Could not switch to Digital')
+        .then((s) => {
+          if (s) setSnap(s)
+          return withErrorToast(() => apiSetTier(wantTier), 'Could not change tier')
+        })
+        .then((s) => {
+          if (s) setSnap(s)
+        })
+    },
+    [handleWorkspace],
+  )
+
   const handleSourceChange = useCallback((k: SourceKind) => {
     // Companion bind can fail (port busy) → withErrorToast surfaces it and the
     // backend stays on the previous source.
@@ -1078,8 +1111,8 @@ export default function App() {
           mode={snap.mode}
           enabled={features.enabled}
           onSelect={handleView}
-          workspace={area}
-          onWorkspace={handleWorkspace}
+          tier={tier}
+          onDigitalMode={handleDigitalMode}
         />
         {/* Operate cockpit lives here PERMANENTLY (mounted once, hidden when you're
             on another section) so the waterfall + Band Activity keep decoding and

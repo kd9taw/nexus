@@ -1570,45 +1570,33 @@ body.resizing {
   flex-direction: column;
   gap: 6px;
 }
-/* Workspace pill tabs (DX / MSG) — the top-level area switch. Made prominent so
-   it reads as a primary control, not a subtle toggle. */
-.mode-nav-areas {
+/* The "Digital" group in the rail: a labelled box holding the FT8 / FT4 / Tempo
+   sub-items (the three digital tiers), so FT8/FT4 read as distinct modes UNDER
+   Digital rather than as a separate top-level pair. Boxed + tinted so the grouping
+   is obvious in the narrow vertical rail. */
+.mode-nav-group {
   display: flex;
-  /* Stack the area pills vertically — in the narrow (88px) vertical rail a
-     horizontal row gives each ~20px and "CONNECT" overflows right onto the
-     content header. Column gives each the full rail width. (Re-rowed at the
-     900px breakpoint where the rail becomes a horizontal top bar.) */
   flex-direction: column;
-  gap: 5px;
-  margin-bottom: 12px;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--border);
-}
-.area-pill {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  padding: 9px 0;
-  border: 1px solid var(--accent);
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--border-soft);
   border-radius: var(--radius-sm);
-  background: var(--bg-elev-2);
-  color: var(--text);
-  font-size: 0.84rem;
+  background: color-mix(in srgb, var(--bg-elev-2) 45%, transparent);
+}
+.mode-nav-group-label {
+  text-align: center;
+  font-size: 9px;
   font-weight: 800;
-  letter-spacing: 0.06em;
-  cursor: pointer;
-  transition: var(--transition);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  padding-top: 2px;
 }
-.area-pill:hover {
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
-}
-.area-pill.active {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--accent-ink);
-  box-shadow: 0 0 0 1px var(--accent);
+/* Compact variant of the nav button for the Digital sub-items. */
+.mode-btn.sub {
+  min-height: 0;
+  padding: 6px 4px;
+  gap: 3px;
 }
 .mode-btn {
   display: flex;
@@ -3811,7 +3799,14 @@ body.resizing {
 /* ===========================================================================
    Phone (voice) operating cockpit (casual) — PTT + rig control + logging
    =========================================================================== */
-.phone-cockpit {
+/* `<main class="layout single phone-cockpit">`. `.layout.single` (0,2,0) sets
+   display:block, which would OVERRIDE a bare `.phone-cockpit` (0,1,0) — leaving the
+   cockpit a scrolling block where `.layout.single > .panel { height:100% }` blows the
+   scope up to full height and pushes the voice controls below the fold (the reported
+   "scroll down at 125% to reach voice control" bug). Match all three classes (0,3,0)
+   so it stays a definite-height flex column; the scope is then a short fixed strip and
+   only a very long log scrolls. Same pattern as `.layout.single.operate-cockpit`. */
+.layout.single.phone-cockpit {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
@@ -3946,19 +3941,28 @@ body.resizing {
 }
 /* Phone bandscope: a horizontal real-time scope (panadapter trace + fast waterfall) with a
    rapid colored S-meter. Replaces the FT8 vertical waterfall in the Phone cockpit. */
+/* A WIDE, SHORT bandscope strip (~quarter screen, not a tall vertical block). vh-based
+   so it stays proportional at 125% OS scale instead of overflowing. Carries its own
+   panel chrome because it intentionally drops the `.panel` class (that class triggers
+   `.layout.single > .panel { height:100% }`, which is what made it full-height). */
 .ph-scope-panel {
   flex: 0 0 auto;
-  min-height: 172px;
+  height: 22vh;
+  min-height: 120px;
+  max-height: 220px;
   display: flex;
   flex-direction: column;
   padding: 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
 }
 .ph-scope {
   display: flex;
   flex-direction: column;
   gap: 6px;
   flex: 1;
-  min-height: 150px;
+  min-height: 0;
 }
 .ph-scope-smeter {
   display: flex;
@@ -3988,7 +3992,7 @@ body.resizing {
 .ph-scope-canvas {
   flex: 1;
   width: 100%;
-  min-height: 120px;
+  min-height: 0;
   display: block;
   border-radius: var(--radius-sm);
 }
@@ -4920,12 +4924,15 @@ select.settings-input {
     gap: 6px;
     align-items: center;
   }
-  .mode-nav-areas {
-    /* Horizontal top bar at this breakpoint → re-row the area pills. */
+  .mode-nav-group {
+    /* Horizontal top bar at this breakpoint → re-row the Digital group inline. */
     flex-direction: row;
-    margin-bottom: 0;
-    padding-bottom: 0;
-    border-bottom: none;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 6px;
+  }
+  .mode-nav-group-label {
+    padding: 0 2px 0 0;
   }
   .mode-btn {
     flex-direction: row;

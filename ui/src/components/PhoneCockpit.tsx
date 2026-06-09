@@ -160,7 +160,7 @@ export function PhoneCockpit({ snap, theme, pendingWork, onConsumeWork, onSnap }
         </span>
       </div>
 
-      <section className="ph-scope-panel panel">
+      <section className="ph-scope-panel">
         <PhoneScope transmitting={snap.radio.transmitting} theme={theme} />
       </section>
 

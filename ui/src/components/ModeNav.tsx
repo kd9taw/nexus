@@ -1,4 +1,4 @@
-import type { OpMode } from '../types'
+import type { OpMode, Tier } from '../types'
 import type { LucideIcon } from 'lucide-react'
 import {
   Radio,
@@ -19,7 +19,7 @@ import {
   Settings,
 } from 'lucide-react'
 import { Tooltip, TooltipProvider } from './ui/Tooltip'
-import { featureById, type FeatureId, type View } from '../features/registry'
+import { type FeatureId, type View } from '../features/registry'
 
 // `View` now lives in the feature registry (features ARE the views); re-export so
 // existing `import { type View } from './ModeNav'` call-sites keep working.
@@ -33,12 +33,55 @@ interface Props {
   /** Enabled-set from the feature system — disabled sections are hidden. */
   enabled: Record<FeatureId, boolean>
   onSelect: (view: View) => void
-  /** Operate MODE: 'dx' (FT8/FT4 structured cockpit) or 'msg' (Tempo two-way
-   * calling). Only swaps the mode-specific sections; Connect/Map/Prop/Logbook/
-   * Awards are global and always shown. */
-  workspace: 'dx' | 'msg'
-  onWorkspace: (w: 'dx' | 'msg') => void
+  /** Live radio tier (FT1/DX1/FT8/FT4) — picks which Digital sub-item is active. */
+  tier: Tier
+  /** Choose a Digital sub-mode: 'ft8'/'ft4' open the weak-signal cockpit on that
+   * tier; 'tempo' opens the FT1/DX1 free-text calling cockpit. */
+  onDigitalMode: (m: DigitalMode) => void
 }
+
+/** The three modes grouped under "Digital" in the rail. */
+export type DigitalMode = 'ft8' | 'ft4' | 'tempo'
+
+interface DigitalSub {
+  mode: DigitalMode
+  label: string
+  icon: LucideIcon
+  title: string
+  /** Whether this sub-item is the active one, given the current view + tier. */
+  active: (view: View, tier: Tier) => boolean
+}
+
+// FT8, FT4 and Tempo (FT1/DX1) are all digital tiers — group them under one
+// "Digital" heading. FT8/FT4 share the weak-signal `operate` cockpit (distinguished
+// by tier); Tempo is the `chat` cockpit. The active highlight is view-first,
+// tier-second so a global view (e.g. Map) leaves none of them lit.
+const DIGITAL_SUBS: DigitalSub[] = [
+  {
+    mode: 'ft8',
+    label: 'FT8',
+    icon: Radio,
+    title: 'FT8 — standard WSJT-X weak-signal (15 s)',
+    // FT8 is the fallback: on the operate cockpit with any tier that isn't FT4 (incl.
+    // a transient FT1/DX1 before the async tier-set lands), FT8 stays lit — so the
+    // operate view always shows exactly one Digital sub active, never a dark group.
+    active: (v, t) => v === 'operate' && t !== 'FT4',
+  },
+  {
+    mode: 'ft4',
+    label: 'FT4',
+    icon: Radio,
+    title: 'FT4 — faster WSJT-X weak-signal (7.5 s)',
+    active: (v, t) => v === 'operate' && t === 'FT4',
+  },
+  {
+    mode: 'tempo',
+    label: 'Tempo',
+    icon: MessageSquare,
+    title: 'Tempo — two-way free-text calling (FT1 / DX1)',
+    active: (v) => v === 'chat',
+  },
+]
 
 interface Item {
   id: View
@@ -47,24 +90,36 @@ interface Item {
   title: string
 }
 
+// The two non-digital operating cockpits — bookends of the operating group. Phone
+// and CW are opt-in (gated by `enabled`); the Digital group sits between them.
+const PHONE: Item = {
+  id: 'phone',
+  label: 'Phone',
+  icon: Mic,
+  title: 'Phone (SSB) operating — PTT, sideband, RF power, panadapter (casual)',
+}
+const CW: Item = {
+  id: 'cw',
+  label: 'CW',
+  icon: Zap,
+  title: 'CW operating — keyboard + F-key macros, WPM, spectrum (casual)',
+}
+
+// Everything below the operating group: global situational/logging surfaces + opt-in
+// extras (all `core: false`, so they appear only when enabled in Settings ▸ Features).
+// `operate` and `chat` are NOT here — they live in the Digital group above as FT8/FT4
+// and Tempo. ('qso' stays retired from the nav; the Digital cockpit sequences inline.)
 const ITEMS: Item[] = [
-  { id: 'operate', label: 'FT8/FT4', icon: Radio, title: 'FT8/FT4 Operations — waterfall-first cockpit' },
-  { id: 'cw', label: 'CW', icon: Zap, title: 'CW operating — keyboard + F-key macros, WPM, spectrum (casual)' },
-  { id: 'phone', label: 'Phone', icon: Mic, title: 'Phone (SSB) operating — PTT, sideband, RF power, panadapter (casual)' },
   { id: 'connect', label: 'Connect', icon: Radar, title: 'Connect — situational awareness: grayline map + live propagation in one view' },
   { id: 'needed', label: 'Needed', icon: Target, title: 'Needed — what you still need that’s on the air now; single-click to QSY' },
   { id: 'propagation', label: 'Prop', icon: Sun, title: 'Propagation & opening intelligence — what’s open now, 6m openings, DXpeditions' },
   { id: 'map', label: 'Map', icon: Globe, title: 'Map — azimuthal beam map: great-circle headings, range rings, openings, DXpeditions' },
-  { id: 'chat', label: 'Chat', icon: MessageSquare, title: 'Chat — free-form QSO' },
-  // 'qso' retired from the nav: the Operate cockpit now sequences the QSO inline
-  // (waterfall + decodes stay visible), so the separate chat-style QSO screen is
-  // redundant. The route still resolves if reached, but it's no longer surfaced.
+  { id: 'logbook', label: 'Logbook', icon: BookOpen, title: 'Logbook — your ADIF contacts' },
+  { id: 'awards', label: 'Awards', icon: Trophy, title: 'Awards — your Journey (firsts, ladders, milestones) + official DXCC/WAS/WAZ progress' },
   { id: 'fieldDay', label: 'Field Day', icon: Tent, title: 'Field Day — contest rate workspace' },
   { id: 'band', label: 'Band', icon: RadioTower, title: 'Band — open broadcasts / activity feed' },
   { id: 'pota', label: 'POTA/SOTA', icon: Trees, title: 'POTA / SOTA — parks & summits: who’s on now (hunt) + tag your activation' },
   { id: 'roam', label: 'Roam', icon: ArrowLeftRight, title: 'Coordinated QSY — move together off QRM (announced in the clear)' },
-  { id: 'logbook', label: 'Logbook', icon: BookOpen, title: 'Logbook — your ADIF contacts' },
-  { id: 'awards', label: 'Awards', icon: Trophy, title: 'Awards — your Journey (firsts, ladders, milestones) + official DXCC/WAS/WAZ progress' },
   { id: 'log', label: 'Field Log', icon: ClipboardList, title: 'Field Log — Field Day / activity export' },
 ]
 
@@ -74,61 +129,63 @@ const MODE_LABEL: Record<OpMode, string> = {
   fieldDay: 'FIELD DAY',
 }
 
-export function ModeNav({ view, mode, enabled, onSelect, workspace, onWorkspace }: Props) {
-  // Show a section when it's enabled AND belongs to the active area (or to both,
-  // i.e. no workspace tag — e.g. Logbook). The pill tabs swap the area.
-  const items = ITEMS.filter((it) => {
-    if (enabled[it.id] === false) return false
-    const ws = featureById(it.id)?.workspace
-    return ws === undefined || ws === workspace
-  })
+export function ModeNav({ view, mode, enabled, onSelect, tier, onDigitalMode }: Props) {
+  // Sections show purely by feature-enable now (no workspace/area gating) — the old
+  // dx/msg split is gone; FT8/FT4/Tempo live in the Digital group instead.
+  const items = ITEMS.filter((it) => enabled[it.id] !== false)
+  // A plain view button (used for Phone, CW, and the global sections).
+  const navBtn = (it: Item) => {
+    const Icon = it.icon
+    return (
+      <Tooltip key={it.id} content={it.title}>
+        <button
+          type="button"
+          className={`mode-btn${view === it.id ? ' active' : ''}`}
+          aria-current={view === it.id ? 'page' : undefined}
+          aria-label={it.title}
+          onClick={() => onSelect(it.id)}
+        >
+          <span className="mode-glyph" aria-hidden="true">
+            <Icon size={18} strokeWidth={1.75} />
+          </span>
+          <span className="mode-label">{it.label}</span>
+        </button>
+      </Tooltip>
+    )
+  }
   return (
     <TooltipProvider>
       <nav className="mode-nav" aria-label="Operating mode">
-        {/* Operate-mode switch: swaps ONLY the cockpit + its mode-specific sections.
-            Connect / Map / Prop / Logbook / Awards stay visible in both modes. */}
-        <div className="mode-nav-areas" role="tablist" aria-label="Operate mode">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={workspace === 'dx'}
-            className={`area-pill${workspace === 'dx' ? ' active' : ''}`}
-            onClick={() => onWorkspace('dx')}
-            title="FT8 / FT4 — structured weak-signal operating"
-          >
-            FT8/FT4
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={workspace === 'msg'}
-            className={`area-pill${workspace === 'msg' ? ' active' : ''}`}
-            onClick={() => onWorkspace('msg')}
-            title="Tempo — two-way free-text calling (FT1 / DX1)"
-          >
-            Tempo
-          </button>
-        </div>
         <div className="mode-nav-top">
-          {items.map((it) => {
-            const Icon = it.icon
-            return (
-              <Tooltip key={it.id} content={it.title}>
-                <button
-                  type="button"
-                  className={`mode-btn${view === it.id ? ' active' : ''}`}
-                  aria-current={view === it.id ? 'page' : undefined}
-                  aria-label={it.title}
-                  onClick={() => onSelect(it.id)}
-                >
-                  <span className="mode-glyph" aria-hidden="true">
-                    <Icon size={18} strokeWidth={1.75} />
-                  </span>
-                  <span className="mode-label">{it.label}</span>
-                </button>
-              </Tooltip>
-            )
-          })}
+          {/* Operating group: Phone · Digital(FT8/FT4/Tempo) · CW. The duplicate
+              top FT8/FT4|Tempo pill row is gone — this is the single source. */}
+          {enabled.phone !== false && navBtn(PHONE)}
+          <div className="mode-nav-group" role="group" aria-label="Digital modes">
+            <span className="mode-nav-group-label">Digital</span>
+            {DIGITAL_SUBS.map((s) => {
+              const Icon = s.icon
+              const active = s.active(view, tier)
+              return (
+                <Tooltip key={s.mode} content={s.title}>
+                  <button
+                    type="button"
+                    className={`mode-btn sub${active ? ' active' : ''}`}
+                    aria-current={active ? 'page' : undefined}
+                    aria-label={s.title}
+                    onClick={() => onDigitalMode(s.mode)}
+                  >
+                    <span className="mode-glyph" aria-hidden="true">
+                      <Icon size={16} strokeWidth={1.75} />
+                    </span>
+                    <span className="mode-label">{s.label}</span>
+                  </button>
+                </Tooltip>
+              )
+            })}
+          </div>
+          {enabled.cw !== false && navBtn(CW)}
+          {/* Global situational/logging surfaces + opt-in extras. */}
+          {items.map((it) => navBtn(it))}
         </div>
 
         <div className="mode-nav-bottom">
