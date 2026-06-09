@@ -629,8 +629,9 @@ export default function App() {
   }, [])
 
   const handleWizardApply = useCallback(
-    (ids: ProfileId[], landing: View) => {
-      features.applyProfiles(ids)
+    (ids: ProfileId[], landing: View, modes: FeatureId[]) => {
+      // Goal profiles + the chosen operating modes (CW/Phone) force-enabled on top.
+      features.applyProfiles(ids, modes)
       setView(landing)
       markWizardSeen()
       setShowWizard(false)

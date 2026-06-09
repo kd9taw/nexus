@@ -52,19 +52,30 @@ export function applyProfile(profileId: ProfileId, dismissedReveals: string[] = 
   return { profile: profileId, enabled: resolveEnabled(profileId), dismissedReveals }
 }
 
-/** State for a UNION of profiles (the wizard's multi-select). One selection keeps
- * its profile tag; multiple → 'custom' (a blended set). Empty → Everything. */
-export function applyProfiles(ids: ProfileId[], dismissedReveals: string[] = []): FeatureState {
-  if (ids.length === 0) return { ...defaultState(), dismissedReveals }
-  if (ids.length === 1) return applyProfile(ids[0], dismissedReveals)
+/** State for a UNION of profiles (the wizard's multi-select), plus any `extraOn`
+ * features force-enabled regardless of the profiles (the wizard's mode choice —
+ * CW/Phone are modes, not goals, so a goal profile never implies them). One profile
+ * and no extras keeps its profile tag; anything blended → 'custom'. Empty → Everything. */
+export function applyProfiles(
+  ids: ProfileId[],
+  dismissedReveals: string[] = [],
+  extraOn: FeatureId[] = [],
+): FeatureState {
+  if (ids.length === 0 && extraOn.length === 0) return { ...defaultState(), dismissedReveals }
   const on = new Set<FeatureId>()
+  for (const f of FEATURES) if (f.core) on.add(f.id)
   for (const id of ids) {
     const e = resolveEnabled(id)
     for (const f of FEATURES) if (e[f.id]) on.add(f.id)
   }
+  for (const id of extraOn) on.add(id)
+  for (const id of [...on]) addWithDependencies(on, id)
   const enabled = {} as Record<FeatureId, boolean>
   for (const f of FEATURES) enabled[f.id] = f.core ? true : on.has(f.id)
-  return { profile: 'custom', enabled, dismissedReveals }
+  // A single profile with no extra modes stays tagged as that profile; otherwise
+  // it's a blended set → 'custom'.
+  const profile = ids.length === 1 && extraOn.length === 0 ? ids[0] : 'custom'
+  return { profile, enabled, dismissedReveals }
 }
 
 /** Record that the operator dismissed the reveal nudge for `achievementId`. */

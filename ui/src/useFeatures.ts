@@ -45,8 +45,9 @@ export interface FeaturesApi {
   toggle: (id: FeatureId) => void
   /** Switch to a goal profile (re-applies its bundle). */
   applyProfile: (id: ProfileId) => void
-  /** Apply a UNION of profiles (wizard multi-select). */
-  applyProfiles: (ids: ProfileId[]) => void
+  /** Apply a UNION of profiles (wizard multi-select), plus `extraOn` features to
+   * force-enable regardless of the profiles (the wizard's CW/Phone mode choice). */
+  applyProfiles: (ids: ProfileId[], extraOn?: FeatureId[]) => void
   /** The active profile's landing view (custom → operate). */
   landing: View
   /** True when there was no persisted feature state at startup (a fresh install
@@ -96,8 +97,8 @@ export function useFeatures(): FeaturesApi {
   )
 
   const applyProfiles = useCallback(
-    (ids: ProfileId[]) => setState((s) => {
-      const next = applyProfilesState(ids, s.dismissedReveals)
+    (ids: ProfileId[], extraOn: FeatureId[] = []) => setState((s) => {
+      const next = applyProfilesState(ids, s.dismissedReveals, extraOn)
       persist(next)
       return next
     }),

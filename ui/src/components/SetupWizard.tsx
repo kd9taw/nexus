@@ -1,17 +1,24 @@
 import { useState } from 'react'
 import { Dialog } from './ui/Dialog'
 import { PROFILE_LIST, PROFILES, type ProfileId } from '../features/profiles'
-import type { View } from '../features/registry'
+import type { FeatureId, View } from '../features/registry'
 
 interface Props {
-  /** Apply the chosen goal profile(s) and navigate to `landing`. */
-  onApply: (ids: ProfileId[], landing: View) => void
+  /** Apply the chosen goal profile(s) + operating modes and navigate to `landing`. */
+  onApply: (ids: ProfileId[], landing: View, modes: FeatureId[]) => void
   /** Close without changing the current feature set (also ESC / backdrop). */
   onSkip: () => void
 }
 
 // Goal cards are the five goal profiles; "Everything" is its own one-click button.
 const GOALS = PROFILE_LIST.filter((p) => p.id !== 'everything')
+
+// Operating modes are SEPARATE from goals (you can chase DX on any mode). Digital is
+// always on (the FT8/FT4 cockpit is the core spine); Phone/CW are opt-in sections.
+const MODES: { id: FeatureId; label: string; blurb: string }[] = [
+  { id: 'phone', label: 'Phone (SSB)', blurb: 'Voice — PTT, sideband, panadapter' },
+  { id: 'cw', label: 'CW', blurb: 'Morse — keyboard + macros, any rig' },
+]
 
 /**
  * First-run setup wizard — a GOAL-driven preset selector (never asks for
@@ -24,6 +31,16 @@ export function SetupWizard({ onApply, onSkip }: Props) {
   const [selected, setSelected] = useState<Set<ProfileId>>(new Set())
   const toggle = (id: ProfileId) =>
     setSelected((s) => {
+      const n = new Set(s)
+      if (n.has(id)) n.delete(id)
+      else n.add(id)
+      return n
+    })
+
+  // Opt-in modes (Phone/CW); Digital is always on.
+  const [modes, setModes] = useState<Set<FeatureId>>(new Set())
+  const toggleMode = (id: FeatureId) =>
+    setModes((s) => {
       const n = new Set(s)
       if (n.has(id)) n.delete(id)
       else n.add(id)
@@ -70,11 +87,31 @@ export function SetupWizard({ onApply, onSkip }: Props) {
         ))}
       </div>
 
+      <h3 className="wizard-modes-title">Which modes do you operate?</h3>
+      <div className="wizard-modes">
+        <button type="button" className="wizard-mode sel locked" aria-pressed disabled>
+          <span className="wizard-mode-label">Digital (FT8/FT4)</span>
+          <span className="wizard-mode-blurb">Always on — the waterfall cockpit</span>
+        </button>
+        {MODES.map((m) => (
+          <button
+            key={m.id}
+            type="button"
+            className={`wizard-mode${modes.has(m.id) ? ' sel' : ''}`}
+            aria-pressed={modes.has(m.id)}
+            onClick={() => toggleMode(m.id)}
+          >
+            <span className="wizard-mode-label">{m.label}</span>
+            <span className="wizard-mode-blurb">{m.blurb}</span>
+          </button>
+        ))}
+      </div>
+
       <div className="wizard-actions">
         <button
           type="button"
           className="wizard-everything"
-          onClick={() => onApply(['everything'], 'operate')}
+          onClick={() => onApply(['everything'], 'operate', [])}
         >
           Turn everything on (expert)
         </button>
@@ -86,7 +123,7 @@ export function SetupWizard({ onApply, onSkip }: Props) {
             type="button"
             className="wizard-go"
             disabled={ids.length === 0}
-            onClick={() => onApply(ids, landing)}
+            onClick={() => onApply(ids, landing, [...modes])}
           >
             {goLabel}
           </button>

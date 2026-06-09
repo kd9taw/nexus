@@ -79,6 +79,23 @@ describe('feature state transitions', () => {
     expect(applyProfiles([]).profile).toBe('custom')
   })
 
+  it('modes are decoupled from goals; extraOn force-enables them (wizard mode pick)', () => {
+    // A goal profile alone never implies an operating mode — CW/Phone are modes, not goals.
+    const goalOnly = applyProfiles(['dx'])
+    expect(goalOnly.enabled.cw).toBe(false)
+    expect(goalOnly.enabled.phone).toBe(false)
+    // The wizard's mode choice rides in as extraOn → force-enabled regardless of goals,
+    // and a goal + a mode is a blended set → 'custom'.
+    const withModes = applyProfiles(['dx'], [], ['cw', 'phone'])
+    expect(withModes.enabled.cw).toBe(true)
+    expect(withModes.enabled.phone).toBe(true)
+    expect(withModes.profile).toBe('custom')
+    // Modes with no goal at all still apply (a pure phone op who skipped goals).
+    const modesOnly = applyProfiles([], [], ['phone'])
+    expect(modesOnly.enabled.phone).toBe(true)
+    expect(modesOnly.enabled.cw).toBe(false)
+  })
+
   it('applyProfile resolves the right enabled-set and records the profile', () => {
     const s = applyProfile('starter')
     expect(s.profile).toBe('starter')

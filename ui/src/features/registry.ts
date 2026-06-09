@@ -98,7 +98,9 @@ export const FEATURES: FeatureDef[] = [
     category: 'Operate',
     core: false, // opt-in: turn on if you operate CW (Settings ▸ Features / wizard)
     dependsOn: [],
-    intents: ['casual', 'dx'],
+    // Mode, not a goal — chosen explicitly in the wizard's "which modes?" step (and
+    // toggleable in Settings ▸ Features), so a goal profile never auto-enables it.
+    intents: [],
     view: 'cw',
     // Global (no workspace): the CW operating cockpit — keyboard + macros key the rig.
     oneLine: 'CW operating — keyboard + F-key macros, WPM, spectrum, casual ragchew.',
@@ -110,7 +112,9 @@ export const FEATURES: FeatureDef[] = [
     category: 'Operate',
     core: false, // opt-in: turn on if you operate voice (Settings ▸ Features / wizard)
     dependsOn: [],
-    intents: ['casual', 'dx'],
+    // Mode, not a goal — chosen explicitly in the wizard's "which modes?" step (and
+    // toggleable in Settings ▸ Features), so a goal profile never auto-enables it.
+    intents: [],
     view: 'phone',
     // Global (no workspace): the Phone (SSB/FM) cockpit — PTT + rig control + logging.
     oneLine: 'Phone (SSB) operating — PTT, band-aware sideband, RF power, panadapter.',

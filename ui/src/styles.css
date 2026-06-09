@@ -5252,6 +5252,49 @@ select.settings-input {
   color: var(--text-dim);
   line-height: 1.4;
 }
+.wizard-modes-title {
+  margin: 4px 0 10px;
+  font-size: 14px;
+  font-weight: 800;
+}
+.wizard-modes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+  margin-bottom: 20px;
+}
+.wizard-mode {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  text-align: left;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  transition: var(--transition);
+}
+.wizard-mode:hover:not(.locked) {
+  border-color: var(--accent);
+}
+.wizard-mode.sel {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg));
+}
+.wizard-mode.locked {
+  opacity: 0.85;
+  cursor: default;
+}
+.wizard-mode-label {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+}
+.wizard-mode-blurb {
+  font-size: 11px;
+  color: var(--text-dim);
+}
 .wizard-actions {
   display: flex;
   align-items: center;
