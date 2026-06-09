@@ -549,10 +549,29 @@ export async function setFrequency(
 }
 
 /** Set the per-section operating mode (the rig-mode policy): "digital" obeys the rig,
- * "phone" forces USB/LSB by band, "cw" forces CW. */
-export async function setOperatingMode(mode: 'digital' | 'phone' | 'cw'): Promise<AppSnapshot> {
+ * "phone" forces USB/LSB by band, "cw" forces CW. `followFreq` = true when the operator
+ * clicks an actual operating-section tab — then the rig QSYs to that mode's home frequency
+ * on the current band (phone segment / CW segment / FT8 watering hole). Pass false for
+ * incidental nav and the Needed click (which sets the spot's exact frequency itself). */
+export async function setOperatingMode(
+  mode: 'digital' | 'phone' | 'cw',
+  followFreq: boolean,
+): Promise<AppSnapshot> {
   const invoke = tauriInvoke()
-  if (invoke) return invoke<AppSnapshot>('set_operating_mode', { mode })
+  if (invoke) return invoke<AppSnapshot>('set_operating_mode', { mode, followFreq })
+  return mockEngine.getSnapshot()
+}
+
+/** Work a spotted station (the Needed click): set the operating mode AND QSY to the spot's
+ * exact frequency atomically — one round-trip, so the rig can't end up in the new mode at the
+ * old dial and the UI never sees a half-applied state. */
+export async function workSpot(
+  mode: 'digital' | 'phone' | 'cw',
+  freqMhz: number,
+  band: string,
+): Promise<AppSnapshot> {
+  const invoke = tauriInvoke()
+  if (invoke) return invoke<AppSnapshot>('work_spot', { mode, freqMhz, band })
   return mockEngine.getSnapshot()
 }
 

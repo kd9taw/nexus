@@ -1146,13 +1146,38 @@ fn set_frequency(
 /// Set the per-section operating mode — the rig-mode policy. "digital" obeys the rig
 /// (FT8/FT4 default); "phone" forces USB/LSB by band; "cw" forces CW. The phone/CW
 /// operating sections call this so the rig follows; the radio loop applies it on the
-/// next tune. Persists, returns the snapshot.
+/// next tune. `follow_freq` = true when the operator clicks an actual operating-section tab
+/// (QSY to that mode's home freq); false for incidental nav and the Needed click. Persists,
+/// returns the snapshot.
 #[tauri::command]
-fn set_operating_mode(state: State<'_, SharedEngine>, mode: String) -> Result<AppSnapshot, String> {
+fn set_operating_mode(
+    state: State<'_, SharedEngine>,
+    mode: String,
+    follow_freq: bool,
+) -> Result<AppSnapshot, String> {
     let mut eng = state.lock().map_err(|e| e.to_string())?;
-    eng.set_operating_mode(&mode);
+    eng.set_operating_mode(&mode, follow_freq);
     if let Err(e) = eng.settings().save(&settings_path()) {
         eprintln!("tempo: failed to persist operating mode: {e}");
+    }
+    Ok(eng.snapshot())
+}
+
+/// Work a spotted station (the Needed click): set the operating mode AND QSY to the spot's
+/// exact frequency atomically (one engine lock, one round-trip) — so the rig can't end up in
+/// the new mode at the old dial, and the UI never sees a half-applied state. Persists,
+/// returns the snapshot.
+#[tauri::command]
+fn work_spot(
+    state: State<'_, SharedEngine>,
+    mode: String,
+    freq_mhz: f64,
+    band: String,
+) -> Result<AppSnapshot, String> {
+    let mut eng = state.lock().map_err(|e| e.to_string())?;
+    eng.work_spot(&mode, freq_mhz, &band);
+    if let Err(e) = eng.settings().save(&settings_path()) {
+        eprintln!("tempo: failed to persist worked spot: {e}");
     }
     Ok(eng.snapshot())
 }
@@ -2895,6 +2920,7 @@ pub fn run() {
             get_licensed_band_plan,
             set_frequency,
             set_operating_mode,
+            work_spot,
             send_cw,
             set_cw_wpm,
             stop_cw,

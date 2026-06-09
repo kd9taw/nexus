@@ -351,13 +351,21 @@ impl RadioLoop {
         // re-open WITHOUT the lock, then publish status. Makes CAT connect on
         // Save with no restart. ---
         {
-            let (want, dial, md, reprobe_req) = {
+            // Only consume the operator's "apply now" flag when we can actually act on it
+            // (not mid-TX) — otherwise a section click during a transmit would be silently
+            // dropped. Left set, it's honored on the first non-keyed loop after TX ends.
+            // `manual_ptt_applied` covers the phone/CW case the slot-based tx_until_ms misses:
+            // we must never command a VFO/mode change while the operator is holding PTT.
+            let can_retune =
+                self.tx_until_ms.is_none() && !self.tuning_keyed && !self.manual_ptt_applied;
+            let (want, dial, md, reprobe_req, force_retune) = {
                 let mut eng = engine.lock().map_err(|e| e.to_string())?;
                 (
                     Transport::from_settings(eng.settings()),
                     eng.settings().dial_hz(),
                     eng.settings().rig_mode(), // DATA submode (PKTUSB/…) when data_mode is on
                     eng.take_cat_reprobe(),
+                    if can_retune { eng.take_immediate_retune() } else { false },
                 )
             };
             if want.rig_differs(&self.applied) {
@@ -404,35 +412,61 @@ impl RadioLoop {
             // Live dial / mode retune — only while not keyed (rigs reject VFO
             // changes mid-TX); retried every loop until it sticks.
             let mut retuned = false;
-            if self.tx_until_ms.is_none() && !self.tuning_keyed {
-                if dial != self.last_dial && rig.set_freq(dial).is_ok() {
-                    self.last_dial = dial;
-                    retuned = true;
-                }
-                // Apply the section's mode — unless it's the one we already gave up on
-                // (rig kept rejecting it). `last_mode` only ever holds a mode actually
-                // applied, so a give-up never masquerades as success.
-                if md != self.last_mode && self.mode_giveup.as_deref() != Some(md.as_str()) {
-                    if rig.set_mode(&md, 0).is_ok() {
-                        self.last_mode = md.clone();
-                        self.mode_fail_count = 0;
-                        self.mode_giveup = None; // a success clears any prior give-up
+            if can_retune {
+                if force_retune {
+                    // The operator just clicked a section / worked a Needed spot / QSY'd.
+                    // Apply the dial + mode RIGHT NOW, clearing any give-up so a single
+                    // click is never ignored — even on a mode a prior attempt abandoned
+                    // (the whole reason a re-click of e.g. CW used to do nothing). The MODE
+                    // is re-asserted unconditionally (picking CW while already on a CW freq
+                    // must still command the rig to CW). The DIAL is only pushed when it
+                    // actually changed: a mode-only click (CW preserves the dial) must NOT
+                    // re-slam a freq the operator may have just hand-tuned inside the up-to-
+                    // 750 ms read-back window — that would fight the VFO-knob mirroring.
+                    self.mode_giveup = None;
+                    self.mode_fail_count = 0;
+                    if dial != self.last_dial && rig.set_freq(dial).is_ok() {
+                        self.last_dial = dial;
                         retuned = true;
-                    } else {
-                        // Retries cover a rig/rigctld still settling; past the budget the
-                        // rig is rejecting this mode (e.g. no DATA/PKT submode) — stop
-                        // retrying THIS mode so we don't spam the CAT link every loop. A
-                        // later section change to a different mode still tries (md flips),
-                        // and once any mode sticks the give-up is cleared.
-                        self.mode_fail_count += 1;
-                        if self.mode_fail_count >= MODE_SET_MAX_TRIES {
-                            eprintln!(
-                                "tempo-audio: set_mode({md:?}) failed {} times — giving up \
-                                 (the rig may not support this mode).",
-                                self.mode_fail_count
-                            );
-                            self.mode_giveup = Some(md.clone());
+                    }
+                    if !md.trim().is_empty() && rig.set_mode(&md, 0).is_ok() {
+                        self.last_mode = md.clone();
+                        retuned = true;
+                    }
+                    // If the forced set_mode failed (rig lacks the DATA/PKT submode),
+                    // `last_mode` is unchanged, so the steady-state path below re-tries on
+                    // later loops and re-gives-up past the budget — a non-supporting rig
+                    // is still never spammed forever.
+                } else {
+                    if dial != self.last_dial && rig.set_freq(dial).is_ok() {
+                        self.last_dial = dial;
+                        retuned = true;
+                    }
+                    // Apply the section's mode — unless it's the one we already gave up on
+                    // (rig kept rejecting it). `last_mode` only ever holds a mode actually
+                    // applied, so a give-up never masquerades as success.
+                    if md != self.last_mode && self.mode_giveup.as_deref() != Some(md.as_str()) {
+                        if rig.set_mode(&md, 0).is_ok() {
+                            self.last_mode = md.clone();
                             self.mode_fail_count = 0;
+                            self.mode_giveup = None; // a success clears any prior give-up
+                            retuned = true;
+                        } else {
+                            // Retries cover a rig/rigctld still settling; past the budget the
+                            // rig is rejecting this mode (e.g. no DATA/PKT submode) — stop
+                            // retrying THIS mode so we don't spam the CAT link every loop. A
+                            // later section change to a different mode still tries (md flips),
+                            // and once any mode sticks the give-up is cleared.
+                            self.mode_fail_count += 1;
+                            if self.mode_fail_count >= MODE_SET_MAX_TRIES {
+                                eprintln!(
+                                    "tempo-audio: set_mode({md:?}) failed {} times — giving up \
+                                     (the rig may not support this mode).",
+                                    self.mode_fail_count
+                                );
+                                self.mode_giveup = Some(md.clone());
+                                self.mode_fail_count = 0;
+                            }
                         }
                     }
                 }

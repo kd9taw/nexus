@@ -42,7 +42,7 @@ import { useAchievements } from './useAchievements'
 import { useJourneyUnlocks } from './useJourneyUnlocks'
 import { useFeatures } from './useFeatures'
 import { useReveals } from './useReveals'
-import { sectionFeatures, type FeatureId } from './features/registry'
+import { sectionFeatures, featureById, type FeatureId } from './features/registry'
 import { visibleNeeds, workTarget } from './features/needs'
 import { usePaneWidths, clampLeft, clampRight } from './usePaneWidths'
 import { TopBar } from './components/TopBar'
@@ -65,6 +65,7 @@ import {
   getFeedHealth,
   getNeedAlerts,
   setOperatingMode,
+  workSpot,
   setLicenseClass,
   stopQsoRecording,
 } from './api'
@@ -168,15 +169,23 @@ export default function App() {
     }
     return features.landing
   })
-  // Per-section rig-mode policy: entering the CW section forces the rig to CW; leaving
-  // returns to "digital" (obey the rig). Fires only on an actual transition so it
-  // doesn't write settings on every nav. Phone joins this when its section lands.
+  // Per-section rig-mode policy. Only ENTERING an actual operating cockpit changes the rig:
+  // the workspace sections (FT8/FT4, Tempo, contest…) + the global CW/Phone cockpits. A
+  // global, non-operating view (Map, Logbook, Settings, Propagation, Awards…) leaves the rig
+  // exactly as the last operating section set it — glancing at the map mid-CW-QSO must never
+  // touch the VFO or mode, and (crucially) must not advance the guard, so a later Operate
+  // click still QSYs. `followFreq` is true only for the three explicit mode tabs (Phone / CW /
+  // Digital-Operate) — entering one drops the rig to that mode's home freq; the other digital
+  // cockpits (chat/qso/…) set the mode only and keep their own band picker's frequency.
   const lastOpModeRef = useRef<'digital' | 'phone' | 'cw'>('digital')
   useEffect(() => {
+    const operating = !!featureById(view as FeatureId)?.workspace || view === 'cw' || view === 'phone'
+    if (!operating) return
     const mode = view === 'cw' ? 'cw' : view === 'phone' ? 'phone' : 'digital'
     if (mode === lastOpModeRef.current) return
     lastOpModeRef.current = mode
-    void setOperatingMode(mode)
+    const followFreq = view === 'operate' || view === 'cw' || view === 'phone'
+    void setOperatingMode(mode, followFreq)
       .then((s) => s && setSnap(s))
       .catch(() => {})
   }, [view])
@@ -588,10 +597,12 @@ export default function App() {
     [bandPlan],
   )
 
-  // Click-to-work a needed VOICE/CW spot: QSY to the spot's exact frequency, force the
-  // rig into the right operating mode (the policy derives USB/LSB/CW), open the matching
-  // cockpit, and hand it the callsign to prefill the log. A Digital need (or one with no
-  // resolvable frequency) falls back to a plain band QSY.
+  // Click-to-work ANY needed spot (CW / Phone / Digital): N1MM-style single click that
+  // changes the band, mode, AND frequency to exactly the spot's — in ONE atomic backend call
+  // (`workSpot`) so the rig can never end up in the new mode at the old dial (no wrong-mode
+  // flash) and the UI never sees a half-applied mode/freq state. Then open the matching
+  // cockpit and — for CW/Phone — hand it the callsign to prefill the log. A need with no
+  // resolvable frequency at all falls back to a plain band QSY.
   const handleWorkNeeded = useCallback(
     (alert: NeedAlert) => {
       const t = workTarget(alert, bandPlan)
@@ -599,28 +610,23 @@ export default function App() {
         handleQsy(alert.band)
         return
       }
-      // Pass a digital-safe 'USB' as the stored sideband: the rig-mode policy derives the
-      // actual CAT mode (CW, or USB/LSB-by-band for phone) from the operating mode, so the
-      // sideband here only seeds a LATER digital session — where USB→PKTUSB is correct.
-      // (Never write 'CW'/'LSB', which would corrupt that next digital session's mode.)
+      // 'operate' is the digital cockpit, so its operating mode is 'digital'.
+      const opMode: 'digital' | 'phone' | 'cw' = t.view === 'operate' ? 'digital' : t.view
       void withErrorToast(
-        () => apiSetFrequency(t.freqMhz, t.band, 'USB'),
-        `Could not QSY to ${t.call}`,
-      ).then(async (s) => {
+        () => workSpot(opMode, t.freqMhz, t.band),
+        `Could not work ${t.call} — check CAT`,
+      ).then((s) => {
+        // On failure DON'T navigate or poison the guard ref — the backend made no change
+        // (atomic), so the view-effect can still apply the mode on a later nav.
         if (!s) return
         setSnap(s)
-        // The operating-mode write is the one that actually puts the rig in CW/Phone — if
-        // it fails, DON'T navigate, claim success, or poison the guard ref (so the
-        // view-effect can still re-attempt the mode write on a later nav).
-        const s2 = await setOperatingMode(t.view).catch(() => null)
-        if (!s2) {
-          pushToast(`Could not set the rig to ${t.view.toUpperCase()} — check CAT`, 'error', 3500)
-          return
-        }
-        setSnap(s2)
         // Keep the rig-mode effect's guard in sync so it doesn't re-fire on the nav.
-        lastOpModeRef.current = t.view
-        setPendingWork({ call: t.call, view: t.view, ts: Date.now() })
+        lastOpModeRef.current = opMode
+        // CW/Phone cockpits consume a prefill; the digital cockpit auto-sequences on a decode
+        // double-click, so it gets no prefill — just the QSY + DATA-U.
+        if (t.view !== 'operate') {
+          setPendingWork({ call: t.call, view: t.view, ts: Date.now() })
+        }
         setView(t.view)
         pushToast(`▶ ${t.call} — ${alert.mode} ${t.band}, ready to log`, 'success', 4000)
       })

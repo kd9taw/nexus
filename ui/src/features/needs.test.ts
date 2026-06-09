@@ -60,8 +60,14 @@ describe('workTarget', () => {
     expect(t?.freqMhz).toBe(14.074)
   })
 
-  it('a Digital need is not a click-to-work target (existing band-QSY path handles it)', () => {
-    expect(workTarget(alert('A', 'Digital', '20m', 14.074), BAND_PLAN)).toBeNull()
+  it('a Digital need QSYs to the exact spot freq and opens the digital cockpit (N1MM-style)', () => {
+    const t = workTarget(alert('A', 'Digital', '20m', 14.074), BAND_PLAN)
+    expect(t).toEqual({ call: 'A', view: 'operate', freqMhz: 14.074, band: '20m' })
+  })
+
+  it('a Digital need with no spot freq falls back to the band default channel', () => {
+    const t = workTarget(alert('A', 'Digital', '40m', null), BAND_PLAN)
+    expect(t).toEqual({ call: 'A', view: 'operate', freqMhz: 7.074, band: '40m' })
   })
 
   it('no frequency resolvable (unknown band, no spot freq) → null', () => {

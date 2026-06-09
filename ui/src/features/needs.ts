@@ -21,23 +21,24 @@ export function visibleNeeds(
 
 /** A resolved click-to-work target: where to QSY and the cockpit to open. The CALLER
  * owns the rig sideband when it QSYs — the rig-mode policy derives the actual CAT mode
- * (CW, or USB/LSB-by-band for phone) from the operating mode, so we never compute it
- * here. */
+ * (CW, USB/LSB-by-band for phone, or DATA-U for digital) from the operating mode, so we
+ * never compute it here. */
 export interface WorkTarget {
   call: string
-  /** Cockpit view to open; also the operating-mode argument ('cw' | 'phone'). */
-  view: 'cw' | 'phone'
+  /** Cockpit view to open. 'operate' = the digital (FT8/FT4) cockpit; its operating-mode
+   * argument is 'digital'. CW/Phone map 1:1 to their cockpit + operating mode. */
+  view: 'cw' | 'phone' | 'operate'
   freqMhz: number
   band: string
 }
 
-/** Resolve a CW/Phone need into a work target. Uses the spot's exact frequency when the
- * cluster carried one, else the band's default channel. Returns null for a Digital need
- * (handled by the existing band-QSY path) or when no frequency can be resolved. */
+/** Resolve ANY need (CW / Phone / Digital) into a work target — N1MM-style: a single click
+ * changes the band, mode, AND frequency to exactly the spot's. Uses the spot's exact
+ * frequency when the cluster/RBN carried one, else the band's default channel. Returns null
+ * only when no frequency can be resolved at all (a band-level need with no band-plan entry). */
 export function workTarget(alert: NeedAlert, bandPlan: BandChannel[]): WorkTarget | null {
-  const view: 'cw' | 'phone' | null =
-    alert.mode === 'CW' ? 'cw' : alert.mode === 'Phone' ? 'phone' : null
-  if (!view) return null
+  const view: 'cw' | 'phone' | 'operate' =
+    alert.mode === 'CW' ? 'cw' : alert.mode === 'Phone' ? 'phone' : 'operate'
   const freqMhz = alert.freqMhz ?? bandPlan.find((c) => c.band === alert.band)?.dialMhz ?? null
   if (freqMhz == null) return null
   return { call: alert.call, view, freqMhz, band: alert.band }

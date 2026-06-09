@@ -161,6 +161,11 @@ pub struct Engine {
     /// the CURRENT period immediately if it's our TX parity and the over still
     /// fits, instead of waiting a full T/R cycle for the next boundary. One-shot.
     immediate_tx: bool,
+    /// Set when the operator clicks a section / works a Needed spot / QSYs: the radio
+    /// loop must apply the dial + mode RIGHT NOW (single-click precision), CLEARING any
+    /// `mode_giveup` so a click is never ignored — even if a prior attempt gave up on
+    /// that mode. One-shot, drained by the loop.
+    immediate_retune: bool,
     /// CW transmit queue (CAT keyer path): expanded CW text the radio loop drains and
     /// keys via `rig.send_morse`. Operator-initiated; gated by `tx_enabled` (Monitor).
     cw_queue: VecDeque<String>,
@@ -317,6 +322,7 @@ impl Engine {
             cq_running: false,
             last_decode_slot: None,
             immediate_tx: false,
+            immediate_retune: false,
             cw_queue: VecDeque::new(),
             cw_wpm: 25,
             cw_abort: false,
@@ -405,6 +411,9 @@ impl Engine {
         self.settings.band = band.to_string();
         self.settings.sideband = mode.to_string();
         self.app.set_radio(dial_mhz, band, mode);
+        // Operator QSY → the radio loop must follow on the very next iteration, not
+        // when it happens to notice the dial changed. (Single-click precision.)
+        self.immediate_retune = true;
     }
 
     /// The rig reported a dial frequency we did NOT set — the operator turned the VFO knob
@@ -421,11 +430,65 @@ impl Engine {
             .set_radio(self.settings.dial_mhz, &self.settings.band, &self.settings.sideband);
     }
 
-    /// Set the per-section operating mode (Digital / Phone / CW) — the rig-mode
-    /// policy. Digital OBEYS the rig; Phone forces USB/LSB by band; CW forces CW.
-    /// The radio loop re-applies `settings.rig_mode()` from settings each slot, so a
-    /// phone/CW section just sets this and the rig follows on the next tune.
-    pub fn set_operating_mode(&mut self, mode: &str) {
+    /// The "home" dial + sideband for `om` on the CURRENT band: Digital → the active tier's
+    /// watering hole (FT8 14.074 / FT4 14.080 / FT1 native); Phone → the lowest phone freq the
+    /// operator is licensed for; CW → the lowest CW freq. `None` when the operator has no
+    /// privilege for that band+mode (Tech on 20 m phone, Tech digital off 10 m, 60 m, an FM /
+    /// no-FT8 band) — the caller then leaves the dial alone and lets the TX lockout guard the
+    /// air. Every returned dial is one the operator can legally TX on: the emission passband
+    /// is checked the same way `tx_allowed` checks it.
+    fn mode_home(&self, om: crate::settings::OperatingMode) -> Option<(f64, String)> {
+        use crate::settings::OperatingMode;
+        // SSB occupies ~2.8 kHz beside the carrier; an FT8/FT4 signal sits at the audio offset
+        // above the dial. Keep these in step with `tx_allowed`'s passband model.
+        const SSB_BW: f64 = 0.0028;
+        let class = self.settings.license_class;
+        let band = self.settings.band.clone();
+        match om {
+            OperatingMode::Digital => {
+                let off = self.tx_offset_hz as f64 / 1_000_000.0;
+                crate::bandplan::band_plan_for(self.app.tier())
+                    .into_iter()
+                    .find(|c| c.band == band)
+                    // FT8/FT4 are USB, so the emission sits `off` ABOVE the dial. Only adopt the
+                    // watering hole if the operator may actually run data there (Tech: 10 m only).
+                    .filter(|c| crate::privileges::tx_allowed(class, c.dial_mhz + off, om))
+                    .map(|c| (c.dial_mhz, c.mode))
+            }
+            OperatingMode::Phone => {
+                crate::privileges::segment_start(class, &band, om).map(|lo| {
+                    // On LSB (<10 MHz) the passband is [dial-2.8 kHz, dial], so parking the dial
+                    // AT the segment edge would push the lower 2.8 kHz out of band → TX locked
+                    // out at the very home freq. Lift the LSB home so the whole passband clears
+                    // the edge. USB extends upward from `lo`, so the edge is already fine.
+                    if lo < 10.0 {
+                        (lo + SSB_BW, "LSB".to_string())
+                    } else {
+                        (lo, "USB".to_string())
+                    }
+                })
+            }
+            OperatingMode::Cw => crate::privileges::segment_start(class, &band, om)
+                // Sideband is inert for CW (the rig-mode policy commands CW or a band-aware tone),
+                // but keep it self-consistent with the band's convention.
+                .map(|lo| (lo, if lo < 10.0 { "LSB".to_string() } else { "USB".to_string() })),
+        }
+    }
+
+    /// Set the per-section operating mode (Digital / Phone / CW) — the rig-mode policy.
+    /// Digital → DATA-U/DATA-L; Phone forces USB/LSB by band; CW forces CW. Always flags an
+    /// immediate retune so the radio loop applies the mode on its very next iteration,
+    /// clearing any prior `mode_giveup` so a click is never ignored.
+    ///
+    /// `follow_freq` is the "go to this mode" gesture: when the operator clicks an actual
+    /// operating-section tab (Phone / CW / Digital), QSY to that mode's home frequency on the
+    /// current band — Phone lands in the phone segment, CW drops to the CW segment, Digital
+    /// snaps to the tier's watering hole (14.074 etc.). It's `false` for incidental nav (so
+    /// glancing at the map/logbook never moves the VFO) and for the Needed click (which sets
+    /// the spot's exact frequency itself — re-homing would clobber it). The view-effect's
+    /// `lastOpModeRef` guard means a `follow_freq` QSY only fires on a real mode change, so a
+    /// manual tune within a mode survives non-operating nav.
+    pub fn set_operating_mode(&mut self, mode: &str, follow_freq: bool) {
         use crate::settings::OperatingMode;
         let om = match mode.to_ascii_lowercase().as_str() {
             "phone" => OperatingMode::Phone,
@@ -433,6 +496,19 @@ impl Engine {
             _ => OperatingMode::Digital,
         };
         self.settings.operating_mode = om;
+        // Explicit operating-section entry → drop to that mode's home freq on the current
+        // band. `mode_home` returns None when the operator has no privilege there (Tech on
+        // 20 m phone, 60 m, a band with no FT8 channel) — then we leave the dial put and let
+        // the TX lockout guard the air.
+        if follow_freq {
+            if let Some((dial, sideband)) = self.mode_home(om) {
+                let band = self.settings.band.clone();
+                self.set_frequency(dial, &band, &sideband); // also flags immediate_retune
+            }
+        }
+        // Re-assert the rig mode now even if the dial didn't change (e.g. picking CW while
+        // already on a CW freq must still command CW, not wait for a dial change).
+        self.immediate_retune = true;
         // Phone and CW are MANUAL modes — there's no auto-sequencer (poll_tx is gated off
         // for non-Digital), and the operator keys TX explicitly via PTT / the voice keyer
         // / CW. Arm transmit on entry so those work, like a rig's live mic/key. (Digital
@@ -441,6 +517,18 @@ impl Engine {
         if matches!(om, OperatingMode::Phone | OperatingMode::Cw) {
             self.set_tx_enabled(true);
         }
+    }
+
+    /// Work a spotted station (the Needed click): set the operating MODE and QSY to the
+    /// spot's EXACT frequency ATOMICALLY — both under the one engine lock the caller holds, so
+    /// the radio loop never observes the new mode at the old dial (no wrong-mode flash) and a
+    /// single command can't half-apply (no mode/freq desync if a later step failed). The mode
+    /// is set with `follow_freq = false` so its own section-QSY can't override the spot's exact
+    /// frequency, which is authoritative. Sideband is always "USB" here (→ PKTUSB for digital;
+    /// ignored by the CW/phone policy).
+    pub fn work_spot(&mut self, mode: &str, freq_mhz: f64, band: &str) {
+        self.set_operating_mode(mode, false);
+        self.set_frequency(freq_mhz, band, "USB");
     }
 
     /// Set the operator's amateur license class (drives the TX-privilege lockout + the
@@ -1753,6 +1841,16 @@ impl Engine {
         v
     }
 
+    /// Consume the one-shot "apply dial + mode right now" request set whenever the
+    /// operator clicks a section, works a Needed spot, or QSYs. The radio loop honors
+    /// it by clearing any `mode_giveup` and re-asserting the dial + mode immediately —
+    /// so a single click is always followed, even on a mode a prior attempt gave up on.
+    pub fn take_immediate_retune(&mut self) -> bool {
+        let v = self.immediate_retune;
+        self.immediate_retune = false;
+        v
+    }
+
     /// Approximate on-air duration of one transmit over for the active tier (s) —
     /// used to decide whether a late (mid-slot) first over still fits the slot.
     pub fn tx_over_secs(&self) -> f64 {
@@ -2794,17 +2892,17 @@ mod tests {
         e.set_license_class("technician");
         assert!(!e.tx_allowed(), "Technician has no 20 m");
         assert!(e.poll_tx(0).is_empty(), "slot TX blocked");
-        e.set_operating_mode("cw");
+        e.set_operating_mode("cw", false);
         e.send_cw("TEST");
         assert!(e.poll_cw().is_empty(), "CW blocked outside privileges");
-        e.set_operating_mode("phone");
+        e.set_operating_mode("phone", false);
         e.set_ptt(true);
         assert!(!e.manual_ptt(), "manual PTT blocked outside privileges");
         e.set_tune(true);
         assert!(!e.tuning(), "tune refused outside privileges");
 
         // Move to a Technician-legal CW freq (40 m 7.030) → allowed again.
-        e.set_operating_mode("cw");
+        e.set_operating_mode("cw", false);
         e.set_frequency(7.030, "40m", "USB");
         assert!(e.tx_allowed(), "Technician CW on 40 m is allowed");
     }
@@ -2816,7 +2914,7 @@ mod tests {
 
         // Phone (USB) upper-edge bleed: a 20 m dial within ~2.8 kHz of the 14.350 band top
         // emits ABOVE it → blocked; mid-segment is fine.
-        e.set_operating_mode("phone");
+        e.set_operating_mode("phone", false);
         e.set_frequency(14.349, "20m", "USB");
         assert!(!e.tx_allowed(), "USB phone bleeding over the band top is blocked");
         e.set_frequency(14.250, "20m", "USB");
@@ -2824,7 +2922,7 @@ mod tests {
 
         // Digital offset is sideband-signed: at the same dial just past the 80 m data ceiling
         // (3.600), USB emits ABOVE (blocked) but LSB emits BELOW, back inside the segment.
-        e.set_operating_mode("digital");
+        e.set_operating_mode("digital", false);
         e.set_frequency(3.601, "80m", "USB");
         assert!(!e.tx_allowed(), "USB digital above the data ceiling is blocked");
         e.set_frequency(3.601, "80m", "LSB");
@@ -2839,16 +2937,146 @@ mod tests {
         e.set_tx_enabled(true); // TX is disarmed by default (WSJT-X Enable-Tx) — arm it
         e.set_beacon(true); // arm a digital TX source
         // Digital: the slot path transmits as usual on a TX-parity slot.
-        e.set_operating_mode("digital");
+        e.set_operating_mode("digital", false);
         assert!(
             !e.poll_tx(0).is_empty(),
             "digital slot TX still works with a beacon armed",
         );
         // Phone / CW: the slot path is silent (the keyer / PTT own the rig).
-        e.set_operating_mode("phone");
+        e.set_operating_mode("phone", false);
         assert!(e.poll_tx(0).is_empty(), "no slot TX in Phone");
-        e.set_operating_mode("cw");
+        e.set_operating_mode("cw", false);
         assert!(e.poll_tx(0).is_empty(), "no slot TX in CW");
+    }
+
+    #[test]
+    fn section_tab_follow_freq_qsys_to_each_modes_home_and_arms_a_retune() {
+        // The explicit operating-section tabs (follow_freq=true): "go to Phone" lands in the
+        // phone segment, CW drops to the CW segment, Digital snaps to the FT8 watering hole.
+        use crate::settings::OperatingMode;
+        let mut e = Engine::new("KD9TAW", "EN52", 0);
+        e.set_license_class("extra");
+        // Start on the 20 m FT8 watering hole (a digital freq); drain the QSY flag.
+        e.set_frequency(14.074, "20m", "USB");
+        assert!(e.take_immediate_retune(), "a QSY arms an immediate retune");
+
+        // Phone tab → drop to the 20 m phone-segment start (Extra 14.150), arm the loop NOW.
+        e.set_operating_mode("phone", true);
+        assert_eq!(e.settings().operating_mode, OperatingMode::Phone);
+        assert!(
+            (e.settings().dial_mhz - 14.150).abs() < 1e-9,
+            "Phone dropped to the phone segment, got {}",
+            e.settings().dial_mhz
+        );
+        assert!(e.take_immediate_retune(), "a section switch arms an immediate retune");
+
+        // Digital tab → snap to the FT8 watering hole (default tier).
+        e.set_operating_mode("digital", true);
+        assert_eq!(e.settings().operating_mode, OperatingMode::Digital);
+        assert!(
+            (e.settings().dial_mhz - 14.074).abs() < 1e-9,
+            "Digital snapped to the FT8 watering hole, got {}",
+            e.settings().dial_mhz
+        );
+
+        // CW tab → drop to the 20 m CW segment start (Extra 14.000).
+        let _ = e.take_immediate_retune();
+        e.set_operating_mode("cw", true);
+        assert_eq!(e.settings().operating_mode, OperatingMode::Cw);
+        assert!(
+            (e.settings().dial_mhz - 14.000).abs() < 1e-9,
+            "CW dropped to the CW segment start, got {}",
+            e.settings().dial_mhz
+        );
+        assert!(e.take_immediate_retune(), "CW pick arms a retune to command CW");
+    }
+
+    #[test]
+    fn set_operating_mode_without_follow_freq_preserves_the_dial() {
+        // The Needed-click + incidental-nav invariant: a mode write with follow_freq=false
+        // sets ONLY the policy — it must never move the VFO (so a Needed spot keeps its exact
+        // frequency, and glancing at the map doesn't yank you off-frequency). It still arms a
+        // retune so the loop applies the new mode immediately.
+        use crate::settings::OperatingMode;
+        let mut e = Engine::new("KD9TAW", "EN52", 0);
+        e.set_license_class("extra");
+        // A 20 m phone spot at 14.250 → set Phone (no follow) → stays exactly on 14.250.
+        e.set_frequency(14.250, "20m", "USB");
+        let _ = e.take_immediate_retune();
+        e.set_operating_mode("phone", false);
+        assert_eq!(e.settings().operating_mode, OperatingMode::Phone);
+        assert!(
+            (e.settings().dial_mhz - 14.250).abs() < 1e-9,
+            "the exact spot freq is preserved (no QSY), got {}",
+            e.settings().dial_mhz
+        );
+        assert!(e.take_immediate_retune(), "a mode change still arms a retune");
+    }
+
+    #[test]
+    fn phone_lsb_home_clears_the_band_edge_so_tx_is_legal() {
+        // On LSB bands the SSB passband sits BELOW the dial; parking at the segment edge would
+        // push 2.8 kHz out of band and lock TX out at the very home freq. The Phone home must
+        // lift the dial so the whole passband stays in-segment.
+        use crate::settings::OperatingMode;
+        let mut e = Engine::new("KD9TAW", "EN52", 0);
+        e.set_license_class("general");
+        e.set_frequency(7.074, "40m", "USB"); // start on the 40 m FT8 watering hole
+        e.set_operating_mode("phone", true);
+        assert_eq!(e.settings().operating_mode, OperatingMode::Phone);
+        // General 40 m phone starts at 7.175; the home lifts it by the 2.8 kHz SSB passband.
+        assert!(
+            (e.settings().dial_mhz - 7.1778).abs() < 1e-9,
+            "40 m phone home clears the LSB passband off the edge, got {}",
+            e.settings().dial_mhz
+        );
+        // ...and at that home freq the operator may actually transmit (the whole point).
+        assert!(e.tx_allowed(), "the LSB phone home freq is inside the privileged segment");
+    }
+
+    #[test]
+    fn digital_home_is_privilege_gated() {
+        // A Technician has NO data privilege on 20 m → clicking Digital must NOT yank the dial
+        // to 14.074 (where they can't operate); leave it put and let the lockout guard the air.
+        use crate::settings::OperatingMode;
+        let mut e = Engine::new("KD9TAW", "EN52", 0);
+        e.set_license_class("technician");
+        e.set_frequency(14.205, "20m", "USB");
+        let _ = e.take_immediate_retune();
+        e.set_operating_mode("digital", true);
+        assert_eq!(e.settings().operating_mode, OperatingMode::Digital);
+        assert!(
+            (e.settings().dial_mhz - 14.205).abs() < 1e-9,
+            "Tech digital on 20 m leaves the dial put (no privilege), got {}",
+            e.settings().dial_mhz
+        );
+        // Sanity: on 10 m — the one HF band a Tech may run data — it DOES snap to the hole.
+        e.set_frequency(28.400, "10m", "USB");
+        e.set_operating_mode("digital", true);
+        assert!(
+            (e.settings().dial_mhz - 28.074).abs() < 1e-9,
+            "Tech digital on 10 m snaps to the FT8 watering hole, got {}",
+            e.settings().dial_mhz
+        );
+    }
+
+    #[test]
+    fn work_spot_sets_mode_and_exact_freq_atomically_without_override() {
+        // The Needed click: mode + EXACT spot freq in one shot, no auto-QSY override even on a
+        // freq that isn't a "home" channel.
+        use crate::settings::OperatingMode;
+        let mut e = Engine::new("KD9TAW", "EN52", 0);
+        e.set_license_class("extra");
+        e.set_frequency(14.074, "20m", "USB"); // start on FT8
+        // Work a 20 m phone spot at an arbitrary in-segment freq (NOT the home 14.150).
+        e.work_spot("phone", 14.263, "20m");
+        assert_eq!(e.settings().operating_mode, OperatingMode::Phone);
+        assert!(
+            (e.settings().dial_mhz - 14.263).abs() < 1e-9,
+            "work_spot keeps the exact spot freq (no home override), got {}",
+            e.settings().dial_mhz
+        );
+        assert!(e.take_immediate_retune(), "work_spot arms an immediate retune");
     }
 
     #[test]
@@ -3964,3 +4192,4 @@ mod tests {
         );
     }
 }
+
