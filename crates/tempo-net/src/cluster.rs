@@ -34,16 +34,17 @@ impl ClusterSpot {
     }
 
     /// Split/QSX listening offset named in the spot comment, in kHz RELATIVE to
-    /// the spot frequency: "UP 2" → +2.0, "DN 1.5" → −1.5, bare "UP"/"U" → +1.0
-    /// (the pile-up convention), "QSX 14025.5" → the absolute kHz mapped to an
-    /// offset. `None` when the comment names no split — the rig stays simplex.
-    pub fn split_up_khz(&self) -> Option<f64> {
+    /// the spot frequency: "UP 2" → +2.0, "DN 1.5" → −1.5, bare "UP" → +1.0 (the
+    /// pile-up convention; single-letter "U"/"D" deliberately DON'T count — they
+    /// false-positive on report fragments), "QSX 14025.5" → absolute kHz mapped
+    /// to an offset (may be negative). `None` = no split named, stay simplex.
+    pub fn split_offset_khz(&self) -> Option<f64> {
         let toks: Vec<&str> = self.comment.split_whitespace().collect();
         for (i, t) in toks.iter().enumerate() {
             let tl = t.to_ascii_uppercase();
             let (dir, bare) = match tl.as_str() {
-                "UP" | "U" => (1.0, true),
-                "DN" | "DOWN" | "D" => (-1.0, true),
+                "UP" => (1.0, true),
+                "DN" | "DOWN" => (-1.0, true),
                 _ => {
                     // Glued forms: "UP2", "UP1.5", "DN2".
                     if let Some(rest) = tl.strip_prefix("UP") {
@@ -442,14 +443,16 @@ mod tests {
             comment: comment.into(),
             time_utc: None,
         };
-        assert_eq!(mk("CW UP 2").split_up_khz(), Some(2.0));
-        assert_eq!(mk("UP2 big pile").split_up_khz(), Some(2.0));
-        assert_eq!(mk("DN 1.5").split_up_khz(), Some(-1.5));
-        assert_eq!(mk("CW UP").split_up_khz(), Some(1.0), "bare UP → +1 convention");
-        assert_eq!(mk("QSX 14025.5").split_up_khz(), Some(2.5));
-        assert_eq!(mk("loud in NJ").split_up_khz(), None);
-        assert_eq!(mk("UP 50").split_up_khz(), None, "absurd explicit offset → stay simplex");
-        assert_eq!(mk("5UP9").split_up_khz(), None, "report fragments don't parse");
+        assert_eq!(mk("CW UP 2").split_offset_khz(), Some(2.0));
+        assert_eq!(mk("UP2 big pile").split_offset_khz(), Some(2.0));
+        assert_eq!(mk("DN 1.5").split_offset_khz(), Some(-1.5));
+        assert_eq!(mk("CW UP").split_offset_khz(), Some(1.0), "bare UP → +1 convention");
+        assert_eq!(mk("QSX 14025.5").split_offset_khz(), Some(2.5));
+        assert_eq!(mk("loud in NJ").split_offset_khz(), None);
+        assert_eq!(mk("UP 50").split_offset_khz(), None, "absurd explicit offset → stay simplex");
+        assert_eq!(mk("5UP9").split_offset_khz(), None, "report fragments don't parse");
+        assert_eq!(mk("U 2").split_offset_khz(), None, "single-letter U doesn't count");
+        assert_eq!(mk("59 D").split_offset_khz(), None, "single-letter D doesn't count");
     }
 
     #[test]

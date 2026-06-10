@@ -876,6 +876,13 @@ button.nb-chip:hover {
   line-height: 1.35;
 }
 /* Per-path outlook panel (selected station) — the PathPredictor seam surfaced. */
+/* DecodeFeed (three-pane legacy feed) has NO UTC column — 6 children, so it
+ * needs its own template; inheriting OperateDecodes' 7-column grid crushed the
+ * message into the 42px freq slot and gave the work button the wide column. */
+.decode-feed .decode-row {
+  grid-template-columns: auto 52px 34px 38px minmax(0, 1fr) auto;
+}
+
 /* Compact "Needs heard now" rows in the Connect rail */
 .connect-needs .cn-list {
   list-style: none;

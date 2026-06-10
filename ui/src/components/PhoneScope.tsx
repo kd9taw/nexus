@@ -124,7 +124,13 @@ export function PhoneScope({
       const row = spec.row
       if (!row || row.length === 0) return
 
-      const { floor, ceil } = agcRange(row)
+      // AGC over the VISIBLE window only — a loud signal outside the view (e.g.
+      // the FT8 cluster above a narrow CW window) must not compress what's shown.
+      const nb = row.length
+      const vLo = Math.max(0, Math.floor(((Math.max(200, viewLoHz) - 200) / 2700) * (nb - 1)))
+      const vHi = Math.min(nb, Math.ceil(((Math.min(2900, viewHiHz) - 200) / 2700) * (nb - 1)) + 1)
+      const visible = vHi - vLo >= 8 ? row.slice(vLo, vHi) : row
+      const { floor, ceil } = agcRange(visible)
       if (!agcInit) {
         agcFloor = floor
         agcCeil = ceil

@@ -267,6 +267,17 @@ export default function App() {
       if (s) setSnap(s)
     })
   }, [])
+  // Surface a dead radio engine (audio_error) in the persistent status lane —
+  // it was only visible deep in Settings ▸ CAT, i.e. effectively invisible.
+  useEffect(() => {
+    const err = snap?.radio.audioError
+    if (err) {
+      setStatus('audio', { tier: 'critical', message: 'RADIO STOPPED', detail: err })
+    } else {
+      setStatus('audio', null)
+    }
+  }, [snap?.radio.audioError])
+
   // Per-(band,mode) last-alert time so a band coming alive toasts once, not every
   // poll (defence in depth — the backend tracker already flags `isNew` once).
   const openingAlertRef = useRef<Map<string, number>>(new Map())

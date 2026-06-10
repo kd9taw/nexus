@@ -67,7 +67,7 @@ export function CwCockpit({ snap, theme, pitchHz = 600, pendingWork, onConsumeWo
   const changePitch = (v: number) => {
     const p = Math.max(300, Math.min(1200, Math.round(v)))
     setPitch(p)
-    void setCwKeyer(keyer, p)
+    void setCwKeyer(keyer, p).then((s) => s && onSnap?.(s))
   }
 
   const changeWpm = (w: number) => {
@@ -93,7 +93,7 @@ export function CwCockpit({ snap, theme, pitchHz = 600, pendingWork, onConsumeWo
   }
   const changeKeyer = (k: 'cat' | 'soundcard') => {
     setKeyer(k)
-    void setCwKeyer(k)
+    void setCwKeyer(k).then((s) => s && onSnap?.(s))
   }
 
   // Keyboard: F1–F8 fire macros; Esc aborts; PgUp/PgDn nudge speed (±2, Shift ±4).

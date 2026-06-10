@@ -550,13 +550,18 @@ impl RadioLoop {
                             retune_note = Some(if ok {
                                 format!("split ON — TX {tx_mhz:.4} MHz (VFO B)")
                             } else {
+                                // The desired state must not outlive the rejection —
+                                // a SPLIT badge claiming a split the rig isn't
+                                // running would burn the operator mid-pile-up.
+                                if let Ok(mut eng) = engine.lock() {
+                                    eng.split_rejected();
+                                }
                                 "rig rejected split — work the pile-up manually".to_string()
                             });
                         }
                         None => {
-                            let _ = rig.set_split(false, "VFOB");
-                            // Quiet: returning to simplex isn't worth a status line
-                            // unless a set just happened (covered above).
+                            // Back to simplex — TX returns to the main/RX VFO.
+                            let _ = rig.set_split(false, "VFOA");
                         }
                     }
                 }

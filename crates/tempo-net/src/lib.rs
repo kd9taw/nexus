@@ -30,6 +30,11 @@ pub mod wsjtx;
 // Convenience re-exports for the common entry points.
 pub use cluster::{parse_dx_spot, ClusterSpot};
 pub use mqtt::subscribe as mqtt_subscribe;
+
+/// Upper bound (secs) on how long a feed loop (cluster telnet / MQTT) can take to
+/// observe its stop flag — both use 2 s socket read timeouts. Restart orchestration
+/// sleeps `this + 1` so the coupling is explicit, not folklore.
+pub const FEED_STOP_OBSERVE_SECS: u64 = 2;
 pub use pskreporter::{PskReporter, Spot};
 pub use server::{WsjtxServer, APP_ID};
 pub use wsjtx::{Decode, Inbound, QsoLogged, Status};

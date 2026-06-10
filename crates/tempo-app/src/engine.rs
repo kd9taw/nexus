@@ -579,6 +579,14 @@ impl Engine {
         self.split_tx_mhz
     }
 
+    /// The rig REJECTED the split command — drop the desired state so the SPLIT
+    /// badge never claims a split the rig isn't running (the operator works the
+    /// pile-up manually; the CAT note says so).
+    pub fn split_rejected(&mut self) {
+        self.split_tx_mhz = None;
+        self.split_dirty = false;
+    }
+
     /// Set the operator's amateur license class (drives the TX-privilege lockout + the
     /// licensed-segment band dropdown). Unknown strings fall back to Open (no lockout).
     pub fn set_license_class(&mut self, class: &str) {

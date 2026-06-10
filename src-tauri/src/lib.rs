@@ -877,29 +877,29 @@ fn set_settings(
 
     // The live feeds (cluster telnet login, PSKR MQTT topic filters) are BOUND to
     // the callsign — a changed call tears them down, clears old-call buffers, and
-    // restarts them under the new call (background drain; ~3 s blackout).
-    let prev_call = PREV_FEED_CALL
-        .lock()
-        .map(|c| c.clone())
-        .unwrap_or_default();
-    let call_changed = !prev_call.is_empty()
-        && !mycall.trim().is_empty()
-        && prev_call.to_uppercase() != mycall.trim().to_uppercase();
-    if let Ok(mut c) = PREV_FEED_CALL.lock() {
-        *c = mycall.trim().to_string();
-    }
+    // restarts them under the new call (background drain; ~3 s blackout). The
+    // decision is made under ONE lock (no TOCTOU between rapid saves), the drain
+    // is single-flight (a second change during a drain doesn't spawn a second
+    // drain — the in-flight one re-reads the LATEST settings at its end), and an
+    // emptied callsign also tears down (the restart then no-ops via is_real_call).
+    let call_changed = {
+        let mut prev = PREV_FEED_CALL.lock().unwrap_or_else(|e| e.into_inner());
+        let changed =
+            !prev.is_empty() && prev.to_uppercase() != mycall.trim().to_uppercase();
+        *prev = mycall.trim().to_string();
+        changed
+    };
     if call_changed {
-        restart_live_feeds(
-            spots.inner().clone(),
-            live_paths.inner().clone(),
-            region_paths.0.clone(),
-            health.inner().clone(),
-            cluster_enabled,
-            cluster_host.clone(),
-            mycall.clone(),
-            mygrid.clone(),
-            opening_regional,
-        );
+        if !FEED_RESTART_IN_FLIGHT.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            restart_live_feeds(
+                state.inner().clone(),
+                spots.inner().clone(),
+                live_paths.inner().clone(),
+                region_paths.0.clone(),
+                health.inner().clone(),
+            );
+        }
+        // In-flight drain re-reads current settings at its end — nothing to do.
         return Ok(snap);
     }
 
@@ -921,25 +921,27 @@ fn set_settings(
 /// freshly-started threads can't race the dying ones for the latch.
 /// The callsign the live feeds were last started under (detects renames).
 static PREV_FEED_CALL: Mutex<String> = Mutex::new(String::new());
+/// Single-flight latch for the feed drain/restart — rapid successive callsign
+/// changes must not spawn competing drain threads (they'd race the latches).
+static FEED_RESTART_IN_FLIGHT: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
-#[allow(clippy::too_many_arguments)]
 fn restart_live_feeds(
+    engine: SharedEngine,
     spots: SharedSpots,
     live_paths: SharedLivePaths,
     region_paths: Arc<Mutex<propagation::LiveSpots>>,
     health: SharedHealth,
-    cluster_enabled: bool,
-    cluster_host: String,
-    mycall: String,
-    mygrid: String,
-    opening_regional: bool,
 ) {
     use std::sync::atomic::Ordering::SeqCst;
     CLUSTER_STOP.store(true, SeqCst);
     PSKR_STOP.store(true, SeqCst);
     std::thread::spawn(move || {
-        // Feed loops observe the stop flags within ~2 s (read timeouts); give them 3.
-        std::thread::sleep(std::time::Duration::from_secs(3));
+        // Both feed loops observe their stop flags within the socket read timeout;
+        // the +1 covers scheduling. The constant makes the coupling explicit.
+        std::thread::sleep(std::time::Duration::from_secs(
+            tempo_net::FEED_STOP_OBSERVE_SECS + 1,
+        ));
         // Old-call data must not linger on the boards/map.
         if let Ok(mut b) = spots.lock() {
             *b = tempo_net::cluster::SpotBuffer::default();
@@ -955,12 +957,28 @@ fn restart_live_feeds(
         health.cluster_connected.store(false, SeqCst);
         health.pskr_connected.store(false, SeqCst);
         // Re-arm: clear stops + release the once-latches, then start fresh threads
-        // under the NEW callsign right here (the command already returned).
+        // from the LATEST persisted settings (NOT spawn-time captures — a second
+        // save during the drain must win). An emptied/invalid callsign simply
+        // no-ops inside start_* (is_real_call gate) → feeds stay down, correctly.
         CLUSTER_STOP.store(false, SeqCst);
         PSKR_STOP.store(false, SeqCst);
         CLUSTER_STARTED.store(false, SeqCst);
         PSKR_STARTED.store(false, SeqCst);
         PSKR_REGION_STARTED.store(false, SeqCst);
+        let (cluster_enabled, cluster_host, mycall, mygrid, opening_regional) =
+            match engine.lock() {
+                Ok(eng) => {
+                    let st = eng.settings();
+                    (
+                        st.cluster_enabled,
+                        st.cluster_host.clone(),
+                        st.mycall.clone(),
+                        st.mygrid.clone(),
+                        st.opening_regional,
+                    )
+                }
+                Err(_) => return,
+            };
         if cluster_enabled {
             start_cluster_feed(&spots, &cluster_host, &mycall, &health);
         }
@@ -968,6 +986,7 @@ fn restart_live_feeds(
         if opening_regional {
             start_pskr_region_feed(&SharedRegionPaths(region_paths), &mycall, &mygrid);
         }
+        FEED_RESTART_IN_FLIGHT.store(false, SeqCst);
     });
 }
 
@@ -1332,6 +1351,11 @@ fn work_spot(
     // lookup (3Y0J/MM matches 3Y0J); no spot or no offset → simplex.
     let split_up_khz = call.as_deref().and_then(|c| {
         let c = c.to_uppercase();
+        // Slash-boundary tolerant identity ONLY ("3Y0J" ⇔ "3Y0J/MM") — bare prefix
+        // matching would let "K9A" pick up "K9AB"'s spot (a different station).
+        let same_station = |dx: &str| {
+            dx == c || dx.starts_with(&format!("{c}/")) || c.starts_with(&format!("{dx}/"))
+        };
         spots.lock().ok().and_then(|buf| {
             buf.recent_within(
                 std::time::Instant::now(),
@@ -1339,12 +1363,12 @@ fn work_spot(
             )
             .into_iter()
             .filter(|cs| {
-                propagation::live::dxped::call_matches(&cs.dx_call.to_uppercase(), &c)
+                same_station(&cs.dx_call.to_uppercase())
                     // The spot must be for THIS frequency neighborhood — a 20 m CW
                     // spot's split must not apply to the same call worked on 40 m.
                     && (cs.freq_mhz() - freq_mhz).abs() < 0.05
             })
-            .find_map(|cs| cs.split_up_khz())
+            .find_map(|cs| cs.split_offset_khz())
         })
     });
     let mut eng = state.lock().map_err(|e| e.to_string())?;
