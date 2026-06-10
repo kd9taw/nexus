@@ -92,12 +92,9 @@ const SPECIAL_OPS: {
     title:
       'DXpedition hound: calls go out above 1000 Hz; your R+report auto-moves to the Fox\'s frequency',
   },
-  {
-    value: 'superhound',
-    label: 'SuperFox',
-    title:
-      'SuperFox events: the Fox\'s replies arrive in the wideband SF waveform — native SF decode pending; running WSJT-X 2.7 as Companion source delivers them today',
-  },
+  // SuperFox (superhound) retired by operator decision — the QPC table file's
+  // license bars vendoring the native decoder outside WSJT-X. A settings file
+  // that still says 'superhound' loads fine and behaves as plain Hound.
 ]
 
 const NO_MACROS: string[] = []
@@ -377,11 +374,12 @@ export function OperateCockpit({
         HOUND
       </span>
     ) : specialOp === 'superhound' ? (
+      // Retired option still present in an old settings file: same discipline.
       <span
-        className="cockpit-specialop-badge superhound"
-        title="SuperFox events: the Fox's replies arrive in the wideband SF waveform — native SF decode pending; running WSJT-X 2.7 as Companion source delivers them today"
+        className="cockpit-specialop-badge hound"
+        title="DXpedition hound: calls go out above 1000 Hz; your R+report auto-moves to the Fox's frequency"
       >
-        SUPERFOX
+        HOUND
       </span>
     ) : null
 

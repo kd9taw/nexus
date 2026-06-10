@@ -351,9 +351,10 @@ pub enum SpecialOp {
     #[default]
     None,
     Hound,
-    /// SuperFox hound (WSJT-X 2.7 DXpeditions): same hound TX discipline; the
-    /// Fox's replies arrive in the wideband SF waveform (native demod when the
-    /// SF decoder is wired; a WSJT-X 2.7 Companion source delivers them today).
+    /// RETIRED (operator decision 2026-06-10): native SuperFox decode is off
+    /// the table — the QPC code-table file is licensed "only for use with
+    /// WSJT-X" and won't be vendored. The variant stays so a settings file
+    /// that saved it still loads; it behaves exactly as [`SpecialOp::Hound`].
     #[serde(rename = "superhound")]
     SuperHound,
 }

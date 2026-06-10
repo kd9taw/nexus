@@ -1628,7 +1628,6 @@ export function SettingsPanel({
                   {([
                     { value: 'none' as const, label: 'Off' },
                     { value: 'hound' as const, label: 'Hound' },
-                    { value: 'superhound' as const, label: 'SuperFox' },
                   ]).map((op) => (
                     <button
                       key={op.value}
@@ -1646,9 +1645,7 @@ export function SettingsPanel({
                 </div>
                 <span className="settings-hint">
                   Off = normal FT8/FT4 operation. Hound = DXpedition pile-up discipline (calls
-                  above 1000 Hz; report auto-moves to the Fox&apos;s frequency). SuperFox = Fox
-                  running WSJT-X 2.7 SuperFox mode (wideband SF waveform; use Companion source
-                  for full SuperFox decode today).
+                  above 1000 Hz; your report auto-moves to the Fox&apos;s frequency).
                 </span>
               </div>
             </div>
