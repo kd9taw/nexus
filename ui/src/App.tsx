@@ -58,7 +58,6 @@ import { CwCockpit } from './components/CwCockpit'
 import { PhoneCockpit } from './components/PhoneCockpit'
 import { PotaSotaView } from './components/PotaSotaView'
 import { DxpeditionsView } from './components/DxpeditionsView'
-import { MapView } from './components/MapView'
 import { ConnectView } from './components/ConnectView'
 import {
   getPropagation,
@@ -163,8 +162,8 @@ export default function App() {
     if (sectionIds.includes(h) && features.enabled[h as FeatureId] !== false) {
       return h as View
     }
-    // The standalone Propagation section merged into Connect — honor old deeplinks.
-    if (h === 'propagation') return 'connect'
+    // Merged sections — honor old deeplinks.
+    if (h === 'propagation' || h === 'map') return 'connect'
     return features.landing
   })
   // Per-section rig-mode policy. Only ENTERING an actual operating cockpit changes the rig:
@@ -1086,22 +1085,6 @@ export default function App() {
               handleMapSelect(call)
               setView('connect')
             }}
-          />
-        </main>
-      )
-      break
-    case 'map':
-      workspace = (
-        <main className="layout single">
-          <MapView
-            myGrid={settings?.mygrid ?? ''}
-            theme={theme}
-            stations={snap?.stations ?? []}
-            prop={prop}
-            selectedCall={activePeer}
-            onSelectCall={handleMapSelect}
-            needByCall={needByCall}
-            onWorkSpot={handleWorkMapSpot}
           />
         </main>
       )

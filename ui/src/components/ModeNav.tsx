@@ -5,7 +5,6 @@ import {
   Mic,
   Radar,
   Plane,
-  Globe,
   Target,
   MessageSquare,
   Tent,
@@ -110,18 +109,25 @@ const CW: Item = {
 // `operate` and `chat` are NOT here — they live in the Digital group above as FT8/FT4
 // and Tempo. ('qso' stays retired from the nav; the Digital cockpit sequences inline.)
 const ITEMS: Item[] = [
-  { id: 'connect', label: 'Connect', icon: Radar, title: 'Connect — situational awareness: grayline map + live propagation in one view' },
+  { id: 'connect', label: 'Connect', icon: Radar, title: 'Connect — THE map: grayline globe + live spots + openings + propagation, with click-to-work' },
   { id: 'needed', label: 'Needed', icon: Target, title: 'Needed — what you still need that’s on the air now; single-click to QSY' },
   { id: 'dxped', label: 'DXped', icon: Plane, title: 'DXpeditions — active now, the forward calendar, and what you need from each' },
-  { id: 'map', label: 'Map', icon: Globe, title: 'Map — azimuthal beam map: great-circle headings, range rings, openings, DXpeditions' },
   { id: 'logbook', label: 'Logbook', icon: BookOpen, title: 'Logbook — your ADIF contacts' },
   { id: 'awards', label: 'Awards', icon: Trophy, title: 'Awards — your Journey (firsts, ladders, milestones) + official DXCC/WAS/WAZ progress' },
   { id: 'fieldDay', label: 'Field Day', icon: Tent, title: 'Field Day — contest rate workspace' },
-  { id: 'band', label: 'Band', icon: RadioTower, title: 'Band — open broadcasts / activity feed' },
+  { id: 'band', label: 'Broadcasts', icon: RadioTower, title: 'Broadcasts — the open Tempo activity feed (CQs + announcements to everyone on frequency)' },
   { id: 'pota', label: 'POTA/SOTA', icon: Trees, title: 'POTA / SOTA — parks & summits: who’s on now (hunt) + tag your activation' },
-  { id: 'roam', label: 'Roam', icon: ArrowLeftRight, title: 'Coordinated QSY — move together off QRM (announced in the clear)' },
   { id: 'log', label: 'Field Log', icon: ClipboardList, title: 'Field Log — Field Day / activity export' },
 ]
+
+// Roam rides WITH the Digital/Tempo cluster (it's Tempo's coordinated-QSY
+// companion), not down in the global list.
+const ROAM: Item = {
+  id: 'roam',
+  label: 'Roam',
+  icon: ArrowLeftRight,
+  title: 'Coordinated QSY — move together off QRM (announced in the clear; a Tempo feature)',
+}
 
 const MODE_LABEL: Record<OpMode, string> = {
   chat: 'CHAT',
@@ -183,6 +189,7 @@ export function ModeNav({ view, mode, enabled, onSelect, tier, onDigitalMode }: 
               )
             })}
           </div>
+          {enabled.roam !== false && navBtn(ROAM)}
           {enabled.cw !== false && navBtn(CW)}
           {/* Global situational/logging surfaces + opt-in extras. */}
           {items.map((it) => navBtn(it))}

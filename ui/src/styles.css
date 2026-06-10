@@ -3368,15 +3368,18 @@ body.resizing {
 .jy-hero {
   display: flex;
   align-items: center;
-  gap: var(--space-5);
-  padding: var(--space-4);
+  gap: var(--space-4);
+  /* A slim strip, not a billboard: at high levels with no next-milestone the
+   * hero is just badge + XP bar — it must never read as a giant empty box. */
+  padding: var(--space-2) var(--space-3);
   flex-wrap: wrap;
+  align-self: stretch;
 }
 .jy-level {
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  flex: 1 1 360px;
+  flex: 1 1 260px;
   min-width: 0;
 }
 .jy-level-badge {

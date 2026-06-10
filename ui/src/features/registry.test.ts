@@ -28,7 +28,6 @@ const EXPECTED_SECTIONS: FeatureId[] = [
   'pota',
   'log',
   'dxped',
-  'map',
   'awards',
 ]
 

@@ -33,7 +33,7 @@ describe('profiles', () => {
     expect(en.roam).toBe(false)
     expect(en.awards).toBe(false)
     expect(en.dxped).toBe(false)
-    expect(en.map).toBe(false)
+    expect(en.dxped).toBe(false)
     expect(en.fieldDay).toBe(false)
   })
 
@@ -41,7 +41,7 @@ describe('profiles', () => {
     const en = resolveEnabled('dx')
     expect(en.awards).toBe(true)
     expect(en.dxped).toBe(true)
-    expect(en.map).toBe(true)
+    expect(en.connect).toBe(true)
     expect(en.band).toBe(true)
     expect(en.gamification).toBe(true)
     expect(en.fieldDay).toBe(false) // not a contest profile

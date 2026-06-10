@@ -38,7 +38,7 @@ describe('feature state transitions', () => {
     expect(en.operate).toBe(true) // core forced on despite stored false
     expect(en.logbook).toBe(true) // core, not in input → on
     expect(en.awards).toBe(false) // explicit optional off respected
-    expect(en.map).toBe(true) // missing optional → defaults on
+    expect(en.pota).toBe(true) // missing optional → defaults on
   })
 
   it('toggling a core feature is a no-op', () => {

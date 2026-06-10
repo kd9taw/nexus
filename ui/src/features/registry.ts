@@ -16,7 +16,6 @@ export type View =
   | 'phone'
   | 'connect'
   | 'dxped'
-  | 'map'
   | 'needed'
   | 'chat'
   | 'fieldDay'
@@ -250,18 +249,6 @@ export const FEATURES: FeatureDef[] = [
     // global (no workspace — never touches the rig): the expedition board. The old
     // standalone Propagation section merged into Connect; its DXped pieces live here.
     oneLine: 'DXpeditions — active now, the forward calendar, and your needed status.',
-  },
-  {
-    id: 'map',
-    label: 'Map',
-    kind: 'section',
-    category: 'Propagation',
-    core: false,
-    dependsOn: [],
-    intents: ['dx', 'vhf', 'pota'],
-    view: 'map',
-    // global (no workspace): the map is shared across modes.
-    oneLine: 'Azimuthal beam map — headings, range rings, openings, DXpeditions.',
   },
   {
     id: 'awards',
