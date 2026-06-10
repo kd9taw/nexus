@@ -74,6 +74,7 @@ interface FieldDef {
 const BASIC_FIELDS: FieldDef[] = [
   { key: 'mycall', label: 'Callsign', type: 'text', placeholder: 'KD9TAW', hint: 'Your station callsign (required).' },
   { key: 'mygrid', label: 'Grid', type: 'text', placeholder: 'EN52', hint: 'Maidenhead locator.' },
+  { key: 'opName', label: 'Operator name', type: 'text', placeholder: 'Seth', hint: 'Used by the CW {NAME} macro and logging.' },
   { key: 'fdClass', label: 'Field Day Class', type: 'text', placeholder: '1D' },
   { key: 'fdSection', label: 'Field Day Section', type: 'text', placeholder: 'WI' },
 ]
@@ -876,26 +877,6 @@ export function SettingsPanel({
                 <span className="settings-hint">Serial baud rate.</span>
               </label>
 
-              <div className="settings-field">
-                <label className="settings-toggle">
-                  <span className="settings-label">Let Nexus set the rig's mode</span>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={form.setRigMode}
-                    className={`toggle${form.setRigMode ? ' on' : ''}`}
-                    onClick={() => updateBool('setRigMode', !form.setRigMode)}
-                  >
-                    <span className="toggle-knob" />
-                  </button>
-                </label>
-                <span className="settings-hint">
-                  Off (recommended): Nexus OBEYS whatever mode your radio is in (e.g. DATA-U) and
-                  never changes it — maximum compatibility. On: Nexus forces the rig's DATA submode
-                  (Yaesu DATA-U / Icom USB-D / Kenwood DATA) for digital.
-                </span>
-              </div>
-
               <label className="settings-field">
                 <span className="settings-label">rigctld TCP Port</span>
                 <input
@@ -1470,10 +1451,38 @@ export function SettingsPanel({
                   </button>
                 </label>
                 <span className="settings-hint">
-                  Surface "new ones" from the Reverse Beacon Network in Propagation → Needs heard now.
+                  Surface "new ones" from the Reverse Beacon Network on the Needed board + Connect.
                   Takes effect on restart.
                 </span>
               </div>
+
+              <label className="settings-field">
+                <span className="settings-label">Cluster host</span>
+                <input
+                  className="settings-input"
+                  value={form.clusterHost ?? ''}
+                  onChange={(e) => update('clusterHost', e.target.value)}
+                  placeholder="telnet.reversebeacon.net:7000"
+                  spellCheck={false}
+                />
+                <span className="settings-hint">
+                  DX cluster / RBN telnet node (host:port). Takes effect on restart.
+                </span>
+              </label>
+
+              <label className="settings-field">
+                <span className="settings-label">Companion UDP address</span>
+                <input
+                  className="settings-input"
+                  value={form.companionAddr ?? ''}
+                  onChange={(e) => update('companionAddr', e.target.value)}
+                  placeholder="127.0.0.1:2237"
+                  spellCheck={false}
+                />
+                <span className="settings-hint">
+                  Where Nexus listens for WSJT-X/JTDX in Companion source mode.
+                </span>
+              </label>
 
               <div className="settings-field">
                 <label className="settings-toggle">

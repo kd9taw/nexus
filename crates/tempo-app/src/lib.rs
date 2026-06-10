@@ -175,6 +175,12 @@ impl AppState {
         self.active_peer = Some(peer.to_string());
     }
 
+    /// Clear the active peer (deselect) — the UI's null selection must round-trip
+    /// so backend consumers of `active_peer` never act on a stale one.
+    pub fn clear_peer(&mut self) {
+        self.active_peer = None;
+    }
+
     /// Switch the link/messaging tier (FT1 / FT8 / FT4 / DX1).
     ///
     /// All tiers are now live: FT1/FT8/FT4 decode+encode natively through the

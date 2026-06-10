@@ -935,7 +935,9 @@ export function MapView({
     }
   }
 
-  const prov = prop?.source ?? 'demo'
+  // null snapshot = still LOADING the first poll — never mislabel a real
+  // session as demo for its first 30 seconds.
+  const prov = prop ? prop.source : 'loading'
 
   return (
     <div className="map-view">
@@ -968,7 +970,9 @@ export function MapView({
           </button>
         </div>
         <span className="map-center">◎ {myGrid}</span>
-        <span className={`map-prov prov-${prov}`}>{prov === 'live' ? 'LIVE' : prov === 'cached' ? 'CACHED' : 'DEMO'}</span>
+        <span className={`map-prov prov-${prov}`}>
+          {prov === 'live' ? 'LIVE' : prov === 'cached' ? 'CACHED' : prov === 'loading' ? '…' : 'DEMO'}
+        </span>
         <button
           className="map-reset"
           onClick={() => {

@@ -72,7 +72,6 @@ import {
 import { setStatus } from './status'
 import type { PropagationSnapshot, FeedHealth, NeedTag, NeedAlert } from './types'
 import { NeededPanel } from './components/NeededPanel'
-import { QsoPanel } from './components/QsoPanel'
 import { LogConfirm } from './components/LogConfirm'
 import { FieldDayView } from './components/FieldDayView'
 import { BandFeed } from './components/BandFeed'
@@ -88,9 +87,6 @@ import { SetupWizard } from './components/SetupWizard'
 import type { ProfileId } from './features/profiles'
 import { DemoBanner } from './components/DemoBanner'
 
-// Placeholder identity shipped by the mock/default config. Until the operator
-// sets a real callsign we nudge them toward Settings.
-const PLACEHOLDER_CALL = 'KD9TAW'
 const ONBOARD_KEY = 'tempo-onboarded'
 // First-run setup wizard: shown once on a fresh install, re-openable from Settings.
 const WIZARD_KEY = 'nexus.features.wizardSeen'
@@ -459,14 +455,18 @@ export default function App() {
   }, [snap, activePeer, typingTick])
 
   const handleSelect = useCallback((call: string) => {
-    void withErrorToast(() => Promise.resolve(apiSelectPeer(call)), 'Could not select station')
+    void withErrorToast(() => apiSelectPeer(call), 'Could not select station').then(
+      (s) => s && setSnap(s),
+    )
   }, [])
 
   // The Map and the roster share ONE selection: the active peer. Clicking a map
   // dot selects (or, if already selected, clears) that station — and the roster
   // highlights it too, since StationList already keys its highlight off activePeer.
   const handleMapSelect = useCallback((call: string | null) => {
-    void withErrorToast(() => Promise.resolve(apiSelectPeer(call)), 'Could not select station')
+    void withErrorToast(() => apiSelectPeer(call), 'Could not select station').then(
+      (s) => s && setSnap(s),
+    )
   }, [])
 
   const handleCall = useCallback(
@@ -505,9 +505,9 @@ export default function App() {
     (text: string) => {
       if (!activePeer) return
       void withErrorToast(
-        () => Promise.resolve(apiSendMessage(activePeer, text)),
+        () => apiSendMessage(activePeer, text),
         'Message could not be sent',
-      )
+      ).then((s) => s && setSnap(s)) // instant echo — no 300 ms poll wait
     },
     [activePeer],
   )
@@ -707,7 +707,6 @@ export default function App() {
       // (listen + answer), never auto-calling CQ. The operator hits "Call CQ" /
       // "Running" in the panel to start transmitting.
       if (next === 'chat') handleSetMode('chat')
-      else if (next === 'qso') handleSetMode('qso-monitor')
       else if (next === 'fieldDay') handleSetMode('fieldday-sp')
     },
     [handleSetMode],
@@ -839,7 +838,7 @@ export default function App() {
   const needsOnboarding =
     !onboardDismissed &&
     effectiveView !== 'settings' &&
-    (snap.mycall.trim() === '' || snap.mycall.trim().toUpperCase() === PLACEHOLDER_CALL)
+    snap.mycall.trim() === '' // fresh install (the default callsign is empty)
 
   const stationsPanel = (
     <StationList
@@ -929,17 +928,6 @@ export default function App() {
 
   let workspace: JSX.Element | null
   switch (effectiveView) {
-    case 'qso':
-      workspace = threePane(
-        <QsoPanel
-          qso={snap.qso}
-          onSetMode={handleSetMode}
-          onResend={handleQsoResend}
-          onFreetext={handleQsoFreetext}
-          onWork={handleCall}
-        />,
-      )
-      break
     case 'fieldDay':
       workspace = threePane(
         <FieldDayView fieldDay={snap.fieldDay} onSetMode={handleSetMode} />,

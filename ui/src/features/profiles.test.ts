@@ -24,11 +24,10 @@ describe('profiles', () => {
     }
   })
 
-  it('starter is a lean newcomer surface (band/chat/qso + gamification)', () => {
+  it('starter is a lean newcomer surface (band/chat + gamification)', () => {
     const en = resolveEnabled('starter')
     expect(en.band).toBe(true)
     expect(en.chat).toBe(true)
-    expect(en.qso).toBe(true) // "work this station" lands here — needed everywhere
     expect(en.gamification).toBe(true)
     // hidden for a newcomer — DX/contest console + the niche QSY section
     expect(en.roam).toBe(false)
@@ -36,12 +35,6 @@ describe('profiles', () => {
     expect(en.dxped).toBe(false)
     expect(en.map).toBe(false)
     expect(en.fieldDay).toBe(false)
-  })
-
-  it('qso (the "work a station" destination) is enabled in every goal profile', () => {
-    for (const id of ['starter', 'dx', 'contest', 'pota', 'vhf'] as ProfileId[]) {
-      expect(resolveEnabled(id).qso, `${id} qso`).toBe(true)
-    }
   })
 
   it('dx surfaces the chase tools', () => {

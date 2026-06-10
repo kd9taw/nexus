@@ -23,6 +23,14 @@ function rowClass(d: DecodeRow): string {
 function fmtSnr(snr: number): string {
   return `${snr > 0 ? '+' : ''}${snr}`
 }
+// DT column — parity with OperateDecodes: the clock-skew diagnostic belongs in
+// EVERY decode surface (a wrong PC clock silently kills decodes).
+function fmtDt(dt: number): string {
+  return `${dt >= 0 ? '+' : ''}${dt.toFixed(1)}`
+}
+function dtClass(dt: number): string {
+  return Math.abs(dt) > 1.0 ? 'bad' : Math.abs(dt) > 0.5 ? 'warn' : 'ok'
+}
 
 export function DecodeFeed({ decodes, harqRescues, onCall }: Props) {
   return (
@@ -56,6 +64,9 @@ export function DecodeFeed({ decodes, harqRescues, onCall }: Props) {
                 {d.tier}
               </span>
               <span className={`decode-snr ${snrClass(d.snr)}`}>{fmtSnr(d.snr)}</span>
+              <span className={`decode-dt ${dtClass(d.dtSec)}`} title="DT — time offset (s); large = clock/sync skew">
+                {fmtDt(d.dtSec)}
+              </span>
               <span className="decode-freq">{Math.round(d.freqHz)}</span>
               <span className="decode-msg" title={d.country ? `${d.message} · ${d.country}` : d.message}>
                 {d.message}

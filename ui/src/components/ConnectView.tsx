@@ -337,7 +337,11 @@ export function ConnectView({
                 <section className="connect-path panel">
                   <h3>
                     Path to {selectedCall}
-                    <span className="cp-engine">{pathPred.engine === 'heuristic' ? 'modelled' : pathPred.engine}</span>
+                    {pathPred.engine !== 'demo' && (
+                      <span className="cp-engine">
+                        {pathPred.engine === 'heuristic' ? 'modelled' : pathPred.engine}
+                      </span>
+                    )}
                   </h3>
                   {pathOpen.length === 0 ? (
                     <p className="cp-none">No HF band modelled workable on this path right now.</p>

@@ -112,13 +112,13 @@ export async function getAurora(): Promise<AuroraPoint[]> {
   return []
 }
 
-export async function sendMessage(peer: string, text: string): Promise<void> {
+export async function sendMessage(peer: string, text: string): Promise<AppSnapshot> {
   const invoke = tauriInvoke()
-  if (invoke) {
-    await invoke<void>('send_message', { peer, text })
-    return
-  }
+  // The command returns the post-send snapshot — apply it immediately so the
+  // outbound message renders without waiting ~300 ms for the next poll.
+  if (invoke) return invoke<AppSnapshot>('send_message', { peer, text })
   mockEngine.sendMessage(peer, text)
+  return mockEngine.getSnapshot()
 }
 
 /**
@@ -131,15 +131,15 @@ export async function broadcast(text: string): Promise<AppSnapshot> {
   return mockEngine.broadcast(text)
 }
 
-export async function selectPeer(peer: string | null): Promise<void> {
+export async function selectPeer(peer: string | null): Promise<AppSnapshot> {
   const invoke = tauriInvoke()
   if (invoke) {
-    // Deselect (null) is a UI-only concern; the Rust command takes a non-null
-    // peer, so only round-trip an actual selection.
-    if (peer != null) await invoke<void>('select_peer', { peer })
-    return
+    // Round-trip BOTH select and deselect — a null clears the engine's active
+    // peer (it used to linger backend-side, leaving stale roster/QSY context).
+    return invoke<AppSnapshot>('select_peer', { peer })
   }
   mockEngine.selectPeer(peer)
+  return mockEngine.getSnapshot()
 }
 
 /**
@@ -572,7 +572,8 @@ export async function workSpot(
 ): Promise<AppSnapshot> {
   const invoke = tauriInvoke()
   if (invoke) return invoke<AppSnapshot>('work_spot', { mode, freqMhz, band })
-  return mockEngine.getSnapshot()
+  // Browser demo: at least QSY the mock dial so the gesture is visible.
+  return mockEngine.setFrequency(freqMhz, band, 'USB')
 }
 
 /** Queue CW to transmit (CAT keyer). `text` is an F-key macro template or literal

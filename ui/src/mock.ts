@@ -320,6 +320,9 @@ function defaultSettings(): Settings {
   return {
     mycall: MYCALL,
     mygrid: MYGRID,
+    opName: '',
+    clusterHost: 'telnet.reversebeacon.net:7000',
+    companionAddr: '127.0.0.1:2237',
     band: '20m',
     dialMhz: 14.074,
     sideband: 'USB',
@@ -332,7 +335,6 @@ function defaultSettings(): Settings {
     rigModelName: '',
     serialPort: '',
     baud: 38400,
-    setRigMode: false,
     rigctldPort: 4532,
     catBroker: false,
     catBrokerPort: 4532,

@@ -1688,6 +1688,10 @@ impl Engine {
     pub fn select_peer(&mut self, peer: &str) {
         self.app.select_peer(peer);
     }
+    /// Clear the active peer (map/roster deselect).
+    pub fn clear_peer(&mut self) {
+        self.app.clear_peer();
+    }
     pub fn set_tier(&mut self, tier: Tier) {
         self.app.set_tier(tier);
         // Point the native signal source at the selected mode (FT1/FT8/FT4). DX1

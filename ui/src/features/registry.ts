@@ -19,7 +19,6 @@ export type View =
   | 'map'
   | 'needed'
   | 'chat'
-  | 'qso'
   | 'fieldDay'
   | 'band'
   | 'roam'
@@ -177,21 +176,6 @@ export const FEATURES: FeatureDef[] = [
     view: 'chat',
     workspace: 'msg',
     oneLine: 'Free-form QSO text (FT1/DX1).',
-  },
-  {
-    id: 'qso',
-    label: 'QSO',
-    kind: 'section',
-    core: false,
-    category: 'Operate',
-    dependsOn: [],
-    // The 1:1 sequenced-contact view is the destination of the core "work this
-    // station" action (roster/map → QsoPanel), so it must be available in every
-    // goal profile — disabling it would strand that primary workflow.
-    intents: ['casual', 'dx', 'contest', 'pota', 'vhf'],
-    view: 'qso',
-    workspace: 'dx',
-    oneLine: '1:1 sequenced contact workflow (where “work this station” lands).',
   },
   {
     id: 'roam',

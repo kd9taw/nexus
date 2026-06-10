@@ -23,7 +23,6 @@ const EXPECTED_SECTIONS: FeatureId[] = [
   'settings',
   'band',
   'chat',
-  'qso',
   'roam',
   'fieldDay',
   'pota',

@@ -870,6 +870,12 @@ export interface FieldDayStatus {
 export interface Settings {
   mycall: string
   mygrid: string
+  /** Operator first name — the CW {NAME} macro + logging. */
+  opName: string
+  /** DX cluster / RBN telnet node (host:port). */
+  clusterHost: string
+  /** Companion-mode UDP listen address (WSJT-X/JTDX). */
+  companionAddr: string
   band: string
   dialMhz: number
   sideband: string
@@ -895,7 +901,6 @@ export interface Settings {
   baud: number
   /** Let Nexus set the rig's mode (forces the DATA submode). Off by default —
    * Nexus obeys whatever mode the rig is already in (max compatibility). */
-  setRigMode: boolean
   /** TCP port that rigctld listens on / Tempo launches it with. */
   rigctldPort: number
   /** Run the rigctld-compatible CAT broker so other apps share the radio. */

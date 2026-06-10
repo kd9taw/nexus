@@ -437,9 +437,17 @@ fn send_message(
 
 /// Select `peer` as the active conversation. Returns the refreshed snapshot.
 #[tauri::command]
-fn select_peer(state: State<'_, SharedEngine>, peer: String) -> Result<AppSnapshot, String> {
+fn select_peer(
+    state: State<'_, SharedEngine>,
+    peer: Option<String>,
+) -> Result<AppSnapshot, String> {
     let mut eng = state.lock().map_err(|e| e.to_string())?;
-    eng.select_peer(&peer);
+    match peer.as_deref() {
+        Some(p) => eng.select_peer(p),
+        // Deselect must reach the engine too — a lingering active peer kept stale
+        // roster/QSY context alive backend-side.
+        None => eng.clear_peer(),
+    }
     Ok(eng.snapshot())
 }
 
