@@ -1688,6 +1688,24 @@ fn set_tx_even(state: State<'_, SharedEngine>, even: bool) -> Result<AppSnapshot
     Ok(eng.snapshot())
 }
 
+/// WSJT-X "Decode" button / F6: re-run the decoder over the last period's
+/// audio with the current settings; only newly-found lines are ingested.
+#[tauri::command]
+fn redecode(state: State<'_, SharedEngine>) -> Result<AppSnapshot, String> {
+    let mut eng = state.lock().map_err(|e| e.to_string())?;
+    let _ = eng.redecode();
+    Ok(eng.snapshot())
+}
+
+/// Start a CQ run; `dir` = a directed-CQ token ("DX"/"NA"/"POTA"/…) or None
+/// for a plain CQ (also clears a sticky directed token).
+#[tauri::command]
+fn start_cq(state: State<'_, SharedEngine>, dir: Option<String>) -> Result<AppSnapshot, String> {
+    let mut eng = state.lock().map_err(|e| e.to_string())?;
+    eng.start_cq(dir.as_deref())?;
+    Ok(eng.snapshot())
+}
+
 /// WSJT-X Tx-slot click: force `text` as the next transmission to `call`
 /// (starts/retargets the QSO, arms per the double-click behavior option).
 #[tauri::command]
@@ -3355,6 +3373,11 @@ pub fn run() {
     let region_grid = settings.mygrid.clone();
     let region_enabled = settings.opening_regional;
     let engine: SharedEngine = Arc::new(Mutex::new(Engine::with_settings(settings)));
+    // Re-seed the decoder's hash table from the logbook so <...> compound-call
+    // tokens resolve right after launch (the Fortran table dies with the process).
+    if let Ok(eng) = engine.lock() {
+        eng.seed_hash_table();
+    }
 
     // Live network feeds (DX-cluster / RBN spots + the PSK Reporter MQTT firehose).
     // Each is spawned once per process (the *_STARTED latches), gated on a real
@@ -3523,6 +3546,8 @@ pub fn run() {
             set_rx_offset,
             set_tx_offset,
             override_next_tx,
+            redecode,
+            start_cq,
             set_hold_tx_freq,
             call_station,
             open_panel_window,

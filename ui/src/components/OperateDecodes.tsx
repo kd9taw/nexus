@@ -266,6 +266,18 @@ export function OperateDecodes({
                 <span className="decode-freq">{Math.round(d.freqHz)}</span>
                 <span className="decode-msg" title={d.country ? `${d.message} · ${d.country}` : d.message}>
                   {d.message}
+                  {/* WSJT-X AP / low-confidence markers: dim trailing annotations.
+                      Both can appear on the same decode (AP-assisted but uncertain). */}
+                  {(d.lowConf || d.ap) && (
+                    <span className="decode-confidence-markers">
+                      {d.lowConf && (
+                        <span className="decode-marker decode-marker-lc" title="Low-confidence decode">?</span>
+                      )}
+                      {d.ap && (
+                        <span className="decode-marker decode-marker-ap" title="AP-assisted decode">a</span>
+                      )}
+                    </span>
+                  )}
                   {d.newDxcc && (
                     <span className="decode-tag newdxcc" title="New DXCC entity — a new one!">
                       DXCC

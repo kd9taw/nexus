@@ -5,18 +5,22 @@ interface Props {
   dxGrid: string
   onDxCall: (v: string) => void
   onDxGrid: (v: string) => void
-  /** The generated standard messages (tx5 here is only the baseline — the
-   * editable value arrives via `tx5`). */
+  /** The generated standard messages (tx5/tx6 here are only the baselines —
+   * the editable values arrive via `tx5` and `tx6`). */
   messages: StdMessages
   /** Editable Tx5 free text. Lifted to the cockpit so F4 / Alt+5 reach it. */
   tx5: string
   onTx5: (v: string) => void
+  /** Editable Tx6 (Call CQ) text. Auto-tracks the generated CQ until edited
+   * for a directed CQ (CQ DX / CQ NA / CQ POTA / CQ TEST / …). */
+  tx6: string
+  onTx6: (v: string) => void
   /** 0-based row queued as the next TX (qso.txNow match, else the local pick);
    * null = nothing queued. */
   nextIndex: number | null
   /** Fire row n (1-based): Tx6 = Call CQ; Tx1–Tx5 = override the next TX. */
   onTx: (n: number) => void
-  /** Regenerate the std messages (resets an edited Tx5 to its baseline). */
+  /** Regenerate the std messages (resets an edited Tx5/Tx6 to its baseline). */
   onGenerate: () => void
   /** Clear DX Call + DX Grid (the F4 action). */
   onClear: () => void
@@ -27,7 +31,8 @@ interface Props {
 /**
  * The WSJT-X Tx1–Tx6 standard-message panel (Classic layout). Semantics are
  * stock: DX Call/Grid drive Generate-Std-Msgs; each row has a "next" dot and a
- * Tx button; Tx6 is the Call-CQ path; Tx5 is editable free text. Only the
+ * Tx button; Tx6 is the editable Call-CQ path (supports directed CQ tokens
+ * like "CQ DX", "CQ POTA", "CQ TEST"); Tx5 is editable free text. Only the
  * visual theme is modern — the message machine itself replicates WSJT-X.
  */
 export function TxPanel({
@@ -38,6 +43,8 @@ export function TxPanel({
   messages,
   tx5,
   onTx5,
+  tx6,
+  onTx6,
   nextIndex,
   onTx,
   onGenerate,
@@ -51,7 +58,7 @@ export function TxPanel({
     { n: 3, text: messages.tx3 },
     { n: 4, text: messages.tx4 },
     { n: 5, text: tx5 },
-    { n: 6, text: messages.tx6 },
+    { n: 6, text: tx6 },
   ]
   // Stock defaults first, then the operator's QSO macros (deduped).
   const tx5Options = Array.from(new Set(['73', 'RR73', ...qsoMacros]))
@@ -130,6 +137,22 @@ export function TxPanel({
                     ))}
                   </datalist>
                 </>
+              ) : n === 6 ? (
+                <div className="txp-cq-field">
+                  <input
+                    type="text"
+                    className="txp-msg txp-free txp-cq-edit mono"
+                    value={tx6}
+                    maxLength={22}
+                    spellCheck={false}
+                    placeholder="CQ call"
+                    aria-label="Tx6 Call CQ (edit for a directed CQ)"
+                    onChange={(e) => onTx6(e.target.value.toUpperCase())}
+                  />
+                  <div className="txp-cq-hint">
+                    Edit for a directed CQ — CQ DX / CQ NA / CQ POTA / CQ TEST
+                  </div>
+                </div>
               ) : (
                 <span className="txp-msg mono">{text || '—'}</span>
               )}

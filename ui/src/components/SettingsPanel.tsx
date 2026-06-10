@@ -1520,6 +1520,107 @@ export function SettingsPanel({
                   off-grid: GPS). Turn off for fully-offline operation (no network calls).
                 </span>
               </div>
+
+              <div className="settings-field">
+                <span className="settings-label">Decode depth</span>
+                <div className="theme-switcher" role="group" aria-label="Decode depth">
+                  {([1, 2, 3] as const).map((d) => (
+                    <button
+                      key={d}
+                      type="button"
+                      className={`theme-chip${(form.decodeDepth ?? 3) === d ? ' active' : ''}`}
+                      aria-pressed={(form.decodeDepth ?? 3) === d}
+                      onClick={() => {
+                        markDirty()
+                        setForm((prev) => (prev ? { ...prev, decodeDepth: d } : prev))
+                      }}
+                    >
+                      {d === 1 ? 'Fast' : d === 2 ? 'Normal' : 'Deep'}
+                    </button>
+                  ))}
+                </div>
+                <span className="settings-hint">
+                  Deep finds the most signals (WSJT-X default); Fast saves CPU on old hardware.
+                </span>
+              </div>
+
+              <div className="settings-field">
+                <span className="settings-label">Decoder passband (Hz)</span>
+                <div className="settings-input-row">
+                  <label className="settings-inline-label">
+                    <span>F low</span>
+                    <input
+                      id="decode-flow"
+                      className="settings-input"
+                      type="number"
+                      inputMode="numeric"
+                      min={200}
+                      max={2900}
+                      step={1}
+                      value={form.decodeFLowHz ?? 200}
+                      aria-label="Decoder F low (Hz)"
+                      onChange={(e) => {
+                        if (e.target.value === '') return // mid-edit clear: keep the prior value
+                        markDirty()
+                        const raw = Number(e.target.value)
+                        const clamped = Math.max(200, Math.min(2900, Math.round(raw)))
+                        setForm((prev) =>
+                          prev
+                            ? { ...prev, decodeFLowHz: clamped }
+                            : prev,
+                        )
+                      }}
+                      onBlur={() => {
+                        setForm((prev) => {
+                          if (!prev) return prev
+                          const lo = prev.decodeFLowHz ?? 200
+                          const hi = prev.decodeFHighHz ?? 2900
+                          if (lo >= hi) return { ...prev, decodeFLowHz: Math.min(lo, hi - 1) }
+                          return prev
+                        })
+                      }}
+                    />
+                  </label>
+                  <label className="settings-inline-label">
+                    <span>F high</span>
+                    <input
+                      id="decode-fhigh"
+                      className="settings-input"
+                      type="number"
+                      inputMode="numeric"
+                      min={200}
+                      max={2900}
+                      step={1}
+                      value={form.decodeFHighHz ?? 2900}
+                      aria-label="Decoder F high (Hz)"
+                      onChange={(e) => {
+                        if (e.target.value === '') return // mid-edit clear: keep the prior value
+                        markDirty()
+                        const raw = Number(e.target.value)
+                        const clamped = Math.max(200, Math.min(2900, Math.round(raw)))
+                        setForm((prev) =>
+                          prev
+                            ? { ...prev, decodeFHighHz: clamped }
+                            : prev,
+                        )
+                      }}
+                      onBlur={() => {
+                        setForm((prev) => {
+                          if (!prev) return prev
+                          const lo = prev.decodeFLowHz ?? 200
+                          const hi = prev.decodeFHighHz ?? 2900
+                          if (hi <= lo) return { ...prev, decodeFHighHz: Math.max(hi, lo + 1) }
+                          return prev
+                        })
+                      }}
+                    />
+                  </label>
+                </div>
+                <span className="settings-hint">
+                  Restrict the decoder&apos;s search range — useful with narrow filters or strong
+                  close-in QRM. Default 200–2900 Hz (full passband).
+                </span>
+              </div>
             </div>
           </fieldset>
           )}

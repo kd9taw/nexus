@@ -1195,7 +1195,13 @@ fn emit_rx_decodes(
     for d in eng.last_decodes() {
         if let Some(server) = sinks.wsjtx {
             let _ = server.send_decode(&build_decode(
-                &d.message, d.snr, d.dt, d.freq, tier, ms_mid,
+                &d.message,
+                d.snr,
+                d.dt,
+                d.freq,
+                tier,
+                ms_mid,
+                d.qual < 0.17, // the stock low-confidence line
             ));
         }
         if sinks.psk.is_some() {
@@ -1215,6 +1221,7 @@ fn build_decode<'a>(
     freq: f32,
     mode: &'a str,
     time_ms: u32,
+    low_confidence: bool,
 ) -> WsjtxDecode<'a> {
     WsjtxDecode {
         new: true,
@@ -1224,7 +1231,7 @@ fn build_decode<'a>(
         delta_freq: freq as u32,
         mode,
         message,
-        low_confidence: false,
+        low_confidence,
         off_air: false,
     }
 }

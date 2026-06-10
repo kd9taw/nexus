@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   clampOffsetHz,
+  cqDirFromText,
   formatReport,
   genStdMessages,
   gridFromMessage,
@@ -169,5 +170,60 @@ describe('compound-call (i3=4) display parity', () => {
     const m = genStdMessages({ dxCall: 'K1ABC', myCall: 'W9XYZ', myGrid: 'EN37', snr: 3 })
     expect(m.tx1).toBe('K1ABC W9XYZ EN37')
     expect(m.tx2).toBe('K1ABC W9XYZ +03')
+  })
+})
+
+describe('cqDirFromText — directed CQ parser for Tx6', () => {
+  const MY = 'KD9TAW'
+
+  it('plain CQ (no token) returns null', () => {
+    expect(cqDirFromText('CQ KD9TAW EN52', MY)).toBeNull()
+    expect(cqDirFromText('CQ KD9TAW', MY)).toBeNull()
+    expect(cqDirFromText('cq kd9taw en52', MY)).toBeNull()
+  })
+
+  it('returns the token for directed CQs — letter tokens', () => {
+    expect(cqDirFromText('CQ DX KD9TAW EN52', MY)).toBe('DX')
+    expect(cqDirFromText('CQ NA KD9TAW', MY)).toBe('NA')
+    expect(cqDirFromText('CQ POTA KD9TAW', MY)).toBe('POTA')
+    expect(cqDirFromText('CQ TEST KD9TAW EN52', MY)).toBe('TEST')
+  })
+
+  it('returns the token for 3-digit zone directed CQs', () => {
+    expect(cqDirFromText('CQ 040 KD9TAW', MY)).toBe('040')
+    expect(cqDirFromText('CQ 005 KD9TAW EN52', MY)).toBe('005')
+  })
+
+  it('is case-insensitive on keyword and token', () => {
+    expect(cqDirFromText('cq dx kd9taw', MY)).toBe('DX')
+    expect(cqDirFromText('CQ dx KD9TAW', MY)).toBe('DX')
+  })
+
+  it('returns undefined for garbage / wrong callsign', () => {
+    expect(cqDirFromText('', MY)).toBeUndefined()
+    expect(cqDirFromText('DE KD9TAW', MY)).toBeUndefined()
+    expect(cqDirFromText('CQ W1ABC EN52', MY)).toBeUndefined()   // wrong callsign
+    expect(cqDirFromText('CQ DX W1ABC EN52', MY)).toBeUndefined() // token present, wrong call
+    expect(cqDirFromText('KD9TAW W1ABC EN52', MY)).toBeUndefined() // not a CQ
+  })
+
+  it('returns undefined when myCall is blank', () => {
+    expect(cqDirFromText('CQ KD9TAW EN52', '')).toBeUndefined()
+  })
+
+  it('rejects 2-digit or 4-digit "zone" tokens (only exactly 3 digits)', () => {
+    // 2-digit: interpreted as... not a valid token under the rule
+    expect(cqDirFromText('CQ 04 KD9TAW', MY)).toBeUndefined()
+    // 4-digit: looks like a GRID — invalid position
+    expect(cqDirFromText('CQ 0400 KD9TAW', MY)).toBeUndefined()
+  })
+
+  it('rejects tokens longer than 4 letters', () => {
+    // NEXUS = 5 letters — not a valid token
+    expect(cqDirFromText('CQ NEXUS KD9TAW', MY)).toBeUndefined()
+  })
+
+  it('plain CQ with trailing invalid grid returns undefined', () => {
+    expect(cqDirFromText('CQ KD9TAW EXTRA STUFF', MY)).toBeUndefined()
   })
 })

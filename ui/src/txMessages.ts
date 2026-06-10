@@ -157,3 +157,75 @@ export function isIgnored(ignored: ReadonlySet<string>, call: string | null | un
 export function clampOffsetHz(hz: number): number {
   return Math.max(200, Math.min(2900, Math.round(hz)))
 }
+
+// ---------------------------------------------------------------------------
+// Directed CQ parsing: Tx6 editable field → startCq(dir | null).
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse the Tx6 text and extract a directed CQ token for `startCq(dir)`.
+ *
+ * Returns:
+ *   - `null`      — plain CQ (no direction token), e.g. "CQ KD9TAW EN52"
+ *   - `string`    — the directed token, e.g. "DX", "NA", "POTA", "040"
+ *   - `undefined` — not a CQ for `myCall`, or malformed → fall back to plain
+ *
+ * Pattern matched: `CQ [<TOKEN>] <MYCALL> [<GRID4>]`
+ *   where TOKEN = 1–4 uppercase letters OR exactly 3 digits (contest/zone CQ).
+ * The match is case-insensitive on the CQ keyword and token; myCall comparison
+ * is case-insensitive and stripped of leading/trailing whitespace.
+ *
+ * Examples:
+ *   "CQ KD9TAW EN52"       → null     (plain CQ)
+ *   "CQ DX KD9TAW EN52"   → "DX"
+ *   "CQ POTA KD9TAW"       → "POTA"
+ *   "CQ 040 KD9TAW"        → "040"    (CQ zone directed)
+ *   "CQ NA KD9TAW"         → "NA"
+ *   "CQ TEST KD9TAW EN52"  → "TEST"
+ *   "CQ W1ABC EN52"        → undefined  (callsign ≠ myCall)
+ *   ""                     → undefined  (empty / garbage)
+ */
+export function cqDirFromText(
+  text: string,
+  myCall: string,
+): string | null | undefined {
+  const parts = text.trim().toUpperCase().split(/\s+/).filter(Boolean)
+  if (parts.length < 2) return undefined
+  if (parts[0] !== 'CQ') return undefined
+
+  const myUp = myCall.trim().toUpperCase()
+  if (!myUp) return undefined
+
+  // Regex for a valid directed token: 1–4 letters OR exactly 3 digits.
+  const TOKEN_RE = /^([A-Z]{1,4}|\d{3})$/
+
+  // Check structure: parts after CQ are some of [TOKEN] MYCALL [GRID].
+  // We walk the remaining tokens:
+  //   idx 1: could be TOKEN or MYCALL
+  //   if TOKEN at idx 1: idx 2 must be MYCALL, idx 3 (opt) GRID
+  //   if MYCALL at idx 1 (no token): idx 2 (opt) GRID
+
+  let token: string | null = null
+  let callIdx: number | null = null
+
+  if (parts[1] === myUp) {
+    // No direction token: CQ MYCALL [GRID]
+    callIdx = 1
+    token = null
+  } else if (TOKEN_RE.test(parts[1]) && parts.length >= 3 && parts[2] === myUp) {
+    // Has direction token: CQ TOKEN MYCALL [GRID]
+    token = parts[1]
+    callIdx = 2
+  } else {
+    // First non-CQ part is neither myCall nor a valid TOKEN followed by myCall
+    return undefined
+  }
+
+  // Optional trailing GRID (must be valid 4-char grid shape, not a callsign fragment)
+  const remainder = parts.slice(callIdx + 1)
+  if (remainder.length > 1) return undefined // too many trailing parts
+  if (remainder.length === 1 && !GRID4_RE.test(remainder[0])) return undefined
+
+  return token
+}
+

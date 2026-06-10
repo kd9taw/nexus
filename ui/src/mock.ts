@@ -353,6 +353,10 @@ function defaultSettings(): Settings {
     // WSJT-X parity: Split Operation + working-frequency overrides
     splitMode: 'none',
     workingFrequencies: [],
+    // Decoder settings (WSJT-X parity: depth + passband)
+    decodeDepth: 3,
+    decodeFLowHz: 200,
+    decodeFHighHz: 2900,
     // network integrations
     wsjtxUdp: false,
     wsjtxUdpAddr: '127.0.0.1:2237',

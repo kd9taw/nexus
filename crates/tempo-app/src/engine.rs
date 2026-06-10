@@ -182,6 +182,11 @@ pub struct Engine {
     /// radio loop consumes it AFTER tx_until expires; disabling immediately
     /// would trip the hard-stop path and cut the 73 itself mid-over.
     pending_tx_disable: bool,
+    /// Directed-CQ token for CQ runs ("DX", "NA", "POTA", …): applied to the
+    /// run's CQ message at start AND on the return-to-CQ after each pileup
+    /// contact. None = plain CQ. Sticky until the operator starts a plain run
+    /// (stock: the edited Tx6 text persists the same way).
+    cq_dir: Option<String>,
     /// TX dial shift (Hz) for the over poll_tx just generated under WSJT-X
     /// Split Operation — the audio was reduced into 1500–2000 Hz and the loop
     /// must move the TX dial by this much before keying. 0 = no shift.
@@ -352,6 +357,7 @@ impl Engine {
             decode_history: std::collections::VecDeque::new(),
             early_seen: None,
             pending_tx_disable: false,
+            cq_dir: None,
             tx_dial_shift_hz: 0,
             split_tx_mhz: None,
             split_dirty: false,
@@ -1493,6 +1499,14 @@ impl Engine {
                 station: Box::new({
                     let mut s = QsoStation::calling_cq(&mycall, &mygrid);
                     s.cq_call_cap = self.settings.cq_max_calls; // None = stock
+                    if let Some(d) = &self.cq_dir {
+                        // Directed run: "CQ DX <me> <grid>" instead of plain.
+                        s.override_next(Msg::Cq {
+                            de: mycall.clone(),
+                            grid: mygrid.clone(),
+                            dir: d.clone(),
+                        });
+                    }
                     s
                 }),
                 running: true,
@@ -2229,6 +2243,18 @@ impl Engine {
         self.clock_offset_ms
     }
 
+    /// Start a CQ run, optionally DIRECTED ("DX"/"NA"/"POTA"/"TEST"/3-digit
+    /// kHz). The token is validated by Msg::parse round-trip semantics at the
+    /// UI layer; here it's stored verbatim (uppercased) and applied to the
+    /// run's CQ — including the return-to-CQ after each pileup contact. A
+    /// plain start clears a sticky token.
+    pub fn start_cq(&mut self, dir: Option<&str>) -> Result<(), String> {
+        self.cq_dir = dir
+            .map(|d| d.trim().to_uppercase())
+            .filter(|d| !d.is_empty());
+        self.set_mode("qso-run")
+    }
+
     /// WSJT-X Tx-slot click: force `text` as the next transmission to `dxcall`.
     /// Starts (or retargets) the QSO when needed; the auto-sequencer's observe
     /// still advances on the partner's matching reply, so a forced message
@@ -2490,6 +2516,10 @@ impl Engine {
                     country: entity,
                     new_dxcc,
                     new_grid,
+                    // WSJT-X decode markers: trailing 'a' = AP-assisted decode,
+                    // '?' = low-confidence (qual below the stock 0.17 line).
+                    ap: d.nap > 0,
+                    low_conf: d.qual < 0.17,
                     // Label each decode by the mode that actually produced it
                     // (native source's mode, or a companion stream's per-decode
                     // WSJT-X mode); fall back to the selected tier when unknown
@@ -2524,6 +2554,8 @@ impl Engine {
                 mine: true,
                 tx_at: Some(tx.when_unix),
                 tier: s.link.tier,
+                ap: false,
+                low_conf: false,
             });
         }
         s.harq_rescues = self.harq_rescues;
@@ -2744,6 +2776,76 @@ impl Engine {
         self.process_decodes(frame, decodes, slot)
     }
 
+    /// Seed the decoder's SESSION hash table with compound calls from the
+    /// logbook. The vendored packjt77 table (how `<...>` i3=4 tokens resolve to
+    /// full calls) is process-persistent but dies on app restart — WSJT-X
+    /// reloads its equivalents from disk. Encoding "CQ <call>" populates the
+    /// same table through pack28→save_hash_call without transmitting anything,
+    /// so compound stations you've worked resolve immediately on relaunch.
+    pub fn seed_hash_table(&self) {
+        use tempo_core::message::is_compound;
+        let mode = modes::make_mode(modes::ModeKind::Ft8);
+        let mut seen = std::collections::HashSet::new();
+        // Newest first; cap the work — each encode is one FFI round-trip.
+        for rec in self.get_log().into_iter().rev() {
+            let call = rec.call.trim().to_uppercase();
+            if !is_compound(&call) || !seen.insert(call.clone()) {
+                continue;
+            }
+            let _ = mode.encode(&format!("CQ {call}"));
+            if seen.len() >= 50 {
+                break;
+            }
+        }
+    }
+
+    /// WSJT-X "Decode" button / F6: re-run the decoder over the LAST period's
+    /// retained audio with the CURRENT settings (deeper depth, changed
+    /// passband, fresh AP context) and ingest only the lines the original pass
+    /// missed — re-observing an already-ingested message would double-advance
+    /// the sequencer and duplicate rows.
+    pub fn redecode(&mut self) -> usize {
+        if self.source_kind != SourceKind::Native {
+            // Companion decode() DRAINS the live UDP queue — a redecode would
+            // steal the boundary's datagrams (same guard as the early pass).
+            return 0;
+        }
+        let Some(frame) = self.last_rx.clone() else {
+            return 0;
+        };
+        let Some(slot) = self.last_decode_slot else {
+            return 0;
+        };
+        let decodes = self.decode_frame(&frame, slot);
+        let fresh: Vec<modes::Decode> = decodes
+            .into_iter()
+            .filter(|d| {
+                !self
+                    .decode_history
+                    .iter()
+                    .any(|(s, h)| *s == slot && h.message.trim() == d.message.trim())
+            })
+            .collect();
+        if fresh.is_empty() {
+            return 0;
+        }
+        // DISPLAY-ONLY ingest: rows + history + spotting, but NOT the QSO
+        // sequencer — the redecoded period may be a full cycle old, and the
+        // CallingCq auto-answer arm would otherwise commit the run to a caller
+        // who has long moved on. The operator sees the row and clicks if the
+        // station is still there (stock F6 is an operator review tool).
+        let n = fresh.len();
+        for d in &fresh {
+            self.decode_history.push_back((slot, d.clone()));
+        }
+        while self.decode_history.len() > 240 {
+            self.decode_history.pop_front();
+        }
+        self.app.observe(&fresh, slot);
+        self.last_decodes = fresh;
+        n
+    }
+
     /// Drop decodes the early pass already ingested for this boundary slot.
     /// Always consumes the marker — a leftover from a slot whose boundary never
     /// decoded (we transmitted) must not filter a later slot.
@@ -2810,11 +2912,15 @@ impl Engine {
                 _ => (String::new(), String::new(), 0),
             };
             let iwave = channel::to_i16(frame);
+            // Operator decode controls (WSJT-X F Low / F High / depth), clamped
+            // to the modem's real passband and kept ordered.
+            let nfa = self.settings.decode_flow_hz.clamp(200, 2800) as i32;
+            let nfb = self.settings.decode_fhigh_hz.clamp(300, 2900).max(nfa as u32 + 100) as i32;
             let req = modes::DecodeRequest {
                 iwave: &iwave,
-                nfa: 200,
-                nfb: 2900,
-                ndepth: 3,
+                nfa,
+                nfb,
+                ndepth: self.settings.decode_depth.clamp(1, 3) as i32,
                 mycall: &ap_mycall,
                 hiscall: &ap_hiscall,
                 nqso_progress: ap_progress,
@@ -2982,6 +3088,15 @@ impl Engine {
             let mut s = QsoStation::calling_cq(&mycall, &mygrid);
             s.confirm_with_rrr = self.settings.prefer_rrr;
             s.cq_call_cap = self.settings.cq_max_calls; // None = stock
+            if let Some(d) = &self.cq_dir {
+                // The directed run stays directed across the pileup (stock: the
+                // edited Tx6 text persists).
+                s.override_next(Msg::Cq {
+                    de: mycall.clone(),
+                    grid: mygrid.clone(),
+                    dir: d.clone(),
+                });
+            }
             self.mode = Mode::Qso {
                 station: Box::new(s),
                 running: true,
@@ -4208,6 +4323,58 @@ mod tests {
         e.set_tier(Tier::Ft4);
         let c = e.band_plan().into_iter().find(|c| c.band == "20m").unwrap();
         assert!((c.dial_mhz - 14.080).abs() < 1e-9, "FT4 stock kept");
+    }
+
+    #[test]
+    fn directed_cq_run_persists_across_the_pileup() {
+        // "CQ DX" must go out directed AND stay directed after a completed
+        // contact returns the run to CQ (stock: the edited Tx6 text persists).
+        let mut e = Engine::new("W9XYZ", "EN37", 0);
+        e.start_cq(Some("DX")).unwrap();
+        let q = e.snapshot().qso.unwrap();
+        assert_eq!(q.tx_now.as_deref(), Some("CQ DX W9XYZ EN37"));
+        // Work a full pileup contact…
+        e.ingest_decodes_for_test(&[dec_snr("W9XYZ K1ABC FN42", -8)], 1);
+        let _ = e.poll_tx(2); // report
+        e.ingest_decodes_for_test(&[dec_snr("W9XYZ K1ABC R-05", -8)], 3);
+        let _ = e.poll_tx(4); // RR73 goes out
+        // Return-to-CQ is evaluated on the NEXT ingest (observe_modes), like a
+        // real period boundary following the RR73 over.
+        e.ingest_decodes_for_test(&[dec_snr("CQ N0OTH EM48", -3)], 5);
+        let q = e.snapshot().qso.unwrap();
+        assert_eq!(
+            q.tx_now.as_deref(),
+            Some("CQ DX W9XYZ EN37"),
+            "the run returns to the DIRECTED CQ"
+        );
+        // A plain start clears the sticky token.
+        e.start_cq(None).unwrap();
+        assert_eq!(
+            e.snapshot().qso.unwrap().tx_now.as_deref(),
+            Some("CQ W9XYZ EN37")
+        );
+    }
+
+    #[test]
+    fn redecode_ingests_only_newly_found_lines() {
+        // F6 re-runs the decoder over the retained period audio; an already-
+        // ingested message must NOT double-ingest (double-observe / dup rows).
+        let mut e = Engine::new("KD9TAW", "EN52", 0);
+        e.set_tier(Tier::Ft8);
+        let frame = native_frame_for(modes::ModeKind::Ft8, "CQ W1ABC FN42", 1500.0);
+        assert!(e.ingest(&frame, 2) >= 1, "first pass decodes");
+        let rows_before = e
+            .decode_history
+            .iter()
+            .filter(|(_, d)| d.message == "CQ W1ABC FN42")
+            .count();
+        assert_eq!(e.redecode(), 0, "same audio, same settings: nothing new");
+        let rows_after = e
+            .decode_history
+            .iter()
+            .filter(|(_, d)| d.message == "CQ W1ABC FN42")
+            .count();
+        assert_eq!(rows_before, rows_after, "no duplicate history rows");
     }
 
     fn dec_snr(msg: &str, snr: i32) -> Decode {

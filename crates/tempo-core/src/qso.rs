@@ -119,6 +119,7 @@ impl Station {
             pending: Some(Msg::Cq {
                 de: mycall.into(),
                 grid: mygrid.into(),
+                dir: String::new(),
             }),
             rx_report: None,
             rv_count: 0,
@@ -330,7 +331,10 @@ impl Station {
         let brk =
             |to: &str| format!("<{}>", to.trim().trim_start_matches('<').trim_end_matches('>'));
         match msg {
-            Msg::Cq { de, .. } => Msg::Cq { de, grid: String::new() },
+            // i3=4 has NO directed-CQ slot: keeping the dir would make the
+            // packer fall through to TRUNCATED free text ("CQ DX PJ4/K1A").
+            // Drop it — the panel's compound preview shows the same plain form.
+            Msg::Cq { de, .. } => Msg::Cq { de, grid: String::new(), dir: String::new() },
             Msg::Grid { to, de, .. } => Msg::Grid { to: brk(&to), de, grid: String::new() },
             // A numeric report survives i3=4/Type-1 only when the SENDER (`de`) is a
             // standard 28-bit call — it becomes the c28 carrying the report while the

@@ -5,6 +5,10 @@ interface Props {
   qso: QsoStatus | null
   /** Switch the sequencer role (Call CQ / Monitor S&P). */
   onSetMode: (mode: ModeRequest) => void
+  /** Start a PLAIN CQ run (clears any sticky directed token — the labelled
+   * "Call CQ" button must never silently transmit a leftover "CQ DX"). The
+   * DIRECTED machine lives in the Tx panel's editable Tx6. */
+  onCallCq?: () => void
   /** Re-arm the current message (re-transmit a stalled/uncopied step). */
   onResend: () => void
   /** Send in-QSO free text (WSJT-X Tx5). */
@@ -24,7 +28,7 @@ function reportLabel(rx: number | null | undefined): string | null {
  * Resend), the Call-CQ / Monitor role toggle, and an in-QSO free-text field —
  * so you work a station and watch it sequence WITHOUT leaving the waterfall.
  */
-export function OperateQsoStrip({ qso, onSetMode, onResend, onFreetext, onLog }: Props) {
+export function OperateQsoStrip({ qso, onSetMode, onCallCq, onResend, onFreetext, onLog }: Props) {
   const running = qso?.running ?? false
   const dxcall = qso?.dxcall ?? null
   const state = qso?.state ?? 'Idle'
@@ -54,7 +58,7 @@ export function OperateQsoStrip({ qso, onSetMode, onResend, onFreetext, onLog }:
             type="button"
             className={`cq-role cq-call${running ? ' active' : ''}`}
             aria-pressed={running}
-            onClick={() => onSetMode('qso-run')}
+            onClick={() => (onCallCq ? onCallCq() : onSetMode('qso-run'))}
             title="Call CQ (run)"
           >
             Call CQ

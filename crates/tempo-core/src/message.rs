@@ -11,7 +11,15 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Msg {
     /// `CQ <de> <grid>`
-    Cq { de: String, grid: String },
+    Cq {
+        de: String,
+        grid: String,
+        /// Directed-CQ token between "CQ" and the call ("DX", "NA", "POTA",
+        /// "TEST", a 3-digit kHz like "040", …). Empty = a plain CQ. WSJT-X
+        /// preserves and re-emits it; dropping it silently rewrote operators'
+        /// directed calls into plain ones.
+        dir: String,
+    },
     /// `<to> <de> <grid>` — reply to a CQ / call with grid.
     Grid {
         to: String,
@@ -107,6 +115,13 @@ pub fn same_call(a: &str, b: &str) -> bool {
 /// the modem silently strips the prefix off a bare compound call. Brackets are ignored.
 /// Requires at least one '/'-segment to be callsign-shaped, so ham free-text slashes
 /// ("5/9", "S/N", "W/L", "2X/3") are NOT mistaken for compound calls.
+/// A valid WSJT-X directed-CQ token: 1–4 letters ("DX", "NA", "POTA", "TEST")
+/// or exactly 3 digits (a kHz QSY like "CQ 040 …").
+fn is_cq_dir(s: &str) -> bool {
+    (!s.is_empty() && s.len() <= 4 && s.chars().all(|c| c.is_ascii_alphabetic()))
+        || (s.len() == 3 && s.chars().all(|c| c.is_ascii_digit()))
+}
+
 pub fn is_compound(call: &str) -> bool {
     let c = call.trim().trim_start_matches('<').trim_end_matches('>');
     c.contains('/') && c.split('/').any(is_callsign)
@@ -139,8 +154,14 @@ impl Msg {
         match self {
             // An empty grid = the i3=4 compound form (a compound call carries no grid):
             // render without the trailing grid token.
-            Msg::Cq { de, grid } if grid.is_empty() => format!("CQ {de}"),
-            Msg::Cq { de, grid } => format!("CQ {de} {grid}"),
+            Msg::Cq { de, grid, dir } => {
+                let d = if dir.is_empty() { String::new() } else { format!("{dir} ") };
+                if grid.is_empty() {
+                    format!("CQ {d}{de}")
+                } else {
+                    format!("CQ {d}{de} {grid}")
+                }
+            }
             Msg::Grid { to, de, grid } if grid.is_empty() => format!("{to} {de}"),
             Msg::Grid { to, de, grid } => format!("{to} {de} {grid}"),
             Msg::Report { to, de, snr } => format!("{to} {de} {}", fmt_report(*snr)),
@@ -169,18 +190,40 @@ impl Msg {
     pub fn parse(s: &str) -> Msg {
         let t: Vec<&str> = s.split_whitespace().collect();
         if t.len() >= 3 && t[0] == "CQ" {
-            // "CQ <call> <grid>" (also tolerates "CQ DX <call> <grid>").
+            // "CQ <call> <grid>" or directed "CQ DX/NA/POTA/TEST/nnn <call> <grid>"
+            // — the modifier is PRESERVED (WSJT-X re-emits it; we used to eat it).
             let de = t[t.len() - 2].to_string();
             let grid = t[t.len() - 1].to_string();
             if is_grid(&grid) {
-                return Msg::Cq { de, grid };
+                let dir = if t.len() == 4 && is_cq_dir(t[1]) {
+                    t[1].to_string()
+                } else {
+                    String::new()
+                };
+                return Msg::Cq { de, grid, dir };
             }
+        }
+        // Grid-less DIRECTED CQ: "CQ DX <call>" (3 tokens — WSJT-X emits this
+        // for compound senders and some band plans). Without this branch the
+        // form fell to free text and the station was invisible to the
+        // sequencer. The token must validate AND the third must be a real call
+        // so "5/9 NJ2X"-style free text never misreads.
+        if t.len() == 3
+            && t[0] == "CQ"
+            && is_cq_dir(t[1])
+            && (is_callsign(t[2]) || is_compound(t[2]))
+        {
+            return Msg::Cq {
+                de: t[2].to_string(),
+                grid: String::new(),
+                dir: t[1].to_string(),
+            };
         }
         // i3=4 compound CQ: "CQ <compound-call>" with NO grid (a compound call can't
         // carry one). Only a real COMPOUND call qualifies — "CQ W1AW" (a grid-less plain
         // call) stays free text, and "CQ <...>" is invalid (the modem rejects it).
         if t.len() == 2 && t[0] == "CQ" && is_compound(t[1]) {
-            return Msg::Cq { de: t[1].to_string(), grid: String::new() };
+            return Msg::Cq { de: t[1].to_string(), grid: String::new(), dir: String::new() };
         }
         // Two-call message with no payload: "<to> <de>" — an i3=4 call (no grid), e.g. a
         // compound/hashed station answering. A grid-less Grid = "calling <to>". REQUIRE
@@ -396,7 +439,7 @@ mod fidelity_tests {
     fn parses_compound_cq_and_i3_4_call_forms() {
         assert_eq!(
             Msg::parse("CQ PJ4/K1ABC"),
-            Msg::Cq { de: "PJ4/K1ABC".into(), grid: String::new() },
+            Msg::Cq { de: "PJ4/K1ABC".into(), grid: String::new(), dir: String::new() },
             "compound CQ has no grid"
         );
         // Two-call no-payload i3=4 forms (a hashed or compound token present).
@@ -432,7 +475,10 @@ mod fidelity_tests {
 
     #[test]
     fn compound_forms_render_without_a_grid() {
-        assert_eq!(Msg::Cq { de: "PJ4/K1ABC".into(), grid: String::new() }.to_text(), "CQ PJ4/K1ABC");
+        assert_eq!(
+            Msg::Cq { de: "PJ4/K1ABC".into(), grid: String::new(), dir: String::new() }.to_text(),
+            "CQ PJ4/K1ABC"
+        );
         assert_eq!(
             Msg::Grid { to: "<PJ4/K1ABC>".into(), de: "W9XYZ".into(), grid: String::new() }.to_text(),
             "<PJ4/K1ABC> W9XYZ"
@@ -488,6 +534,12 @@ mod fidelity_tests {
             Msg::Cq {
                 de: "W9XYZ".into(),
                 grid: "EN37".into(),
+                dir: String::new(),
+            },
+            Msg::Cq {
+                de: "W9XYZ".into(),
+                grid: "EN37".into(),
+                dir: "DX".into(),
             },
             Msg::Grid {
                 to: "W9XYZ".into(),
@@ -533,8 +585,44 @@ mod fidelity_tests {
             Msg::parse("CQ W9XYZ EN37"),
             Msg::Cq {
                 de: "W9XYZ".into(),
-                grid: "EN37".into()
+                grid: "EN37".into(),
+                dir: String::new(),
             }
+        );
+        // Grid-less directed CQ (3 tokens) — WSJT-X emits this for compound
+        // senders and some band plans; it must be a CQ, not free text.
+        assert_eq!(
+            Msg::parse("CQ DX K1ABC"),
+            Msg::Cq { de: "K1ABC".into(), grid: String::new(), dir: "DX".into() }
+        );
+        assert_eq!(
+            Msg::parse("CQ DX PJ4/K1ABC"),
+            Msg::Cq { de: "PJ4/K1ABC".into(), grid: String::new(), dir: "DX".into() }
+        );
+        assert_eq!(Msg::parse("CQ DX K1ABC").to_text(), "CQ DX K1ABC");
+        // Free text must NOT misread as a gridless directed CQ ("5" is no
+        // callsign). (It still hits a PRE-EXISTING 3-token report quirk —
+        // Report{to:"CQ"} — which predates the dir branch; assert only that
+        // the new branch doesn't claim it.)
+        assert!(!matches!(Msg::parse("CQ UP 5"), Msg::Cq { .. }));
+        // Directed CQ: the modifier is preserved, de/grid still parse right.
+        assert_eq!(
+            Msg::parse("CQ DX W9XYZ EN37"),
+            Msg::Cq {
+                de: "W9XYZ".into(),
+                grid: "EN37".into(),
+                dir: "DX".into(),
+            }
+        );
+        assert_eq!(
+            Msg::parse("CQ DX W9XYZ EN37").to_text(),
+            "CQ DX W9XYZ EN37",
+            "directed CQ round-trips"
+        );
+        assert_eq!(
+            Msg::parse("CQ 040 W9XYZ EN37").to_text(),
+            "CQ 040 W9XYZ EN37",
+            "kHz-QSY directed CQ round-trips"
         );
         assert_eq!(
             Msg::parse("K2DEF W9XYZ +05"),

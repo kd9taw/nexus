@@ -1264,6 +1264,7 @@ export default function App() {
             onOverrideTx={handleOverrideTx}
             onHaltTx={handleHaltTx}
             dxClearTick={dxClearTick}
+            onSnap={setSnap}
             preferRrr={settings?.preferRrr ?? false}
             qsoMacros={macros.qso}
             roster={stationsPanel}

@@ -78,6 +78,12 @@ pub struct DecodeRow {
     #[serde(default)]
     pub tx_at: Option<u64>,
     pub tier: Tier,
+    /// WSJT-X 'a' marker: the decode used a-priori (AP) assistance.
+    #[serde(default)]
+    pub ap: bool,
+    /// WSJT-X '?' marker: low-confidence decode (quality below the stock line).
+    #[serde(default)]
+    pub low_conf: bool,
     /// IR-HARQ redundancy versions combined to recover this decode: 0 = decoded
     /// from the initial transmission alone; 1/2 = recovered by joint-combining
     /// that many retransmissions; -1 = not applicable (e.g. DX1). Lets the UI

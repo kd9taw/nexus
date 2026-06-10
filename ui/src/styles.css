@@ -5600,6 +5600,28 @@ select.settings-input {
   color: var(--accent-ink);
 }
 
+/* WSJT-X AP / low-confidence decode markers — trailing dim annotations.
+   Rendered as a muted group immediately after the message text: '?' then 'a'.
+   Uses no layout space on rows that have neither marker. */
+.decode-confidence-markers {
+  display: inline;
+}
+.decode-marker {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  opacity: 0.45;
+  letter-spacing: 0.04em;
+  padding-left: 3px;
+  user-select: none;
+}
+.decode-marker-lc {
+  color: var(--state-bad, #e5484d);
+}
+.decode-marker-ap {
+  color: var(--text-faint);
+}
+
 /* ===========================================================================
    Logbook (manual log form)
    =========================================================================== */
@@ -6581,6 +6603,56 @@ select.settings-input {
   font-variant-numeric: tabular-nums;
   min-width: 30px;
   text-align: right;
+}
+
+/* "Decode" button — re-run the decoder over the last period (F6). Sits in the
+   cockpit-meta strip alongside the DF fields; compact like the cockpit-cat pill. */
+.cockpit-decode-btn {
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 2px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elev-2);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: var(--transition);
+  white-space: nowrap;
+}
+.cockpit-decode-btn:hover {
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+/* Tx6 directed-CQ: the wrapping column div occupies the middle grid column;
+   the hint line sits below the editable input, full-width inside the wrapper. */
+.txp-cq-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.txp-cq-hint {
+  font-size: 10px;
+  color: var(--text-faint);
+  font-style: italic;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Settings: inline label pair (e.g. F low / F high side by side). */
+.settings-inline-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.82rem;
+  color: var(--text-dim);
+  font-weight: 600;
+}
+.settings-inline-label .settings-input {
+  width: 80px;
 }
 
 .cockpit-body {

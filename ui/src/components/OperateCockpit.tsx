@@ -2,11 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import type { AppSnapshot, ModeRequest, NeedTag, SourceKind, Tier } from '../types'
 import {
   clampOffsetHz,
+  cqDirFromText,
   genStdMessages,
   snrForCall,
   stdMessageList,
   toggleIgnored,
 } from '../txMessages'
+import { redecode, startCq } from '../api'
 import { Waterfall } from './Waterfall'
 import { OperateDecodes } from './OperateDecodes'
 import { OperateQsoStrip } from './OperateQsoStrip'
@@ -41,6 +43,8 @@ interface Props {
   onOverrideTx: (call: string, grid: string | null, text: string) => void
   /** Halt TX immediately (the Esc key — same api as the Stop TX button). */
   onHaltTx: () => void
+  /** Apply a fresh snapshot returned by a cockpit-local api call. */
+  onSnap?: (s: AppSnapshot) => void
   /** Roger the final with RRR instead of RR73 (Settings preferRrr). */
   preferRrr?: boolean
   /** Bumps when a QSO was logged with "Clear DX call after logging" on — the
@@ -100,6 +104,7 @@ export function OperateCockpit({
   onLog,
   onOverrideTx,
   onHaltTx,
+  onSnap,
   preferRrr = false,
   dxClearTick = 0,
   qsoMacros = NO_MACROS,
@@ -138,6 +143,10 @@ export function OperateCockpit({
   // it; Generate Std Msgs resets the edit and re-baselines (stock behavior).
   const [tx5, setTx5] = useState('')
   const tx5Edited = useRef(false)
+  // Tx6 free text: same auto-track pattern as Tx5, but follows msgs.tx6
+  // (the CQ message) until the operator edits it for a directed CQ.
+  const [tx6, setTx6] = useState('')
+  const tx6Edited = useRef(false)
   // Locally picked "next" row (0-based) until qso.txNow confirms one.
   const [localNext, setLocalNext] = useState<number | null>(null)
   // Session-only ignore set (Alt-double-click a decode/roster row).
@@ -159,20 +168,31 @@ export function OperateCockpit({
   useEffect(() => {
     if (!tx5Edited.current) setTx5(msgs.tx5)
   }, [msgs.tx5])
+  useEffect(() => {
+    if (!tx6Edited.current) setTx6(msgs.tx6)
+  }, [msgs.tx6])
 
   const handleTx5 = (v: string) => {
     tx5Edited.current = true
     setTx5(v)
   }
+  const handleTx6 = (v: string) => {
+    tx6Edited.current = true
+    setTx6(v)
+  }
   const handleGenerate = () => {
     tx5Edited.current = false
     setTx5(msgs.tx5)
+    tx6Edited.current = false
+    setTx6(msgs.tx6)
   }
   const clearDx = useCallback(() => {
     setDxCall('')
     setDxGrid('')
     tx5Edited.current = false
     setTx5('')
+    tx6Edited.current = false
+    setTx6('')
     setLocalNext(null)
   }, [])
 
@@ -197,19 +217,24 @@ export function OperateCockpit({
     }
   }, [snap.qso?.dxcall])
 
-  // The six panel rows (Tx5 = the live editable text). The "next" dot follows
-  // qso.txNow when it matches a row, else the operator's local pick.
-  const rowTexts = stdMessageList({ ...msgs, tx5 })
+  // The six panel rows (Tx5 + Tx6 = the live editable texts). The "next" dot
+  // follows qso.txNow when it matches a row, else the operator's local pick.
+  const rowTexts = stdMessageList({ ...msgs, tx5, tx6 })
   const txNow = snap.qso?.txNow ?? null
   const liveNext = txNow ? rowTexts.indexOf(txNow) : -1
   const nextIndex = liveNext >= 0 ? liveNext : localNext
 
-  /** Fire Tx row n (1-based). Tx6 = the existing Call-CQ path; Tx1–Tx5 force
-   * the row's text as the next transmission to the DX (overrideNextTx). */
+  /** Fire Tx row n (1-based).
+   * Tx6 = Call CQ — parse the editable Tx6 text for a directed token and call
+   * startCq(dir | null) directly; apply the returned snapshot via onSnap.
+   * Tx1–Tx5 force the row's text as the next transmission to the DX. */
   const doTx = (n: number) => {
     if (n === 6) {
       setLocalNext(5)
-      onSetMode('qso-run')
+      const dir = cqDirFromText(tx6, snap.mycall)
+      // dir === undefined → parse failed / malformed → fall back to plain CQ
+      const resolved = dir === undefined ? null : dir
+      startCq(resolved).then((s) => onSnap?.(s)).catch(() => {})
       return
     }
     const call = dxCall.trim().toUpperCase()
@@ -217,6 +242,11 @@ export function OperateCockpit({
     if (!call || !text) return
     setLocalNext(n - 1)
     onOverrideTx(call, dxGrid.trim().toUpperCase() || null, text)
+  }
+
+  /** Re-decode the last period (WSJT-X Decode / F6). */
+  const handleRedecode = () => {
+    redecode().then((s) => onSnap?.(s)).catch(() => {})
   }
 
   /** Single-click SELECT from a decode: populate DX Call/Grid only — no RF
@@ -232,12 +262,12 @@ export function OperateCockpit({
   const handleToggleIgnore = (call: string) => setIgnored((prev) => toggleIgnored(prev, call))
   const handleSetRx = (hz: number) => onTune(hz, 'rx')
 
-  // Cockpit keyboard (stock WSJT-X): Esc = halt TX, F4 = clear DX, Alt+1…6 =
-  // the Tx buttons. Window-level, active-view only, and never while typing in
-  // an input/textarea. Handlers ride a ref so the listener binds once per
-  // activation without re-subscribing on every keystroke of state.
-  const keyRef = useRef({ doTx, clearDx, halt: onHaltTx })
-  keyRef.current = { doTx, clearDx, halt: onHaltTx }
+  // Cockpit keyboard (stock WSJT-X): Esc = halt TX, F4 = clear DX, F6 = re-decode,
+  // Alt+1…6 = the Tx buttons. Window-level, active-view only, and never while
+  // typing in an input/textarea. Handlers ride a ref so the listener binds once
+  // per activation without re-subscribing on every keystroke of state.
+  const keyRef = useRef({ doTx, clearDx, halt: onHaltTx, redecode: handleRedecode })
+  keyRef.current = { doTx, clearDx, halt: onHaltTx, redecode: handleRedecode }
   useEffect(() => {
     if (!active) return
     const onKey = (e: KeyboardEvent) => {
@@ -252,6 +282,11 @@ export function OperateCockpit({
       if (e.key === 'F4') {
         e.preventDefault()
         keyRef.current.clearDx()
+        return
+      }
+      if (e.key === 'F6') {
+        e.preventDefault()
+        keyRef.current.redecode()
         return
       }
       const m = e.altKey && !e.ctrlKey && !e.metaKey ? /^Digit([1-6])$/.exec(e.code) : null
@@ -328,6 +363,15 @@ export function OperateCockpit({
             <DfField label="Rx" hz={snap.radio.rxOffsetHz} onCommit={(hz) => onTune(hz, 'rx')} />
             <DfField label="Tx" hz={snap.radio.txOffsetHz} onCommit={(hz) => onTune(hz, 'tx')} />
           </div>
+          {/* Decode button — re-run the decoder over the last period's audio (F6). */}
+          <button
+            type="button"
+            className="cockpit-decode-btn"
+            onClick={handleRedecode}
+            title="Re-decode the last period (F6)"
+          >
+            Decode
+          </button>
           {snap.radio.splitTxMhz != null && (
             <span
               className="cockpit-cat ok"
@@ -419,6 +463,11 @@ export function OperateCockpit({
         <OperateQsoStrip
           qso={snap.qso}
           onSetMode={onSetMode}
+          onCallCq={() => {
+            // The labelled "Call CQ" is always a PLAIN run — it also clears a
+            // sticky directed token so a leftover "CQ DX" can't surprise.
+            void startCq(null).then((s) => onSnap?.(s)).catch(() => {})
+          }}
           onResend={onResend}
           onFreetext={onFreetext}
           onLog={onLog}
@@ -435,6 +484,8 @@ export function OperateCockpit({
             messages={msgs}
             tx5={tx5}
             onTx5={handleTx5}
+            tx6={tx6}
+            onTx6={handleTx6}
             nextIndex={nextIndex}
             onTx={doTx}
             onGenerate={handleGenerate}

@@ -228,6 +228,18 @@ pub struct Settings {
     /// single VFO for the over and restore after (works on any CAT rig).
     #[serde(default)]
     pub split_mode: SplitMode,
+    /// FT8/FT4 decode depth (WSJT-X Fast/Normal/Deep = 1/2/3). Deep is the
+    /// right default on modern hardware; Fast trades sensitivity for CPU.
+    #[serde(default = "default_decode_depth")]
+    pub decode_depth: u8,
+    /// Decoder passband low edge (Hz) — WSJT-X "F Low". Signals below this are
+    /// not searched. 200 = the modem floor.
+    #[serde(default = "default_decode_flow")]
+    pub decode_flow_hz: u32,
+    /// Decoder passband high edge (Hz) — WSJT-X "F High". 2900 = the modem
+    /// ceiling (12 kHz sample rate, conservative SSB filter).
+    #[serde(default = "default_decode_fhigh")]
+    pub decode_fhigh_hz: u32,
     /// Operator overrides of the working-frequency table (WSJT-X Settings ▸
     /// Frequencies). Empty = the stock WSJT-X table built into the band plan.
     /// An entry replaces the dial of the matching (band, mode) row; an entry
@@ -356,6 +368,18 @@ fn default_tune_timeout() -> u32 {
     12
 }
 
+fn default_decode_depth() -> u8 {
+    3
+}
+
+fn default_decode_flow() -> u32 {
+    200
+}
+
+fn default_decode_fhigh() -> u32 {
+    2900
+}
+
 pub fn default_voice_messages() -> Vec<VoiceMessage> {
     [(1, "CQ"), (2, "My Call"), (3, "Report"), (4, "QRZ?"), (5, "73"), (6, "Again")]
         .iter()
@@ -449,6 +473,9 @@ impl Default for Settings {
             double_click_sets_tx: true,
             tune_timeout_secs: 12,
             split_mode: SplitMode::None,
+            decode_depth: 3,
+            decode_flow_hz: 200,
+            decode_fhigh_hz: 2900,
             working_frequencies: Vec::new(),
             qsy_enabled: false,
             qsy_set: vec!["20m".to_string(), "40m".to_string(), "30m".to_string()],

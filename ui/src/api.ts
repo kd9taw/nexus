@@ -197,6 +197,22 @@ export async function overrideNextTx(
   return mockEngine.overrideNextTx(call, text, grid ?? undefined)
 }
 
+/** WSJT-X "Decode" / F6: re-run the decoder over the last period's audio with
+ * the current settings; only newly-found lines appear. */
+export async function redecode(): Promise<AppSnapshot> {
+  const invoke = tauriInvoke()
+  if (invoke) return invoke<AppSnapshot>('redecode', {})
+  return mockEngine.getSnapshot()
+}
+
+/** Start a CQ run; `dir` = a directed token ("DX"/"NA"/"POTA"/…) or null for a
+ * plain CQ (clears a sticky directed token). */
+export async function startCq(dir: string | null): Promise<AppSnapshot> {
+  const invoke = tauriInvoke()
+  if (invoke) return invoke<AppSnapshot>('start_cq', { dir })
+  return mockEngine.setMode('qso-run')
+}
+
 /** Confirm-and-log a QSO held by the prompt-to-log popup (the possibly-edited
  * record). Returns the fresh snapshot. */
 export async function confirmPendingLog(record: LoggedQso): Promise<AppSnapshot> {

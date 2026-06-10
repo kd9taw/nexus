@@ -93,6 +93,7 @@ pub fn beacon(mycall: &str, grid: &str) -> Msg {
     Msg::Cq {
         de: mycall.to_string(),
         grid: grid.to_string(),
+        dir: String::new(),
     }
 }
 

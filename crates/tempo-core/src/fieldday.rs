@@ -180,6 +180,9 @@ impl FieldDayStation {
             pending: Some(Msg::Cq {
                 de: mycall.to_string(),
                 grid: mygrid.to_string(),
+                // Field Day's CQ is "CQ FD <call> <grid>" by convention — but the
+                // exchange machinery has always sent a plain CQ here; keep as-is.
+                dir: String::new(),
             }),
             dxcall: None,
             peer_exch: None,

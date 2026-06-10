@@ -387,6 +387,10 @@ export interface DecodeRow {
    * per-cycle key + timestamp (so own-TX rows don't drift/duplicate). */
   txAt?: number | null
   tier: Tier
+  /** WSJT-X 'a' marker — AP-assisted decode. */
+  ap?: boolean
+  /** WSJT-X '?' marker — low-confidence decode. */
+  lowConf?: boolean
   /** IR-HARQ redundancy versions combined to recover this decode: 0 = decoded
    * from the initial transmission alone; 1/2 = recovered by joint-combining that
    * many retransmissions; -1 = not applicable. Used to badge HARQ rescues. */
@@ -1001,6 +1005,11 @@ export interface Settings {
   splitMode?: 'none' | 'rig' | 'fakeit'
   /** Operator overrides of the working-frequency table (empty = stock). */
   workingFrequencies?: { band: string; mode: string; mhz: number }[]
+  /** FT8/FT4 decode depth: 1=Fast 2=Normal 3=Deep (stock Deep). */
+  decodeDepth?: number
+  /** Decoder passband (Hz) — WSJT-X F Low / F High. */
+  decodeFLowHz?: number
+  decodeFHighHz?: number
   // --- coordinated QSY ("move together") — separate, opt-in, off by default ---
   /** Master opt-in for coordinated QSY (announced-in-the-clear roaming). */
   qsyEnabled: boolean
