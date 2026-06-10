@@ -988,6 +988,9 @@ export interface Settings {
   /** Roger the final report with a bare RRR (partner still owes a 73) instead of
    * the combined RR73. Off by default (RR73 — modern FT8 practice). */
   preferRrr?: boolean
+  /** Stop a CQ run after N unanswered calls; null/undefined = stock WSJT-X
+   * (CQ repeats until you stop it — the Tx watchdog is the backstop). */
+  cqMaxCalls?: number | null
   // --- coordinated QSY ("move together") — separate, opt-in, off by default ---
   /** Master opt-in for coordinated QSY (announced-in-the-clear roaming). */
   qsyEnabled: boolean

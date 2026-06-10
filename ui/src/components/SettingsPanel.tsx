@@ -245,6 +245,16 @@ export function SettingsPanel({
     setForm((prev) => (prev ? { ...prev, [key]: value } : prev))
   }
 
+  // Optional numeric fields ('' = null = feature off) — `update` coerces '' to 0,
+  // which would silently mean "cap at 0" instead of "no cap".
+  const updateNullableNum = (key: FieldKey, raw: string, min: number) => {
+    markDirty()
+    const v = raw === '' ? null : Math.max(min, Number(raw))
+    setForm((prev) =>
+      prev ? { ...prev, [key]: Number.isNaN(v as number) ? null : v } : prev,
+    )
+  }
+
   // Macros are edited as comma-separated text per context; commit on change.
   const updateMacros = (ctx: keyof Settings['macros'], raw: string) => {
     markDirty()
@@ -1246,6 +1256,25 @@ export function SettingsPanel({
                 <span className="settings-hint">
                   Acknowledge the final report with a bare RRR (partner still owes a 73) instead of
                   the combined RR73. Off = RR73 (modern FT8 practice).
+                </span>
+              </div>
+
+              <div className="settings-field">
+                <label>
+                  <span className="settings-label">Stop CQ after N calls</span>
+                  <input
+                    className="settings-input"
+                    type="number"
+                    min={1}
+                    max={99}
+                    value={form.cqMaxCalls ?? ''}
+                    placeholder="keep calling"
+                    onChange={(e) => updateNullableNum('cqMaxCalls', e.target.value, 1)}
+                  />
+                </label>
+                <span className="settings-hint">
+                  Blank = WSJT-X behavior: CQ repeats until you stop it (the TX watchdog is the
+                  backstop). Set a number to auto-stop an unanswered CQ run after that many calls.
                 </span>
               </div>
 

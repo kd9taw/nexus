@@ -272,6 +272,9 @@ struct RadioLoop {
     qso_started_ms: Option<f64>,
     psk_spots: Vec<Spot>,
     last_psk_flush: f64,
+    /// Slot index whose WSJT-X-style EARLY decode pass already ran (once per
+    /// RX slot; the boundary decode then ingests only the stragglers).
+    early_done_slot: Option<u64>,
     /// Last time we polled the rig's live dial over CAT (ms), for throttling.
     last_rig_poll: f64,
     /// Last known CAT health (from connect/Test-CAT): `Some(false)` = configured but failing,
@@ -308,6 +311,7 @@ impl RadioLoop {
             qso_sink: None,
             qso_started_ms: None,
             psk_spots: Vec::new(),
+            early_done_slot: None,
             last_psk_flush: now_unix_ms(),
             last_rig_poll: now_unix_ms(),
             cat_ok: None,
@@ -849,16 +853,18 @@ impl RadioLoop {
             // Counting it here inflated the deficit by up to 250 ms and trimmed
             // silence we didn't need to, starting the signal early (dt shift).
             let need_ms = eng.tx_over_secs() * 1000.0;
-            // Late-start window (WSJT-X behavior): the generated wave begins with a
-            // 0.5 s SILENCE lead-in — when we're up to that much short of a full
-            // fit, trim the silence we're late by and key anyway. Decoders sync on
-            // dt; half a second of lateness is well inside tolerance.
-            const LEAD_IN_MS: f64 = 500.0;
-            // Late-start only on tiers whose generated wave is KNOWN to begin with
-            // the 0.5 s silence lead-in (FT8/FT4; verified by modes' unit tests) —
-            // other tiers require a full fit so we never risk trimming signal.
+            // Late start, the WSJT-X way: the transmission stays TIME-ALIGNED to
+            // the period grid — starting late just SKIPS the wave's leading
+            // samples (the 0.5 s silence lead-in first, then leading symbols).
+            // The remote decoder still syncs (dt ≈ 0, just fewer symbols), which
+            // is why stock fires the current period for clicks up to ~2 s in.
+            const LATE_START_MAX_MS: f64 = 2_000.0;
+            // FT8/FT4 only — their wave layout (lead-in + costas sync) is what
+            // makes a head-truncated over decodable; other tiers need a full fit.
             let allowed_deficit = match eng.tier() {
-                tempo_app::dto::Tier::Ft8 | tempo_app::dto::Tier::Ft4 => LEAD_IN_MS,
+                tempo_app::dto::Tier::Ft8 | tempo_app::dto::Tier::Ft4 => {
+                    LATE_START_MAX_MS
+                }
                 _ => 0.0,
             };
             let deficit_ms = (need_ms - room_ms).max(0.0);
@@ -871,28 +877,34 @@ impl RadioLoop {
                 if !waves.is_empty() {
                     let trim_samples =
                         ((deficit_ms / 1000.0) * ft1::SAMPLE_RATE as f64) as usize;
-                    // Only ever trim SILENCE: verify the samples we'd drop are the
-                    // lead-in zeros (FT8/FT4 self-position with one; other tiers
-                    // may not) — if they're signal, fall through to the boundary.
-                    let trimmable = trim_samples == 0
-                        || waves
-                            .first()
-                            .map(|w| {
-                                trim_samples < w.len()
-                                    && w[..trim_samples].iter().all(|&x| x == 0.0)
-                            })
-                            .unwrap_or(false);
+                    // Must leave a transmittable remainder (always true within
+                    // the 2 s window — FT8 keeps ≥ 10.6 s of signal).
+                    let trimmable = waves
+                        .first()
+                        .map(|w| trim_samples < w.len())
+                        .unwrap_or(false);
                     if trimmable {
                         let _ = rig.ptt(true);
                         let mut secs = 0.0f32;
-                        let mut first = true;
-                        for w in &waves {
-                            let w2: &[f32] = if first && trim_samples > 0 {
+                        let last = waves.len() - 1;
+                        for (i, w) in waves.iter().enumerate() {
+                            let mut w2: &[f32] = if i == 0 && trim_samples > 0 {
                                 &w[trim_samples..]
                             } else {
                                 w
                             };
-                            first = false;
+                            // The generated buffer can carry TRAILING silence
+                            // (FT4: ~1.0 s of zero pad). On a LATE start the fit
+                            // math is airtime-based — playing that pad would
+                            // hold PTT past the boundary into the partner's
+                            // period. Strip it; it carries nothing.
+                            if i == last {
+                                let end = w2
+                                    .iter()
+                                    .rposition(|&x| x != 0.0)
+                                    .map_or(0, |p| p + 1);
+                                w2 = &w2[..end];
+                            }
                             secs += w2.len() as f32 / ft1::SAMPLE_RATE;
                             backend.play(w2);
                         }
@@ -914,6 +926,47 @@ impl RadioLoop {
             self.rx = RxRing::with_capacity(eng.active_capture_samples());
             self.last_slot = None;
             self.prev_slot_was_tx = false;
+        }
+
+        // --- WSJT-X-style early decode (FT8/FT4): a few seconds before the
+        // boundary, decode the partial capture so callers appear while the
+        // period is still running (stock decodes ~3×/period from ~11.8 s; our
+        // single boundary pass made decodes land exactly as the operator's TX
+        // window opened — zero decision time). RX slots only: our own carrier
+        // (current TX or its boundary-crossing tail) must never reach the
+        // decoder. The boundary pass below stays authoritative and ingests only
+        // the stragglers this pass missed.
+        if self.tx_until_ms.is_none()
+            && !self.prev_slot_was_tx
+            && self.early_done_slot != Some(slot)
+            && !is_tuning
+        {
+            let early_at_ms = match tier_now {
+                Tier::Ft8 => Some(11_800.0),
+                Tier::Ft4 => Some(5_500.0),
+                _ => None,
+            };
+            if let Some(at) = early_at_ms {
+                let slot_ms = eng.active_slot_secs() * 1000.0;
+                let elapsed_ms = slot_ms - self.clock.ms_to_next_slot(now) as f64;
+                // `< slot_ms` guards the exact-boundary tick (ms_to_next_slot
+                // returns 0 there, which would read as a FULL slot elapsed and
+                // early-decode the PREVIOUS slot's audio under the wrong index).
+                if elapsed_ms >= at && elapsed_ms < slot_ms && !self.rx.is_empty() {
+                    self.early_done_slot = Some(slot);
+                    // Only THIS slot's audio, at its true position from the slot
+                    // start, tail-padded — a rolling tail of the previous slot
+                    // (or front-padding) would wreck the decoder's dt alignment.
+                    let n = ((elapsed_ms / 1000.0) * ft1::SAMPLE_RATE as f64) as usize;
+                    let frame = self.rx.frame_latest_padded(n);
+                    // Boundary-slot index (audio slot + 1): the parity/history
+                    // conventions match the boundary ingest exactly.
+                    if eng.ingest_early(&frame, slot + 1) > 0 {
+                        let cur_dial = eng.settings().dial_hz();
+                        emit_rx_decodes(sinks, &eng, &mut self.psk_spots, now, cur_dial);
+                    }
+                }
+            }
         }
 
         if Some(slot) != self.last_slot {
@@ -950,25 +1003,7 @@ impl RadioLoop {
                 let ms_mid = (now as u64 % 86_400_000) as u32;
                 let now_secs = (now / 1000.0) as i64;
                 if did_rx {
-                    for d in eng.last_decodes() {
-                        if let Some(server) = sinks.wsjtx {
-                            let _ = server.send_decode(&build_decode(
-                                &d.message, d.snr, d.dt, d.freq, tier, ms_mid,
-                            ));
-                        }
-                        if sinks.psk.is_some() {
-                            if let Some(spot) = build_spot(
-                                &d.message,
-                                d.snr,
-                                d.freq,
-                                tier,
-                                cur_dial,
-                                now_secs as u32,
-                            ) {
-                                self.psk_spots.push(spot);
-                            }
-                        }
-                    }
+                    emit_rx_decodes(sinks, &eng, &mut self.psk_spots, now, cur_dial);
                 }
                 if let Some(server) = sinks.wsjtx {
                     let dx = snap
@@ -1073,6 +1108,39 @@ fn tier_mode(tier: Tier) -> &'static str {
 
 /// Build the WSJT-X **Decode (type 2)** message for one decoded signal.
 /// Borrows `message`/`mode` for the lifetime of the returned struct.
+/// Forward the engine's `last_decodes` (the rows the ingest that just ran
+/// produced — boundary OR early pass) to the WSJT-X UDP server and the PSK
+/// Reporter spot queue. Shared so early decodes reach cooperating loggers and
+/// PSKR at the same moment they reach our own UI.
+fn emit_rx_decodes(
+    sinks: &Sinks,
+    eng: &Engine,
+    psk_spots: &mut Vec<Spot>,
+    now: f64,
+    cur_dial: u64,
+) {
+    if sinks.wsjtx.is_none() && sinks.psk.is_none() {
+        return;
+    }
+    let tier = tier_mode(eng.tier());
+    let ms_mid = (now as u64 % 86_400_000) as u32;
+    let now_secs = (now / 1000.0) as u32;
+    for d in eng.last_decodes() {
+        if let Some(server) = sinks.wsjtx {
+            let _ = server.send_decode(&build_decode(
+                &d.message, d.snr, d.dt, d.freq, tier, ms_mid,
+            ));
+        }
+        if sinks.psk.is_some() {
+            if let Some(spot) =
+                build_spot(&d.message, d.snr, d.freq, tier, cur_dial, now_secs)
+            {
+                psk_spots.push(spot);
+            }
+        }
+    }
+}
+
 fn build_decode<'a>(
     message: &'a str,
     snr: i32,

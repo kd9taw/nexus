@@ -80,6 +80,22 @@ impl RxRing {
         out
     }
 
+    /// A frame for the WSJT-X-style EARLY decode pass: the latest `n` captured
+    /// samples placed at the START of the window (their true position relative
+    /// to the slot boundary), zero-padded to `cap` at the TAIL. `frame()`
+    /// front-pads instead — which would shift a partial slot's audio toward the
+    /// window end and push every decode's dt out of the sync search range.
+    /// Taking only the latest `n` also drops any tail of the PREVIOUS slot still
+    /// rolling in the ring (consecutive RX slots), which would otherwise sit at
+    /// the front of the window and corrupt the time alignment.
+    pub fn frame_latest_padded(&self, n: usize) -> Vec<f32> {
+        let take = n.min(self.buf.len()).min(self.cap);
+        let skip = self.buf.len() - take;
+        let mut out: Vec<f32> = self.buf.iter().skip(skip).copied().collect();
+        out.resize(self.cap, 0.0);
+        out
+    }
+
     pub fn len(&self) -> usize {
         self.buf.len()
     }
@@ -97,6 +113,20 @@ impl RxRing {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn frame_latest_padded_places_audio_at_front_with_zero_tail() {
+        let mut r = RxRing::with_capacity(10);
+        r.push(&[9.0, 9.0, 1.0, 2.0, 3.0]); // 9s = stale previous-slot tail
+        let f = r.frame_latest_padded(3);
+        assert_eq!(f.len(), 10, "always the full window length");
+        assert_eq!(&f[..3], &[1.0, 2.0, 3.0], "latest n at the FRONT");
+        assert!(f[3..].iter().all(|&x| x == 0.0), "zero TAIL padding");
+        // Asking for more than captured takes everything, still tail-padded.
+        let f = r.frame_latest_padded(99);
+        assert_eq!(&f[..5], &[9.0, 9.0, 1.0, 2.0, 3.0]);
+        assert!(f[5..].iter().all(|&x| x == 0.0));
+    }
 
     #[test]
     fn frame_is_always_frame_len_and_holds_latest() {

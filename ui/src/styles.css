@@ -5332,11 +5332,13 @@ select.settings-input {
    highlights below; worked recedes. */
 /* Our own transmitted message — WSJT-X yellow. One row per cycle, so repeated
    calls stack and you can see how many times you've called. */
-.decode-row.mine {
+.decode-row.mine,
+.decode-row.own-tx {
   border-left: 3px solid #f5d020;
   background: color-mix(in srgb, #f5d020 18%, transparent);
 }
-.decode-row.mine .decode-msg {
+.decode-row.mine .decode-msg,
+.decode-row.own-tx .decode-msg {
   color: #f5d860;
   font-weight: 700;
 }
@@ -6509,8 +6511,12 @@ select.settings-input {
   flex: 1;
   min-width: 0;
 }
-/* Compact OperateDecodes (the Rx-Frequency pane): tighter header, no controls. */
+/* Compact OperateDecodes (the Rx-Frequency pane): tighter header, no filter/sort
+   controls — just the title + per-pane Erase on one row. */
 .operate-decodes.compact .od-head {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
   padding-bottom: 4px;
 }
 .operate-decodes.compact .od-head h2 {
@@ -7131,7 +7137,8 @@ select.settings-input {
   opacity: 0.4;
 }
 
-/* --- enhanced Band Activity (history + freeze-on-hover + filter + sort) --- */
+/* --- Band Activity / Rx Frequency (stock WSJT-X flow: chronological, bottom-
+   pinned, period separator bars; plus filter + sort + per-pane Erase) --- */
 .operate-decodes {
   display: flex;
   flex-direction: column;
@@ -7204,7 +7211,7 @@ select.settings-input {
   font-size: 0.75rem;
   color: var(--text-faint);
 }
-.od-frozen.on {
+.od-paused.on {
   color: var(--accent);
   font-weight: 600;
 }
@@ -7215,6 +7222,32 @@ select.settings-input {
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+/* WSJT-X period separator: a dim rule with the period's UTC start + band,
+   inserted between decoding periods (time-sorted view). */
+.od-period-sep {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 12px;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+  user-select: none;
+}
+.od-period-sep::before,
+.od-period-sep::after {
+  content: '';
+  flex: 1;
+  border-top: 1px solid var(--border-soft);
+}
+.od-sep-utc {
+  font-family: var(--font-mono);
+  font-weight: 700;
+}
+.od-sep-band {
+  font-weight: 700;
+  letter-spacing: 0.04em;
 }
 
 /* ===========================================================================

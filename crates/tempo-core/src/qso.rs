@@ -94,6 +94,10 @@ pub struct Station {
     /// (implicit ACK). Lets the receiver joint-combine retransmissions.
     pub rv_count: u8,
     /// Transmissions of the current step so far (resets when the step advances).
+    /// Optional CQ-run call budget: stop calling CQ after this many unanswered
+    /// calls. `None` = stock WSJT-X (repeat indefinitely; the Tx watchdog is the
+    /// backstop). In-QSO steps are NEVER capped either way.
+    pub cq_call_cap: Option<u32>,
     pub tx_count: u32,
     /// Operator preference: roger the final report with `RRR` (acknowledge only,
     /// partner still owes a 73) instead of the combined `RR73`. Default `false`
@@ -119,6 +123,7 @@ impl Station {
             rx_report: None,
             rv_count: 0,
             tx_count: 0,
+            cq_call_cap: None,
             confirm_with_rrr: false,
             transcript: Vec::new(),
         }
@@ -136,6 +141,7 @@ impl Station {
             rx_report: None,
             rv_count: 0,
             tx_count: 0,
+            cq_call_cap: None,
             confirm_with_rrr: false,
             transcript: Vec::new(),
         }
@@ -292,6 +298,7 @@ impl Station {
             rx_report,
             rv_count: 0,
             tx_count: 0,
+            cq_call_cap: None,
             confirm_with_rrr: prefer_rrr,
             transcript: vec![log_line],
         }
@@ -358,12 +365,14 @@ impl Station {
     /// been retransmitted [`MAX_TX_PER_STEP`] times without acknowledgement (the
     /// step has failed — the caller should time out or return to listening).
     pub fn outgoing_rv(&self) -> Option<(Msg, u8)> {
-        // Operating policy: a CQ stops after MAX_TX_PER_STEP calls (don't spam an
-        // empty band — the operator re-arms to call again), but a directed call /
-        // in-QSO step you're working repeats INDEFINITELY until the station
-        // responds (or the operator / Tx watchdog stops it). So the cap applies
-        // ONLY to CallingCq.
-        if self.state == State::CallingCq && self.tx_count >= MAX_TX_PER_STEP {
+        // Stock WSJT-X: a CQ repeats indefinitely (the Tx watchdog is the
+        // backstop). `cq_call_cap` is the opt-in "stop after N unanswered calls"
+        // budget; it applies ONLY to CallingCq — a directed call / in-QSO step
+        // you're working always repeats until the station responds (or the
+        // operator / watchdog stops it).
+        if self.state == State::CallingCq
+            && self.cq_call_cap.is_some_and(|cap| self.tx_count >= cap)
+        {
             return None;
         }
         self.pending
@@ -375,11 +384,12 @@ impl Station {
     /// partner advancing — i.e. we have an outgoing message but [`outgoing_rv`]
     /// is withholding it. The app may time out the QSO at this point.
     pub fn stalled(&self) -> bool {
-        // Only a CQ "stalls" (stops after its call budget); a station you're
-        // working keeps calling until it answers or the watchdog trips.
+        // Only a capped CQ "stalls" (stops after its opt-in call budget); a
+        // station you're working keeps calling until it answers or the watchdog
+        // trips, and an uncapped CQ (stock) never stalls.
         self.state == State::CallingCq
             && self.pending.is_some()
-            && self.tx_count >= MAX_TX_PER_STEP
+            && self.cq_call_cap.is_some_and(|cap| self.tx_count >= cap)
     }
 
     /// The current outgoing message as on-air text (the "Now sending" readout),
@@ -988,15 +998,29 @@ mod start_context_tests {
 
     #[test]
     fn running_cq_stops_after_its_call_budget() {
-        // Operating policy: a CQ stops after MAX_TX_PER_STEP calls (don't spam an
-        // empty band) — the operator re-arms to call again.
+        // The OPT-IN budget: with cq_call_cap set, a CQ stops after that many
+        // calls — the operator re-arms to call again. (Stock = uncapped, below.)
         let mut s = Station::calling_cq(ME, MY_GRID);
+        s.cq_call_cap = Some(MAX_TX_PER_STEP);
         for _ in 0..MAX_TX_PER_STEP {
             assert!(s.outgoing_rv().is_some(), "CQ calls within the budget");
             s.after_tx();
         }
         assert!(s.outgoing_rv().is_none(), "CQ stops after its budget");
         assert!(s.stalled(), "a finished CQ reports stalled (Resend re-arms)");
+    }
+
+    #[test]
+    fn uncapped_cq_repeats_indefinitely_like_stock_wsjtx() {
+        // Stock WSJT-X: a CQ run repeats until the operator stops it or the Tx
+        // watchdog trips — it never self-stalls. (Default: cq_call_cap = None.)
+        let mut s = Station::calling_cq(ME, MY_GRID);
+        for _ in 0..(MAX_TX_PER_STEP * 5) {
+            assert!(s.outgoing_rv().is_some(), "CQ keeps calling (stock)");
+            assert!(!s.stalled(), "an uncapped CQ never stalls");
+            s.after_tx();
+        }
+        assert_eq!(s.pending_text().as_deref(), Some("CQ KD9TAW EN61"));
     }
 
     #[test]
@@ -1078,8 +1102,9 @@ mod harq_seq_tests {
 
     #[test]
     fn step_stalls_after_max_tx_without_ack() {
-        // A CQ stops after its call budget (the only step that auto-stalls).
+        // A CAPPED CQ stops after its call budget (the only step that auto-stalls).
         let mut s = Station::calling_cq("W9XYZ", "EN37");
+        s.cq_call_cap = Some(MAX_TX_PER_STEP);
         for i in 0..MAX_TX_PER_STEP {
             assert!(
                 s.outgoing_rv().is_some(),
@@ -1097,6 +1122,7 @@ mod harq_seq_tests {
     #[test]
     fn resend_clears_a_stall_and_re_arms() {
         let mut s = Station::calling_cq("W9XYZ", "EN37");
+        s.cq_call_cap = Some(MAX_TX_PER_STEP);
         for _ in 0..MAX_TX_PER_STEP {
             s.after_tx();
         }

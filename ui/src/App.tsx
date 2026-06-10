@@ -148,6 +148,12 @@ export default function App() {
   const { commitLeft, commitRight, resetWidths } = usePaneWidths()
   const layoutRef = useRef<HTMLElement>(null)
   const [snap, setSnap] = useState<AppSnapshot | null>(null)
+  // Live mirror of our callsign for callbacks with empty dep lists (handleCall
+  // guards against working yourself without re-creating the callback per snap).
+  const mycallRef = useRef('')
+  useEffect(() => {
+    mycallRef.current = snap?.mycall ?? ''
+  }, [snap?.mycall])
   // Click-to-work handoff: a Needed-board click on a voice/CW spot seeds this, the
   // matching cockpit consumes it to prefill the log. `ts` makes a re-click of the same
   // call refire the cockpit's prefill effect. Cleared once consumed.
@@ -483,6 +489,14 @@ export default function App() {
 
   const handleCall = useCallback(
     (call: string, grid?: string, message?: string, snr?: number, freq?: number) => {
+      // Clicking your OWN line (your CQ / TX echo): the engine guards against
+      // the self-QSO, but without this the command still returns a snapshot and
+      // we'd flash a FALSE "Working KD9TAW" success toast.
+      const me = mycallRef.current.trim().toUpperCase()
+      if (me && call.trim().toUpperCase().split('/')[0] === me.split('/')[0]) {
+        pushToast(`${call} is your own call`, 'info', 2500)
+        return
+      }
       void withErrorToast(
         () => apiCallStation(call, grid, message, snr, freq),
         `Could not work ${call}`,

@@ -219,7 +219,17 @@ impl Mode for Ft4Mode {
         ft4::encode(msg)
     }
     fn gen_wave(&self, itone: &[i32], fsample: f32, f0: f32) -> Vec<f32> {
-        ft4::gen_wave(itone, fsample, f0)
+        // Same slot-positioning contract as FT8: WSJT-X's FT4 decoder reports
+        // `xdt = t − 0.5` (ft4_decode.f90), i.e. the nominal signal start is
+        // 0.5 s into the period — but `ft4::gen_wave` places the tones at t ≈ 0
+        // (measured: signal 0.00–5.04 s of the 6.048 s buffer). Played at the
+        // boundary that put every transmission at DT ≈ −0.5 for the whole band.
+        // Prepend the lead-in so our FT4 goes out at the standard DT ≈ 0.
+        let lead = (0.5 * fsample).round().max(0.0) as usize;
+        let tones = ft4::gen_wave(itone, fsample, f0);
+        let mut wave = vec![0f32; lead + tones.len()];
+        wave[lead..].copy_from_slice(&tones);
+        wave
     }
     fn decode_frame(
         &self,

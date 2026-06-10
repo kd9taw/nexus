@@ -198,6 +198,11 @@ pub struct Settings {
     /// of the combined `RR73`. Off by default (RR73 — modern FT8 practice).
     #[serde(default)]
     pub prefer_rrr: bool,
+    /// Stop a CQ run after this many unanswered calls. `None` (default) = stock
+    /// WSJT-X behavior: CQ repeats indefinitely, the Tx watchdog is the backstop.
+    /// The earlier always-on 6-call cap is preserved as this opt-in.
+    #[serde(default)]
+    pub cq_max_calls: Option<u32>,
 
     // --- coordinated QSY ("move together") — a SEPARATE, opt-in function ---
     /// Master opt-in for coordinated QSY. **Off by default** and fully isolated:
@@ -378,6 +383,7 @@ impl Default for Settings {
             auto_log: true,
             prompt_to_log: false,
             prefer_rrr: false,
+            cq_max_calls: None,
             qsy_enabled: false,
             qsy_set: vec!["20m".to_string(), "40m".to_string(), "30m".to_string()],
             qsy_cadence: tempo_core::qsy::DEFAULT_CADENCE,

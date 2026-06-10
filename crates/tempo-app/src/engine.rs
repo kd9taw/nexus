@@ -173,6 +173,10 @@ pub struct Engine {
     /// and the sequencer silently fell back to Tx1 (the "sent my grid instead of a
     /// report" on-air bug). Also the source for answer parity.
     decode_history: std::collections::VecDeque<(u64, modes::Decode)>,
+    /// Messages the WSJT-X-style EARLY decode pass already ingested for an
+    /// upcoming boundary slot, so the boundary's full-window decode ingests only
+    /// the stragglers it newly found (no double rows / double observe).
+    early_seen: Option<(u64, std::collections::HashSet<String>)>,
     /// Desired rig SPLIT state: `Some(tx_dial_mhz)` = split on with that TX dial;
     /// `None` = simplex. Set by work_spot (pile-up "UP n" spots) and cleared by any
     /// plain QSY/work; the loop applies it via `split_dirty` (one-shot).
@@ -337,6 +341,7 @@ impl Engine {
             immediate_tx: false,
             immediate_retune: false,
             decode_history: std::collections::VecDeque::new(),
+            early_seen: None,
             split_tx_mhz: None,
             split_dirty: false,
             cw_queue: VecDeque::new(),
@@ -1438,7 +1443,11 @@ impl Engine {
         self.mode = match spec {
             "chat" => Mode::Chat,
             "qso-run" => Mode::Qso {
-                station: Box::new(QsoStation::calling_cq(&mycall, &mygrid)),
+                station: Box::new({
+                    let mut s = QsoStation::calling_cq(&mycall, &mygrid);
+                    s.cq_call_cap = self.settings.cq_max_calls; // None = stock
+                    s
+                }),
                 running: true,
             },
             "qso-monitor" => Mode::Qso {
@@ -1561,6 +1570,13 @@ impl Engine {
         let mycall = self.settings.mycall.clone();
         let mygrid = self.settings.mygrid.clone();
 
+        // Guard: a double-click on our OWN line (our CQ / our TX echo in the
+        // band activity) must not start a QSO with ourselves — stock WSJT-X
+        // ignores it; without this we'd key up calling our own callsign.
+        if tempo_core::message::same_call(dxcall, &mycall) {
+            return;
+        }
+
         // Resolve the message we're answering → (parsed Msg, the report we send =
         // the SNR we decoded the DX at). Prefer the clicked line; recover its SNR
         // from this slot's decodes if the caller didn't pass one; else fall back to
@@ -1654,6 +1670,7 @@ impl Engine {
     fn clear_decode_context(&mut self) {
         self.decode_history.clear();
         self.last_decode_slot = None;
+        self.early_seen = None;
     }
 
     /// The best resume point from `dxcall` addressed to `mycall` in this slot, for
@@ -1825,6 +1842,10 @@ impl Engine {
     /// companion stream over UDP. Companion binds [`Settings::companion_addr`];
     /// returns `Err` (and stays on the previous source) if the socket can't bind.
     pub fn set_source(&mut self, kind: SourceKind) -> Result<(), String> {
+        // Source switch invalidates the decode context — in particular a stale
+        // Native early-pass marker would silently filter the first Companion
+        // boundary's decodes, and history/parity belong to the old stream.
+        self.clear_decode_context();
         match kind {
             SourceKind::Native => {
                 let mode_kind = self.tier().mode_kind().unwrap_or(modes::ModeKind::Ft1);
@@ -1986,7 +2007,11 @@ impl Engine {
             // room check doesn't admit an over that overruns the next slot by 0.5 s.
             Tier::Ft8 => 13.14,
             Tier::Dx1 => 12.64, // no lead-in; a safe over-estimate of the ~9.9 s frame
-            Tier::Ft4 => 4.48,
+            // FT4 = 0.5 s lead-in + 5.04 s tones (105 sym × 576 sa @ 12 kHz). The
+            // generated buffer also carries ~1.0 s of TRAILING silence — that is
+            // PTT-hold padding, not airtime, and the radio loop strips it on a
+            // late (mid-slot) start so the over never bleeds into the next period.
+            Tier::Ft4 => 5.54,
             Tier::Ft1 => 3.55,
         }
     }
@@ -2542,11 +2567,68 @@ impl Engine {
     /// Decode a captured frame and fold it into the app *and* the active mode's
     /// sequencer. Returns the number of decodes.
     pub fn ingest(&mut self, frame: &[f32], slot: u64) -> usize {
+        let decodes = self.decode_frame(frame, slot);
+        // If the early pass already ingested this boundary's messages, keep only
+        // the stragglers the full-window decode newly found.
+        let decodes = self.drop_early_dupes(decodes, slot);
+        self.process_decodes(frame, decodes, slot)
+    }
+
+    /// WSJT-X-style EARLY decode pass (FT8/FT4, native source only): decode the
+    /// partial capture a few seconds before the boundary so callers appear while
+    /// the period is still running — the operator (and the auto-sequencer) get
+    /// 2–3 s of decision time instead of zero (stock decodes ~3×/period starting
+    /// at ~11.8 s). `slot` is the UPCOMING boundary slot (audio slot + 1) so the
+    /// parity / history conventions match the boundary ingest exactly; the
+    /// boundary pass then ingests only what this pass missed.
+    pub fn ingest_early(&mut self, frame: &[f32], slot: u64) -> usize {
+        if self.source_kind != SourceKind::Native
+            || !matches!(self.app.tier(), Tier::Ft8 | Tier::Ft4)
+        {
+            // Companion DRAINS a UDP queue (an early drain would steal the
+            // boundary's decodes); FT1/DX1 decode full frames only.
+            return 0;
+        }
+        let decodes = self.decode_frame(frame, slot);
+        if decodes.is_empty() {
+            // Nothing heard yet: leave ALL state untouched (advancing
+            // last_decode_slot / the app slot counter early would skew the
+            // parity fallback and the UI period for zero benefit). The
+            // boundary pass redecodes the full window from scratch.
+            return 0;
+        }
+        self.early_seen = Some((
+            slot,
+            decodes.iter().map(|d| d.message.trim().to_string()).collect(),
+        ));
+        self.process_decodes(frame, decodes, slot)
+    }
+
+    /// Drop decodes the early pass already ingested for this boundary slot.
+    /// Always consumes the marker — a leftover from a slot whose boundary never
+    /// decoded (we transmitted) must not filter a later slot.
+    fn drop_early_dupes(
+        &mut self,
+        decodes: Vec<modes::Decode>,
+        slot: u64,
+    ) -> Vec<modes::Decode> {
+        match self.early_seen.take() {
+            Some((s, seen)) if s == slot => decodes
+                .into_iter()
+                .filter(|d| !seen.contains(d.message.trim()))
+                .collect(),
+            _ => decodes,
+        }
+    }
+
+    /// Decode one capture window through the active source (the shared front
+    /// half of [`Engine::ingest`] / [`Engine::ingest_early`]).
+    fn decode_frame(&mut self, frame: &[f32], slot: u64) -> Vec<modes::Decode> {
         // Companion mode: decodes arrive over UDP from an upstream WSJT-X/JTDX/
         // MSHV — the captured audio is irrelevant. Drain the network source
         // regardless of the selected tier (the native/DX1 paths below are
         // native-only).
-        let decodes: Vec<modes::Decode> = if self.source_kind == SourceKind::Companion {
+        if self.source_kind == SourceKind::Companion {
             self.source.decode(&modes::DecodeRequest::full_band(&[]))
         } else if self.app.tier() == Tier::Dx1 {
             // DX1 full-passband acquisition (WS-B): one slot decodes EVERY signal
@@ -2603,7 +2685,17 @@ impl Engine {
                 frame_time_ms,
             };
             self.source.decode(&req)
-        };
+        }
+    }
+
+    /// Fold a slot's decodes into the app/sequencer state (the shared back half
+    /// of [`Engine::ingest`] / [`Engine::ingest_early`]).
+    fn process_decodes(
+        &mut self,
+        frame: &[f32],
+        decodes: Vec<modes::Decode>,
+        slot: u64,
+    ) -> usize {
         let n = decodes.len();
         // Tally IR-HARQ rescues (messages recovered by combining retransmissions).
         self.harq_rescues += decodes
@@ -2654,10 +2746,17 @@ impl Engine {
         // borrowed and committed after (so building the record doesn't conflict
         // with the mutable borrow of the sequencer).
         let mut completed: Option<(String, Option<String>, Option<i32>)> = None;
+        // Did the partner advance the sequence this slot? WSJT-X resets the Tx
+        // watchdog on genuine QSO progress — on a marginal path where every step
+        // needs several repeats, a progressing QSO must not be watchdog-killed
+        // mid-exchange. (Operator actions reset it elsewhere, as before.)
+        let mut sequence_advanced = false;
         match &mut self.mode {
             Mode::Chat => {}
             Mode::Qso { station, .. } => {
+                let state_before = station.state;
                 station.observe(decodes);
+                sequence_advanced = station.state != state_before;
                 // Remember the report we sent the DX (RST sent) — captured from
                 // the sequencer's current outgoing (R)Report, which is replaced
                 // by RR73/73 by the time the QSO reaches Done.
@@ -2698,7 +2797,14 @@ impl Engine {
                     ));
                 }
             }
-            Mode::FieldDay { station, .. } => station.observe(decodes, slot),
+            Mode::FieldDay { station, .. } => {
+                let state_before = station.state;
+                station.observe(decodes, slot);
+                sequence_advanced = station.state != state_before;
+            }
+        }
+        if sequence_advanced {
+            self.reset_tx_watchdog();
         }
         if let Some((dxcall, dxgrid, rx_report)) = completed {
             if self.settings.auto_log {
@@ -2735,6 +2841,7 @@ impl Engine {
             let mygrid = self.settings.mygrid.clone();
             let mut s = QsoStation::calling_cq(&mycall, &mygrid);
             s.confirm_with_rrr = self.settings.prefer_rrr;
+            s.cq_call_cap = self.settings.cq_max_calls; // None = stock
             self.mode = Mode::Qso {
                 station: Box::new(s),
                 running: true,
@@ -3818,6 +3925,25 @@ mod tests {
         );
     }
 
+    #[test]
+    fn cq_cap_setting_flows_into_a_cq_run() {
+        // The opt-in "stop CQ after N calls" must travel settings -> station.
+        // (The field is a plain pub Option with a None default — without this
+        // test a future construction site that forgets the assignment would
+        // silently revert that path to uncapped.)
+        let mut e = Engine::new("W9XYZ", "EN37", 0);
+        e.settings.cq_max_calls = Some(2);
+        e.set_mode("qso-run").unwrap();
+        assert!(!e.poll_tx(0).is_empty(), "CQ call 1");
+        assert!(!e.poll_tx(2).is_empty(), "CQ call 2");
+        assert!(
+            e.poll_tx(4).is_empty(),
+            "capped CQ stops after the configured budget"
+        );
+        // Default (None) stays stock-uncapped — pinned in tempo-core's
+        // uncapped_cq_repeats_indefinitely_like_stock_wsjtx.
+    }
+
     fn dec_snr(msg: &str, snr: i32) -> Decode {
         Decode {
             message: msg.to_string(),
@@ -4318,6 +4444,49 @@ mod tests {
             "FT8 live ingest must recover the message; got {:?}",
             e.last_decodes()
         );
+    }
+
+    /// The WSJT-X-style early pass: a period truncated at ~11.8 s (the capture
+    /// the radio loop hands it mid-slot, tail zero-padded) must still decode, and
+    /// the boundary's full-window ingest must NOT double-ingest the same message.
+    #[test]
+    fn early_pass_decodes_truncated_period_and_boundary_dedupes() {
+        let mut e = Engine::new("KD9TAW", "EN52", 0);
+        e.set_tier(Tier::Ft8);
+        let full = native_frame_for(modes::ModeKind::Ft8, "CQ W1ABC FN42", 1500.0);
+        // What the early site captures by 11.8 s: audio so far, zero tail.
+        let cut = (11.8 * ft1::SAMPLE_RATE as f64) as usize;
+        let mut early = full.clone();
+        for x in &mut early[cut..] {
+            *x = 0.0;
+        }
+        let n_early = e.ingest_early(&early, 3);
+        assert!(n_early >= 1, "early (truncated) pass must decode");
+        assert!(
+            e.last_decodes().iter().any(|d| d.message == "CQ W1ABC FN42"),
+            "early pass recovered the message; got {:?}",
+            e.last_decodes()
+        );
+        assert_eq!(e.last_decode_slot, Some(3), "boundary-slot convention");
+        // The boundary then decodes the FULL window — same message must be
+        // filtered (no double row in history, no double observe).
+        let n_boundary = e.ingest(&full, 3);
+        assert_eq!(n_boundary, 0, "boundary ingests only stragglers");
+        let rows = e
+            .decode_history
+            .iter()
+            .filter(|(_, d)| d.message == "CQ W1ABC FN42")
+            .count();
+        assert_eq!(rows, 1, "exactly one history row for the message");
+    }
+
+    /// The early pass is FT8/FT4-native only: FT1/DX1 decode full frames, and a
+    /// Companion source drains a UDP queue the boundary owns.
+    #[test]
+    fn early_pass_gated_to_native_ft8_ft4() {
+        let mut e = Engine::new("KD9TAW", "EN52", 0);
+        e.set_tier(Tier::Ft1);
+        assert_eq!(e.ingest_early(&[0.0f32; 48000], 1), 0);
     }
 
     /// Like [`native_frame_for`] but at a target SNR with seeded AWGN (the repo

@@ -273,6 +273,8 @@ export function OperateCockpit({
                     decodes={snap.recentDecodes}
                     slot={snap.radio.slot}
                     rxOffsetHz={snap.radio.rxOffsetHz}
+                    band={snap.radio.band}
+                    tier={tier}
                     harqRescues={snap.harqRescues}
                     onCall={onCall}
                     compact
@@ -284,6 +286,8 @@ export function OperateCockpit({
                     decodes={snap.recentDecodes}
                     slot={snap.radio.slot}
                     rxOffsetHz={snap.radio.rxOffsetHz}
+                    band={snap.radio.band}
+                    tier={tier}
                     harqRescues={snap.harqRescues}
                     onCall={onCall}
                     lockedFilter="rx"
@@ -302,6 +306,8 @@ export function OperateCockpit({
                   decodes={snap.recentDecodes}
                   slot={snap.radio.slot}
                   rxOffsetHz={snap.radio.rxOffsetHz}
+                  band={snap.radio.band}
+                  tier={tier}
                   harqRescues={snap.harqRescues}
                   onCall={onCall}
                 />
@@ -312,6 +318,8 @@ export function OperateCockpit({
                     decodes={snap.recentDecodes}
                     slot={snap.radio.slot}
                     rxOffsetHz={snap.radio.rxOffsetHz}
+                    band={snap.radio.band}
+                    tier={tier}
                     harqRescues={snap.harqRescues}
                     onCall={onCall}
                     lockedFilter="rx"
