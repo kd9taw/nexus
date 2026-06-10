@@ -156,6 +156,7 @@ fn run_session<R: Read, W: Write>(
     on_publish: &mut dyn FnMut(&str, &[u8]),
     stop: &AtomicBool,
     keepalive: Duration,
+    connected: &AtomicBool,
 ) -> std::io::Result<()> {
     writer.write_all(&encode_connect(
         client_id,
@@ -197,6 +198,10 @@ fn run_session<R: Read, W: Write>(
                             format!("MQTT CONNACK refused (code {code})"),
                         ));
                     }
+                    // The broker accepted us — the session is genuinely up. Surfaced
+                    // so the UI can show "connected (quiet)" instead of an
+                    // indistinguishable-from-broken "waiting" before the first message.
+                    connected.store(true, Ordering::Relaxed);
                     if !subscribed {
                         writer.write_all(&encode_subscribe(1, topics))?;
                         subscribed = true;
@@ -219,6 +224,7 @@ pub fn subscribe(
     topics: &[&str],
     mut on_publish: impl FnMut(&str, &[u8]),
     stop: &AtomicBool,
+    connected: &AtomicBool,
 ) {
     const BASE: Duration = Duration::from_secs(2);
     const MAX: Duration = Duration::from_secs(60);
@@ -236,7 +242,10 @@ pub fn subscribe(
                     &mut on_publish,
                     stop,
                     KEEPALIVE,
+                    connected,
                 );
+                // Session over (broker drop / error / stop) — no longer connected.
+                connected.store(false, Ordering::Relaxed);
             }
         }
         backoff = if started.elapsed() > Duration::from_secs(10) {
@@ -373,6 +382,7 @@ mod tests {
         };
         let mut writer: Vec<u8> = Vec::new();
         let stop = AtomicBool::new(false);
+        let connected = AtomicBool::new(false);
         let mut topics_seen: Vec<String> = Vec::new();
         run_session(
             reader,
@@ -382,8 +392,11 @@ mod tests {
             &mut |topic, _payload| topics_seen.push(topic.to_string()),
             &stop,
             Duration::from_secs(60),
+            &connected,
         )
         .unwrap();
+        // The accepted CONNACK flips the session-up flag (the UI's "connected" state).
+        assert!(connected.load(Ordering::Relaxed), "CONNACK 0 → connected");
         // CONNECT then SUBSCRIBE were written.
         assert_eq!(writer[0], 0x10, "CONNECT first");
         assert!(
@@ -402,6 +415,7 @@ mod tests {
         };
         let mut writer: Vec<u8> = Vec::new();
         let stop = AtomicBool::new(false);
+        let connected = AtomicBool::new(false);
         let err = run_session(
             reader,
             &mut writer,
@@ -410,7 +424,12 @@ mod tests {
             &mut |_, _| {},
             &stop,
             Duration::from_secs(60),
+            &connected,
         );
         assert!(err.is_err(), "a refused CONNACK is an error");
+        assert!(
+            !connected.load(Ordering::Relaxed),
+            "a refused CONNACK must NOT read as connected"
+        );
     }
 }

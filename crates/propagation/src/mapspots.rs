@@ -25,6 +25,12 @@ pub struct MapSpot {
     pub age_secs: i64,
     /// Placed by DXCC centroid (true) rather than an exact grid (false).
     pub approx: bool,
+    /// Exact spot frequency (MHz) when the source carried one (cluster/RBN, PSKR
+    /// HTTP) — what map click-to-work tunes to. `None` = band-level only.
+    pub freq_mhz: Option<f64>,
+    /// Mode named by the source ("CW", "FT8", "SSB"…) when known — routes a map
+    /// click-to-work to the right cockpit. `None` = unknown (treated as digital).
+    pub mode: Option<String>,
 }
 
 /// Build the deduped, located, capped map-spot set from a spot window.
@@ -62,6 +68,8 @@ pub fn build_map_spots(now: i64, me_call: &str, spots: &[PathSpot], cap: usize) 
             heard_me,
             age_secs: age,
             approx,
+            freq_mhz: s.freq_mhz,
+            mode: s.mode.clone(),
         };
         best
             .entry(call)
@@ -71,7 +79,33 @@ pub fn build_map_spots(now: i64, me_call: &str, spots: &[PathSpot], cap: usize) 
                     || (cand.approx == e.approx && cand.heard_me && !e.heard_me)
                     || (cand.approx == e.approx && cand.heard_me == e.heard_me && cand.age_secs < e.age_secs);
                 if upgrade {
+                    // Keep an already-learned freq/mode through a placement upgrade
+                    // when the fresher report lacks them (e.g. cluster gave the freq,
+                    // then a fresher gridded PSKR path of the SAME band upgrades the
+                    // fix) — same-band only, same rule as the enrichment below.
+                    let (old_freq, old_mode, old_band) =
+                        (e.freq_mhz, e.mode.clone(), e.band.clone());
                     *e = cand.clone();
+                    if old_band == e.band {
+                        if e.freq_mhz.is_none() {
+                            e.freq_mhz = old_freq;
+                        }
+                        if e.mode.is_none() {
+                            e.mode = old_mode;
+                        }
+                    }
+                } else if cand.band == e.band {
+                    // Even when the placement doesn't upgrade, an exact frequency /
+                    // named mode from another report of the same call enriches it
+                    // (cluster gives freq+mode; PSKR MQTT gives grids — fuse both).
+                    // SAME BAND ONLY: a call active on two bands must never inherit
+                    // the other band's frequency — click-to-work would tune wrong.
+                    if e.freq_mhz.is_none() {
+                        e.freq_mhz = cand.freq_mhz;
+                    }
+                    if e.mode.is_none() {
+                        e.mode = cand.mode.clone();
+                    }
                 }
             })
             .or_insert(cand);
@@ -101,6 +135,7 @@ mod tests {
             band: Band::B20,
             mode: Some("FT8".into()),
             snr: Some(-12.0),
+            freq_mhz: None,
         }
     }
 
@@ -132,6 +167,40 @@ mod tests {
         assert_eq!(out.len(), 1, "capped to 1");
         assert_eq!(out[0].call, "DL1ABC", "freshest kept (20s DL beats 50s F5)");
         assert_eq!(out[0].age_secs, 20);
+    }
+
+    #[test]
+    fn freq_and_mode_fuse_across_reports_of_the_same_call() {
+        // A gridded PSKR path (no freq) + a cluster report (freq+mode, no grid) of the
+        // SAME call: keep the precise placement AND adopt the cluster's freq/mode.
+        let mut pskr = spot("DL1ABC", Some("JN58"), "KD9TAW", Some("EN52"), 20);
+        pskr.freq_mhz = None;
+        pskr.mode = None;
+        let mut cluster = spot("DL1ABC", None, "W1SKM", None, 40);
+        cluster.freq_mhz = Some(14.0235);
+        cluster.mode = Some("CW".into());
+        let out = build_map_spots(NOW, "KD9TAW", &[pskr, cluster], 100);
+        assert_eq!(out.len(), 1);
+        let m = &out[0];
+        assert!(!m.approx, "precise grid placement kept");
+        assert_eq!(m.freq_mhz, Some(14.0235), "cluster freq adopted");
+        assert_eq!(m.mode.as_deref(), Some("CW"), "cluster mode adopted");
+    }
+
+    #[test]
+    fn freq_never_fuses_across_bands() {
+        // The same call heard on 20 m (kept entry, no freq) and spotted on 40 m with an
+        // exact freq: the 20 m entry must NOT inherit the 40 m frequency — click-to-work
+        // would tune the wrong band.
+        let mut on20 = spot("DL1ABC", Some("JN58"), "KD9TAW", Some("EN52"), 10);
+        on20.freq_mhz = None;
+        let mut on40 = spot("DL1ABC", None, "W1SKM", None, 30);
+        on40.band = Band::B40;
+        on40.freq_mhz = Some(7.012);
+        let out = build_map_spots(NOW, "KD9TAW", &[on20, on40], 100);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].band, "20m", "freshest+precise 20 m entry kept");
+        assert_eq!(out[0].freq_mhz, None, "40 m freq NOT fused onto the 20 m entry");
     }
 
     #[test]

@@ -4,7 +4,7 @@
 // each acronym carries a hover/tap plain-English definition so a newcomer is
 // never staring at a cryptic "SFI 142 / Kp 4"; Expert mode assumes fluency.
 import type { SpaceWxView } from '../../types'
-import { sfiImpact, kpImpact, xrayImpact, type Impact } from '../../propViz'
+import { sfiImpact, kpImpact, aImpact, xrayImpact, type Impact } from '../../propViz'
 import { Tooltip, TooltipProvider } from '../ui/Tooltip'
 
 const SEV_VAR: Record<Impact['sev'], string> = {
@@ -63,7 +63,7 @@ export function SpaceWxGauges({ wx, gloss }: { wx: SpaceWxView; gloss?: boolean 
     <section className="swx-strip panel" aria-label="Space weather">
       <Gauge label="SFI" value={wx.sfi.toFixed(0)} impact={sfiImpact(wx.sfi)} gloss={gloss} />
       <Gauge label="Kp" value={wx.kp.toFixed(0)} impact={kpImpact(wx.kp)} gloss={gloss} />
-      <Gauge label="A" value={wx.aIndex.toFixed(0)} impact={kpImpact(wx.kp)} gloss={gloss} />
+      <Gauge label="A" value={wx.aIndex.toFixed(0)} impact={aImpact(wx.aIndex)} gloss={gloss} />
       <Gauge
         label="X-ray"
         value={wx.xrayClass.replace('-class', '')}

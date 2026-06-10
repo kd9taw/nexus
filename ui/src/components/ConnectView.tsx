@@ -41,6 +41,8 @@ interface Props {
   selectedCall: string | null
   onSelectCall: (call: string | null) => void
   needByCall: Map<string, NeedTag>
+  /** Double-click-to-work a map spot/DXpedition (forwarded to MapView). */
+  onWorkSpot?: (t: { call: string; band: string; mode: string | null; freqMhz: number | null }) => void
 }
 
 function provLabel(source: PropagationSnapshot['source'], asOf: number): { label: string; cls: string } {
@@ -59,6 +61,7 @@ export function ConnectView({
   prop,
   selectedCall,
   onSelectCall,
+  onWorkSpot,
   needByCall,
 }: Props) {
   const prov = prop ? provLabel(prop.source, prop.asOf) : null
@@ -159,6 +162,7 @@ export function ConnectView({
             needByCall={needByCall}
             expert={expert}
             intent={intent}
+            onWorkSpot={onWorkSpot}
           />
         </div>
         <aside className="connect-side">

@@ -24,16 +24,34 @@ function agoText(secs: number | null): string {
 }
 
 /** A connector-liveness pill (one per started feed). Hidden when the feed isn't
- * running, so a user who never enabled a feed sees nothing for it. */
+ * running, so a user who never enabled a feed sees nothing for it. The states
+ * separate "healthy but quiet" (connected — normal on a still band) from "can't
+ * reach the server" (connecting/reconnecting) — previously both rendered as an
+ * identical, broken-looking "waiting". */
 function FeedPill({ name, status }: { name: string; status: FeedStatus }) {
   if (!status.enabled) return null
   const ago = agoText(status.lastEventSecs)
   const [cls, val, title] =
     status.state === 'live'
       ? ['good', ago ? `live ${ago}` : 'live', `${name}: receiving (last ${ago} ago)`]
-      : status.state === 'waiting'
-        ? ['weak', 'waiting', `${name}: started — waiting for the first spot/report`]
-        : ['ok', `idle ${ago}`, `${name}: no data for ${ago} (a quiet band, or a feed problem)`]
+      : status.state === 'connected'
+        ? [
+            'good',
+            'connected',
+            `${name}: connected — no reports yet (normal until you transmit or the band stirs)`,
+          ]
+        : status.state === 'connecting' || status.state === 'waiting'
+          ? ['weak', 'connecting…', `${name}: trying to reach the server`]
+          : status.state === 'reconnecting'
+            ? [
+                'bad',
+                'reconnecting…',
+                `${name}: connection dropped — retrying${ago ? ` (last event ${ago} ago)` : ''}`,
+              ]
+            : status.state === 'idle'
+              ? ['ok', `idle ${ago}`, `${name}: connected, no data for ${ago} (a quiet band is normal)`]
+              : // Defensive: an unknown future backend state renders visibly, not as a fake idle.
+                ['weak', status.state, `${name}: ${status.state}`]
   return (
     <span className={`nb-chip nb-feed ${cls}`} title={title}>
       <Radio size={12} aria-hidden="true" />
@@ -149,8 +167,11 @@ export function NowBar({ snap, prop, feedHealth, propEnabled, onNavigate }: Prop
       </NbChip>
 
       {prop && (
-        <span className={`nb-src ${prop.source}`} title={`Propagation data: ${prop.source}`}>
-          {prop.source === 'live' ? 'LIVE' : prop.source === 'cached' ? 'CACHED' : 'DEMO'}
+        <span
+          className={`nb-src ${prop.source}`}
+          title={`Propagation nowcast data is ${prop.source} — separate from the Cluster/PSKR connection pills`}
+        >
+          {prop.source === 'live' ? 'PROP LIVE' : prop.source === 'cached' ? 'PROP CACHED' : 'DEMO'}
         </span>
       )}
 

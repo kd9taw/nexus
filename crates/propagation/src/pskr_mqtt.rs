@@ -150,6 +150,7 @@ pub fn parse_mqtt_report(topic: &str, now: i64) -> Option<PathSpot> {
         band,
         mode: non_empty(mode),
         snr: None,
+        freq_mhz: None, // MQTT topic is band-level — no exact frequency
     })
 }
 
@@ -189,6 +190,7 @@ mod tests {
             band: Band::B6,
             mode: None,
             snr: None,
+            freq_mhz: None,
         };
         for k in 0..10i64 {
             buf.push(mk(1_000 + k * 600)); // 1000, 1600, ..., 6400 (oldest first)
@@ -236,6 +238,7 @@ mod tests {
             band: Band::B20,
             mode: Some("FT8".into()),
             snr: None,
+            freq_mhz: None,
         };
         b.push(mk("A", 1000)); // old
         b.push(mk("B", 5000));

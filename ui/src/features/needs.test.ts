@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { visibleNeeds, workTarget } from './needs'
+import { modeClassOf, visibleNeeds, workTarget } from './needs'
 import type { BandChannel, NeedAlert } from '../types'
 
 function alert(call: string, mode: string, band = '20m', freqMhz: number | null = null): NeedAlert {
@@ -72,5 +72,22 @@ describe('workTarget', () => {
 
   it('no frequency resolvable (unknown band, no spot freq) → null', () => {
     expect(workTarget(alert('A', 'CW', '60m', null), BAND_PLAN)).toBeNull()
+  })
+})
+
+describe('modeClassOf (map-spot → cockpit routing)', () => {
+  it('CW routes to the CW cockpit', () => {
+    expect(modeClassOf('CW')).toBe('CW')
+    expect(modeClassOf('cw')).toBe('CW')
+  })
+  it('voice modes route to Phone', () => {
+    for (const m of ['SSB', 'USB', 'LSB', 'FM', 'AM', 'ssb']) {
+      expect(modeClassOf(m)).toBe('Phone')
+    }
+  })
+  it('digital + unknown + missing route to Digital (fail-safe)', () => {
+    for (const m of ['FT8', 'FT4', 'RTTY', 'PSK31', 'JS8', 'weird', '', null, undefined]) {
+      expect(modeClassOf(m)).toBe('Digital')
+    }
   })
 })

@@ -270,6 +270,7 @@ pub fn demo() -> PropagationSnapshot {
         band,
         mode: Some("FT8".to_string()),
         snr: Some(-12.0),
+        freq_mhz: None,
     };
 
     // 6 m Sporadic-E burst: many stations both ways across ~1000–2000 km grids,

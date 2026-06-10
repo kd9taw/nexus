@@ -348,6 +348,7 @@ mod tests {
             band,
             mode: Some("FT8".to_string()),
             snr: Some(-12.0),
+            freq_mhz: None,
         }
     }
 

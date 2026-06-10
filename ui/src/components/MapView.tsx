@@ -6,7 +6,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { geoPath } from 'd3-geo'
 import { RotateCcw } from 'lucide-react'
-import type { AuroraPoint, NeedTag, PropagationSnapshot, Station, WorkableCard } from '../types'
+import type { AuroraPoint, MapSpot, NeedTag, PropagationSnapshot, Station, WorkableCard } from '../types'
 import type { Theme } from '../useTheme'
 import { getAurora } from '../api'
 import { gridToLatLon, haversineKm, bearingDeg, type LatLon } from '../grid'
@@ -26,6 +26,7 @@ import {
 } from '../mapGeo'
 import { sampleLut } from '../colormaps'
 import { needMeta } from '../propViz'
+import { modeClassOf } from '../features/needs'
 import { StateBlock } from './StateBlock'
 // Geochron-style shaded-relief basemap (Natural Earth I 50m, public domain),
 // downsampled to 2048x1024 webp. Bundled offline; drawn behind the World view.
@@ -51,6 +52,9 @@ interface Props {
   expert?: boolean
   /** Connect intent preset — applied (soft) on change. Omitted = no preset. */
   intent?: MapIntent
+  /** Double-click-to-work a live spot / DXpedition marker: the app's atomic
+   * work path (rig → band+mode+freq, cockpit opens). Omitted = gesture off. */
+  onWorkSpot?: (t: { call: string; band: string; mode: string | null; freqMhz: number | null }) => void
 }
 
 const INTENT_PRESETS: Record<
@@ -172,6 +176,7 @@ export function MapView({
   needByCall,
   expert = true,
   intent,
+  onWorkSpot,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
@@ -181,6 +186,8 @@ export function MapView({
   const [layers, setLayers] = useState(DEFAULT_LAYERS)
   const [size, setSize] = useState({ w: 0, h: 0 })
   const [hover, setHover] = useState<{ x: number; y: number; text: string } | null>(null)
+  // Last pointer-up (time+pos) — lets pointer-up swallow the 2nd click of a dblclick.
+  const lastUpRef = useRef<{ t: number; x: number; y: number } | null>(null)
   // Interactive view: zoom (wheel), Globe rotation + flat-map pan (drag). Reset
   // when the projection changes (rotation/pan don't carry across projections).
   const DEFAULT_VIEW: MapView3 = { zoom: 1, rotate: null, panX: 0, panY: 0 }
@@ -300,6 +307,38 @@ export function MapView({
     }
     return out
   }, [me, kind, size, stations, view])
+
+  // Project the live cluster/RBN/PSKR spots the same way — RETAINED (not just drawn)
+  // so they participate in hover tooltips + click/double-click-to-work. Previously
+  // these were positioned only inside the draw pass: visible but dead pixels.
+  const placedSpots = useMemo(() => {
+    if (!me || size.w === 0 || !prop?.spots) {
+      return [] as Array<{ sp: MapSpot; xy: [number, number] }>
+    }
+    const proj = makeProjection(kind, me, size.w, size.h, view)
+    const out: Array<{ sp: MapSpot; xy: [number, number] }> = []
+    for (const sp of prop.spots) {
+      const xy = project(proj, { lat: sp.lat, lon: sp.lon })
+      if (xy) out.push({ sp, xy })
+    }
+    return out
+    // Depend on the spots array, not the whole snapshot — a poll that only moved
+    // space-weather numbers must not reproject hundreds of points.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [me, kind, size, prop?.spots, view])
+
+  // Project the DXpedition markers (bearing+distance placement) the same way —
+  // retained for hover/click/work; previously glyphs with no hit-target.
+  const placedDxped = useMemo(() => {
+    if (!me || size.w === 0) return [] as Array<{ card: WorkableCard; xy: [number, number] }>
+    const proj = makeProjection(kind, me, size.w, size.h, view)
+    const out: Array<{ card: WorkableCard; xy: [number, number] }> = []
+    for (const card of dxCards) {
+      const xy = project(proj, destinationPoint(me, card.bearingDeg, card.distanceKm))
+      if (xy) out.push({ card, xy })
+    }
+    return out
+  }, [me, kind, size, view, dxCards])
 
   // Static MUF grid cells (geometry never changes; colors recomputed per draw).
   const mufGrid = useMemo(() => mufCells(), [])
@@ -537,10 +576,8 @@ export function MapView({
     // out"); faded by age; centroid-placed (approx) spots dimmer. This is what
     // fills the map with real activity (HamClock-style), under the operator's own
     // decode roster + needed/selected stations.
-    if (layers.liveSpots.visible && prop?.spots) {
-      for (const sp of prop.spots) {
-        const p = project(proj, { lat: sp.lat, lon: sp.lon })
-        if (!p) continue
+    if (layers.liveSpots.visible) {
+      for (const { sp, xy: p } of placedSpots) {
         const ageMin = sp.ageSecs / 60
         const fade = ageMin < 10 ? 1 : ageMin < 30 ? 0.6 : 0.35
         ctx.globalAlpha = layers.liveSpots.opacity * fade * (sp.approx ? 0.7 : 1)
@@ -645,10 +682,7 @@ export function MapView({
       ctx.font = '13px system-ui'
       ctx.textAlign = 'center'
       ctx.textBaseline = 'middle'
-      for (const card of dxCards) {
-        const pos = destinationPoint(me, card.bearingDeg, card.distanceKm)
-        const p = project(proj, pos)
-        if (!p) continue
+      for (const { card, xy: p } of placedDxped) {
         const nm = needMeta(card.need)
         ctx.fillStyle = cssVar(nm.cssVar)
         ctx.fillText(nm.glyph, p[0], p[1])
@@ -667,7 +701,7 @@ export function MapView({
     }
     // theme is a draw dependency so colors refresh on theme switch.
     void theme
-  }, [me, kind, colorBy, pathMode, view, size, layers, placed, mufGrid, auroraPts, reliefReady, prop, dxCards, selStation, selectedCall, needByCall, theme, nowMs])
+  }, [me, kind, colorBy, pathMode, view, size, layers, placed, placedSpots, placedDxped, mufGrid, auroraPts, reliefReady, prop, selStation, selectedCall, needByCall, theme, nowMs])
 
   if (!me) {
     return (
@@ -681,14 +715,68 @@ export function MapView({
     )
   }
 
-  // Nearest plotted station to a screen point (within the hit radius).
-  const hitTest = (mx: number, my: number) => {
-    let best: { d: number; s: Station; ll: LatLon } | null = null
-    for (const { s, ll, xy } of placed) {
-      const d = Math.hypot(xy[0] - mx, xy[1] - my)
-      if (d < 9 && (!best || d < best.d)) best = { d, s, ll }
+  // Nearest interactive feature to a screen point. Priority: decoded stations
+  // (richest data), then DXpedition markers, then live spots — so overlapping
+  // pixels resolve to the most actionable thing. Each respects its layer toggle.
+  type MapHit =
+    | { kind: 'station'; d: number; s: Station; ll: LatLon }
+    | { kind: 'dxped'; d: number; card: WorkableCard }
+    | { kind: 'spot'; d: number; sp: MapSpot }
+  const hitTest = (mx: number, my: number): MapHit | null => {
+    if (layers.stations.visible) {
+      let best: MapHit | null = null
+      for (const { s, ll, xy } of placed) {
+        const d = Math.hypot(xy[0] - mx, xy[1] - my)
+        if (d < 9 && (!best || d < best.d)) best = { kind: 'station', d, s, ll }
+      }
+      if (best) return best
     }
-    return best
+    if (layers.dxped.visible) {
+      let best: MapHit | null = null
+      for (const { card, xy } of placedDxped) {
+        const d = Math.hypot(xy[0] - mx, xy[1] - my)
+        if (d < 10 && (!best || d < best.d)) best = { kind: 'dxped', d, card }
+      }
+      if (best) return best
+    }
+    if (layers.liveSpots.visible) {
+      let best: MapHit | null = null
+      for (const { sp, xy } of placedSpots) {
+        const d = Math.hypot(xy[0] - mx, xy[1] - my)
+        if (d < 7 && (!best || d < best.d)) best = { kind: 'spot', d, sp }
+      }
+      if (best) return best
+    }
+    return null
+  }
+  /** A DXpedition's announced modes → the work-routing mode: single-class CW →
+   * 'CW', single-class voice → 'SSB'; mixed/unannounced → null (digital default).
+   * A CW-only operation must open the CW cockpit, not the FT8 default. */
+  const dxpedWorkMode = (modes?: string[]): string | null => {
+    if (!modes || modes.length === 0) return null
+    const classes = new Set(modes.map((m) => modeClassOf(m)))
+    if (classes.size === 1) {
+      if (classes.has('CW')) return 'CW'
+      if (classes.has('Phone')) return 'SSB'
+    }
+    return null
+  }
+  const workHint = onWorkSpot ? ' — double-click to work' : ''
+  /** Tooltip line for any map hit — who/where/what, plus the work gesture hint. */
+  const hitText = (hit: MapHit): string => {
+    if (hit.kind === 'station') {
+      const s = hit.s
+      return `${s.call} · ${s.country ? s.country + ' · ' : ''}${s.grid} · ${s.snr} dB · ${bearingDeg(me, hit.ll)}° ${Math.round(haversineKm(me, hit.ll)).toLocaleString()} km`
+    }
+    if (hit.kind === 'dxped') {
+      const c = hit.card
+      return `${c.call} · ${c.entity} · ${c.need} on ${c.band} · ${c.likelihood}${c.liveConfirmed ? ' · live-confirmed' : ''}${workHint}`
+    }
+    const sp = hit.sp
+    const age = sp.ageSecs < 60 ? `${sp.ageSecs}s` : `${Math.round(sp.ageSecs / 60)}m`
+    const freq = sp.freqMhz ? ` · ${sp.freqMhz.toFixed(4).replace(/\.?0+$/, '')} MHz` : ''
+    const mode = sp.mode ? ` ${sp.mode}` : ''
+    return `${sp.call} · ${sp.band}${mode}${freq} · ${age} ago${sp.heardMe ? ' · heard YOU' : ''}${sp.approx ? ' · ~location' : ''}${workHint}`
   }
   // Drag = spin the Globe / pan the flat maps; a press that doesn't move = a
   // click (select a station). Wheel zooms (the native listener, below).
@@ -703,15 +791,7 @@ export function MapView({
       const mx = e.clientX - rect.left
       const my = e.clientY - rect.top
       const hit = hitTest(mx, my)
-      setHover(
-        hit
-          ? {
-              x: mx,
-              y: my,
-              text: `${hit.s.call} · ${hit.s.country ? hit.s.country + ' · ' : ''}${hit.s.grid} · ${hit.s.snr} dB · ${bearingDeg(me, hit.ll)}° ${Math.round(haversineKm(me, hit.ll)).toLocaleString()} km`,
-            }
-          : null,
-      )
+      setHover(hit ? { x: mx, y: my, text: hitText(hit) } : null)
       return
     }
     const dx = e.clientX - d.x
@@ -732,9 +812,43 @@ export function MapView({
     const d = dragRef.current
     dragRef.current = null
     if (d && !d.moved) {
+      // The 2nd click of a double-click must NOT toggle the selection made by the
+      // 1st (select→deselect churn right before the work gesture fires). Single
+      // clicks stay instant; only a rapid same-spot re-click is swallowed.
+      const now = performance.now()
+      const lu = lastUpRef.current
+      lastUpRef.current = { t: now, x: e.clientX, y: e.clientY }
+      if (lu && now - lu.t < 350 && Math.hypot(e.clientX - lu.x, e.clientY - lu.y) < 6) {
+        return
+      }
       const rect = canvasRef.current!.getBoundingClientRect()
       const hit = hitTest(e.clientX - rect.left, e.clientY - rect.top)
-      onSelectCall(hit ? (hit.s.call === selectedCall ? null : hit.s.call) : null)
+      const call =
+        hit?.kind === 'station' ? hit.s.call : hit?.kind === 'dxped' ? hit.card.call : hit?.kind === 'spot' ? hit.sp.call : null
+      onSelectCall(call ? (call === selectedCall ? null : call) : null)
+    }
+  }
+  // Double-click = WORK IT (the WSJT-X gesture): spots + DXpeditions hand their
+  // call/band/mode/freq to the app's atomic work path (rig jumps band+mode+freq,
+  // cockpit opens). Stations stay single-click-select (worked from the cockpit).
+  const onDoubleClick = (e: React.MouseEvent) => {
+    if (!onWorkSpot) return
+    const rect = canvasRef.current!.getBoundingClientRect()
+    const hit = hitTest(e.clientX - rect.left, e.clientY - rect.top)
+    if (hit?.kind === 'spot') {
+      onWorkSpot({
+        call: hit.sp.call,
+        band: hit.sp.band,
+        mode: hit.sp.mode ?? null,
+        freqMhz: hit.sp.freqMhz ?? null,
+      })
+    } else if (hit?.kind === 'dxped') {
+      onWorkSpot({
+        call: hit.card.call,
+        band: hit.card.band,
+        mode: dxpedWorkMode(hit.card.modes),
+        freqMhz: null,
+      })
     }
   }
 
@@ -791,12 +905,14 @@ export function MapView({
             style={{
               width: '100%',
               height: '100%',
-              cursor: kind === 'world' ? 'move' : 'grab',
+              // Pointer over an interactive feature → pointer cursor (it's clickable).
+              cursor: hover ? 'pointer' : kind === 'world' ? 'move' : 'grab',
               touchAction: 'none',
             }}
             onPointerDown={onPointerDown}
             onPointerMove={onPointerMove}
             onPointerUp={onPointerUp}
+            onDoubleClick={onDoubleClick}
             onPointerLeave={() => setHover(null)}
           />
           {hover && (

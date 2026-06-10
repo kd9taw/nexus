@@ -923,6 +923,7 @@ mod tests {
             band,
             mode: Some("FT8".into()),
             snr: None,
+            freq_mhz: None,
         }
     }
     fn i_heard(far: &str, fg: &str, band: Band, dt: i64) -> PathSpot {
@@ -935,6 +936,7 @@ mod tests {
             band,
             mode: Some("FT8".into()),
             snr: None,
+            freq_mhz: None,
         }
     }
 
@@ -1312,6 +1314,7 @@ mod tests {
             band: Band::B6,
             mode: Some("FT8".into()),
             snr: None,
+            freq_mhz: None,
         };
         let mut spots = Vec::new();
         // Quiet baseline: a trickle across the 2 h before onset.
@@ -1378,6 +1381,7 @@ mod tests {
             band,
             mode: Some("FT8".into()),
             snr: None,
+            freq_mhz: None,
         }
     }
 

@@ -375,6 +375,7 @@ mod tests {
             band: Band::from_label(band).unwrap(),
             mode: Some("FT8".into()),
             snr: None,
+            freq_mhz: None,
         };
         let reports = vec![
             // Who-heard-me: my signal copied by a receiver in Spain on 20m.
@@ -403,6 +404,7 @@ mod tests {
             band: Band::from_label(band).unwrap(),
             mode: Some("FT8".into()),
             snr: None,
+            freq_mhz: None,
         };
         let reports = vec![
             report("EA1ABC", "EN52", "20m"), // HF DX, receiver ~near (Iowa) → keep

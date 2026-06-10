@@ -83,6 +83,14 @@ export function kpImpact(kp: number): Impact {
   if (kp >= 4) return { sev: 'warn', text: 'unsettled — high-lat paths soft' }
   return { sev: 'quiet', text: 'quiet field — stable paths' }
 }
+/** A-index (24 h average of geomagnetic activity — the day's character, where Kp is
+ * the last 3 h). NOAA scale: <8 quiet · 8–15 unsettled · 16–29 active · 30+ storm. */
+export function aImpact(a: number): Impact {
+  if (a >= 30) return { sev: 'warn', text: 'stormy day — HF rough, polar paths out' }
+  if (a >= 16) return { sev: 'warn', text: 'active day — paths up and down' }
+  if (a >= 8) return { sev: 'active', text: 'unsettled day — minor fading spells' }
+  return { sev: 'quiet', text: 'quiet day — conditions steady' }
+}
 export function xrayImpact(cls: string): Impact {
   const c = cls.trim().charAt(0).toUpperCase()
   if (c === 'X' || c === 'M') return { sev: 'warn', text: 'flare — low-band shortwave fade' }

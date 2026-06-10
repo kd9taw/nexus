@@ -32,6 +32,23 @@ impl ClusterSpot {
     pub fn freq_mhz(&self) -> f64 {
         self.freq_khz / 1000.0
     }
+
+    /// The operating mode named in the spot comment, when one is ("CW 599", "FT8
+    /// -6 dB", "RTTY", "SSB 59"…). RBN comments lead with the mode; human spots
+    /// often carry one too. `None` when the comment doesn't say — callers fall
+    /// back to band/frequency heuristics. Token-matched (not substring) so e.g.
+    /// a callsign fragment can't read as a mode.
+    pub fn mode(&self) -> Option<&'static str> {
+        const MODES: &[&str] = &[
+            // "AM" is deliberately ABSENT: it false-positives on time-of-day comments
+            // ("9 AM EST") far more often than real AM-mode spots occur on HF.
+            "CW", "FT8", "FT4", "RTTY", "SSB", "USB", "LSB", "PSK31", "PSK", "JS8", "FM",
+            "MSK144", "Q65", "JT65", "FT1", "DX1",
+        ];
+        self.comment
+            .split_whitespace()
+            .find_map(|tok| MODES.iter().find(|m| tok.eq_ignore_ascii_case(m)).copied())
+    }
 }
 
 /// True for a "1234Z"-style UTC time token.
@@ -115,19 +132,22 @@ impl ClusterSession {
     pub fn feed(&mut self, chunk: &str) -> Vec<Action> {
         self.buf.push_str(chunk);
         let mut out = Vec::new();
-        // Pre-login: answer the first login prompt seen anywhere in the buffer.
-        if !self.logged_in && is_login_prompt(&self.buf) {
-            out.push(Action::Send(format!("{}\r\n", self.call)));
-            self.logged_in = true;
-            self.buf.clear(); // discard the pre-login banner
-            return out;
-        }
-        // Extract complete lines; the trailing partial stays buffered.
+        // Extract complete lines; the trailing partial stays buffered. Pre-login
+        // these are banner lines (parse_dx_spot ignores them).
         while let Some(nl) = self.buf.find('\n') {
             let line: String = self.buf.drain(..=nl).collect();
             if let Some(spot) = parse_dx_spot(line.trim_end_matches(['\r', '\n'])) {
                 out.push(Action::Spot(spot));
             }
+        }
+        // A login prompt as the trailing (newline-less) line — answer it EVERY time
+        // it appears, not just once: some DXSpider/RBN hosts keep the socket open
+        // and RE-prompt after a rejected/unregistered call, and answering only the
+        // first prompt wedged the session forever (open TCP, no spots, no retry).
+        if is_login_prompt(&self.buf) {
+            out.push(Action::Send(format!("{}\r\n", self.call)));
+            self.logged_in = true;
+            self.buf.clear(); // discard the prompt/banner
         }
         // Guard against unbounded growth if the server never sends a newline.
         if self.buf.len() > 8192 {
@@ -217,6 +237,7 @@ fn pump<R: Read, W: Write>(
     call: &str,
     on_spot: &mut dyn FnMut(&ClusterSpot),
     stop: &AtomicBool,
+    connected: &AtomicBool,
 ) -> std::io::Result<()> {
     let mut session = ClusterSession::new(call);
     let mut buf = [0u8; 4096];
@@ -241,7 +262,13 @@ fn pump<R: Read, W: Write>(
         let chunk = String::from_utf8_lossy(&buf[..n]);
         for action in session.feed(&chunk) {
             match action {
-                Action::Send(s) => writer.write_all(s.as_bytes())?,
+                Action::Send(s) => {
+                    writer.write_all(s.as_bytes())?;
+                    // The login prompt was answered — the session is genuinely up.
+                    // (NOT on bare TCP-establish: a host that prompts and rejects
+                    // must not read as "connected" before we've even logged in.)
+                    connected.store(true, Ordering::Relaxed);
+                }
                 Action::Spot(sp) => on_spot(&sp),
             }
         }
@@ -251,8 +278,16 @@ fn pump<R: Read, W: Write>(
 /// Connect to a DX cluster / RBN telnet `addr` ("host:port"), log in with `call`,
 /// and call `on_spot` for each parsed spot, reconnecting with backoff until
 /// `stop` is set. The thin live-socket wrapper around [`pump`] (which holds the
-/// tested logic).
-pub fn run(addr: &str, call: &str, mut on_spot: impl FnMut(&ClusterSpot), stop: &AtomicBool) {
+/// tested logic). `connected` mirrors the session state (true while a TCP session
+/// is up) so the UI can tell "connected but quiet" from "can't connect" — a
+/// spotless session previously read as an indistinguishable-from-broken "waiting".
+pub fn run(
+    addr: &str,
+    call: &str,
+    mut on_spot: impl FnMut(&ClusterSpot),
+    stop: &AtomicBool,
+    connected: &AtomicBool,
+) {
     const BASE: Duration = Duration::from_secs(2);
     const MAX: Duration = Duration::from_secs(60);
     let mut backoff = BASE;
@@ -260,7 +295,10 @@ pub fn run(addr: &str, call: &str, mut on_spot: impl FnMut(&ClusterSpot), stop: 
         let started = Instant::now();
         if let Some(stream) = connect(addr) {
             if let Ok(reader) = stream.try_clone() {
-                let _ = pump(reader, stream, call, &mut on_spot, stop);
+                // `connected` flips true inside pump when the login prompt is
+                // ANSWERED (not on bare TCP-establish), and clears on session end.
+                let _ = pump(reader, stream, call, &mut on_spot, stop, connected);
+                connected.store(false, Ordering::Relaxed);
             }
         }
         // A real session (stayed up a while) resets backoff; a fast connect-fail /
@@ -311,6 +349,39 @@ mod tests {
         assert_eq!(s.comment, "CW 599");
         assert_eq!(s.time_utc.as_deref(), Some("1234Z"));
         assert!((s.freq_mhz() - 14.025).abs() < 1e-9);
+    }
+
+    #[test]
+    fn comment_mode_is_token_matched() {
+        let mk = |comment: &str| ClusterSpot {
+            spotter: "W3LPL".into(),
+            dx_call: "UA9CDC".into(),
+            freq_khz: 14025.0,
+            comment: comment.into(),
+            time_utc: None,
+        };
+        assert_eq!(mk("CW 599").mode(), Some("CW"));
+        assert_eq!(mk("FT8  -6 dB  25 WPM").mode(), Some("FT8"));
+        assert_eq!(mk("up 2 big pile").mode(), None, "no mode named");
+        // Token match, not substring: a fragment can't read as a mode.
+        assert_eq!(mk("CWO net").mode(), None);
+        assert_eq!(mk("ssb 59 nice sig").mode(), Some("SSB"), "case-insensitive");
+    }
+
+    #[test]
+    fn session_reanswers_a_login_reprompt() {
+        // Some DXSpider/RBN hosts keep the socket open and prompt AGAIN after a
+        // rejected/unregistered call. Answering only the first prompt wedged the
+        // session forever (open TCP, no spots). The session must re-answer.
+        let mut sess = ClusterSession::new("W9XYZ");
+        let first = sess.feed("login: ");
+        assert!(matches!(&first[..], [Action::Send(s)] if s == "W9XYZ\r\n"));
+        // Server rejects and re-prompts.
+        let again = sess.feed("\rsorry, unknown station\r\nlogin: ");
+        assert!(
+            matches!(&again[..], [Action::Send(s)] if s == "W9XYZ\r\n"),
+            "re-prompt must be re-answered, got {again:?}"
+        );
     }
 
     #[test]
@@ -471,15 +542,18 @@ mod tests {
         let mut writer: Vec<u8> = Vec::new();
         let stop = AtomicBool::new(false);
         let mut spots: Vec<ClusterSpot> = Vec::new();
+        let connected = AtomicBool::new(false);
         pump(
             reader,
             &mut writer,
             "W9XYZ",
             &mut |sp| spots.push(sp.clone()),
             &stop,
+            &connected,
         )
         .unwrap();
         assert_eq!(writer, b"W9XYZ\r\n", "the callsign was sent at the prompt");
+        assert!(connected.load(Ordering::Relaxed), "answering the login prompt = connected");
         assert_eq!(spots.len(), 1);
         assert_eq!(spots[0].dx_call, "3Y0J");
         assert!((spots[0].freq_mhz() - 14.074).abs() < 1e-9);
@@ -493,7 +567,9 @@ mod tests {
         };
         let mut writer: Vec<u8> = Vec::new();
         let stop = AtomicBool::new(true);
-        pump(reader, &mut writer, "W9XYZ", &mut |_| {}, &stop).unwrap();
+        let connected = AtomicBool::new(false);
+        pump(reader, &mut writer, "W9XYZ", &mut |_| {}, &stop, &connected).unwrap();
         assert!(writer.is_empty());
+        assert!(!connected.load(Ordering::Relaxed), "never answered → never connected");
     }
 }

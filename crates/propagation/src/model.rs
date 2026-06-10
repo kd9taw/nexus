@@ -277,6 +277,10 @@ pub struct PathSpot {
     pub band: Band,
     pub mode: Option<String>,
     pub snr: Option<f32>,
+    /// Exact spot frequency (MHz) when the source carries one (DX cluster / RBN).
+    /// PSK Reporter MQTT is band-level → `None`. Lets map click-to-work land ON the
+    /// spot (a CW DX at 14.0235 must be worked there, not at a band default).
+    pub freq_mhz: Option<f64>,
 }
 
 /// Which side of a path the operator is on.

@@ -233,6 +233,10 @@ pub struct WorkableCard {
     pub how_to_call: String,
     pub window_hint: String,
     pub priority: u32,
+    /// The expedition's ANNOUNCED modes (from the NG3K listing) — routes a map
+    /// click-to-work to the right cockpit (a CW-only operation must open CW, not
+    /// the FT8 default). Empty = unannounced (treated as digital).
+    pub modes: Vec<String>,
 }
 
 /// A forward-calendar entry — an announced DXpedition that hasn't started yet,
@@ -404,6 +408,7 @@ impl DxpeditionTracker {
                     how_to_call,
                     window_hint,
                     priority,
+                    modes: p.modes.clone(),
                 });
             }
         }
@@ -510,6 +515,7 @@ mod tests {
                 band: Band::B20,
                 mode: Some("FT8".to_string()),
                 snr: Some(-10.0),
+                freq_mhz: None,
             });
         }
         let advisory = PropAdvisor::new("KD9TAW", "EN52").advise(NOW, &spots, &SpaceWx::default());

@@ -43,7 +43,7 @@ import { useJourneyUnlocks } from './useJourneyUnlocks'
 import { useFeatures } from './useFeatures'
 import { useReveals } from './useReveals'
 import { sectionFeatures, featureById, type FeatureId } from './features/registry'
-import { visibleNeeds, workTarget } from './features/needs'
+import { visibleNeeds, workTarget, modeClassOf } from './features/needs'
 import { usePaneWidths, clampLeft, clampRight } from './usePaneWidths'
 import { TopBar } from './components/TopBar'
 import { StationList } from './components/StationList'
@@ -640,6 +640,26 @@ export default function App() {
     [bandPlan, handleQsy],
   )
 
+  // Work a spot double-clicked on the MAP — the same atomic path as the Needed
+  // board (workSpot → rig jumps band+mode+freq, cockpit opens). The source-reported
+  // mode routes the cockpit: CW→CW, SSB/FM→Phone, FT8/unknown→Digital.
+  const handleWorkMapSpot = useCallback(
+    (t: { call: string; band: string; mode: string | null; freqMhz: number | null }) => {
+      handleWorkNeeded({
+        call: t.call,
+        entity: '',
+        band: t.band,
+        zone: 0,
+        tags: [],
+        priority: 0,
+        headline: '',
+        mode: modeClassOf(t.mode),
+        freqMhz: t.freqMhz,
+      })
+    },
+    [handleWorkNeeded],
+  )
+
   // Stop a QSO recording from anywhere (the global REC badge in the TopBar), so an active
   // recording started in the Phone cockpit can be stopped without navigating back.
   const handleStopRecording = useCallback(() => {
@@ -1048,6 +1068,7 @@ export default function App() {
           selectedCall={activePeer}
           onSelectCall={handleMapSelect}
           needByCall={needByCall}
+          onWorkSpot={handleWorkMapSpot}
         />
       )
       break
@@ -1069,6 +1090,7 @@ export default function App() {
             selectedCall={activePeer}
             onSelectCall={handleMapSelect}
             needByCall={needByCall}
+            onWorkSpot={handleWorkMapSpot}
           />
         </main>
       )

@@ -103,6 +103,12 @@ struct FeedHealthState {
     cluster_last: std::sync::atomic::AtomicI64,
     /// Last successfully parsed PSK Reporter MQTT report.
     pskr_last_event: std::sync::atomic::AtomicI64,
+    /// Cluster telnet session currently up (set on TCP-established, cleared on drop).
+    /// Lets the pill say "connected" (quiet but healthy) instead of an ambiguous
+    /// "waiting" that reads as broken.
+    cluster_connected: std::sync::atomic::AtomicBool,
+    /// PSK Reporter MQTT session currently up (set on accepted CONNACK, cleared on drop).
+    pskr_connected: std::sync::atomic::AtomicBool,
 }
 type SharedHealth = Arc<FeedHealthState>;
 
@@ -160,6 +166,7 @@ fn start_cluster_feed(
     }
     let buf = spots.clone();
     let hp = health.clone();
+    let hp_conn = health.clone();
     let host = cluster_host.to_string();
     let call = mycall.trim().to_string();
     std::thread::spawn(move || {
@@ -174,6 +181,7 @@ fn start_cluster_feed(
                 }
             },
             &CLUSTER_STOP,
+            &hp_conn.cluster_connected,
         );
     });
 }
@@ -190,6 +198,7 @@ fn start_pskr_feed(live_paths: &SharedLivePaths, mycall: &str, health: &SharedHe
     }
     let buf = live_paths.clone();
     let hp = health.clone();
+    let hp_conn = health.clone();
     let call = mycall.trim().to_string();
     std::thread::spawn(move || {
         let topics = propagation::pskr_mqtt_topics(&call);
@@ -208,6 +217,7 @@ fn start_pskr_feed(live_paths: &SharedLivePaths, mycall: &str, health: &SharedHe
                 }
             },
             &PSKR_STOP,
+            &hp_conn.pskr_connected,
         );
     });
 }
@@ -234,6 +244,8 @@ fn start_pskr_region_feed(region_paths: &SharedRegionPaths, mycall: &str, mygrid
         let topics = propagation::pskr_region_topics();
         let topic_refs: Vec<&str> = topics.iter().map(|s| s.as_str()).collect();
         let base_w = propagation::OpeningConfig::default().base_w;
+        // No Now-Bar pill for the region feed — session state isn't surfaced.
+        let connected = std::sync::atomic::AtomicBool::new(false);
         tempo_net::mqtt::subscribe(
             PSKR_MQTT_ADDR,
             &format!("nexus-rgn-{call}"),
@@ -265,6 +277,7 @@ fn start_pskr_region_feed(region_paths: &SharedRegionPaths, mycall: &str, mygrid
                 }
             },
             &PSKR_STOP,
+            &connected,
         );
     });
 }
@@ -280,7 +293,10 @@ struct FeedStatus {
     enabled: bool,
     /// Seconds since the last parsed spot/report; `null` if none yet this session.
     last_event_secs: Option<i64>,
-    /// "off" | "waiting" | "live" | "idle" (only meaningful when `enabled`).
+    /// "off" | "connecting" | "connected" | "live" | "idle" | "reconnecting"
+    /// (only meaningful when `enabled`). "connected" = session up but no event parsed
+    /// yet (normal on a quiet band — NOT broken); "connecting" = thread running, no
+    /// session yet; "reconnecting" = had events, session currently down.
     state: String,
 }
 
@@ -292,7 +308,7 @@ struct FeedHealth {
     pskr: FeedStatus,
 }
 
-fn feed_status(started: bool, last: i64, now: i64) -> FeedStatus {
+fn feed_status(started: bool, connected: bool, last: i64, now: i64) -> FeedStatus {
     if !started {
         return FeedStatus {
             enabled: false,
@@ -301,17 +317,22 @@ fn feed_status(started: bool, last: i64, now: i64) -> FeedStatus {
         };
     }
     if last == 0 {
+        // No event parsed yet — the connected flag is what separates "healthy but
+        // quiet" (normal: nobody has spotted the operator yet) from "can't reach the
+        // server". Without it this read as a permanent, broken-looking "waiting".
         return FeedStatus {
             enabled: true,
             last_event_secs: None,
-            state: "waiting".into(),
+            state: if connected { "connected" } else { "connecting" }.into(),
         };
     }
     let age = (now - last).max(0);
     FeedStatus {
         enabled: true,
         last_event_secs: Some(age),
-        state: if age <= FEED_FRESH_SECS {
+        state: if !connected {
+            "reconnecting"
+        } else if age <= FEED_FRESH_SECS {
             "live"
         } else {
             "idle"
@@ -331,11 +352,13 @@ fn get_feed_health(health: State<'_, SharedHealth>) -> FeedHealth {
     FeedHealth {
         cluster: feed_status(
             CLUSTER_STARTED.load(Relaxed),
+            health.cluster_connected.load(Relaxed),
             health.cluster_last.load(Relaxed),
             now,
         ),
         pskr: feed_status(
             PSKR_STARTED.load(Relaxed),
+            health.pskr_connected.load(Relaxed),
             health.pskr_last_event.load(Relaxed),
             now,
         ),
@@ -492,6 +515,7 @@ async fn get_propagation(
                         band,
                         mode: None,
                         snr: Some(st.snr as f32),
+                        freq_mhz: None, // own decodes are band-level here
                     });
                 }
             }
@@ -597,8 +621,11 @@ async fn get_propagation(
                     rx_call: cs.spotter.to_uppercase(),
                     rx_grid: propagation::skimmer_grid(&cs.spotter).map(str::to_string),
                     band,
-                    mode: None,
+                    // Cluster/RBN carry the goods the band-level feeds lack: the EXACT
+                    // spot frequency + (usually) the mode — what map click-to-work needs.
+                    mode: cs.mode().map(str::to_string),
                     snr: None,
+                    freq_mhz: Some(cs.freq_mhz()),
                 });
                 regional_scope = true; // we now have wide-area data → advisor uses it
             }
@@ -1793,15 +1820,18 @@ async fn get_need_alerts(
     let snap = eng.snapshot();
     drop(eng); // nothing below needs the engine — don't hold the hot lock
     let band = snap.radio.band.clone();
-    // Your own radio's decodes on the CURRENT band (you are the receiver).
+    // Your own radio's decodes on the CURRENT band (you are the receiver). These come
+    // from the digital modem, so the truthful mode label is the active TIER (FT8/FT4/
+    // FT1/DX1) — all of which map to the Digital class for click-to-work routing.
+    let tier_mode = format!("{:?}", snap.link.tier).to_uppercase();
     let mut heard: Vec<propagation::Heard> = snap
         .stations
         .iter()
         .map(|s| propagation::Heard {
             call: s.call.clone(),
             band: band.clone(),
-            mode: "FT8".to_string(), // FT-family → Digital class; the band is what varies
-            freq_mhz: None,          // own decodes are band-level here
+            mode: tier_mode.clone(),
+            freq_mhz: None, // own decodes are band-level here
         })
         .collect();
     // The real value (empirical evidence, not a model): two complementary signals

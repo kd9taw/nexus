@@ -104,6 +104,7 @@ mod tests {
             band: Band::B20,
             mode: Some("FT8".to_string()),
             snr: Some(-14.0),
+            freq_mhz: None,
         }
     }
 
@@ -123,6 +124,7 @@ mod tests {
                 band: Band::B20,
                 mode: Some("FT8".to_string()),
                 snr: Some(-5.0),
+                freq_mhz: None,
             },
         ];
         let go = getting_out("KD9TAW", "EN52", &spots, NOW);

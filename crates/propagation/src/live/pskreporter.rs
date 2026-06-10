@@ -82,7 +82,8 @@ fn report_from_attrs(e: &BytesStart) -> Option<PathSpot> {
             _ => {}
         }
     }
-    let band = Band::from_mhz(freq? / 1_000_000.0)?;
+    let freq_mhz = freq? / 1_000_000.0;
+    let band = Band::from_mhz(freq_mhz)?;
     Some(PathSpot {
         time: time?,
         tx_call: tx_call?,
@@ -92,6 +93,9 @@ fn report_from_attrs(e: &BytesStart) -> Option<PathSpot> {
         band,
         mode,
         snr,
+        // The HTTP reception reports DO carry the exact frequency (unlike the
+        // band-level MQTT topics) — keep it so map click-to-work lands on the spot.
+        freq_mhz: Some(freq_mhz),
     })
 }
 

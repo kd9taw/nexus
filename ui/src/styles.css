@@ -375,6 +375,11 @@ button.nb-chip:hover {
 .nb-chip.good .nb-v {
   color: var(--state-good);
 }
+/* On a live/connected chip the key label brightens too — without this the
+ * "Cluster"/"PSKR" word stayed faint even when green, reading as half-dead. */
+.nb-chip.good .nb-k {
+  color: var(--text-dim);
+}
 .nb-chip.ok {
   --c: var(--state-ok);
 }

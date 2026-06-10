@@ -73,6 +73,9 @@ export interface WorkableCard {
   howToCall: string
   windowHint: string
   priority: number
+  /** Announced modes (NG3K) — routes map click-to-work to the right cockpit.
+   * Empty/missing = unannounced (treated as digital). */
+  modes?: string[]
 }
 /** One band's outlook on a path: best workability + window + per-UTC-hour grid. */
 export interface BandOutlook {
@@ -163,6 +166,12 @@ export interface MapSpot {
   heardMe: boolean
   ageSecs: number
   approx: boolean
+  /** Exact spot frequency (MHz) when the source carried one (cluster/RBN, PSKR
+   * HTTP) — what map click-to-work tunes to. Null = band-level only. */
+  freqMhz?: number | null
+  /** Mode named by the source ("CW", "FT8", "SSB"…) — routes click-to-work to the
+   * right cockpit. Null = unknown (treated as digital). */
+  mode?: string | null
 }
 
 /** Top-level operating mode reflected in the snapshot. */
@@ -668,8 +677,10 @@ export interface FeedStatus {
   enabled: boolean
   /** Seconds since the last parsed spot/report; null if none yet this session. */
   lastEventSecs: number | null
-  /** Only meaningful when `enabled`. */
-  state: 'off' | 'waiting' | 'live' | 'idle'
+  /** Only meaningful when `enabled`. 'connected' = session up but quiet (normal —
+   * NOT broken); 'connecting' = no session yet; 'reconnecting' = had events, session
+   * currently down. ('waiting' is the legacy pre-connected-flag label.) */
+  state: 'off' | 'connecting' | 'connected' | 'live' | 'idle' | 'reconnecting' | 'waiting'
 }
 
 /** Liveness of both background live feeds (DX cluster/RBN + PSK Reporter MQTT). */

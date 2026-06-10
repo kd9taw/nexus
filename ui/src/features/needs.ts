@@ -32,6 +32,17 @@ export interface WorkTarget {
   band: string
 }
 
+/** Coarse operating-mode CLASS for a source-reported mode string — the router for
+ * click-to-work (which cockpit + rig-mode policy). Voice modes → 'Phone'; CW → 'CW';
+ * everything else (FT8/FT4/RTTY/PSK/unknown/null) → 'Digital'. Mirrors the backend's
+ * NeedAlert.mode classes so map spots and Needed rows route identically. */
+export function modeClassOf(mode: string | null | undefined): 'CW' | 'Phone' | 'Digital' {
+  const m = (mode ?? '').trim().toUpperCase()
+  if (m === 'CW') return 'CW'
+  if (m === 'SSB' || m === 'USB' || m === 'LSB' || m === 'FM' || m === 'AM') return 'Phone'
+  return 'Digital'
+}
+
 /** Resolve ANY need (CW / Phone / Digital) into a work target — N1MM-style: a single click
  * changes the band, mode, AND frequency to exactly the spot's. Uses the spot's exact
  * frequency when the cluster/RBN carried one, else the band's default channel. Returns null
