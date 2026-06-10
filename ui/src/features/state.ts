@@ -119,7 +119,15 @@ export function normalizeState(raw: unknown): FeatureState {
     obj.profile === 'custom' || (typeof obj.profile === 'string' && obj.profile in PROFILES)
       ? (obj.profile as FeatureState['profile'])
       : 'custom'
-  const coerced = coerceEnabled((obj.enabled ?? {}) as Partial<Record<FeatureId, boolean>>)
+  const stored = { ...(obj.enabled ?? {}) } as Partial<Record<FeatureId, boolean>> &
+    Record<string, boolean | undefined>
+  // Migration: the standalone `propagation` section became `dxped` (Propagation
+  // merged into Connect). Carry the operator's old on/off choice across the rename
+  // so a deliberately-disabled Propagation doesn't resurrect as a surprise DXped tab.
+  if (stored.dxped === undefined && stored['propagation'] !== undefined) {
+    stored.dxped = stored['propagation']
+  }
+  const coerced = coerceEnabled(stored)
   // Restore dependency closure: every enabled feature implies its dependencies.
   const on = new Set<FeatureId>()
   for (const f of FEATURES) if (coerced[f.id]) on.add(f.id)

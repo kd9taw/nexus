@@ -73,7 +73,7 @@ describe('feature state transitions', () => {
     const both = applyProfiles(['contest', 'vhf'])
     expect(both.profile).toBe('custom')
     expect(both.enabled.fieldDay).toBe(true) // from contest
-    expect(both.enabled.propagation).toBe(true) // from vhf
+    expect(both.enabled.dxped).toBe(true) // from vhf
     expect(both.enabled.logbook).toBe(true) // core
     // empty → the safe default (everything-except-Field-Day, tagged custom)
     expect(applyProfiles([]).profile).toBe('custom')
@@ -131,7 +131,7 @@ describe('feature state transitions', () => {
 
   it('landingFor follows the profile, custom → operate', () => {
     expect(landingFor(applyProfile('contest'))).toBe('fieldDay')
-    expect(landingFor(applyProfile('vhf'))).toBe('propagation')
+    expect(landingFor(applyProfile('vhf'))).toBe('connect')
     expect(
       landingFor({ profile: 'custom', enabled: applyProfile('dx').enabled, dismissedReveals: [] }),
     ).toBe('operate')

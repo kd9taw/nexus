@@ -617,7 +617,7 @@ export interface JourneySummary {
 
 /** DXCC-first award progress, computed from the logbook (cty.dat-resolved). */
 /** Why a heard station is worth working (need-aware spotting). */
-export type NeedTag = 'NewEntity' | 'NewZone' | 'NewBand' | 'NewMode' | 'Confirm'
+export type NeedTag = 'NewEntity' | 'NewZone' | 'NewBand' | 'NewMode' | 'Confirm' | 'Dxped'
 
 /** One phone voice-keyer slot: an F-key-numbered label bound to a recorded WAV.
  * `file` is empty until the operator records or imports a message. */

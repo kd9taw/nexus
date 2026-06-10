@@ -9,9 +9,10 @@ interface Props {
   /** Liveness of the background live feeds (cluster/RBN + PSK Reporter MQTT); null
    * until the first poll. Each started feed shows a status pill. */
   feedHealth: FeedHealth | null
-  /** Whether the Propagation section is enabled — the Band/Need chips only offer a
-   * drill-in when it is (otherwise they're informative-only, not dead links). */
-  propEnabled: boolean
+  /** Drill-in gates: the Band chip opens Connect; the Need chip opens DXpeditions.
+   * A disabled section's chip stays informative-only, never a dead link. */
+  connectEnabled: boolean
+  dxpedEnabled: boolean
   onNavigate: (v: View) => void
 }
 
@@ -107,10 +108,12 @@ const BAND_WORD: Record<string, [string, string]> = {
   Closed: ['closed', 'bad'],
 }
 
-export function NowBar({ snap, prop, feedHealth, propEnabled, onNavigate }: Props) {
+export function NowBar({ snap, prop, feedHealth, connectEnabled, dxpedEnabled, onNavigate }: Props) {
   const band = snap.radio.band
   const report = prop?.advisory.bands.find((b) => b.band === band) ?? null
-  const need = prop?.dxpeditions.workableNow[0] ?? null
+  // Skip NotOpen cards: the chip must never advertise an unworkable slot as the
+  // top need (the tracker keeps NotOpen cards for the board, filtered here).
+  const need = prop?.dxpeditions.workableNow.find((c) => c.status !== 'NotOpen') ?? null
 
   // Band open?
   const [bandWord, bandCls] = report ? (BAND_WORD[report.tier] ?? ['—', 'weak']) : ['…', 'weak']
@@ -127,8 +130,8 @@ export function NowBar({ snap, prop, feedHealth, propEnabled, onNavigate }: Prop
 
       <NbChip
         cls={bandCls}
-        onClick={propEnabled ? () => onNavigate('propagation') : undefined}
-        title={report?.reason ?? (propEnabled ? 'Open the propagation nowcast' : 'Band activity')}
+        onClick={connectEnabled ? () => onNavigate('connect') : undefined}
+        title={report?.reason ?? (connectEnabled ? 'Open Connect — the map + nowcast' : 'Band activity')}
       >
         <Activity size={13} aria-hidden="true" />
         <span className="nb-k">Band</span>
@@ -152,7 +155,7 @@ export function NowBar({ snap, prop, feedHealth, propEnabled, onNavigate }: Prop
 
       <NbChip
         cls={`nb-need ${need ? 'good' : 'weak'}`}
-        onClick={propEnabled ? () => onNavigate('propagation') : undefined}
+        onClick={dxpedEnabled ? () => onNavigate('dxped') : undefined}
         title={
           need
             ? `${need.call} (${need.entity}) — ${need.need} on ${need.band}, likelihood ${need.likelihood}${need.liveConfirmed ? ' (live-confirmed)' : ''}`

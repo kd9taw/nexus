@@ -33,7 +33,7 @@ describe('profiles', () => {
     // hidden for a newcomer — DX/contest console + the niche QSY section
     expect(en.roam).toBe(false)
     expect(en.awards).toBe(false)
-    expect(en.propagation).toBe(false)
+    expect(en.dxped).toBe(false)
     expect(en.map).toBe(false)
     expect(en.fieldDay).toBe(false)
   })
@@ -47,7 +47,7 @@ describe('profiles', () => {
   it('dx surfaces the chase tools', () => {
     const en = resolveEnabled('dx')
     expect(en.awards).toBe(true)
-    expect(en.propagation).toBe(true)
+    expect(en.dxped).toBe(true)
     expect(en.map).toBe(true)
     expect(en.band).toBe(true)
     expect(en.gamification).toBe(true)
@@ -60,7 +60,7 @@ describe('profiles', () => {
     expect(en.log).toBe(true)
     expect(en.band).toBe(true)
     expect(en.awards).toBe(false)
-    expect(en.propagation).toBe(false)
+    expect(en.dxped).toBe(false)
   })
 
   it('band is surfaced in every goal profile (spec §4.2)', () => {

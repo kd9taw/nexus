@@ -21,6 +21,7 @@ const NEED_CHIP: Record<NeedTag, { label: string; cls: string; title: string }> 
   NewBand: { label: 'BAND', cls: 'band', title: 'New band-slot for this entity' },
   NewMode: { label: 'MODE', cls: 'mode', title: 'New mode for this entity' },
   Confirm: { label: 'CFM', cls: 'confirm', title: 'Worked — needs a confirmation' },
+  Dxped: { label: 'DXP', cls: 'dxped', title: 'Active announced DXpedition' },
 }
 
 function lastHeardLabel(lastHeardSlot: number, currentSlot: number): string {

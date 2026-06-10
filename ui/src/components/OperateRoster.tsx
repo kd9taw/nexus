@@ -25,6 +25,7 @@ const NEED_RANK: Record<NeedTag, number> = {
   NewBand: 3,
   NewMode: 2,
   Confirm: 1,
+  Dxped: 0,
 }
 const NEED_CHIP: Record<NeedTag, { label: string; cls: string }> = {
   NewEntity: { label: 'NEW', cls: 'entity' },
@@ -32,6 +33,7 @@ const NEED_CHIP: Record<NeedTag, { label: string; cls: string }> = {
   NewBand: { label: 'BAND', cls: 'band' },
   NewMode: { label: 'MODE', cls: 'mode' },
   Confirm: { label: 'CFM', cls: 'confirm' },
+  Dxped: { label: 'DXP', cls: 'dxped' },
 }
 
 const snrClass = (snr: number) => (snr >= -10 ? 'good' : snr >= -18 ? 'ok' : 'weak')

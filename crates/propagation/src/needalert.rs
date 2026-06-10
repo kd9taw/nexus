@@ -29,6 +29,9 @@ pub enum NeedTag {
     NewMode,
     /// Worked but unconfirmed — a confirmation opportunity (lowest).
     Confirm,
+    /// The call belongs to an ACTIVE announced DXpedition — a limited-time window
+    /// (appended alongside the award tags; never the primary row color).
+    Dxped,
 }
 
 impl NeedTag {
@@ -39,6 +42,7 @@ impl NeedTag {
             NeedTag::NewBand => "New band",
             NeedTag::NewMode => "New mode",
             NeedTag::Confirm => "Confirm",
+            NeedTag::Dxped => "DXpedition",
         }
     }
     /// Ranking weight (higher = more valuable to work right now).
@@ -49,6 +53,9 @@ impl NeedTag {
             NeedTag::NewBand => 50,
             NeedTag::NewMode => 30,
             NeedTag::Confirm => 10,
+            // Never a primary tier — appended by the command layer onto an existing
+            // award need; its priority effect is the explicit bump applied there.
+            NeedTag::Dxped => 0,
         }
     }
 }
@@ -151,6 +158,8 @@ pub fn score(
             band
         ),
         NeedTag::Confirm => format!("Confirm — {}", info.entity),
+        // Dxped is appended post-scoring (command layer) — never the headline tag.
+        NeedTag::Dxped => format!("Active DXpedition — {}", info.entity),
     };
     Some(NeedAlert {
         call: call.to_ascii_uppercase(),

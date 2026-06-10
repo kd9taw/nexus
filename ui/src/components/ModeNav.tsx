@@ -4,7 +4,7 @@ import {
   Radio,
   Mic,
   Radar,
-  Sun,
+  Plane,
   Globe,
   Target,
   MessageSquare,
@@ -112,7 +112,7 @@ const CW: Item = {
 const ITEMS: Item[] = [
   { id: 'connect', label: 'Connect', icon: Radar, title: 'Connect — situational awareness: grayline map + live propagation in one view' },
   { id: 'needed', label: 'Needed', icon: Target, title: 'Needed — what you still need that’s on the air now; single-click to QSY' },
-  { id: 'propagation', label: 'Prop', icon: Sun, title: 'Propagation & opening intelligence — what’s open now, 6m openings, DXpeditions' },
+  { id: 'dxped', label: 'DXped', icon: Plane, title: 'DXpeditions — active now, the forward calendar, and what you need from each' },
   { id: 'map', label: 'Map', icon: Globe, title: 'Map — azimuthal beam map: great-circle headings, range rings, openings, DXpeditions' },
   { id: 'logbook', label: 'Logbook', icon: BookOpen, title: 'Logbook — your ADIF contacts' },
   { id: 'awards', label: 'Awards', icon: Trophy, title: 'Awards — your Journey (firsts, ladders, milestones) + official DXCC/WAS/WAZ progress' },

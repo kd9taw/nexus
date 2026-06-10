@@ -876,6 +876,90 @@ button.nb-chip:hover {
   line-height: 1.35;
 }
 /* Per-path outlook panel (selected station) — the PathPredictor seam surfaced. */
+/* Compact "Needs heard now" rows in the Connect rail */
+.connect-needs .cn-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.connect-needs .cn-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 4px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 0.84rem;
+}
+.connect-needs .cn-row:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.connect-needs .cn-call {
+  font-weight: 700;
+  min-width: 7ch;
+}
+.connect-needs .cn-band {
+  color: var(--text-dim);
+}
+.connect-needs .cn-entity {
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* DXpedition need chip + board filter + the DXpeditions section */
+.need-chip.need-dxped {
+  background: color-mix(in srgb, #38bdf8 22%, transparent);
+  color: #38bdf8;
+  border: 1px solid color-mix(in srgb, #38bdf8 50%, transparent);
+}
+.np-filter {
+  margin-left: 10px;
+  font-size: 0.72rem;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-dim);
+  padding: 2px 9px;
+  cursor: pointer;
+}
+.np-filter.active {
+  border-color: #38bdf8;
+  color: #38bdf8;
+  background: color-mix(in srgb, #38bdf8 12%, transparent);
+}
+.dxped-view .dx-section h2 {
+  font-size: 0.95rem;
+  margin: 14px 0 8px;
+}
+.dxped-view .dx-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+  gap: 10px;
+}
+.dxped-view .dx-none {
+  color: var(--text-dim);
+  font-size: 0.88rem;
+}
+.dx-card-wrap {
+  display: flex;
+  flex-direction: column;
+}
+.dx-map-link {
+  margin-top: 4px;
+  align-self: flex-end;
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 0.78rem;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+.dx-map-link:hover {
+  text-decoration: underline;
+}
+
 /* --- Selected-entity card (the map's "so what" panel) --- */
 .connect-sel .cs-head {
   display: flex;

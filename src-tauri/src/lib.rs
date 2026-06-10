@@ -831,6 +831,8 @@ fn set_settings(
         {
             CLUBLOG_SUSPENDED.store(false, std::sync::atomic::Ordering::Relaxed);
         }
+        // Keep the live DXpedition layer's most-wanted key current.
+        propagation::live::dxped::set_clublog_key(&settings.clublog_api_key);
         if let Err(e) = settings.save(&settings_path()) {
             eprintln!("tempo: failed to persist settings: {e}");
         }
@@ -1883,7 +1885,33 @@ async fn get_need_alerts(
             }
         }
     }
-    Ok(propagation::rank_needs(&heard, &needs, needs.worked_zones()))
+    let mut alerts = propagation::rank_needs(&heard, &needs, needs.worked_zones());
+    // DXpedition tagging: a heard call that belongs to an ACTIVE announced
+    // expedition gets the Dxped chip + a priority nudge — limited-time windows
+    // must be findable at a glance on the board. APPENDED (never tags[0]) so the
+    // award tier keeps driving the row color. Reads the lock-only cached plan list
+    // (warmed by a startup primer + every prop refresh) — NOT the PropCache, which
+    // is only populated once the operator visits Connect/DXpeditions. The match is
+    // suffix/prefix-tolerant ("3Y0J/MM" still tags as 3Y0J).
+    let active = propagation::live::dxped::cached_active_calls(now_unix() as i64);
+    if !active.is_empty() {
+        for a in &mut alerts {
+            let call = a.call.to_uppercase();
+            if active
+                .iter()
+                .any(|act| propagation::live::dxped::call_matches(act, &call))
+            {
+                a.tags.push(propagation::NeedTag::Dxped);
+                // +15 floats expedition rows up WITHIN their award tier without ever
+                // crossing into the next one (tier floors are 10/30/50/70/100 — the
+                // smallest gap is 20).
+                a.priority += 15;
+                a.headline = format!("{} · active DXpedition", a.headline);
+            }
+        }
+        alerts.sort_by(|x, y| y.priority.cmp(&x.priority));
+    }
+    Ok(alerts)
 }
 
 /// Import an external ADIF logbook (deduped merge → real "needs"). Takes the
@@ -2862,6 +2890,17 @@ pub fn run() {
     if region_enabled {
         start_pskr_region_feed(&region_paths, &cluster_call, &region_grid);
     }
+    // Feed the live DXpedition layer the ClubLog key (most-wanted ranks). Pushed,
+    // not pulled — keeps the propagation crate decoupled from settings IO.
+    if let Ok(eng) = engine.lock() {
+        propagation::live::dxped::set_clublog_key(&eng.settings().clublog_api_key);
+    }
+    // Warm the DXpedition plan cache in the background so the Needed board's
+    // expedition tagging works from launch — without it the cache stays cold until
+    // the operator first opens Connect/DXpeditions.
+    std::thread::spawn(|| {
+        let _ = propagation::live::dxped::fetch_plans();
+    });
 
     // Point the logbook at its ADIF file and load prior contacts (so worked-
     // before highlighting and the log view reflect previous sessions), and

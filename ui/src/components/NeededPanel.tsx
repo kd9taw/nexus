@@ -12,6 +12,11 @@ const NEED_CHIP: Record<NeedTag, { label: string; cls: string; title: string }> 
   NewBand: { label: 'BAND', cls: 'band', title: 'New band-slot for this entity' },
   NewMode: { label: 'MODE', cls: 'mode', title: 'New mode for this entity' },
   Confirm: { label: 'CONFIRM', cls: 'confirm', title: 'Worked — needs a confirmation' },
+  Dxped: { label: 'DXPED', cls: 'dxped', title: 'Active announced DXpedition — a limited-time window' },
+}
+/** Defensive chip lookup — an unknown future tag renders visibly, never throws. */
+function chipFor(t: NeedTag): { label: string; cls: string; title: string } {
+  return NEED_CHIP[t] ?? { label: String(t).toUpperCase(), cls: 'confirm', title: String(t) }
 }
 
 type SortKey = 'priority' | 'call' | 'band' | 'entity'
@@ -45,10 +50,12 @@ export function NeededPanel({
     key: 'priority',
     dir: 'desc',
   })
+  // DXpedition filter — expedition chasers narrow the board to limited-time windows.
+  const [dxpedOnly, setDxpedOnly] = useState(false)
   const knownBands = useMemo(() => new Set(bandPlan.map((b) => b.band)), [bandPlan])
 
   const rows = useMemo(() => {
-    const r = [...alerts]
+    const r = dxpedOnly ? alerts.filter((a) => a.tags.includes('Dxped')) : [...alerts]
     const dir = sort.dir === 'asc' ? 1 : -1
     r.sort((a, b) => {
       let c = 0
@@ -70,7 +77,7 @@ export function NeededPanel({
       return c * dir
     })
     return r
-  }, [alerts, sort])
+  }, [alerts, sort, dxpedOnly])
 
   const th = (key: SortKey, label: string) => (
     <button
@@ -95,6 +102,14 @@ export function NeededPanel({
         <h2>Needed now</h2>
         <span className="np-count">{alerts.length}</span>
         <span className="np-hint">single-click a row to QSY the radio to that band and listen</span>
+        <button
+          type="button"
+          className={`np-filter${dxpedOnly ? ' active' : ''}`}
+          onClick={() => setDxpedOnly((v) => !v)}
+          title="Show only active-DXpedition needs (limited-time windows)"
+        >
+          ✈ DXped only
+        </button>
         {onPopOut && (
           <button
             type="button"
@@ -130,7 +145,7 @@ export function NeededPanel({
                 key={`${a.call}|${a.band}|${a.mode}`}
                 role="row"
                 className={`np-row${a.call === selectedCall ? ' selected' : ''} need-${
-                  a.tags[0] ? NEED_CHIP[a.tags[0]].cls : 'confirm'
+                  a.tags[0] ? chipFor(a.tags[0]).cls : 'confirm'
                 }`}
                 title={
                   workable
@@ -151,8 +166,8 @@ export function NeededPanel({
               >
                 <span className="np-need">
                   {a.tags.map((t) => (
-                    <span key={t} className={`need-chip need-${NEED_CHIP[t].cls}`} title={NEED_CHIP[t].title}>
-                      {NEED_CHIP[t].label}
+                    <span key={t} className={`need-chip need-${chipFor(t).cls}`} title={chipFor(t).title}>
+                      {chipFor(t).label}
                     </span>
                   ))}
                 </span>

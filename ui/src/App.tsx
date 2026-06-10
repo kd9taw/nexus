@@ -57,7 +57,7 @@ import { AwardsJourney } from './components/AwardsJourney'
 import { CwCockpit } from './components/CwCockpit'
 import { PhoneCockpit } from './components/PhoneCockpit'
 import { PotaSotaView } from './components/PotaSotaView'
-import { PropagationView } from './components/PropagationView'
+import { DxpeditionsView } from './components/DxpeditionsView'
 import { MapView } from './components/MapView'
 import { ConnectView } from './components/ConnectView'
 import {
@@ -167,6 +167,8 @@ export default function App() {
     if (sectionIds.includes(h) && features.enabled[h as FeatureId] !== false) {
       return h as View
     }
+    // The standalone Propagation section merged into Connect — honor old deeplinks.
+    if (h === 'propagation') return 'connect'
     return features.landing
   })
   // Per-section rig-mode policy. Only ENTERING an actual operating cockpit changes the rig:
@@ -1069,13 +1071,22 @@ export default function App() {
           onSelectCall={handleMapSelect}
           needByCall={needByCall}
           onWorkSpot={handleWorkMapSpot}
+          needAlerts={visibleAlerts}
         />
       )
       break
-    case 'propagation':
+    case 'dxped':
       workspace = (
         <main className="layout single">
-          <PropagationView snap={prop} />
+          <DxpeditionsView
+            snap={prop}
+            onWorkSpot={handleWorkMapSpot}
+            onShowOnMap={(call) => {
+              // Hand off to Connect with the expedition selected on the map.
+              handleMapSelect(call)
+              setView('connect')
+            }}
+          />
         </main>
       )
       break
@@ -1156,7 +1167,8 @@ export default function App() {
         snap={snap}
         prop={prop}
         feedHealth={feedHealth}
-        propEnabled={features.isOn('propagation')}
+        connectEnabled={features.isOn('connect')}
+        dxpedEnabled={features.isOn('dxped')}
         onNavigate={handleView}
       />
 

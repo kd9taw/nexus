@@ -9,6 +9,7 @@ import { useState, useEffect, useMemo } from 'react'
 import type {
   GettingOut,
   MapSpot,
+  NeedAlert,
   NeedTag,
   PathPrediction,
   PropagationSnapshot,
@@ -34,6 +35,7 @@ const NEED_CHIP: Record<NeedTag, { label: string; cls: string }> = {
   NewBand: { label: 'BAND', cls: 'band' },
   NewMode: { label: 'MODE', cls: 'mode' },
   Confirm: { label: 'CONFIRM', cls: 'confirm' },
+  Dxped: { label: 'DXPED', cls: 'dxped' },
 }
 
 /** A DXpedition's announced modes → its work-routing mode (CW-only → CW, voice-
@@ -76,6 +78,9 @@ interface Props {
   needByCall: Map<string, NeedTag>
   /** Double-click-to-work a map spot/DXpedition (forwarded to MapView). */
   onWorkSpot?: (t: { call: string; band: string; mode: string | null; freqMhz: number | null }) => void
+  /** The ranked needed-now alerts (App's shared 30 s poll) — the compact at-a-glance
+   * list that lived in the old Propagation section; the full board stays in Needed. */
+  needAlerts?: NeedAlert[]
 }
 
 function provLabel(source: PropagationSnapshot['source'], asOf: number): { label: string; cls: string } {
@@ -96,6 +101,7 @@ export function ConnectView({
   onSelectCall,
   onWorkSpot,
   needByCall,
+  needAlerts,
 }: Props) {
   const prov = prop ? provLabel(prop.source, prop.asOf) : null
   const [intent, setIntent] = useState<MapIntent>(() =>
@@ -404,6 +410,30 @@ export function ConnectView({
                       }
                     />
                   ))}
+                </section>
+              )}
+              {!selectedCall && (needAlerts?.length ?? 0) > 0 && (
+                <section className="connect-needs panel">
+                  <h3>Needs heard now</h3>
+                  <ul className="cn-list">
+                    {needAlerts!.slice(0, 5).map((a) => (
+                      <li
+                        key={`${a.call}-${a.band}`}
+                        className="cn-row"
+                        onClick={() => onSelectCall(a.call)}
+                        title={a.headline}
+                      >
+                        <span className="cn-call">{a.call}</span>
+                        {a.tags[0] && (
+                          <span className={`need-chip need-${NEED_CHIP[a.tags[0]]?.cls ?? 'confirm'}`}>
+                            {NEED_CHIP[a.tags[0]]?.label ?? a.tags[0]}
+                          </span>
+                        )}
+                        <span className="cn-band">{a.band}</span>
+                        <span className="cn-entity">{a.entity}</span>
+                      </li>
+                    ))}
+                  </ul>
                 </section>
               )}
               <OpeningStrip openings={prop.openings} onBandClick={toggleFocusBand} />

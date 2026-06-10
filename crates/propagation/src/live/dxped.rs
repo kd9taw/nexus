@@ -3,8 +3,9 @@
 //! `expeditions.php` (which calls are **active on the air now**). Each plan's
 //! location comes from [`crate::dxcc`] so distance/bearing/region work.
 
-use std::collections::HashSet;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::collections::{HashMap, HashSet};
+use std::sync::Mutex;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::dxcc;
 use crate::dxped::{DxpeditionPlan, Ft8DxpMode};
@@ -20,10 +21,78 @@ fn now_unix() -> i64 {
         .unwrap_or(0)
 }
 
+/// The ClubLog API key (from Settings), pushed in by the command layer at startup
+/// and on settings save — keeps the live-fetch layer decoupled from settings IO.
+/// Empty = no key → the most-wanted ranks simply stay `None`.
+static CLUBLOG_KEY: Mutex<String> = Mutex::new(String::new());
+pub fn set_clublog_key(key: &str) {
+    if let Ok(mut k) = CLUBLOG_KEY.lock() {
+        *k = key.trim().to_string();
+    }
+}
+
+/// Plans cache: NG3K is a daily-updated page and ClubLog's active list moves
+/// slowly — refetching on every 5-min snapshot miss was needless, and a transient
+/// outage emptied the whole DXpedition board. 30 min TTL, and on a fetch FAILURE
+/// the last-good list is served stale (an expedition board that flickers empty is
+/// worse than one 30 minutes old).
+static PLANS_CACHE: Mutex<Option<(Instant, Vec<DxpeditionPlan>)>> = Mutex::new(None);
+const PLANS_TTL_SECS: u64 = 1800;
+
+/// Most-wanted cache (entity name → ClubLog rank). The list changes ~monthly;
+/// 24 h TTL is generous.
+static MOST_WANTED: Mutex<Option<(Instant, HashMap<String, u32>)>> = Mutex::new(None);
+const MOST_WANTED_TTL_SECS: u64 = 86_400;
+
 /// Fetch the merged DXpedition plan list: NG3K's announced calendar overlaid
 /// with ClubLog's currently-active callsigns (so within-window plans confirmed
-/// on the air are forced active).
+/// on the air are forced active). Cached (30 min TTL, stale-on-error).
 pub fn fetch_plans() -> Result<Vec<DxpeditionPlan>, String> {
+    {
+        let cache = PLANS_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((when, plans)) = cache.as_ref() {
+            if when.elapsed().as_secs() < PLANS_TTL_SECS {
+                return Ok(plans.clone());
+            }
+        }
+    }
+    match fetch_plans_uncached() {
+        Ok(plans) => {
+            let mut cache = PLANS_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+            *cache = Some((Instant::now(), plans.clone()));
+            Ok(plans)
+        }
+        Err(e) => {
+            // Serve the last-good list stale rather than an empty board — and advance
+            // the timestamp to a short-retry point (5 min) so an outage is retried on
+            // a BACKOFF, not with a full 2-host network round-trip on every call.
+            let mut cache = PLANS_CACHE.lock().unwrap_or_else(|p| p.into_inner());
+            if let Some((when, plans)) = cache.as_mut() {
+                *when = Instant::now() - Duration::from_secs(PLANS_TTL_SECS.saturating_sub(300));
+                return Ok(plans.clone());
+            }
+            Err(e)
+        }
+    }
+}
+
+/// The currently-active expedition calls from the CACHED plan list (no network) —
+/// what the Needed board's DXpedition tagging reads. Cheap and lock-only, so it is
+/// safe on every alerts poll; warmed by [`fetch_plans`] (a startup primer spawns
+/// one). Calls are uppercased.
+pub fn cached_active_calls(now_unix: i64) -> Vec<String> {
+    let cache = PLANS_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    match cache.as_ref() {
+        Some((_, plans)) => plans
+            .iter()
+            .filter(|p| p.start_unix <= now_unix && now_unix <= p.end_unix)
+            .map(|p| p.call.to_uppercase())
+            .collect(),
+        None => Vec::new(),
+    }
+}
+
+fn fetch_plans_uncached() -> Result<Vec<DxpeditionPlan>, String> {
     let c = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(20))
         .user_agent(UA)
@@ -53,7 +122,70 @@ pub fn fetch_plans() -> Result<Vec<DxpeditionPlan>, String> {
             }
         }
     }
+    // ClubLog most-wanted rank (needs an API key; absent → ranks stay None). The
+    // WorkableCard priority formula already weights this — it was just never fed.
+    let wanted = most_wanted(&c);
+    if !wanted.is_empty() {
+        for p in &mut plans {
+            if p.most_wanted_rank.is_none() {
+                if let Some(info) = dxcc::resolve(&p.call) {
+                    p.most_wanted_rank = wanted.get(info.entity).copied();
+                }
+            }
+        }
+    }
     Ok(plans)
+}
+
+/// ClubLog most-wanted list → entity-name → rank, cached 24 h. Accepts both JSON
+/// shapes ClubLog has used: {"1":"P5",...} (rank→prefix) and {"P5":1,...}
+/// (prefix→rank). Prefixes resolve to entity names via cty.dat so plan calls can
+/// match regardless of the operation's actual callsign.
+fn most_wanted(c: &reqwest::blocking::Client) -> HashMap<String, u32> {
+    {
+        let cache = MOST_WANTED.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((when, map)) = cache.as_ref() {
+            if when.elapsed().as_secs() < MOST_WANTED_TTL_SECS {
+                return map.clone();
+            }
+        }
+    }
+    let key = CLUBLOG_KEY.lock().map(|k| k.clone()).unwrap_or_default();
+    if key.is_empty() {
+        return HashMap::new();
+    }
+    let mut out: HashMap<String, u32> = HashMap::new();
+    let url = format!("https://clublog.org/mostwanted.php?api={key}");
+    if let Ok(resp) = c.get(&url).send() {
+        if let Ok(v) = resp.json::<serde_json::Value>() {
+            // ClubLog reports problems as {"error": "..."} with HTTP 200 — surface it
+            // rather than silently behaving like "no key".
+            if let Some(err) = v.get("error").and_then(|e| e.as_str()) {
+                eprintln!("propagation: ClubLog most-wanted error: {err}");
+                return HashMap::new();
+            }
+            if let Some(obj) = v.as_object() {
+                for (k, val) in obj {
+                    // rank→prefix shape: key parses as the rank, value is the prefix.
+                    if let (Ok(rank), Some(prefix)) = (k.parse::<u32>(), val.as_str()) {
+                        if let Some(info) = dxcc::resolve(prefix) {
+                            out.entry(info.entity.to_string()).or_insert(rank);
+                        }
+                    // prefix→rank shape.
+                    } else if let Some(rank) = val.as_u64() {
+                        if let Some(info) = dxcc::resolve(k) {
+                            out.entry(info.entity.to_string()).or_insert(rank as u32);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if !out.is_empty() {
+        let mut cache = MOST_WANTED.lock().unwrap_or_else(|e| e.into_inner());
+        *cache = Some((Instant::now(), out.clone()));
+    }
+    out
 }
 
 /// ClubLog's active-expeditions set (uppercased callsigns).
@@ -71,11 +203,16 @@ fn fetch_active(c: &reqwest::blocking::Client) -> Result<HashSet<String>, String
                 set.insert(call.to_uppercase());
             }
         }
+    } else {
+        // Schema drift must be visible in the log, not a silent empty set.
+        eprintln!("propagation: ClubLog expeditions.php unexpected JSON shape");
     }
     Ok(set)
 }
 
-fn call_matches(active: &str, plan_call: &str) -> bool {
+/// Suffix/prefix-tolerant expedition-call match ("3Y0J/MM" ⇔ "3Y0J") — shared by
+/// the active-overlay fork and the Needed board's DXpedition tagging.
+pub fn call_matches(active: &str, plan_call: &str) -> bool {
     let (a, p) = (active.to_uppercase(), plan_call.to_uppercase());
     a == p || a.starts_with(&p) || p.starts_with(&a)
 }

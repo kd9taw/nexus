@@ -15,7 +15,7 @@ export type View =
   | 'cw'
   | 'phone'
   | 'connect'
-  | 'propagation'
+  | 'dxped'
   | 'map'
   | 'needed'
   | 'chat'
@@ -255,16 +255,17 @@ export const FEATURES: FeatureDef[] = [
     oneLine: "What you still need that's on the air now — single-click to QSY.",
   },
   {
-    id: 'propagation',
-    label: 'Propagation',
+    id: 'dxped',
+    label: 'DXpeditions',
     kind: 'section',
     category: 'Propagation',
     core: false,
     dependsOn: [],
     intents: ['dx', 'vhf'],
-    view: 'propagation',
-    // global (no workspace): propagation is shared across modes.
-    oneLine: "What's open now, 6m openings, and DXpedition windows.",
+    view: 'dxped',
+    // global (no workspace — never touches the rig): the expedition board. The old
+    // standalone Propagation section merged into Connect; its DXped pieces live here.
+    oneLine: 'DXpeditions — active now, the forward calendar, and your needed status.',
   },
   {
     id: 'map',

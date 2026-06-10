@@ -27,7 +27,7 @@ function readInitial(): FeatureState {
 }
 
 /** Read the persisted enabled operating-mode flags WITHOUT the hook — for standalone
- * surfaces (the popped-out panel, the propagation view) that fetch needs on their own
+ * surfaces (e.g. the popped-out Needed panel) that fetch needs on their own
  * cadence and must gate CW/Phone rows the same way the docked Needed board does. Falls
  * back to the default state (everything-except-Field-Day → CW/Phone on) if unreadable. */
 export function readEnabledModes(): { cw: boolean; phone: boolean } {

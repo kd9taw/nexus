@@ -4,9 +4,8 @@
 //! - **Opening detection** ([`opening`]) — a rigorous, unit-tested detection core
 //!   (operator-anchored reciprocity, per-band anomaly/onset features, an
 //!   ordered-rule Es/F2-TEP/Aurora/Tropo classifier, and an anti-flap tracker),
-//!   folding in the heuristic from the earlier `weak-signal-sleuth` 6 m port. The
-//!   original [`detector`] (ported heuristic + logistic model + `classify_vhf_mode`)
-//!   is retained for reference but no longer drives the snapshot.
+//!   folding in the heuristic from the earlier `weak-signal-sleuth` 6 m port. (The
+//!   original `detector` module it superseded has been removed.)
 //! - **Adaptive propagation** (`advisor`, upcoming) — data-driven, plain-language
 //!   "what's open now / point here" from observed spots + space weather, with no
 //!   VOACAP expertise required.
@@ -19,7 +18,6 @@
 pub mod achievements;
 pub mod advisor;
 pub mod awards;
-pub mod detector;
 pub mod dxcc;
 pub mod dxped;
 pub mod engine;
@@ -45,7 +43,6 @@ pub mod live;
 pub use achievements::Achievement;
 pub use advisor::{BandReport, PropAdvisor, PropAdvisory, RegionReport};
 pub use awards::{AwardSummary, Awards, BandAward, EntityNeed};
-pub use detector::{DetectorConfig, Features, OpeningDetector, OpeningStatus, Weights};
 pub use dxped::{
     CalendarEntry, DxpedDashboard, DxpeditionPlan, DxpeditionTracker, Ft8DxpMode, LogNeeds,
     NeedKind, NeedsSet, OperatorNeeds, WorkStatus, WorkableCard,

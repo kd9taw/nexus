@@ -63,9 +63,9 @@ export const PROFILES: Record<ProfileId, Profile> = {
   vhf: {
     id: 'vhf',
     label: '6m / VHF & openings',
-    blurb: 'Catch the band coming alive: propagation, the map, and opening detection.',
+    blurb: 'Catch the band coming alive: Connect (map + openings) and the DXpedition board.',
     intents: ['vhf'],
-    landing: 'propagation',
+    landing: 'connect',
     nowBarEmphasis: 'openings',
   },
   everything: {
