@@ -1001,6 +1001,8 @@ export interface Settings {
   doubleClickSetsTx?: boolean
   /** Tune carrier auto-release (seconds). */
   tuneTimeoutSecs?: number
+  /** DXpedition special op: 'none' | 'hound' | 'superhound' (SuperFox hound). */
+  specialOp?: 'none' | 'hound' | 'superhound'
   /** WSJT-X Split Operation: keep TX audio 1500-2000 Hz via dial shifts. */
   splitMode?: 'none' | 'rig' | 'fakeit'
   /** Operator overrides of the working-frequency table (empty = stock). */
@@ -1083,6 +1085,10 @@ export interface AppSnapshot {
   fieldDay: FieldDayStatus | null
   /** The most-recent RX slot's decoded signals (drives the live decode feed). */
   recentDecodes: DecodeRow[]
+  /** JTAlert-style UDP callsign highlights for the decode panes. */
+  highlights?: { call: string; bg?: string | null; fg?: string | null }[]
+  /** Bumped by an inbound UDP Clear — panes erase on change. */
+  clearTick?: number
   /** Coordinated-QSY status — present only while the opt-in feature is enabled. */
   qsy?: QsyStatus | null
   /** Session count of IR-HARQ rescues (decodes recovered by combining

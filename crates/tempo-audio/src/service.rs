@@ -785,6 +785,13 @@ impl RadioLoop {
             }
         }
 
+        // Operator hit Erase → mirror it to cooperating apps (UDP Clear).
+        if let Some(window) = eng.take_pending_udp_clear() {
+            if let Some(server) = sinks.wsjtx {
+                let _ = server.send_clear(window);
+            }
+        }
+
         // Deferred "Disable Tx after sending 73": only once the final over has
         // fully played out (tx_until cleared) — disabling mid-over would trip
         // the hard-stop path above and cut the 73 itself.
@@ -855,6 +862,39 @@ impl RadioLoop {
                         let _ = rig.ptt(false);
                         backend.flush_output();
                         self.tx_until_ms = None;
+                    }
+                    WsjtxInbound::Clear { .. } => {
+                        // Visual clear only — the engine's decode context (answer
+                        // parity / history) is not a window and stays intact.
+                        eng.apply_udp_clear();
+                    }
+                    WsjtxInbound::Replay { .. } => {
+                        // A consumer that just connected wants the WHOLE current
+                        // period back — `last_decodes` alone holds only the most
+                        // recent ingest (post-early-pass it's just the boundary
+                        // stragglers). NO PSK spots here: replays must never
+                        // double-spot.
+                        if let Some(server) = sinks.wsjtx {
+                            let tier = tier_mode(eng.tier());
+                            let ms_mid = (now as u64 % 86_400_000) as u32;
+                            for d in eng.current_period_decodes() {
+                                let _ = server.send_decode(&build_decode(
+                                    &d.message,
+                                    d.snr,
+                                    d.dt,
+                                    d.freq,
+                                    tier,
+                                    ms_mid,
+                                    d.qual < 0.17,
+                                ));
+                            }
+                        }
+                    }
+                    WsjtxInbound::Location { location, .. } => {
+                        eng.apply_udp_location(&location);
+                    }
+                    WsjtxInbound::HighlightCallsign { call, bg, fg, .. } => {
+                        eng.set_highlight(&call, bg, fg);
                     }
                     WsjtxInbound::FreeText { text, send, .. } => {
                         let t = text.trim();
@@ -1192,7 +1232,8 @@ fn emit_rx_decodes(
     let tier = tier_mode(eng.tier());
     let ms_mid = (now as u64 % 86_400_000) as u32;
     let now_secs = (now / 1000.0) as u32;
-    for d in eng.last_decodes() {
+    // ON-AIR text only — never the hound-rewritten internal form.
+    for d in eng.wire_decodes() {
         if let Some(server) = sinks.wsjtx {
             let _ = server.send_decode(&build_decode(
                 &d.message,

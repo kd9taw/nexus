@@ -240,6 +240,11 @@ pub struct Settings {
     /// ceiling (12 kHz sample rate, conservative SSB filter).
     #[serde(default = "default_decode_fhigh")]
     pub decode_fhigh_hz: u32,
+    /// WSJT-X "Special operating activity": Hound = work a DXpedition Fox
+    /// (calls ≥ 1000 Hz, auto-move to the Fox's frequency for the R+report,
+    /// Fox multi-payload messages split at ingest). Fox role: not yet.
+    #[serde(default)]
+    pub special_op: SpecialOp,
     /// Operator overrides of the working-frequency table (WSJT-X Settings ▸
     /// Frequencies). Empty = the stock WSJT-X table built into the band plan.
     /// An entry replaces the dial of the matching (band, mode) row; an entry
@@ -339,6 +344,20 @@ pub struct VoiceMessage {
 
 /// The default six labelled (but empty) voice-keyer slots — a casual phone set (no
 /// contest exchange). The operator records or imports the audio per slot.
+/// WSJT-X "Special operating activity" (the DXpedition modes we support).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SpecialOp {
+    #[default]
+    None,
+    Hound,
+    /// SuperFox hound (WSJT-X 2.7 DXpeditions): same hound TX discipline; the
+    /// Fox's replies arrive in the wideband SF waveform (native demod when the
+    /// SF decoder is wired; a WSJT-X 2.7 Companion source delivers them today).
+    #[serde(rename = "superhound")]
+    SuperHound,
+}
+
 /// WSJT-X Split Operation choices. Serialized lowercase for the UI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -473,6 +492,7 @@ impl Default for Settings {
             double_click_sets_tx: true,
             tune_timeout_secs: 12,
             split_mode: SplitMode::None,
+            special_op: SpecialOp::None,
             decode_depth: 3,
             decode_flow_hz: 200,
             decode_fhigh_hz: 2900,

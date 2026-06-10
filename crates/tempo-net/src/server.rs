@@ -89,6 +89,13 @@ impl WsjtxServer {
     }
 
     /// Send a Close (Tempo is shutting down).
+    /// **Clear (type 3)** — tell consumers (JTAlert/GridTracker) we erased a
+    /// decode window so they clear theirs: 0 = Band Activity, 1 = Rx Frequency,
+    /// 2 = both.
+    pub fn send_clear(&self, window: u8) -> io::Result<()> {
+        self.send(&wsjtx::encode_clear(&self.id, window))
+    }
+
     pub fn send_close(&self) -> io::Result<()> {
         self.send(&wsjtx::encode_close(&self.id))
     }

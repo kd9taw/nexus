@@ -182,6 +182,23 @@ pub struct Engine {
     /// radio loop consumes it AFTER tx_until expires; disabling immediately
     /// would trip the hard-stop path and cut the 73 itself mid-over.
     pending_tx_disable: bool,
+    /// JTAlert-style callsign highlights from UDP HighlightCallsign (type 13):
+    /// uppercased call → (bg, fg) CSS hex. None/None entries are removed.
+    highlights: std::collections::HashMap<String, (Option<String>, Option<String>)>,
+    /// Bumped by an inbound UDP Clear (type 3) — the UI watches it and erases
+    /// the matching pane(s). Visual-only: the engine's decode context (answer
+    /// parity, history) is NOT a window and stays intact.
+    clear_tick: u32,
+    /// One-shot: the operator hit Erase — the radio loop tells cooperating
+    /// apps via an outbound Clear (window byte; 0 = Band, 1 = Rx, 2 = both).
+    pending_udp_clear: Option<u8>,
+    /// The last ingest's decodes as they were ON AIR (pre hound-split/rewrite)
+    /// — what UDP consumers receive. Identical to `last_decodes` outside Hound.
+    last_wire_decodes: Vec<modes::Decode>,
+    /// Per-launch salt for the hound pileup spread (stock re-randomizes each
+    /// session; a pure callsign hash parked every operator on the same offset
+    /// at every event).
+    session_salt: u32,
     /// Directed-CQ token for CQ runs ("DX", "NA", "POTA", …): applied to the
     /// run's CQ message at start AND on the return-to-CQ after each pileup
     /// contact. None = plain CQ. Sticky until the operator starts a plain run
@@ -357,7 +374,12 @@ impl Engine {
             decode_history: std::collections::VecDeque::new(),
             early_seen: None,
             pending_tx_disable: false,
+            highlights: std::collections::HashMap::new(),
+            clear_tick: 0,
+            pending_udp_clear: None,
             cq_dir: None,
+            last_wire_decodes: Vec::new(),
+            session_salt: now_unix_secs() as u32,
             tx_dial_shift_hz: 0,
             split_tx_mhz: None,
             split_dirty: false,
@@ -1710,6 +1732,23 @@ impl Engine {
         if let Some(hz) = dx_freq.filter(|h| *h > 0.0) {
             self.set_rx_offset(hz);
         }
+        // Hound rule (stock DXpedition mode): initial calls to the Fox must be
+        // ABOVE 1000 Hz — the Fox listens there; 300–900 is the Fox's own
+        // segment. Spread by callsign so a pileup doesn't stack at one offset.
+        if matches!(self.settings.special_op, crate::settings::SpecialOp::Hound | crate::settings::SpecialOp::SuperHound)
+            && self.tx_offset_hz < 1000.0
+        {
+            // Per-SESSION spread (stock randomizes each launch): salt the call
+            // hash so two hounds never collide deterministically every event,
+            // and stay within the 2900 Hz offset ceiling (% 1900, not 2000 —
+            // the clamp was stacking ~5% of calls at exactly 2900).
+            let spread: u32 = self
+                .settings
+                .mycall
+                .bytes()
+                .fold(self.session_salt, |a, b| a.wrapping_mul(31).wrapping_add(b as u32));
+            self.set_tx_offset(1000.0 + (spread % 1900) as f32);
+        }
         // Working a station implies transmit (stock "Double-click on call sets
         // Tx enable", default on): enable TX (also clears a tripped watchdog +
         // resets the continuous-TX count) so the auto-sequencer actually keys
@@ -2243,6 +2282,63 @@ impl Engine {
         self.clock_offset_ms
     }
 
+    /// UDP HighlightCallsign (JTAlert): paint/clear a callsign in the decode
+    /// panes. Both colors None = clear the entry.
+    pub fn set_highlight(&mut self, call: &str, bg: Option<String>, fg: Option<String>) {
+        let k = call.trim().to_uppercase();
+        if k.is_empty() {
+            return;
+        }
+        if bg.is_none() && fg.is_none() {
+            self.highlights.remove(&k);
+        } else {
+            // Bounded: a chatty logger can paint thousands of calls over a
+            // session, and the whole map rides every snapshot poll. Evict an
+            // arbitrary old entry past the cap (newest paint wins).
+            const MAX_HIGHLIGHTS: usize = 2048;
+            if self.highlights.len() >= MAX_HIGHLIGHTS && !self.highlights.contains_key(&k) {
+                if let Some(old) = self.highlights.keys().next().cloned() {
+                    self.highlights.remove(&old);
+                }
+            }
+            self.highlights.insert(k, (bg, fg));
+        }
+    }
+
+    /// Inbound UDP Clear (type 3): bump the visual clear tick for the UI.
+    pub fn apply_udp_clear(&mut self) {
+        self.clear_tick = self.clear_tick.wrapping_add(1);
+    }
+
+    /// The operator hit Erase: queue an outbound UDP Clear so cooperating apps
+    /// mirror it. `window`: 0 = Band Activity, 1 = Rx Frequency, 2 = both.
+    pub fn notify_erase(&mut self, window: u8) {
+        self.pending_udp_clear = Some(window.min(2));
+    }
+
+    /// Consume the queued outbound Clear (radio loop).
+    pub fn take_pending_udp_clear(&mut self) -> Option<u8> {
+        self.pending_udp_clear.take()
+    }
+
+    /// UDP Location (type 11): a GPS feeder updates our grid. Accepts a bare
+    /// 4/6-char Maidenhead or the "GRID:XXnn[xx]" form; everything else is
+    /// ignored (never let a malformed datagram corrupt the configured grid).
+    pub fn apply_udp_location(&mut self, location: &str) {
+        let g = location
+            .trim()
+            .strip_prefix("GRID:")
+            .unwrap_or(location.trim())
+            .trim()
+            .to_uppercase();
+        if tempo_core::message::is_valid_grid(&g) {
+            self.settings.mygrid = g.clone();
+            // Keep the displayed grid in step with what the sequencer now
+            // transmits — settings alone left the UI showing the OLD grid.
+            self.app.set_mygrid(&g);
+        }
+    }
+
     /// Start a CQ run, optionally DIRECTED ("DX"/"NA"/"POTA"/"TEST"/3-digit
     /// kHz). The token is validated by Msg::parse round-trip semantics at the
     /// UI layer; here it's stored verbatim (uppercased) and applied to the
@@ -2558,6 +2654,16 @@ impl Engine {
                 low_conf: false,
             });
         }
+        s.highlights = self
+            .highlights
+            .iter()
+            .map(|(call, (bg, fg))| crate::dto::HighlightEntry {
+                call: call.clone(),
+                bg: bg.clone(),
+                fg: fg.clone(),
+            })
+            .collect();
+        s.clear_tick = self.clear_tick;
         s.harq_rescues = self.harq_rescues;
         s.pending_log = self.pending_log.clone().map(Into::into);
         s
@@ -2842,6 +2948,7 @@ impl Engine {
             self.decode_history.pop_front();
         }
         self.app.observe(&fresh, slot);
+        self.last_wire_decodes = fresh.clone();
         self.last_decodes = fresh;
         n
     }
@@ -2942,6 +3049,15 @@ impl Engine {
         decodes: Vec<modes::Decode>,
         slot: u64,
     ) -> usize {
+        // Keep the ON-AIR text for UDP consumers BEFORE any hound rewriting —
+        // JTAlert/GridTracker must never receive a message the Fox didn't send.
+        let hound_active = matches!(
+            self.settings.special_op,
+            crate::settings::SpecialOp::Hound | crate::settings::SpecialOp::SuperHound
+        );
+        let wire_copy: Option<Vec<modes::Decode>> =
+            hound_active.then(|| decodes.clone());
+        let decodes = self.hound_split(decodes);
         let n = decodes.len();
         // Tally IR-HARQ rescues (messages recovered by combining retransmissions).
         self.harq_rescues += decodes
@@ -2979,9 +3095,68 @@ impl Engine {
         while self.decode_history.len() > 240 {
             self.decode_history.pop_front();
         }
+        self.last_wire_decodes = wire_copy.unwrap_or_else(|| decodes.clone());
         self.last_decodes = decodes;
         self.last_decode_slot = Some(slot);
         n
+    }
+
+    /// Hound mode: a DXpedition Fox packs TWO payloads in one transmission
+    /// ("K1ABC RR73; W9XYZ <FOX> -08"). Split them so everything downstream —
+    /// rows, roster, the auto-sequencer — sees both halves as ordinary messages
+    /// (the standard sequencer then handles the whole hound exchange). Gated on
+    /// Hound so normal operation (where free text may carry ';') is untouched.
+    fn hound_split(&self, decodes: Vec<modes::Decode>) -> Vec<modes::Decode> {
+        if !matches!(self.settings.special_op, crate::settings::SpecialOp::Hound | crate::settings::SpecialOp::SuperHound)
+            || !matches!(self.app.tier(), Tier::Ft8 | Tier::Ft4)
+        {
+            // Fox multiplexing is an FT8 DXpedition construct — FT1/DX1 free
+            // text may legitimately contain ';' and must never be split.
+            return decodes;
+        }
+        // The Fox we're working (for reconstructing its implied sender below).
+        let fox: Option<String> = match &self.mode {
+            Mode::Qso { station, .. } => station.dxcall.clone(),
+            _ => None,
+        };
+        // A Fox confirm half is the SENDER-LESS 2-token "K1ABC RR73" — re-add
+        // the Fox's call so it parses as a standard Rr73 and passes the
+        // sequencer's sender lock. Only exact 2-token <call> RR73/RRR/73 forms.
+        let reattach = |m: String| -> String {
+            let t: Vec<&str> = m.split_whitespace().collect();
+            if let (Some(f), [to, fin]) = (&fox, t.as_slice()) {
+                if matches!(*fin, "RR73" | "RRR" | "73")
+                    && tempo_core::message::is_callsign(to)
+                {
+                    return format!("{to} {f} {fin}");
+                }
+            }
+            m
+        };
+        let mut out = Vec::with_capacity(decodes.len());
+        for d in decodes {
+            let halves = d
+                .message
+                .split_once(';')
+                .map(|(a, b)| (a.trim().to_string(), b.trim().to_string()));
+            match halves {
+                Some((a, b)) if !a.is_empty() && !b.is_empty() => {
+                    let mut d1 = d.clone();
+                    d1.message = reattach(a);
+                    let mut d2 = d;
+                    d2.message = reattach(b);
+                    out.push(d1);
+                    out.push(d2);
+                }
+                // NOT a multiplex: pass through UNTOUCHED. Reattaching here
+                // fabricated a Fox sender for any bystander's 2-token
+                // "W9XYZ 73" free text — which could falsely COMPLETE and log
+                // our QSO. Only the halves of a real Fox multiplex ever drop
+                // their sender; a standalone Fox message carries the full form.
+                _ => out.push(d),
+            }
+        }
+        out
     }
 
     /// Fold a slot's decodes into the active mode's sequencer and, in QSO mode,
@@ -2997,12 +3172,34 @@ impl Engine {
         // needs several repeats, a progressing QSO must not be watchdog-killed
         // mid-exchange. (Operator actions reset it elsewhere, as before.)
         let mut sequence_advanced = false;
+        // Hound: TX frequency to adopt for the R+report (the Fox's freq).
+        let mut hound_move_tx: Option<f32> = None;
         match &mut self.mode {
             Mode::Chat => {}
             Mode::Qso { station, .. } => {
                 let state_before = station.state;
                 station.observe(decodes);
                 sequence_advanced = station.state != state_before;
+                // Hound rule: when the Fox answers with our report (we just
+                // queued the R+report), move TX onto the FOX's frequency —
+                // stock "your Tx frequency is moved to the Fox's". Find the
+                // advancing decode (the report from the Fox addressed to us).
+                if sequence_advanced
+                    && matches!(self.settings.special_op, crate::settings::SpecialOp::Hound | crate::settings::SpecialOp::SuperHound)
+                    && station.state == QsoState::AwaitRr73
+                {
+                    if let Some(dx) = station.dxcall.clone() {
+                        let mycall = self.settings.mycall.clone();
+                        if let Some(d) = decodes.iter().find(|d| {
+                            let m = Msg::parse(&d.message);
+                            matches!(&m, Msg::Report { to, de, .. }
+                                if tempo_core::message::same_call(to, &mycall)
+                                    && tempo_core::message::same_call(de, &dx))
+                        }) {
+                            hound_move_tx = Some(d.freq);
+                        }
+                    }
+                }
                 // Remember the report we sent the DX (RST sent) — captured from
                 // the sequencer's current outgoing (R)Report, which is replaced
                 // by RR73/73 by the time the QSO reaches Done.
@@ -3051,6 +3248,9 @@ impl Engine {
         }
         if sequence_advanced {
             self.reset_tx_watchdog();
+        }
+        if let Some(hz) = hound_move_tx {
+            self.set_tx_offset(hz);
         }
         if let Some((dxcall, dxgrid, rx_report)) = completed {
             if self.settings.auto_log {
@@ -3173,11 +3373,34 @@ impl Engine {
     pub fn last_decodes(&self) -> &[modes::Decode] {
         &self.last_decodes
     }
+    /// The last ingest's decodes as transmitted ON AIR (pre hound rewriting) —
+    /// the only form that may leave over UDP.
+    pub fn wire_decodes(&self) -> &[modes::Decode] {
+        &self.last_wire_decodes
+    }
+
+    /// Every decode of the CURRENT period (for UDP Replay) — the early pass +
+    /// boundary stragglers reassembled from history; `last_decodes` alone holds
+    /// only the most recent ingest's batch.
+    pub fn current_period_decodes(&self) -> Vec<modes::Decode> {
+        let Some(slot) = self.last_decode_slot else {
+            return Vec::new();
+        };
+        self.decode_history
+            .iter()
+            .filter(|(s, _)| *s == slot)
+            .map(|(_, d)| d.clone())
+            .collect()
+    }
+
 
     /// Test-only: fold synthetic decodes through the same DT-tracking + observe
     /// path as [`Engine::ingest`], without needing a real audio frame.
     #[cfg(test)]
     fn ingest_decodes_for_test(&mut self, decodes: &[modes::Decode], slot: u64) {
+        // Mirror the live path's Hound multi-payload split.
+        let decodes: Vec<modes::Decode> = self.hound_split(decodes.to_vec());
+        let decodes = &decodes[..];
         for d in decodes {
             self.seen_decode = true;
             self.recent_dt.push_back(d.dt.abs());
@@ -4375,6 +4598,97 @@ mod tests {
             .filter(|(_, d)| d.message == "CQ W1ABC FN42")
             .count();
         assert_eq!(rows_before, rows_after, "no duplicate history rows");
+    }
+
+    /// Decode at a specific audio frequency (Hound freq-rule tests).
+    fn dec_at(msg: &str, snr: i32, freq: f32) -> Decode {
+        let mut d = dec_snr(msg, snr);
+        d.freq = freq;
+        d
+    }
+
+    #[test]
+    fn hound_works_a_fox_through_a_multi_payload_exchange() {
+        // The full DXpedition hound exchange against a Fox that packs two
+        // payloads per transmission ("<other> RR73; <us> <fox> rpt").
+        let mut e = Engine::new("W9XYZ", "EN37", 0);
+        e.set_tier(Tier::Ft8);
+        e.settings.special_op = crate::settings::SpecialOp::Hound;
+        e.set_tx_offset(450.0); // operator parked in the Fox's segment
+        // Double-click the Fox's CQ.
+        e.ingest_decodes_for_test(&[dec_at("CQ DX PJ4DX", -10, 400.0)], 1);
+        e.call_station_ctx("PJ4DX", None, Some("CQ DX PJ4DX"), Some(-10), Some(400.0));
+        assert!(
+            e.tx_offset_hz() >= 1000.0,
+            "hound calls ABOVE 1000 Hz, got {}",
+            e.tx_offset_hz()
+        );
+        // The Fox answers US inside a multi-payload transmission at 320 Hz.
+        e.ingest_decodes_for_test(
+            &[dec_at("K1ABC RR73; W9XYZ PJ4DX -08", -10, 320.0)],
+            3,
+        );
+        let q = e.snapshot().qso.expect("hound QSO running");
+        let next = q.tx_now.unwrap_or_default();
+        assert!(
+            next.contains("R-") || next.contains("R+"),
+            "the R+report is queued, got {next:?}"
+        );
+        assert!(
+            (e.tx_offset_hz() - 320.0).abs() < 1.0,
+            "TX moved to the FOX's frequency for the R+report, got {}",
+            e.tx_offset_hz()
+        );
+        // The Fox confirms us (again multiplexed) — contact complete + logged.
+        e.ingest_decodes_for_test(
+            &[dec_at("W9XYZ RR73; N0CALL PJ4DX +03", -10, 320.0)],
+            5,
+        );
+        assert!(
+            !e.get_log().is_empty(),
+            "the hound contact logged on the Fox's RR73"
+        );
+    }
+
+    #[test]
+    fn bystander_73_never_fabricates_a_fox_confirmation() {
+        // Review-found trap: while hounding, a third station's plain 2-token
+        // "W9XYZ 73" free text must NOT get the Fox's call attached — that
+        // falsely COMPLETED and logged the QSO. Only the halves of a real Fox
+        // multiplex ever drop their sender.
+        let mut e = Engine::new("W9XYZ", "EN37", 0);
+        e.set_tier(Tier::Ft8);
+        e.settings.special_op = crate::settings::SpecialOp::Hound;
+        e.ingest_decodes_for_test(&[dec_at("CQ DX PJ4DX", -10, 400.0)], 1);
+        e.call_station_ctx("PJ4DX", None, Some("CQ DX PJ4DX"), Some(-10), Some(400.0));
+        e.ingest_decodes_for_test(
+            &[dec_at("K1ABC RR73; W9XYZ PJ4DX -08", -10, 320.0)],
+            3,
+        );
+        // A bystander signs a free-text 73 that happens to carry OUR call.
+        e.ingest_decodes_for_test(&[dec_snr("W9XYZ 73", -3)], 5);
+        assert!(
+            e.get_log().is_empty(),
+            "the QSO must NOT complete from a bystander's 73"
+        );
+        // The REAL multiplexed confirm still completes it.
+        e.ingest_decodes_for_test(
+            &[dec_at("W9XYZ RR73; N0CALL PJ4DX +03", -10, 320.0)],
+            7,
+        );
+        assert!(!e.get_log().is_empty(), "the Fox's multiplexed RR73 logs");
+    }
+
+    #[test]
+    fn fox_split_is_gated_to_hound_mode() {
+        // Normal operation must never split on ';' (free text could carry it).
+        let mut e = Engine::new("W9XYZ", "EN37", 0);
+        e.ingest_decodes_for_test(&[dec_snr("K1ABC RR73; W9XYZ PJ4DX -08", -10)], 1);
+        assert_eq!(
+            e.last_decodes().len(),
+            1,
+            "no split outside Hound mode"
+        );
     }
 
     fn dec_snr(msg: &str, snr: i32) -> Decode {

@@ -12,6 +12,28 @@ import {
 import { gridFromMessage, isIgnored } from '../txMessages'
 import { StateBlock } from './StateBlock'
 
+/** JTAlert UDP highlight entry — bg/fg may be null/missing. */
+export interface HighlightEntry {
+  call: string
+  bg?: string | null
+  fg?: string | null
+}
+
+/**
+ * Build a case-insensitive lookup Map from a highlights array.
+ * Exported so OperateCockpit (and tests) can call it in useMemo.
+ */
+export function buildHighlightMap(
+  highlights: HighlightEntry[] | undefined,
+): Map<string, HighlightEntry> {
+  const m = new Map<string, HighlightEntry>()
+  if (!highlights) return m
+  for (const h of highlights) {
+    m.set(h.call.toUpperCase(), h)
+  }
+  return m
+}
+
 interface Props {
   /** This slot's decodes (the live per-slot feed from the snapshot). */
   decodes: DecodeRow[]
@@ -50,6 +72,25 @@ interface Props {
   compact?: boolean
   /** Header title (default "Band Activity"). */
   title?: string
+  /**
+   * JTAlert-style UDP callsign highlights (built by OperateCockpit via
+   * buildHighlightMap). When a row's from-call matches an entry, the row's
+   * backgroundColor/color are overridden with the logger's chosen colors.
+   * Inline style wins intentionally — JTAlert colors must show above theme classes.
+   */
+  highlights?: Map<string, HighlightEntry>
+  /**
+   * Called AFTER the internal erase() wipe so the cockpit can mirror the
+   * operator's clear gesture to cooperating loggers via notifyErase (UDP Clear).
+   * Only called on operator-initiated Erase, NOT on snap.clearTick (no echo loop).
+   */
+  onErase?: () => void
+  /**
+   * Bumped by an inbound UDP Clear (snap.clearTick). When the value CHANGES
+   * (skipping mount), the pane wipes its history — same as Erase, but does NOT
+   * invoke onErase (avoids echoing back to the logger).
+   */
+  clearTick?: number
 }
 
 /** Stay auto-scrolled while within this many px of the bottom (scroll up
@@ -58,6 +99,9 @@ const PIN_SLOP_PX = 40
 
 /** Shared empty set so the ignore checks stay allocation-free per render. */
 const NO_IGNORES: ReadonlySet<string> = new Set()
+
+/** Shared empty map so the highlight lookups stay allocation-free per render. */
+const NO_HIGHLIGHTS: Map<string, HighlightEntry> = new Map()
 
 /**
  * Band Activity / Rx Frequency pane with stock WSJT-X flow: oldest at the top,
@@ -88,6 +132,9 @@ export function OperateDecodes({
   lockedFilter,
   compact = false,
   title = 'Band Activity',
+  highlights = NO_HIGHLIGHTS,
+  onErase,
+  clearTick = 0,
 }: Props) {
   const histRef = useRef(new DecodeHistory())
   const [, setTick] = useState(0)
@@ -117,6 +164,19 @@ export function OperateDecodes({
     setTick((t) => t + 1)
   }, [decodes, slot])
 
+  // Inbound UDP Clear: when clearTick changes (skip mount), wipe without
+  // calling onErase (no echo loop back to the logger).
+  const clearTickSeen = useRef(clearTick)
+  useEffect(() => {
+    if (clearTick !== clearTickSeen.current) {
+      clearTickSeen.current = clearTick
+      histRef.current.erase()
+      pinnedRef.current = true
+      setPinned(true)
+      setTick((t) => t + 1)
+    }
+  }, [clearTick])
+
   const list = orderEntries(
     histRef.current.entries().filter((d) => passesFilter(d, filter, rxOffsetHz)),
     sort,
@@ -138,11 +198,13 @@ export function OperateDecodes({
   }
 
   // Wipe this pane (WSJT-X "Erase") and re-pin to the bottom.
+  // Also calls onErase so the cockpit can mirror the gesture to loggers.
   const erase = () => {
     histRef.current.erase()
     pinnedRef.current = true
     setPinned(true)
     setTick((t) => t + 1)
+    onErase?.()
   }
 
   const ignores = ignoredCalls ?? NO_IGNORES
@@ -227,6 +289,16 @@ export function OperateDecodes({
         {list.map((d, i) => {
           const ignoredRow = isIgnored(ignores, d.from)
           const selectedRow = !!d.from && !!selectedUp && d.from.toUpperCase() === selectedUp
+          // JTAlert highlight lookup: match the from-call case-insensitively.
+          const hlEntry = d.from ? highlights.get(d.from.toUpperCase()) : undefined
+          const hlStyle = hlEntry
+            ? {
+                backgroundColor: hlEntry.bg ?? undefined,
+                color: hlEntry.fg ?? undefined,
+              }
+            : undefined
+          // Tooltip suffix for highlighted rows so the operator knows why the color appeared.
+          const hlTip = hlEntry ? ' · highlighted by your logger (UDP)' : ''
           return (
             <Fragment key={d.id}>
               {/* WSJT-X period separator: a dim bar with the period's UTC start +
@@ -243,6 +315,7 @@ export function OperateDecodes({
               <div
                 className={`decode-row ${rowClass(d)}${selectedRow ? ' selected' : ''}${ignoredRow ? ' ignored' : ''}`}
                 role="listitem"
+                style={hlStyle}
                 onClick={() =>
                   d.from && onSelectDecode?.(d.from, gridFromMessage(d.message), d.message, d.snr)
                 }
@@ -251,7 +324,7 @@ export function OperateDecodes({
                   ignoredRow
                     ? 'Ignored this session (Alt-double-click to restore)'
                     : d.from
-                      ? `Click to select ${d.from} · double-click to work`
+                      ? `Click to select ${d.from} · double-click to work${hlTip}`
                       : undefined
                 }
               >

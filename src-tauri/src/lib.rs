@@ -1688,6 +1688,15 @@ fn set_tx_even(state: State<'_, SharedEngine>, even: bool) -> Result<AppSnapshot
     Ok(eng.snapshot())
 }
 
+/// The operator erased a decode pane — queue the WSJT-X UDP Clear so
+/// cooperating apps (JTAlert/GridTracker) mirror it. 0 = Band, 1 = Rx, 2 = both.
+#[tauri::command]
+fn notify_erase(state: State<'_, SharedEngine>, window: u8) -> Result<(), String> {
+    let mut eng = state.lock().map_err(|e| e.to_string())?;
+    eng.notify_erase(window);
+    Ok(())
+}
+
 /// WSJT-X "Decode" button / F6: re-run the decoder over the last period's
 /// audio with the current settings; only newly-found lines are ingested.
 #[tauri::command]
@@ -3548,6 +3557,7 @@ pub fn run() {
             override_next_tx,
             redecode,
             start_cq,
+            notify_erase,
             set_hold_tx_freq,
             call_station,
             open_panel_window,

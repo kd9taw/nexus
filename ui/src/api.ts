@@ -197,6 +197,13 @@ export async function overrideNextTx(
   return mockEngine.overrideNextTx(call, text, grid ?? undefined)
 }
 
+/** The operator erased a decode pane — mirror it to cooperating apps via the
+ * WSJT-X UDP Clear. 0 = Band Activity, 1 = Rx Frequency, 2 = both. */
+export async function notifyErase(window: 0 | 1 | 2): Promise<void> {
+  const invoke = tauriInvoke()
+  if (invoke) await invoke('notify_erase', { window })
+}
+
 /** WSJT-X "Decode" / F6: re-run the decoder over the last period's audio with
  * the current settings; only newly-found lines appear. */
 export async function redecode(): Promise<AppSnapshot> {

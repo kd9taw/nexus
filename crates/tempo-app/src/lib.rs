@@ -59,6 +59,12 @@ pub struct AppState {
 
 impl AppState {
     /// Build a fresh state for an operator.
+    /// Update the displayed grid (UDP Location / GPS feeders) without
+    /// rebuilding the whole app state.
+    pub fn set_mygrid(&mut self, grid: &str) {
+        self.mygrid = grid.to_uppercase();
+    }
+
     pub fn new(mycall: &str, mygrid: &str) -> Self {
         Self {
             mycall: mycall.to_string(),
@@ -366,6 +372,8 @@ impl AppState {
             field_day: None,
             // Filled by the engine from its last decodes; empty at the AppState layer.
             recent_decodes: Vec::new(),
+            highlights: Vec::new(),
+            clear_tick: 0,
             // Filled by the engine while coordinated QSY is enabled; None here.
             qsy: None,
             // Filled by the engine from its session HARQ tally; 0 at this layer.

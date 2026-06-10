@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import type { AppSnapshot, ModeRequest, NeedTag, SourceKind, Tier } from '../types'
+import type { AppSnapshot, ModeRequest, NeedTag, Settings, SourceKind, Tier } from '../types'
 import {
   clampOffsetHz,
   cqDirFromText,
@@ -8,9 +8,10 @@ import {
   stdMessageList,
   toggleIgnored,
 } from '../txMessages'
+import { getSettings, notifyErase, setSettings } from '../api'
 import { redecode, startCq } from '../api'
 import { Waterfall } from './Waterfall'
-import { OperateDecodes } from './OperateDecodes'
+import { buildHighlightMap, OperateDecodes } from './OperateDecodes'
 import { OperateQsoStrip } from './OperateQsoStrip'
 import { OperateRoster } from './OperateRoster'
 import { TxPanel } from './TxPanel'
@@ -78,6 +79,27 @@ const MODES: { tier: Tier; label: string; slot: string; title: string }[] = [
   { tier: 'FT4', label: 'FT4', slot: '7.5s', title: 'Standard WSJT-X FT4 — 7.5 s T/R' },
 ]
 
+/** DXpedition special-op chip definitions. */
+const SPECIAL_OPS: {
+  value: NonNullable<Settings['specialOp']>
+  label: string
+  title: string
+}[] = [
+  { value: 'none', label: 'Off', title: 'No DXpedition special mode' },
+  {
+    value: 'hound',
+    label: 'Hound',
+    title:
+      'DXpedition hound: calls go out above 1000 Hz; your R+report auto-moves to the Fox\'s frequency',
+  },
+  {
+    value: 'superhound',
+    label: 'SuperFox',
+    title:
+      'SuperFox events: the Fox\'s replies arrive in the wideband SF waveform — native SF decode pending; running WSJT-X 2.7 as Companion source delivers them today',
+  },
+]
+
 const NO_MACROS: string[] = []
 
 /**
@@ -134,6 +156,40 @@ export function OperateCockpit({
   const nextSlotSec = Math.max(
     0,
     Math.ceil((slotBase.current.ms - (Date.now() - slotBase.current.at)) / 1000),
+  )
+
+  // --- DXpedition special-op selector ---
+  // Fetch once on mount (lightweight — just reads the one field). After the
+  // operator picks a chip we patch specialOp + save, then update local state.
+  const [specialOp, setSpecialOp] = useState<NonNullable<Settings['specialOp']>>('none')
+  const specialOpLoaded = useRef(false)
+  useEffect(() => {
+    let alive = true
+    getSettings()
+      .then((s) => {
+        if (alive) {
+          setSpecialOp(s.specialOp ?? 'none')
+          specialOpLoaded.current = true
+        }
+      })
+      .catch(() => {})
+    return () => { alive = false }
+  }, [])
+
+  const handleSpecialOp = (val: NonNullable<Settings['specialOp']>) => {
+    if (val === specialOp) return
+    setSpecialOp(val)
+    // Patch the one field: fetch current saved settings, apply the change, save.
+    getSettings()
+      .then((s) => setSettings({ ...s, specialOp: val }))
+      .then((freshSnap) => onSnap?.(freshSnap))
+      .catch(() => {})
+  }
+
+  // --- JTAlert highlight map (built once per highlights array reference) ---
+  const highlightMap = useMemo(
+    () => buildHighlightMap(snap.highlights),
+    [snap.highlights],
   )
 
   // --- WSJT-X Tx1–Tx6 message machine (the Classic layout's Tx panel) ---
@@ -307,7 +363,27 @@ export function OperateCockpit({
     selectedCall: dxCall || null,
     ignoredCalls: ignored,
     onToggleIgnore: handleToggleIgnore,
+    highlights: highlightMap,
+    clearTick: snap.clearTick ?? 0,
   }
+
+  // Active special-op badge shown next to the TX indicator.
+  const specialOpBadge =
+    specialOp === 'hound' ? (
+      <span
+        className="cockpit-specialop-badge hound"
+        title="DXpedition hound: calls go out above 1000 Hz; your R+report auto-moves to the Fox's frequency"
+      >
+        HOUND
+      </span>
+    ) : specialOp === 'superhound' ? (
+      <span
+        className="cockpit-specialop-badge superhound"
+        title="SuperFox events: the Fox's replies arrive in the wideband SF waveform — native SF decode pending; running WSJT-X 2.7 as Companion source delivers them today"
+      >
+        SUPERFOX
+      </span>
+    ) : null
 
   return (
     <main className="layout single operate-cockpit">
@@ -327,6 +403,25 @@ export function OperateCockpit({
             </button>
           ))}
         </div>
+
+        {/* DXpedition special-op selector — compact 3-chip control, always visible
+            in both classic and roster layouts. Edits settings.specialOp. */}
+        <div className="cockpit-specialop" role="group" aria-label="DXpedition mode">
+          <span className="cockpit-specialop-label">DXped:</span>
+          {SPECIAL_OPS.map((op) => (
+            <button
+              key={op.value}
+              type="button"
+              className={`cockpit-specialop-chip${specialOp === op.value ? ' active' : ''}`}
+              aria-pressed={specialOp === op.value}
+              onClick={() => handleSpecialOp(op.value)}
+              title={op.title}
+            >
+              {op.label}
+            </button>
+          ))}
+        </div>
+
         <div className="cockpit-meta">
           <div
             className="cockpit-source"
@@ -431,6 +526,8 @@ export function OperateCockpit({
         {snap.radio.transmitting && snap.qso?.txNow && (
           <span className="cs-msg mono">{snap.qso.txNow}</span>
         )}
+        {/* Active DXpedition mode badge — prominent, next to the TX indicator */}
+        {specialOpBadge}
         <span className="cs-spacer" />
         <button
           type="button"
@@ -523,6 +620,7 @@ export function OperateCockpit({
                     harqRescues={snap.harqRescues}
                     onCall={onCall}
                     {...decodeClickProps}
+                    onErase={() => notifyErase(0)}
                     compact
                     title="Band Activity"
                   />
@@ -537,6 +635,7 @@ export function OperateCockpit({
                     harqRescues={snap.harqRescues}
                     onCall={onCall}
                     {...decodeClickProps}
+                    onErase={() => notifyErase(1)}
                     lockedFilter="rx"
                     compact
                     title={`Rx Frequency · ${Math.round(snap.radio.rxOffsetHz)} Hz`}
@@ -558,6 +657,7 @@ export function OperateCockpit({
                   harqRescues={snap.harqRescues}
                   onCall={onCall}
                   {...decodeClickProps}
+                  onErase={() => notifyErase(0)}
                 />
               </div>
               <aside className="cockpit-side">
@@ -571,6 +671,7 @@ export function OperateCockpit({
                     harqRescues={snap.harqRescues}
                     onCall={onCall}
                     {...decodeClickProps}
+                    onErase={() => notifyErase(1)}
                     lockedFilter="rx"
                     compact
                     title={`Rx Frequency · ${Math.round(snap.radio.rxOffsetHz)} Hz`}

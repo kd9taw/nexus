@@ -47,11 +47,17 @@ pub mod msg_type {
     pub const QSO_LOGGED: u32 = 5;
     pub const CLOSE: u32 = 6;
     pub const REPLAY: u32 = 7;
-    pub const HALT_TX: u32 = 9;
-    pub const FREE_TEXT: u32 = 10;
-    pub const WSPR_DECODE: u32 = 11;
-    pub const LOCATION: u32 = 12;
-    pub const LOGGED_ADIF: u32 = 13;
+    // CANONICAL NetworkMessage.hpp numbering — these were shifted +1 for every
+    // type >= 8 (HaltTx missing entirely): a REAL JTAlert FreeText(9) parsed as
+    // our HaltTx and KILLED TX, and a real HaltTx(8) was silently ignored.
+    pub const HALT_TX: u32 = 8;
+    pub const FREE_TEXT: u32 = 9;
+    pub const WSPR_DECODE: u32 = 10;
+    pub const LOCATION: u32 = 11;
+    pub const LOGGED_ADIF: u32 = 12;
+    pub const HIGHLIGHT_CALLSIGN: u32 = 13;
+    pub const SWITCH_CONFIGURATION: u32 = 14;
+    pub const CONFIGURE: u32 = 15;
 }
 
 /// Start a datagram: write the magic, schema, message type and sender id.
@@ -213,6 +219,15 @@ pub fn encode_close(id: &str) -> Vec<u8> {
     header(id, msg_type::CLOSE).into_bytes()
 }
 
+/// Build a **Clear (type 3)** datagram: window 0 = Band Activity, 1 = Rx
+/// Frequency, 2 = both — sent when the operator hits Erase so cooperating
+/// apps (JTAlert/GridTracker) clear their mirrored windows too.
+pub fn encode_clear(id: &str, window: u8) -> Vec<u8> {
+    let mut w = header(id, msg_type::CLEAR);
+    w.put_u8(window);
+    w.into_bytes()
+}
+
 /// A parsed inbound datagram from a controlling app (e.g. GridTracker telling
 /// us to reply to a CQ, halt TX, or send free text).
 #[derive(Debug, Clone, PartialEq)]
@@ -230,10 +245,28 @@ pub enum Inbound {
         low_confidence: bool,
         modifiers: u8,
     },
-    /// **HaltTx (type 9)** — stop transmitting (`auto_only` = true means only
+    /// **HaltTx (type 8)** — stop transmitting (`auto_only` = true means only
     /// turn off auto-TX, finishing the current transmission).
     HaltTx { id: String, auto_only: bool },
-    /// **FreeText (type 10)** — set the free-text TX message (`send` = transmit
+    /// **Clear (type 3)** — the consumer asks us to clear decode windows.
+    /// `window`: 0 = Band Activity, 1 = Rx Frequency, 2 = both.
+    Clear { id: String, window: u8 },
+    /// **Replay (type 7)** — re-send the current period's Decode datagrams
+    /// (a consumer that just connected wants to catch up).
+    Replay { id: String },
+    /// **Location (type 11)** — a GPS feeder updates our Maidenhead grid.
+    Location { id: String, location: String },
+    /// **HighlightCallsign (type 13)** — JTAlert-style row coloring for a
+    /// callsign in Band Activity. Empty/invalid colors clear the highlight.
+    HighlightCallsign {
+        id: String,
+        call: String,
+        /// CSS hex like "#rrggbb", or None = clear.
+        bg: Option<String>,
+        fg: Option<String>,
+        highlight_last: bool,
+    },
+    /// **FreeText (type 9)** — set the free-text TX message (`send` = transmit
     /// it now vs. just stage it).
     FreeText {
         id: String,
@@ -285,6 +318,23 @@ pub fn parse_inbound(bytes: &[u8]) -> Option<Inbound> {
             low_confidence: r.read_bool().unwrap_or(false),
             modifiers: r.read_u8().unwrap_or(0),
         }),
+        msg_type::CLEAR => Some(Inbound::Clear {
+            id,
+            // The window byte was added later; absent = Band Activity (0).
+            window: r.read_u8().unwrap_or(0),
+        }),
+        msg_type::REPLAY => Some(Inbound::Replay { id }),
+        msg_type::LOCATION => Some(Inbound::Location {
+            id,
+            location: r.read_utf8()?.unwrap_or_default(),
+        }),
+        msg_type::HIGHLIGHT_CALLSIGN => {
+            let call = r.read_utf8()?.unwrap_or_default();
+            let bg = r.read_qcolor()?;
+            let fg = r.read_qcolor()?;
+            let highlight_last = r.read_bool().unwrap_or(false);
+            Some(Inbound::HighlightCallsign { id, call, bg, fg, highlight_last })
+        }
         msg_type::HALT_TX => Some(Inbound::HaltTx {
             id,
             auto_only: r.read_bool()?,
@@ -611,4 +661,97 @@ mod tests {
             })
         );
     }
+    #[test]
+    fn message_type_numbers_are_canonical_networkmessage_hpp() {
+        // The interop contract with EVERY cooperating app. These were shifted
+        // +1 for types >= 8 once — a real JTAlert FreeText(9) parsed as our
+        // HaltTx and killed TX. Pin the canon.
+        assert_eq!(msg_type::HEARTBEAT, 0);
+        assert_eq!(msg_type::STATUS, 1);
+        assert_eq!(msg_type::DECODE, 2);
+        assert_eq!(msg_type::CLEAR, 3);
+        assert_eq!(msg_type::REPLY, 4);
+        assert_eq!(msg_type::QSO_LOGGED, 5);
+        assert_eq!(msg_type::CLOSE, 6);
+        assert_eq!(msg_type::REPLAY, 7);
+        assert_eq!(msg_type::HALT_TX, 8);
+        assert_eq!(msg_type::FREE_TEXT, 9);
+        assert_eq!(msg_type::WSPR_DECODE, 10);
+        assert_eq!(msg_type::LOCATION, 11);
+        assert_eq!(msg_type::LOGGED_ADIF, 12);
+        assert_eq!(msg_type::HIGHLIGHT_CALLSIGN, 13);
+        assert_eq!(msg_type::SWITCH_CONFIGURATION, 14);
+        assert_eq!(msg_type::CONFIGURE, 15);
+    }
+
+    #[test]
+    fn parses_clear_replay_location_highlight() {
+        let dg = |t: u32, body: &dyn Fn(&mut crate::qds::QdsWriter)| {
+            let mut w = crate::qds::QdsWriter::new();
+            w.put_u32(MAGIC);
+            w.put_u32(SCHEMA);
+            w.put_u32(t);
+            w.put_utf8(Some("JTAlert"));
+            body(&mut w);
+            w.into_bytes()
+        };
+        match parse_inbound(&dg(msg_type::CLEAR, &|w| {
+            w.put_u8(2);
+        })) {
+            Some(Inbound::Clear { window: 2, .. }) => {}
+            other => panic!("expected Clear, got {other:?}"),
+        }
+        match parse_inbound(&dg(msg_type::REPLAY, &|_| {})) {
+            Some(Inbound::Replay { .. }) => {}
+            other => panic!("expected Replay, got {other:?}"),
+        }
+        match parse_inbound(&dg(msg_type::LOCATION, &|w| {
+            w.put_utf8(Some("GRID:EN52"));
+        })) {
+            Some(Inbound::Location { location, .. }) => assert_eq!(location, "GRID:EN52"),
+            other => panic!("expected Location, got {other:?}"),
+        }
+        // HighlightCallsign with a red bg, valid-RGB fg, and the QColor layout
+        // (qint8 spec, then a/r/g/b/pad quint16s).
+        let qcolor = |w: &mut crate::qds::QdsWriter, spec: i8, r: u16, g: u16, b: u16| {
+            w.put_u8(spec as u8);
+            w.put_u16(0xffff); // alpha
+            w.put_u16(r);
+            w.put_u16(g);
+            w.put_u16(b);
+            w.put_u16(0); // pad
+        };
+        // A non-RGB spec (Hsv = 2) must keep the stream ALIGNED — all five
+        // quint16s are consumed even when the color is reported as None, so the
+        // fields AFTER the QColors still parse. (Misalignment would corrupt
+        // every later field silently.)
+        match parse_inbound(&dg(msg_type::HIGHLIGHT_CALLSIGN, &|w| {
+            w.put_utf8(Some("HSV1AB"));
+            qcolor(w, 2, 0x1234, 0x5678, 0x9abc); // Hsv — unsupported spec
+            qcolor(w, 1, 0x0000, 0xffff, 0x0000); // green fg AFTER it
+            w.put_u8(1);
+        })) {
+            Some(Inbound::HighlightCallsign { bg, fg, highlight_last, .. }) => {
+                assert_eq!(bg, None, "non-RGB spec reads as None");
+                assert_eq!(fg.as_deref(), Some("#00ff00"), "stream stayed aligned");
+                assert!(highlight_last);
+            }
+            other => panic!("expected HighlightCallsign, got {other:?}"),
+        }
+        match parse_inbound(&dg(msg_type::HIGHLIGHT_CALLSIGN, &|w| {
+            w.put_utf8(Some("K1ABC"));
+            qcolor(w, 1, 0xffff, 0x0000, 0x0000); // red bg
+            qcolor(w, 0, 0, 0, 0); // Invalid fg = none
+            w.put_u8(1);
+        })) {
+            Some(Inbound::HighlightCallsign { call, bg, fg, highlight_last, .. }) => {
+                assert_eq!(call, "K1ABC");
+                assert_eq!(bg.as_deref(), Some("#ff0000"));
+                assert_eq!(fg, None);
+                assert!(highlight_last);
+            }
+            other => panic!("expected HighlightCallsign, got {other:?}"),
+        }
+    }
+
 }

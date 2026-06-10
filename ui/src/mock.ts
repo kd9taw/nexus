@@ -352,6 +352,7 @@ function defaultSettings(): Settings {
     clockCheck: true,
     // WSJT-X parity: Split Operation + working-frequency overrides
     splitMode: 'none',
+    specialOp: 'none',
     workingFrequencies: [],
     // Decoder settings (WSJT-X parity: depth + passband)
     decodeDepth: 3,

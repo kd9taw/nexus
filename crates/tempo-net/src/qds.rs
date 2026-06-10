@@ -47,6 +47,12 @@ impl QdsWriter {
     }
 
     /// `quint8` — a single byte.
+    /// Write a big-endian `quint16`.
+    pub fn put_u16(&mut self, v: u16) -> &mut Self {
+        self.buf.extend_from_slice(&v.to_be_bytes());
+        self
+    }
+
     pub fn put_u8(&mut self, v: u8) -> &mut Self {
         self.buf.push(v);
         self
@@ -185,6 +191,36 @@ impl<'a> QdsReader<'a> {
     /// Read a `qint8`.
     pub fn read_i8(&mut self) -> Option<i8> {
         self.read_u8().map(|b| b as i8)
+    }
+
+    /// Read a big-endian `quint16`.
+    pub fn read_u16(&mut self) -> Option<u16> {
+        self.take(2)
+            .map(|b| u16::from_be_bytes(b.try_into().unwrap()))
+    }
+
+    /// Read a serialized `QColor` and reduce it to a CSS `#rrggbb` hex (or
+    /// `None` for an Invalid color — the "clear this highlight" sentinel).
+    /// QDataStream layout: `qint8` spec (0 = Invalid, 1 = Rgb, …), then five
+    /// `quint16`s: alpha, red, green, blue, pad. Non-RGB specs are read fully
+    /// (stream stays aligned) but reported as `None`.
+    pub fn read_qcolor(&mut self) -> Option<Option<String>> {
+        let spec = self.read_i8()?;
+        let _alpha = self.read_u16()?;
+        let r = self.read_u16()?;
+        let g = self.read_u16()?;
+        let b = self.read_u16()?;
+        let _pad = self.read_u16()?;
+        if spec != 1 {
+            return Some(None); // Invalid/unsupported spec = clear
+        }
+        // Qt stores 16-bit channels; CSS wants 8-bit.
+        Some(Some(format!(
+            "#{:02x}{:02x}{:02x}",
+            (r >> 8) as u8,
+            (g >> 8) as u8,
+            (b >> 8) as u8
+        )))
     }
 
     /// Read a big-endian `quint32`.

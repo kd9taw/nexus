@@ -39,6 +39,15 @@ pub struct Station {
 /// A single decoded signal from the most recent RX slot, for the live decode
 /// feed (alerts + color-coding). Distinct from `ChatMessage` (which is threaded
 /// conversation): this is the raw heard-this-slot list, like WSJT-X Band Activity.
+/// One UDP-driven callsign highlight (JTAlert paints wanted/B4 calls).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HighlightEntry {
+    pub call: String,
+    pub bg: Option<String>,
+    pub fg: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DecodeRow {
@@ -950,6 +959,13 @@ pub struct AppSnapshot {
     pub field_day: Option<FieldDayStatus>,
     /// Signals decoded in the most recent RX slot (live decode feed).
     pub recent_decodes: Vec<DecodeRow>,
+    /// JTAlert-style UDP callsign highlights (call → CSS colors) for the
+    /// decode panes. Empty unless a cooperating app sent HighlightCallsign.
+    #[serde(default)]
+    pub highlights: Vec<HighlightEntry>,
+    /// Bumped by an inbound UDP Clear — the UI erases its panes on change.
+    #[serde(default)]
+    pub clear_tick: u32,
     /// Coordinated-QSY status — present only while the (opt-in) feature is enabled.
     #[serde(default)]
     pub qsy: Option<QsyStatus>,

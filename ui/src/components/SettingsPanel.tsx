@@ -1621,6 +1621,36 @@ export function SettingsPanel({
                   close-in QRM. Default 200–2900 Hz (full passband).
                 </span>
               </div>
+
+              <div className="settings-field">
+                <span className="settings-label">DXpedition mode</span>
+                <div className="theme-switcher" role="group" aria-label="DXpedition mode">
+                  {([
+                    { value: 'none' as const, label: 'Off' },
+                    { value: 'hound' as const, label: 'Hound' },
+                    { value: 'superhound' as const, label: 'SuperFox' },
+                  ]).map((op) => (
+                    <button
+                      key={op.value}
+                      type="button"
+                      className={`theme-chip${(form.specialOp ?? 'none') === op.value ? ' active' : ''}`}
+                      aria-pressed={(form.specialOp ?? 'none') === op.value}
+                      onClick={() => {
+                        markDirty()
+                        setForm((prev) => prev ? { ...prev, specialOp: op.value } : prev)
+                      }}
+                    >
+                      {op.label}
+                    </button>
+                  ))}
+                </div>
+                <span className="settings-hint">
+                  Off = normal FT8/FT4 operation. Hound = DXpedition pile-up discipline (calls
+                  above 1000 Hz; report auto-moves to the Fox&apos;s frequency). SuperFox = Fox
+                  running WSJT-X 2.7 SuperFox mode (wideband SF waveform; use Companion source
+                  for full SuperFox decode today).
+                </span>
+              </div>
             </div>
           </fieldset>
           )}

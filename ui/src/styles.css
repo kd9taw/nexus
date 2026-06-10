@@ -6490,6 +6490,63 @@ select.settings-input {
   opacity: 0.8;
 }
 
+/* DXpedition special-op selector — compact 3-chip strip in the cockpit bar. */
+.cockpit-specialop {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.cockpit-specialop-label {
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.cockpit-specialop-chip {
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elev);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: var(--transition);
+  white-space: nowrap;
+}
+.cockpit-specialop-chip:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+.cockpit-specialop-chip.active {
+  background: color-mix(in srgb, var(--accent) 20%, var(--bg-elev));
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 800;
+}
+
+/* Active DXpedition mode badge — shown next to the TX indicator in cockpit-status. */
+.cockpit-specialop-badge {
+  font-size: 0.7rem;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  text-transform: uppercase;
+}
+.cockpit-specialop-badge.hound {
+  color: var(--alert-warning, #f7c243);
+  background: color-mix(in srgb, var(--alert-warning, #f7c243) 14%, transparent);
+  border-color: color-mix(in srgb, var(--alert-warning, #f7c243) 45%, transparent);
+}
+.cockpit-specialop-badge.superhound {
+  color: var(--status-new-mode, #bb8aef);
+  background: color-mix(in srgb, var(--status-new-mode, #bb8aef) 14%, transparent);
+  border-color: color-mix(in srgb, var(--status-new-mode, #bb8aef) 45%, transparent);
+}
+
 .cockpit-meta {
   display: flex;
   align-items: center;
