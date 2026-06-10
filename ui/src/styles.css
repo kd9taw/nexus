@@ -8378,6 +8378,253 @@ select.settings-input {
   font-size: 0.85rem;
 }
 
+/* POTA/SOTA hunter additions — pure-hunter rewrite (Batch C). */
+
+/* hunt-target banner (shown when snap.hunt is set) */
+.pota-hunt-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  margin: 0 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  font-size: var(--fs-label);
+}
+.pota-hunt-icon {
+  display: flex;
+  align-items: center;
+  color: var(--accent);
+  gap: 2px;
+  flex: none;
+}
+.pota-hunt-text {
+  flex: 1 1 auto;
+  color: var(--text);
+}
+.pota-hunt-text strong {
+  color: var(--accent);
+  font-weight: 700;
+}
+.pota-hunt-sub {
+  color: var(--text-dim);
+}
+.pota-hunt-clear {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  padding: 3px;
+  cursor: pointer;
+  color: var(--text-faint);
+  border-radius: 4px;
+  transition: color var(--transition), background var(--transition);
+}
+.pota-hunt-clear:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--border) 50%, transparent);
+}
+
+/* controls bar (program tabs, refresh, band/mode filters) */
+.pota-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: var(--space-2);
+}
+.pota-controls-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.pota-refresh-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+.pota-refresh-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.pota-last-updated {
+  font-size: var(--fs-micro);
+  color: var(--text-faint);
+}
+.pota-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+.pota-filter-label {
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  color: var(--text-faint);
+  margin-right: 3px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.pota-empty {
+  margin: var(--space-4) 0;
+  color: var(--text-dim);
+  font-size: var(--fs-label);
+}
+.pota-source-hint {
+  margin-top: var(--space-3);
+}
+
+/* v2 spot rows (rewritten hunter view) */
+.pota-spot-v2 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: var(--bg);
+  transition: border-color var(--transition), background var(--transition);
+}
+.pota-spot-v2:hover {
+  border-color: var(--border);
+  background: var(--bg-raised);
+}
+/* Priority: bandOpen rows get a green-ish accent; newPark rows get an accent tint */
+.pota-spot-v2.pota-spot-open {
+  border-color: color-mix(in srgb, #22c55e 40%, var(--border-soft));
+}
+.pota-spot-v2.pota-spot-new {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border-soft));
+}
+.pota-spot-main {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.pota-spot-line1 {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.pota-spot-call {
+  font-weight: 700;
+  font-size: var(--fs-body);
+  font-family: var(--font-mono);
+}
+.pota-spot-ref {
+  font-size: var(--fs-label);
+  font-weight: 700;
+  color: var(--accent);
+  font-family: var(--font-mono);
+}
+.pota-spot-badges {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+.pota-badge {
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+.pota-badge-new {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 50%, transparent);
+}
+.pota-badge-open {
+  color: #22c55e;
+  background: color-mix(in srgb, #22c55e 18%, transparent);
+  border: 1px solid color-mix(in srgb, #22c55e 50%, transparent);
+}
+.pota-spot-line2 {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.pota-spot-name {
+  font-size: var(--fs-micro);
+  color: var(--text-dim);
+  flex: 1 1 auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 28ch;
+}
+.pota-spot-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: var(--fs-micro);
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+.pota-spot-band {
+  color: var(--text-dim);
+  font-weight: 600;
+}
+.pota-spot-mode {
+  color: var(--text-dim);
+}
+.pota-spot-prog {
+  color: var(--accent);
+  font-weight: 700;
+  font-size: 9.5px;
+  letter-spacing: 0.04em;
+}
+
+/* HUNT action button */
+.pota-hunt-btn {
+  flex: none;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  padding: 5px 13px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent) 60%, transparent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+  cursor: pointer;
+  transition: background var(--transition), border-color var(--transition), color var(--transition);
+  white-space: nowrap;
+}
+.pota-hunt-btn:hover {
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+  border-color: var(--accent);
+}
+.pota-hunt-btn:active {
+  background: color-mix(in srgb, var(--accent) 38%, transparent);
+}
+
+/* need-chip colors for Pota/Sota NeedTags in the Needed board */
+.need-pota {
+  --need-color: #16a34a; /* forest green — parks */
+}
+.need-sota {
+  --need-color: #9333ea; /* purple — summits */
+}
+
+/* spin animation for the refresh button loading state */
+@keyframes pota-spin {
+  to { transform: rotate(360deg); }
+}
+.pota-refresh-btn .spin {
+  animation: pota-spin 0.8s linear infinite;
+}
+
 /* Zero-config detected-radio list (Settings → rig control). */
 .rig-detect-list {
   list-style: none;

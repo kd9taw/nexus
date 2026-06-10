@@ -22,6 +22,8 @@ const NEED_CHIP: Record<NeedTag, { label: string; cls: string; title: string }> 
   NewMode: { label: 'MODE', cls: 'mode', title: 'New mode for this entity' },
   Confirm: { label: 'CFM', cls: 'confirm', title: 'Worked — needs a confirmation' },
   Dxped: { label: 'DXP', cls: 'dxped', title: 'Active announced DXpedition' },
+  Pota: { label: 'POTA', cls: 'pota', title: 'Live POTA activator on a park right now' },
+  Sota: { label: 'SOTA', cls: 'sota', title: 'Live SOTA activator on a summit right now' },
 }
 
 function lastHeardLabel(lastHeardSlot: number, currentSlot: number): string {

@@ -213,7 +213,10 @@ export interface OtaSpot {
   mode: string
   spotter: string | null
   comment: string | null
-  grid: string | null
+  grid: string | null  /** This park/summit has never been logged (hunter side) — a NEW PARK. */
+  newPark?: boolean
+  /** Your own signal is being received on this band right now (live PSKR). */
+  bandOpen?: boolean
 }
 
 /** The operator's current activation state (POTA/SOTA). */
@@ -627,7 +630,15 @@ export interface JourneySummary {
 
 /** DXCC-first award progress, computed from the logbook (cty.dat-resolved). */
 /** Why a heard station is worth working (need-aware spotting). */
-export type NeedTag = 'NewEntity' | 'NewZone' | 'NewBand' | 'NewMode' | 'Confirm' | 'Dxped'
+export type NeedTag =
+  | 'NewEntity'
+  | 'NewZone'
+  | 'NewBand'
+  | 'NewMode'
+  | 'Confirm'
+  | 'Dxped'
+  | 'Pota'
+  | 'Sota'
 
 /** One phone voice-keyer slot: an F-key-numbered label bound to a recorded WAV.
  * `file` is empty until the operator records or imports a message. */
@@ -1093,6 +1104,8 @@ export interface AppSnapshot {
   highlights?: { call: string; bg?: string | null; fg?: string | null }[]
   /** Bumped by an inbound UDP Clear — panes erase on change. */
   clearTick?: number
+  /** Pending one-click POTA/SOTA hunt (next QSO with this call auto-tags). */
+  hunt?: { program: string; reference: string; call: string } | null
   /** Coordinated-QSY status — present only while the opt-in feature is enabled. */
   qsy?: QsyStatus | null
   /** Session count of IR-HARQ rescues (decodes recovered by combining

@@ -57,7 +57,7 @@ import { NowBar } from './components/NowBar'
 import { AwardsJourney } from './components/AwardsJourney'
 import { CwCockpit } from './components/CwCockpit'
 import { PhoneCockpit } from './components/PhoneCockpit'
-import { PotaSotaView } from './components/PotaSotaView'
+import { PotaSotaView, type OtaSpotClickArg } from './components/PotaSotaView'
 import { DxpeditionsView } from './components/DxpeditionsView'
 import { ConnectView } from './components/ConnectView'
 import {
@@ -717,6 +717,30 @@ export default function App() {
     [handleWorkNeeded],
   )
 
+  // Hunt a POTA/SOTA activator: tag the next QSO with the park/summit reference AND
+  // QSY to the spot's exact frequency — the same atomic workSpot path as handleWorkNeeded.
+  // PotaSotaView calls setHuntTarget itself (and hands us the fresh snap via onSnap),
+  // then calls this handler which only needs to do the QSY + navigation + toast.
+  const handleHuntSpot = useCallback(
+    (arg: OtaSpotClickArg) => {
+      // Build a minimal NeedAlert-shaped object so we can reuse handleWorkNeeded's
+      // existing workSpot → cockpit-open → pendingWork path exactly.
+      handleWorkNeeded({
+        call: arg.call,
+        entity: '',
+        band: arg.band,
+        zone: 0,
+        tags: [],
+        priority: 0,
+        headline: '',
+        mode: arg.modeClass,
+        freqMhz: arg.freqMhz,
+      })
+      // (handleWorkNeeded toasts the QSY itself — one toast per action.)
+    },
+    [handleWorkNeeded],
+  )
+
   // Stop a QSO recording from anywhere (the global REC badge in the TopBar), so an active
   // recording started in the Phone cockpit can be stopped without navigating back.
   const handleStopRecording = useCallback(() => {
@@ -1063,7 +1087,11 @@ export default function App() {
     case 'pota':
       workspace = (
         <main className="layout single">
-          <PotaSotaView />
+          <PotaSotaView
+            snap={snap}
+            onHunt={handleHuntSpot}
+            onSnap={setSnap}
+          />
         </main>
       )
       break

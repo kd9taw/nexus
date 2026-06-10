@@ -29,6 +29,10 @@ pub enum NeedTag {
     NewMode,
     /// Worked but unconfirmed — a confirmation opportunity (lowest).
     Confirm,
+    /// The call is a live POTA activator right now (appended, like Dxped).
+    Pota,
+    /// The call is a live SOTA activator right now (appended, like Dxped).
+    Sota,
     /// The call belongs to an ACTIVE announced DXpedition — a limited-time window
     /// (appended alongside the award tags; never the primary row color).
     Dxped,
@@ -43,6 +47,8 @@ impl NeedTag {
             NeedTag::NewMode => "New mode",
             NeedTag::Confirm => "Confirm",
             NeedTag::Dxped => "DXpedition",
+            NeedTag::Pota => "POTA",
+            NeedTag::Sota => "SOTA",
         }
     }
     /// Ranking weight (higher = more valuable to work right now).
@@ -56,6 +62,8 @@ impl NeedTag {
             // Never a primary tier — appended by the command layer onto an existing
             // award need; its priority effect is the explicit bump applied there.
             NeedTag::Dxped => 0,
+            // Appended program chips (live activator) — same rule as Dxped.
+            NeedTag::Pota | NeedTag::Sota => 0,
         }
     }
 }
@@ -169,8 +177,11 @@ pub fn score(
             band
         ),
         NeedTag::Confirm => format!("Confirm — {}", info.entity),
-        // Dxped is appended post-scoring (command layer) — never the headline tag.
+        // Dxped/Pota/Sota are appended post-scoring (command layer) — never the
+        // headline tag; arms exist only for match exhaustiveness.
         NeedTag::Dxped => format!("Active DXpedition — {}", info.entity),
+        NeedTag::Pota => format!("POTA activator — {}", info.entity),
+        NeedTag::Sota => format!("SOTA activator — {}", info.entity),
     };
     Some(NeedAlert {
         call: call.to_ascii_uppercase(),

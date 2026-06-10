@@ -137,6 +137,15 @@ pub struct Engine {
     worked_entities: HashSet<String>,
     /// Maidenhead grids already worked (uppercased) — for new-grid highlighting.
     worked_grids: HashSet<String>,
+    /// POTA/SOTA references already in the log (hunter side, `ota.their_ref`)
+    /// — drives the NEW PARK badge like worked_entities drives new-DXCC.
+    worked_parks: HashSet<String>,
+    /// Pending HUNT target (program, normalized ref, activator call, set-at
+    /// unix): set by a one-click hunt; the next QSO logged with that call
+    /// auto-tags SIG/SIG_INFO (their_*) and the pend clears. Expires after
+    /// [`HUNT_TTL_SECS`] — activations end; a forgotten pend must never stamp
+    /// a park on an unrelated contact hours later. Session-only.
+    pending_hunt: Option<(String, String, String, u64)>,
     /// The signal report I last sent the current QSO's DX station (RST sent),
     /// captured from the sequencer's outgoing (R)Report. Reset per QSO.
     qso_report_sent: Option<i32>,
@@ -280,6 +289,10 @@ pub struct Engine {
 const SPECTRUM_WINDOW: usize = 4096;
 
 /// Window of recent decode DT samples used for the time-sync health median.
+/// A pending one-click POTA/SOTA hunt expires after this long — activations
+/// end; a stale pend must never stamp a park on an unrelated contact.
+const HUNT_TTL_SECS: u64 = 4 * 3600;
+
 const DT_WINDOW: usize = 16;
 /// Time-sync is considered OK while median(|dt|) is under this many seconds.
 const DT_OK_THRESHOLD: f32 = 0.5;
@@ -363,6 +376,8 @@ impl Engine {
             dxcc_resolve: None,
             worked_entities: HashSet::new(),
             worked_grids: HashSet::new(),
+            worked_parks: HashSet::new(),
+            pending_hunt: None,
             qso_report_sent: None,
             pending_log: None,
             qso_logged: false,
@@ -1099,12 +1114,60 @@ impl Engine {
         }
     }
 
+    /// One-click HUNT: remember the activator + park so the NEXT QSO logged
+    /// with that call auto-tags `SIG`/`SIG_INFO` (POTA) / `SOTA_REF` — the
+    /// hunter-side ADIF credit. Validates like [`Engine::set_activation`].
+    pub fn set_hunt_target(
+        &mut self,
+        call: &str,
+        program: &str,
+        reference: &str,
+    ) -> Result<(), String> {
+        let prog = tempo_core::pota::OtaProgram::from_code(program)
+            .ok_or_else(|| format!("unknown program {program:?} (POTA/SOTA)"))?;
+        let normalized = tempo_core::pota::normalize_ref(prog, reference)
+            .ok_or_else(|| format!("invalid {} reference {reference:?}", prog.code()))?;
+        let c = call.trim().to_uppercase();
+        if c.is_empty() {
+            return Err("no activator callsign".into());
+        }
+        self.pending_hunt = Some((prog.code().to_string(), normalized, c, now_unix_secs()));
+        Ok(())
+    }
+
+    /// Drop the pending hunt target (operator cancelled / moved on).
+    pub fn clear_hunt_target(&mut self) {
+        self.pending_hunt = None;
+    }
+
+    /// The pending hunt (program, reference, activator call), for the UI chip.
+    /// An expired pend reads as None (and is dropped lazily).
+    pub fn hunt_target(&self) -> Option<(String, String, String)> {
+        self.pending_hunt
+            .as_ref()
+            .filter(|(_, _, _, at)| now_unix_secs().saturating_sub(*at) <= HUNT_TTL_SECS)
+            .map(|(p, r, c, _)| (p.clone(), r.clone(), c.clone()))
+    }
+
+    /// True when this POTA/SOTA reference is already in the log (hunter side).
+    pub fn park_worked(&self, reference: &str) -> bool {
+        self.worked_parks
+            .contains(&reference.trim().to_uppercase())
+    }
+
     /// Recompute the worked-entity and worked-grid sets from the logbook. Cheap
     /// (a few hundred records); run on log load and after each log mutation.
     fn refresh_worked_index(&mut self) {
         self.worked_grids.clear();
         self.worked_entities.clear();
+        self.worked_parks.clear();
         for r in self.logbook.records() {
+            if let Some(p) = &r.ota.their_ref {
+                let p = p.trim();
+                if !p.is_empty() {
+                    self.worked_parks.insert(p.to_uppercase());
+                }
+            }
             if let Some(g) = &r.grid {
                 let g = g.trim();
                 if !g.is_empty() {
@@ -1136,6 +1199,23 @@ impl Engine {
             if rec.ota.my_ref.is_none() {
                 rec.ota.my_program = Some(program.clone());
                 rec.ota.my_ref = Some(reference.clone());
+            }
+        }
+        // Hunter side: a pending one-click hunt tags THIS contact with the
+        // activator's park/summit (SIG/SIG_INFO / SOTA_REF) when the call
+        // matches, then clears ON SUCCESS (an already-tagged record must not
+        // consume the pend). Expired pends are dropped, never applied — an
+        // activation is over within hours; stamping a park on an unrelated
+        // same-call contact tomorrow would be a fabricated hunter credit.
+        if let Some((program, reference, call, at)) = &self.pending_hunt {
+            if now_unix_secs().saturating_sub(*at) > HUNT_TTL_SECS {
+                self.pending_hunt = None;
+            } else if tempo_core::message::same_call(&rec.call, call)
+                && rec.ota.their_ref.is_none()
+            {
+                rec.ota.their_program = Some(program.clone());
+                rec.ota.their_ref = Some(reference.clone());
+                self.pending_hunt = None;
             }
         }
         if let Some(path) = &self.log_path {
@@ -2664,6 +2744,13 @@ impl Engine {
             })
             .collect();
         s.clear_tick = self.clear_tick;
+        s.hunt = self
+            .hunt_target() // TTL-filtered: an expired pend never shows a chip
+            .map(|(program, reference, call)| crate::dto::HuntDto {
+                program,
+                reference,
+                call,
+            });
         s.harq_rescues = self.harq_rescues;
         s.pending_log = self.pending_log.clone().map(Into::into);
         s
@@ -4689,6 +4776,35 @@ mod tests {
             1,
             "no split outside Hound mode"
         );
+    }
+
+    #[test]
+    fn hunt_target_tags_only_the_matching_qso() {
+        // One-click hunt: the NEXT logged QSO with the activator's call gets
+        // SIG/SIG_INFO (hunter credit); other contacts never inherit the park,
+        // and the pend clears once used.
+        let mut e = Engine::new("W9XYZ", "EN37", 0);
+        e.set_hunt_target("K1ABC", "POTA", "K-1234").unwrap();
+        assert!(e.hunt_target().is_some());
+        // A DIFFERENT station logged first must not get the park.
+        let mut other = e.qso_record("N0OTH".into(), None, Some(-5));
+        other.when_unix = 1;
+        e.log_qso(other);
+        let log = e.get_log();
+        assert!(log.iter().any(|r| r.call == "N0OTH" && r.ota.their_ref.is_none()));
+        assert!(e.hunt_target().is_some(), "pend survives a non-matching QSO");
+        // The activator (portable suffix tolerated) gets tagged; pend clears.
+        let mut rec = e.qso_record("K1ABC/P".into(), None, Some(-7));
+        rec.when_unix = 2;
+        e.log_qso(rec);
+        let log = e.get_log();
+        let hit = log.iter().find(|r| r.call == "K1ABC/P").unwrap();
+        assert_eq!(hit.ota.their_program.as_deref(), Some("POTA"));
+        assert_eq!(hit.ota.their_ref.as_deref(), Some("K-1234"));
+        assert!(e.hunt_target().is_none(), "pend cleared after tagging");
+        // The parks-worked index picked it up — the NEW PARK badge flips off.
+        assert!(e.park_worked("k-1234"), "case-insensitive park index");
+        assert!(!e.park_worked("K-9999"));
     }
 
     fn dec_snr(msg: &str, snr: i32) -> Decode {

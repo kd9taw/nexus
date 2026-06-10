@@ -11,6 +11,7 @@ use crate::geo::maidenhead_to_latlon;
 pub enum Band {
     B160,
     B80,
+    B60,
     B40,
     B30,
     B20,
@@ -24,9 +25,10 @@ pub enum Band {
 }
 
 impl Band {
-    pub const ALL: [Band; 12] = [
+    pub const ALL: [Band; 13] = [
         Band::B160,
         Band::B80,
+        Band::B60,
         Band::B40,
         Band::B30,
         Band::B20,
@@ -43,6 +45,7 @@ impl Band {
         match self {
             Band::B160 => "160m",
             Band::B80 => "80m",
+            Band::B60 => "60m",
             Band::B40 => "40m",
             Band::B30 => "30m",
             Band::B20 => "20m",
@@ -61,6 +64,7 @@ impl Band {
         match self {
             Band::B160 => 1.9,
             Band::B80 => 3.6,
+            Band::B60 => 5.36,
             Band::B40 => 7.1,
             Band::B30 => 10.13,
             Band::B20 => 14.1,
@@ -85,6 +89,7 @@ impl Band {
         Some(match s.trim().to_ascii_lowercase().as_str() {
             "160m" => Band::B160,
             "80m" => Band::B80,
+            "60m" => Band::B60,
             "40m" => Band::B40,
             "30m" => Band::B30,
             "20m" => Band::B20,
@@ -104,6 +109,7 @@ impl Band {
         let b = match f {
             x if (1.8..2.0).contains(&x) => Band::B160,
             x if (3.5..4.0).contains(&x) => Band::B80,
+            x if (5.25..5.45).contains(&x) => Band::B60,
             x if (7.0..7.3).contains(&x) => Band::B40,
             x if (10.1..10.15).contains(&x) => Band::B30,
             x if (14.0..14.35).contains(&x) => Band::B20,

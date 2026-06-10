@@ -374,6 +374,7 @@ impl AppState {
             recent_decodes: Vec::new(),
             highlights: Vec::new(),
             clear_tick: 0,
+            hunt: None,
             // Filled by the engine while coordinated QSY is enabled; None here.
             qsy: None,
             // Filled by the engine from its session HARQ tally; 0 at this layer.

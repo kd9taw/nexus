@@ -23,6 +23,8 @@ const NEED_CHIP: Record<NeedTag, { label: string; cls: string; title: string }> 
   NewMode: { label: 'MODE', cls: 'mode', title: 'New mode for this entity' },
   Confirm: { label: 'CONFIRM', cls: 'confirm', title: 'Worked — needs a confirmation' },
   Dxped: { label: 'DXPED', cls: 'dxped', title: 'Active announced DXpedition — a limited-time window' },
+  Pota: { label: 'POTA', cls: 'pota', title: 'Live POTA activator — the row\'s call is on a park right now' },
+  Sota: { label: 'SOTA', cls: 'sota', title: 'Live SOTA activator — the row\'s call is on a summit right now' },
 }
 /** Defensive chip lookup — an unknown future tag renders visibly, never throws. */
 function chipFor(t: NeedTag): { label: string; cls: string; title: string } {
@@ -78,6 +80,8 @@ const NEED_TYPE_OPTS: { value: NeedTypeFilter; label: string }[] = [
   { value: 'newMode', label: 'New mode' },
   { value: 'newGrid', label: 'New grid' },
   { value: 'dxped', label: 'DXped' },
+  { value: 'pota', label: 'POTA' },
+  { value: 'sota', label: 'SOTA' },
 ]
 
 const MODE_OPTS: { value: ModeFilter; label: string }[] = [

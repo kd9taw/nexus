@@ -4,7 +4,7 @@
 import type { NeedAlert, NeedTag } from './types'
 
 /** Need-type filter buckets surfaced in the filter bar. */
-export type NeedTypeFilter = 'all' | 'atno' | 'newBand' | 'newMode' | 'newGrid' | 'dxped'
+export type NeedTypeFilter = 'all' | 'atno' | 'newBand' | 'newMode' | 'newGrid' | 'dxped' | 'pota' | 'sota'
 
 /** Mode-class filter surfaced in the filter bar. */
 export type ModeFilter = 'all' | 'Digital' | 'CW' | 'Phone'
@@ -27,13 +27,15 @@ const TAG_TO_BUCKET: Partial<Record<NeedTag, NeedTypeFilter>> = {
   NewBand:   'newBand',
   NewMode:   'newMode',
   Dxped:     'dxped',
+  Pota:      'pota',
+  Sota:      'sota',
 }
 
 /** The valid persisted values — localStorage may hold a stale/renamed bucket
  * from an older build; an unknown value must fall back to 'all', not silently
  * empty the board with no active chip. */
 export const NEED_TYPE_VALUES: readonly NeedTypeFilter[] = [
-  'all', 'atno', 'newBand', 'newMode', 'newGrid', 'dxped',
+  'all', 'atno', 'newBand', 'newMode', 'newGrid', 'dxped', 'pota', 'sota',
 ]
 export const MODE_FILTER_VALUES = ['all', 'Digital', 'CW', 'Phone'] as const
 

@@ -36,6 +36,8 @@ const NEED_CHIP: Record<NeedTag, { label: string; cls: string }> = {
   NewMode: { label: 'MODE', cls: 'mode' },
   Confirm: { label: 'CONFIRM', cls: 'confirm' },
   Dxped: { label: 'DXPED', cls: 'dxped' },
+  Pota: { label: 'POTA', cls: 'pota' },
+  Sota: { label: 'SOTA', cls: 'sota' },
 }
 
 /** A DXpedition's announced modes → its work-routing mode (CW-only → CW, voice-

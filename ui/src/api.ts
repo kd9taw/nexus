@@ -204,6 +204,24 @@ export async function notifyErase(window: 0 | 1 | 2): Promise<void> {
   if (invoke) await invoke('notify_erase', { window })
 }
 
+/** One-click hunt: remember the activator + park so the next QSO logged with
+ * that call auto-tags SIG/SIG_INFO (the hunter-side ADIF credit). */
+export async function setHuntTarget(
+  call: string,
+  program: string,
+  reference: string,
+): Promise<AppSnapshot> {
+  const invoke = tauriInvoke()
+  if (invoke) return invoke<AppSnapshot>('set_hunt_target', { call, program, reference })
+  return mockEngine.getSnapshot()
+}
+
+export async function clearHuntTarget(): Promise<AppSnapshot> {
+  const invoke = tauriInvoke()
+  if (invoke) return invoke<AppSnapshot>('clear_hunt_target', {})
+  return mockEngine.getSnapshot()
+}
+
 /** WSJT-X "Decode" / F6: re-run the decoder over the last period's audio with
  * the current settings; only newly-found lines appear. */
 export async function redecode(): Promise<AppSnapshot> {

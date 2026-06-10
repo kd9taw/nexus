@@ -11,7 +11,8 @@ use crate::model::Band;
 pub fn g_sfi(band: Band, sfi: f32) -> f32 {
     match band {
         // Low bands are physically eligible regardless of solar flux.
-        Band::B160 | Band::B80 | Band::B40 => 1.0,
+        // 60 m behaves like the other low bands — eligible at any SFI.
+        Band::B160 | Band::B80 | Band::B60 | Band::B40 => 1.0,
         Band::B30 | Band::B20 => {
             if sfi >= 70.0 {
                 1.0

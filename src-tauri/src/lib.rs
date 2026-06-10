@@ -63,6 +63,9 @@ static CLUSTER_STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::Atomi
 /// Recent live PSK Reporter MQTT reception reports (the "getting out" firehose),
 /// fed by the background MQTT thread and merged into the propagation nowcast.
 type SharedLivePaths = Arc<Mutex<propagation::LiveSpots>>;
+/// Last fetched POTA+SOTA activator spots (unix stamp + rows) — refreshed by the
+/// hunter view's poll; read lock-only by the Needed scorer for POTA/SOTA tags.
+type SharedOtaSpots = Arc<Mutex<std::collections::HashMap<String, (i64, Vec<propagation::OtaSpot>)>>>;
 
 /// Persistent opening-detection tracker (anomaly/onset hysteresis + onset
 /// stamping) across successive `get_propagation` polls. Stateful so it can flag a
@@ -2038,6 +2041,7 @@ async fn get_need_alerts(
     live_paths: State<'_, SharedLivePaths>,
     region_paths: State<'_, SharedRegionPaths>,
     spots: State<'_, SharedSpots>,
+    ota_cache: State<'_, SharedOtaSpots>,
 ) -> Result<Vec<propagation::NeedAlert>, String> {
     let eng = state.lock().map_err(|e| e.to_string())?;
     let mut needs = propagation::LogNeeds::new();
@@ -2209,6 +2213,40 @@ async fn get_need_alerts(
             }
         }
         alerts.sort_by(|x, y| y.priority.cmp(&x.priority));
+    }
+    // POTA/SOTA tagging: a heard call that is a LIVE activator (per the hunter
+    // feed's cache, <= 10 min fresh) gets the program chip — park chasers spot
+    // them on the board at a glance. Appended like Dxped; no priority change
+    // (a park is a park — the award tier still drives the row).
+    if let Ok(cache) = ota_cache.lock() {
+        // All fresh programs' activators (POTA + SOTA when both are polled).
+        let spots: Vec<&propagation::OtaSpot> = cache
+            .values()
+            .filter(|(stamp, _)| now_unix().saturating_sub(*stamp) <= 600)
+            .flat_map(|(_, v)| v.iter())
+            .collect();
+        if !spots.is_empty() {
+            for a in &mut alerts {
+                if let Some(sp) = spots
+                    .iter()
+                    // Base-call match: the spot says K1ABC, the decode may say
+                    // K1ABC/P — the suffix is exactly the portable case a park
+                    // chaser cares about.
+                    .find(|sp| tempo_core::message::same_call(&sp.activator, &a.call))
+                {
+                    let tag = if sp.program.eq_ignore_ascii_case("SOTA") {
+                        propagation::NeedTag::Sota
+                    } else {
+                        propagation::NeedTag::Pota
+                    };
+                    if !a.tags.contains(&tag) {
+                        a.tags.push(tag);
+                        a.headline =
+                            format!("{} · {} {}", a.headline, sp.program, sp.reference);
+                    }
+                }
+            }
+        }
     }
     Ok(alerts)
 }
@@ -3218,13 +3256,91 @@ struct ActivationDto {
 
 /// Activators currently on the air for `program` ("POTA" | "SOTA") — the hunter
 /// feed. Network fetch (no auth); empty/Err only on a feed problem.
+/// One hunter-feed row: the raw activator spot annotated with what THIS
+/// operator cares about — is the park a new one, and is the band currently
+/// carrying their signal out (live PSKR evidence, the "workable now" signal).
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OtaSpotDto {
+    #[serde(flatten)]
+    spot: propagation::OtaSpot,
+    /// This reference has never been logged (hunter side) — a NEW PARK.
+    new_park: bool,
+    /// The operator's own signal is being received on this band right now.
+    band_open: bool,
+}
+
 #[tauri::command]
-fn get_ota_spots(program: String) -> Result<Vec<propagation::OtaSpot>, String> {
-    match program.to_ascii_uppercase().as_str() {
-        "POTA" => propagation::live::pota::fetch_pota_spots(),
-        "SOTA" => propagation::live::pota::fetch_sota_spots(30),
-        other => Err(format!("Unknown program '{other}' — use POTA or SOTA.")),
+fn get_ota_spots(
+    program: String,
+    state: State<'_, SharedEngine>,
+    live_paths: State<'_, SharedLivePaths>,
+    ota_cache: State<'_, SharedOtaSpots>,
+) -> Result<Vec<OtaSpotDto>, String> {
+    let spots = match program.to_ascii_uppercase().as_str() {
+        "POTA" => propagation::live::pota::fetch_pota_spots()?,
+        "SOTA" => propagation::live::pota::fetch_sota_spots(30)?,
+        other => return Err(format!("Unknown program '{other}' — use POTA or SOTA.")),
+    };
+    // Refresh the lock-only cache the Needed scorer reads for POTA/SOTA tags —
+    // keyed PER PROGRAM ("Both" mode fetches POTA and SOTA concurrently; a
+    // single slot let the last writer evict the other program's activators).
+    if let Ok(mut c) = ota_cache.lock() {
+        c.insert(program.to_ascii_uppercase(), (now_unix(), spots.clone()));
     }
+    // Bands where MY signal is getting out right now (live PSKR receptions of
+    // my call inside the last 15 min) — the "workable now" differentiator.
+    let (mycall, park_worked): (String, Box<dyn Fn(&str) -> bool>) = {
+        let eng = state.lock().map_err(|e| e.to_string())?;
+        let worked: std::collections::HashSet<String> = spots
+            .iter()
+            .filter(|sp| eng.park_worked(&sp.reference))
+            .map(|sp| sp.reference.to_uppercase())
+            .collect();
+        (
+            eng.settings().mycall.clone(),
+            Box::new(move |r: &str| worked.contains(&r.to_uppercase())),
+        )
+    };
+    let open_bands: std::collections::HashSet<String> = live_paths
+        .lock()
+        .map(|b| b.recent(now_unix(), 900))
+        .unwrap_or_default()
+        .iter()
+        .filter(|p| tempo_core::message::same_call(&p.tx_call, &mycall))
+        .map(|p| p.band.label().to_string())
+        .collect();
+    Ok(spots
+        .into_iter()
+        .map(|sp| {
+            let band_open = propagation::Band::from_mhz(sp.freq_khz / 1000.0)
+                .map(|b| open_bands.contains(b.label()))
+                .unwrap_or(false);
+            let new_park = !park_worked(&sp.reference);
+            OtaSpotDto { spot: sp, new_park, band_open }
+        })
+        .collect())
+}
+
+/// One-click hunt: remember the activator + park so the next QSO logged with
+/// that call auto-tags SIG/SIG_INFO (the hunter-side ADIF credit).
+#[tauri::command]
+fn set_hunt_target(
+    state: State<'_, SharedEngine>,
+    call: String,
+    program: String,
+    reference: String,
+) -> Result<AppSnapshot, String> {
+    let mut eng = state.lock().map_err(|e| e.to_string())?;
+    eng.set_hunt_target(&call, &program, &reference)?;
+    Ok(eng.snapshot())
+}
+
+#[tauri::command]
+fn clear_hunt_target(state: State<'_, SharedEngine>) -> Result<AppSnapshot, String> {
+    let mut eng = state.lock().map_err(|e| e.to_string())?;
+    eng.clear_hunt_target();
+    Ok(eng.snapshot())
 }
 
 /// Begin an activation — subsequent logged QSOs are tagged (your side). Validates +
@@ -3564,6 +3680,7 @@ pub fn run() {
         .manage(aurora_cache)
         .manage(spots)
         .manage(live_paths)
+        .manage(SharedOtaSpots::new(Mutex::new(std::collections::HashMap::new())))
         .manage(region_paths)
         .manage(health)
         .manage(SharedOpeningTracker::default())
@@ -3623,6 +3740,8 @@ pub fn run() {
             start_cq,
             notify_erase,
             qrz_test_connection,
+            set_hunt_target,
+            clear_hunt_target,
             set_hold_tx_freq,
             call_station,
             open_panel_window,

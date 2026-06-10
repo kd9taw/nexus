@@ -39,6 +39,15 @@ pub struct Station {
 /// A single decoded signal from the most recent RX slot, for the live decode
 /// feed (alerts + color-coding). Distinct from `ChatMessage` (which is threaded
 /// conversation): this is the raw heard-this-slot list, like WSJT-X Band Activity.
+/// The pending hunt target shown as a chip ("hunting K-1234 · W1ABC").
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HuntDto {
+    pub program: String,
+    pub reference: String,
+    pub call: String,
+}
+
 /// One UDP-driven callsign highlight (JTAlert paints wanted/B4 calls).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -966,6 +975,10 @@ pub struct AppSnapshot {
     /// Bumped by an inbound UDP Clear — the UI erases its panes on change.
     #[serde(default)]
     pub clear_tick: u32,
+    /// Pending one-click POTA/SOTA hunt (the next QSO with this call auto-tags
+    /// the park). None = not hunting.
+    #[serde(default)]
+    pub hunt: Option<HuntDto>,
     /// Coordinated-QSY status — present only while the (opt-in) feature is enabled.
     #[serde(default)]
     pub qsy: Option<QsyStatus>,
