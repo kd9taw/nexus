@@ -2103,6 +2103,11 @@ impl Engine {
         s.radio.time_sync_ok = self.time_sync_ok();
         s.radio.cat_ok = self.cat_status.0;
         s.radio.cat_detail = self.cat_status.1.clone();
+        s.radio.cw_keyer = match self.settings.cw_keyer {
+            crate::settings::CwKeyerBackend::Cat => "cat",
+            crate::settings::CwKeyerBackend::Soundcard => "soundcard",
+        }
+        .to_string();
         s.radio.audio_error = self.audio_error.clone();
         s.radio.tx_even = self.tx_even();
         s.radio.tx_offset_hz = self.tx_offset_hz;

@@ -43,7 +43,16 @@ const WPM_MAX = 50
  */
 export function CwCockpit({ snap, theme, pendingWork, onConsumeWork, onSnap }: Props) {
   const [wpm, setWpm] = useState(25)
-  const [keyer, setKeyer] = useState<'cat' | 'soundcard'>('cat')
+  // Initialize the keyer toggle from the engine's ACTUAL setting (the snapshot is the source
+  // of truth) — not a hard-coded 'cat'. A stale local default showed CAT while the backend was
+  // on Soundcard, so CW silently went to USB (Soundcard keying = rig in SSB) with no clue why.
+  const [keyer, setKeyer] = useState<'cat' | 'soundcard'>(
+    snap.radio.cwKeyer === 'soundcard' ? 'soundcard' : 'cat',
+  )
+  // Keep it in sync if the backend value changes (or arrives after first render).
+  useEffect(() => {
+    setKeyer(snap.radio.cwKeyer === 'soundcard' ? 'soundcard' : 'cat')
+  }, [snap.radio.cwKeyer])
   const [text, setText] = useState('')
 
   const changeWpm = (w: number) => {

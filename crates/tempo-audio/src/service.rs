@@ -434,7 +434,7 @@ impl RadioLoop {
                         retuned = true;
                     }
                     if !md.trim().is_empty() {
-                        match rig.set_mode(&md, 0) {
+                        match rig.set_mode(&md, passband_for(&md)) {
                             Ok(()) => {
                                 self.last_mode = md.clone();
                                 retuned = true;
@@ -458,7 +458,7 @@ impl RadioLoop {
                     // (rig kept rejecting it). `last_mode` only ever holds a mode actually
                     // applied, so a give-up never masquerades as success.
                     if md != self.last_mode && self.mode_giveup.as_deref() != Some(md.as_str()) {
-                        match rig.set_mode(&md, 0) {
+                        match rig.set_mode(&md, passband_for(&md)) {
                             Ok(()) => {
                                 self.last_mode = md.clone();
                                 self.mode_fail_count = 0;
@@ -1148,6 +1148,18 @@ impl Transport {
     }
 }
 
+/// The passband (Hz) to command alongside a rig mode. FT8/FT4 (the DATA submodes) need the
+/// FULL ~3 kHz audio passband — decodes span the whole band, and passband 0 ("normal") left
+/// some rigs on a narrow recalled DATA filter (e.g. 600 Hz on the FTDX10), clipping signals.
+/// For SSB / CW / FM we pass 0 so the rig keeps its own normal/recalled filter for that mode
+/// (the operator's chosen CW width, SSB filter, etc.).
+fn passband_for(md: &str) -> u32 {
+    match md.trim().to_ascii_uppercase().as_str() {
+        "PKTUSB" | "PKTLSB" => 3000,
+        _ => 0,
+    }
+}
+
 /// After commanding a mode, read it straight back from the rig and describe the outcome —
 /// the ONLY way to distinguish "rigctld answered RPRT 0 AND the rig actually changed" from
 /// "rigctld answered RPRT 0 but the rig is still in the old mode" (a Hamlib/rig no-op). The
@@ -1233,7 +1245,7 @@ fn open_cat(t: &Transport, dial_hz: u64, mode: &str, ptt_mode: PttMode) -> RigOp
         // THROUGH it instead of fighting for the serial port.
         let mut rig = Rig::with_control(Some(addr.clone()), ptt_mode);
         let _ = rig.set_freq(dial_hz);
-        let _ = rig.set_mode(mode, 0);
+        let _ = rig.set_mode(mode, passband_for(mode));
         let (ok, detail) = probe_cat(&mut rig, t.rigctld_port);
         return (
             rig,
@@ -1248,7 +1260,7 @@ fn open_cat(t: &Transport, dial_hz: u64, mode: &str, ptt_mode: PttMode) -> RigOp
             std::thread::sleep(Duration::from_millis(700));
             let mut rig = Rig::with_control(Some(addr), ptt_mode);
             let _ = rig.set_freq(dial_hz);
-            let _ = rig.set_mode(mode, 0);
+            let _ = rig.set_mode(mode, passband_for(mode));
             let (ok, detail) = probe_cat(&mut rig, t.rigctld_port);
             (rig, Some(proc), ok, detail)
         }

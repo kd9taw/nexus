@@ -222,6 +222,12 @@ pub struct RadioStatus {
     /// "VOX — no CAT", or a specific error ("rigctld not reachable…").
     #[serde(default)]
     pub cat_detail: String,
+    /// The CW keyer backend: "cat" (the rig generates CW → rig in CW mode) or "soundcard"
+    /// (a keyed audio tone → rig deliberately in USB/LSB). Surfaced so the CW cockpit's
+    /// toggle reflects the ACTUAL backend setting instead of a stale local default — that
+    /// desync made CW land on USB when the persisted keyer was Soundcard.
+    #[serde(default)]
+    pub cw_keyer: String,
     /// Set when the sound-card input/output failed to open, so the UI can show
     /// why the waterfall is blank instead of failing silently.
     #[serde(default)]

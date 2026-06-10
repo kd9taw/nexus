@@ -309,6 +309,9 @@ export interface RadioStatus {
   catOk?: boolean | null
   /** Human-readable rig/CAT status (read frequency, or a specific error). */
   catDetail?: string
+  /** The CW keyer backend the engine is actually using: 'cat' (rig in CW) or
+   * 'soundcard' (rig in USB/LSB). Lets the CW cockpit toggle show the REAL state. */
+  cwKeyer?: string
   /** Set when the sound card failed to open (explains a blank waterfall). */
   audioError?: string | null
   /** Transmit on even/"1st" slots (true) or odd/"2nd" (false). */
