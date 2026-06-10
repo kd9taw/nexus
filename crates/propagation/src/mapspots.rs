@@ -31,6 +31,11 @@ pub struct MapSpot {
     /// Mode named by the source ("CW", "FT8", "SSB"…) when known — routes a map
     /// click-to-work to the right cockpit. `None` = unknown (treated as digital).
     pub mode: Option<String>,
+    /// DXCC entity name resolved from the callsign (cty.dat) — the selected-spot
+    /// card's "who/where" line. `None` only when the prefix is unknown.
+    pub entity: Option<String>,
+    /// CQ zone from the same resolution (WAZ context on the selected-spot card).
+    pub cq_zone: Option<u8>,
 }
 
 /// Build the deduped, located, capped map-spot set from a spot window.
@@ -51,11 +56,14 @@ pub fn build_map_spots(now: i64, me_call: &str, spots: &[PathSpot], cap: usize) 
         if call == me_call.to_uppercase() {
             continue;
         }
+        // Resolve the DXCC entity once — it both places grid-less spots (centroid)
+        // and feeds the selected-spot card (entity + CQ zone) for ALL spots.
+        let info = dxcc::resolve(&call);
         // Locate: exact grid first, else DXCC entity centroid.
         let (lat, lon, approx) = match subject_grid.and_then(maidenhead_to_latlon) {
             Some((la, lo)) => (la, lo, false),
-            None => match dxcc::resolve(&call) {
-                Some(info) => (info.lat, info.lon, true),
+            None => match &info {
+                Some(i) => (i.lat, i.lon, true),
                 None => continue, // can't place it
             },
         };
@@ -70,6 +78,8 @@ pub fn build_map_spots(now: i64, me_call: &str, spots: &[PathSpot], cap: usize) 
             approx,
             freq_mhz: s.freq_mhz,
             mode: s.mode.clone(),
+            entity: info.as_ref().map(|i| i.entity.to_string()),
+            cq_zone: info.as_ref().map(|i| i.cq_zone),
         };
         best
             .entry(call)

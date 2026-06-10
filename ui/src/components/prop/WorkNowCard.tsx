@@ -5,7 +5,15 @@ import { Check } from 'lucide-react'
 import type { WorkableCard } from '../../types'
 import { needMeta, workabilityVar } from '../../propViz'
 
-export function WorkNowCard({ card }: { card: WorkableCard }) {
+export function WorkNowCard({
+  card,
+  onWork,
+}: {
+  card: WorkableCard
+  /** "Work" button → the app's atomic work path (rig jumps band+mode+freq).
+   * Omitted = display-only card. */
+  onWork?: (card: WorkableCard) => void
+}) {
   const need = needMeta(card.need)
   return (
     <div className={`worknow-card${card.status === 'WorkNow' ? ' is-worknow' : ''}`}>
@@ -32,6 +40,16 @@ export function WorkNowCard({ card }: { card: WorkableCard }) {
       </div>
       <div className="wn-window">{card.windowHint}</div>
       <div className="wn-how">{card.howToCall}</div>
+      {onWork && (
+        <button
+          type="button"
+          className="wn-work"
+          onClick={() => onWork(card)}
+          title={`Jump the rig to ${card.band} and open the right cockpit`}
+        >
+          ▶ Work {card.band}
+        </button>
+      )}
     </div>
   )
 }

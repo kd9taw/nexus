@@ -27,6 +27,21 @@ export function gridToLatLon(grid: string): LatLon | null {
   return { lat, lon }
 }
 
+/** Lat/lon → 4-char Maidenhead square (e.g. "EN52") — the inverse of
+ * gridToLatLon at square precision. Used to ask the path predictor about a
+ * map spot that has coordinates but no reported grid. */
+export function latLonToGrid(lat: number, lon: number): string {
+  const la = Math.min(89.999, Math.max(-90, lat)) + 90
+  const lo = (((Math.min(179.999, Math.max(-180, lon)) + 180) % 360) + 360) % 360
+  const A = 'A'.charCodeAt(0)
+  return (
+    String.fromCharCode(A + Math.floor(lo / 20)) +
+    String.fromCharCode(A + Math.floor(la / 10)) +
+    String(Math.floor((lo % 20) / 2)) +
+    String(Math.floor(la % 10))
+  )
+}
+
 export function haversineKm(a: LatLon, b: LatLon): number {
   const R = 6371
   const dLat = ((b.lat - a.lat) * Math.PI) / 180

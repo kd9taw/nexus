@@ -172,6 +172,10 @@ export interface MapSpot {
   /** Mode named by the source ("CW", "FT8", "SSB"…) — routes click-to-work to the
    * right cockpit. Null = unknown (treated as digital). */
   mode?: string | null
+  /** DXCC entity name (cty.dat) — the selected-spot card's "who/where". */
+  entity?: string | null
+  /** CQ zone from the same resolution. */
+  cqZone?: number | null
 }
 
 /** Top-level operating mode reflected in the snapshot. */

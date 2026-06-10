@@ -876,6 +876,88 @@ button.nb-chip:hover {
   line-height: 1.35;
 }
 /* Per-path outlook panel (selected station) — the PathPredictor seam surfaced. */
+/* --- Selected-entity card (the map's "so what" panel) --- */
+.connect-sel .cs-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.connect-sel .cs-call {
+  font-size: 1.05rem;
+  letter-spacing: 0.02em;
+}
+.connect-sel .cs-close {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--text-faint);
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+.connect-sel .cs-close:hover {
+  color: var(--text);
+}
+.connect-sel .cs-who {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  margin-top: 2px;
+}
+.connect-sel .cs-spot {
+  color: var(--text);
+  font-size: 0.85rem;
+  margin-top: 4px;
+}
+.connect-sel .cs-work,
+.connect-worknow .wn-work {
+  margin-top: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+  font-weight: 700;
+  cursor: pointer;
+}
+.connect-sel .cs-work:hover,
+.connect-worknow .wn-work:hover {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+/* Clickable advisor/opening rows (band focus) */
+.ba-row.is-clickable {
+  cursor: pointer;
+}
+.ba-row.is-active {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+  border-radius: 6px;
+}
+.ba-clear {
+  margin-left: 10px;
+  font-size: 0.7rem;
+  background: none;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  color: var(--accent);
+  padding: 1px 8px;
+  cursor: pointer;
+}
+.opening-strip.is-clickable {
+  cursor: pointer;
+}
+/* Getting-out rows: clickable + receiver-side SNR */
+.getout-list .go-clickable {
+  cursor: pointer;
+}
+.getout-list .go-clickable:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.getout-list .go-snr {
+  color: var(--state-good);
+  font-variant-numeric: tabular-nums;
+  margin-left: auto;
+}
+
 .connect-path h3 {
   display: flex;
   align-items: baseline;

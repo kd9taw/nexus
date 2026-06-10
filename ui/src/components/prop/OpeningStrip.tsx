@@ -9,14 +9,27 @@ function agoLabel(secs: number): string {
   return m < 1 ? 'just now' : m < 60 ? `${m}m ago` : `${Math.round(m / 60)}h ago`
 }
 
-export function OpeningStrip({ openings }: { openings: OpeningView[] }) {
+export function OpeningStrip({
+  openings,
+  onBandClick,
+}: {
+  openings: OpeningView[]
+  /** Click an opening → focus its band on the map. Omitted = display-only. */
+  onBandClick?: (band: string) => void
+}) {
   if (openings.length === 0) return null
   return (
     <div className="opening-strips">
       {openings.map((o, i) => {
         const ago = agoLabel(o.onsetSecs)
         return (
-          <div className="opening-strip" key={i}>
+          <div
+            className={`opening-strip${onBandClick ? ' is-clickable' : ''}`}
+            key={i}
+            onClick={onBandClick ? () => onBandClick(o.band) : undefined}
+            role={onBandClick ? 'button' : undefined}
+            title={onBandClick ? `Focus ${o.band} on the map — where IS this opening?` : undefined}
+          >
             <span className="opening-band">
               <Zap size={15} strokeWidth={2.25} aria-hidden="true" />
               {o.band} OPEN

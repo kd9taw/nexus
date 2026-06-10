@@ -6,14 +6,47 @@
 // point, what do I need" at a glance. Map deep-dive + full Propagation panel
 // remain available as their own sections within the Connect area.
 import { useState, useEffect, useMemo } from 'react'
-import type { GettingOut, NeedTag, PathPrediction, PropagationSnapshot, Station } from '../types'
+import type {
+  GettingOut,
+  MapSpot,
+  NeedTag,
+  PathPrediction,
+  PropagationSnapshot,
+  Station,
+  WorkableCard,
+} from '../types'
 import type { Theme } from '../useTheme'
 import { getPathOutlook, getGettingOut } from '../api'
+import { latLonToGrid } from '../grid'
+import { modeClassOf } from '../features/needs'
 import { MapView, type MapIntent } from './MapView'
 import { StateBlock } from './StateBlock'
 import { SpaceWxGauges } from './prop/SpaceWxGauges'
 import { BandAdvisor } from './prop/BandAdvisor'
 import { OpeningStrip } from './prop/OpeningStrip'
+import { WorkNowCard } from './prop/WorkNowCard'
+import { LikelihoodHeatmap } from './prop/LikelihoodHeatmap'
+
+/** Need tag → the chip label/class the Needed board uses — ONE color language. */
+const NEED_CHIP: Record<NeedTag, { label: string; cls: string }> = {
+  NewEntity: { label: 'NEW ONE', cls: 'entity' },
+  NewZone: { label: 'ZONE', cls: 'zone' },
+  NewBand: { label: 'BAND', cls: 'band' },
+  NewMode: { label: 'MODE', cls: 'mode' },
+  Confirm: { label: 'CONFIRM', cls: 'confirm' },
+}
+
+/** A DXpedition's announced modes → its work-routing mode (CW-only → CW, voice-
+ * only → SSB, mixed/unknown → null = digital default). Mirrors MapView's rule. */
+function dxpedWorkMode(modes?: string[]): string | null {
+  if (!modes || modes.length === 0) return null
+  const classes = new Set(modes.map((m) => modeClassOf(m)))
+  if (classes.size === 1) {
+    if (classes.has('CW')) return 'CW'
+    if (classes.has('Phone')) return 'SSB'
+  }
+  return null
+}
 
 /** Intent presets — beginner picks a goal once; map + prop configure themselves. */
 const INTENTS: { id: MapIntent; label: string; title: string }[] = [
@@ -87,13 +120,51 @@ export function ConnectView({
       /* ignore */
     }
   }
-  // Per-path outlook for the selected station (the PathPredictor seam): fetch when
-  // the selected station's grid changes. Keyed on the grid so it doesn't refetch
-  // on every spot-roster poll.
-  const selGrid = useMemo(
-    () => (selectedCall ? (stations.find((s) => s.call === selectedCall)?.grid ?? null) : null),
+  // Band focus (advisor/opening row click) — the map highlights that band's heat
+  // + spots; click the same band again (or the clear chip) to release.
+  const [focusBand, setFocusBand] = useState<string | null>(null)
+  const toggleFocusBand = (band: string) => setFocusBand((f) => (f === band ? null : band))
+  // Auto-release a stale focus: when the focused band no longer has any spots on
+  // the map (the opening ended / activity died), dimming everything else would
+  // leave a near-black map with no obvious cause. Release rather than puzzle.
+  useEffect(() => {
+    if (!focusBand || !prop?.spots) return
+    if (!prop.spots.some((sp) => sp.band === focusBand)) setFocusBand(null)
+  }, [focusBand, prop])
+  // Resolve the selection against EVERYTHING plotted: my decoded stations, the
+  // live cluster/RBN/PSKR spots, and the DXpedition cards — so clicking ANY map
+  // pixel populates this rail (the map's "so what" panel).
+  const selStation = useMemo(
+    () => (selectedCall ? (stations.find((s) => s.call === selectedCall) ?? null) : null),
     [selectedCall, stations],
   )
+  const selSpot = useMemo<MapSpot | null>(
+    () =>
+      selectedCall && !selStation
+        ? (prop?.spots?.find((sp) => sp.call === selectedCall) ?? null)
+        : null,
+    [selectedCall, selStation, prop],
+  )
+  // Gated on !selStation: a DXpedition call we ALSO decoded locally renders as the
+  // decoded station (worked from the cockpit) — the dxped card's advertised band may
+  // differ from the band it was actually heard on, and the Work button must never
+  // route the rig off what the operator is looking at.
+  const selDxped = useMemo<WorkableCard | null>(
+    () =>
+      selectedCall && !selStation
+        ? (prop?.dxpeditions.workableNow.find((c) => c.call === selectedCall) ?? null)
+        : null,
+    [selectedCall, selStation, prop],
+  )
+  // Per-path outlook for the selection (the PathPredictor seam): a station's
+  // reported grid when we have one, else the spot's coordinates as a Maidenhead
+  // square (centroid-placed spots = the entity's grid — approximate, labeled).
+  const selGrid = useMemo(() => {
+    if (!selectedCall) return null
+    if (selStation?.grid) return selStation.grid
+    if (selSpot) return latLonToGrid(selSpot.lat, selSpot.lon)
+    return null
+  }, [selectedCall, selStation, selSpot])
   const [pathPred, setPathPred] = useState<PathPrediction | null>(null)
   useEffect(() => {
     if (!selGrid) {
@@ -163,6 +234,7 @@ export function ConnectView({
             expert={expert}
             intent={intent}
             onWorkSpot={onWorkSpot}
+            focusBand={focusBand}
           />
         </div>
         <aside className="connect-side">
@@ -183,6 +255,78 @@ export function ConnectView({
                   {b}
                 </div>
               ))}
+              {selectedCall && (
+                <section className="connect-sel panel">
+                  <div className="cs-head">
+                    <b className="cs-call">{selectedCall}</b>
+                    {(() => {
+                      const tag = needByCall.get(selectedCall.toUpperCase())
+                      const chip = tag ? NEED_CHIP[tag] : null
+                      return chip ? (
+                        <span className={`need-chip need-${chip.cls}`}>{chip.label}</span>
+                      ) : null
+                    })()}
+                    <button
+                      type="button"
+                      className="cs-close"
+                      onClick={() => onSelectCall(null)}
+                      title="Clear selection"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                  <div className="cs-who">
+                    {selSpot?.entity ?? selDxped?.entity ?? selStation?.country ?? '—'}
+                    {selSpot?.cqZone != null && ` · CQ ${selSpot.cqZone}`}
+                    {selStation?.grid && ` · ${selStation.grid}`}
+                  </div>
+                  {selSpot && (
+                    <div className="cs-spot">
+                      {selSpot.band}
+                      {selSpot.mode ? ` ${selSpot.mode}` : ''}
+                      {selSpot.freqMhz ? ` · ${selSpot.freqMhz.toFixed(4).replace(/\.?0+$/, '')} MHz` : ''}
+                      {' · '}
+                      {selSpot.ageSecs < 60
+                        ? `${selSpot.ageSecs}s ago`
+                        : `${Math.round(selSpot.ageSecs / 60)}m ago`}
+                      {selSpot.heardMe && ' · heard YOU'}
+                      {selSpot.approx && ' · ~location'}
+                    </div>
+                  )}
+                  {selStation && (
+                    <div className="cs-spot">
+                      decoded here · {selStation.snr} dB
+                      {selStation.worked ? ' · worked before' : ''}
+                    </div>
+                  )}
+                  {onWorkSpot && (selSpot || selDxped) && (
+                    <button
+                      type="button"
+                      className="cs-work"
+                      onClick={() =>
+                        selSpot
+                          ? onWorkSpot({
+                              call: selSpot.call,
+                              band: selSpot.band,
+                              mode: selSpot.mode ?? null,
+                              freqMhz: selSpot.freqMhz ?? null,
+                            })
+                          : selDxped &&
+                            onWorkSpot({
+                              call: selDxped.call,
+                              band: selDxped.band,
+                              mode: dxpedWorkMode(selDxped.modes),
+                              freqMhz: null,
+                            })
+                      }
+                      title="Rig jumps to this spot's band/mode/frequency; the right cockpit opens"
+                    >
+                      ▶ Work {selSpot ? selSpot.band : selDxped?.band}
+                      {selSpot?.freqMhz ? ` @ ${selSpot.freqMhz.toFixed(4).replace(/\.?0+$/, '')}` : ''}
+                    </button>
+                  )}
+                </section>
+              )}
               {selectedCall && pathPred && (
                 <section className="connect-path panel">
                   <h3>
@@ -192,15 +336,20 @@ export function ConnectView({
                   {pathOpen.length === 0 ? (
                     <p className="cp-none">No HF band modelled workable on this path right now.</p>
                   ) : (
-                    <ul className="connect-path-list">
-                      {pathOpen.slice(0, 6).map((b) => (
-                        <li key={b.band}>
-                          <span className="cp-band">{b.band}</span>
-                          <span className={`cp-work w-${b.workability.toLowerCase()}`}>{b.workability}</span>
-                          <span className="cp-win">{b.window}</span>
-                        </li>
-                      ))}
-                    </ul>
+                    <>
+                      <ul className="connect-path-list">
+                        {pathOpen.slice(0, 6).map((b) => (
+                          <li key={b.band}>
+                            <span className="cp-band">{b.band}</span>
+                            <span className={`cp-work w-${b.workability.toLowerCase()}`}>{b.workability}</span>
+                            <span className="cp-win">{b.window}</span>
+                          </li>
+                        ))}
+                      </ul>
+                      {/* WHEN can I work them — the 24 h band×hour heatmap (the data
+                          was always in the prediction; now it's visible). */}
+                      <LikelihoodHeatmap outlook={pathOpen.slice(0, 6)} />
+                    </>
                   )}
                 </section>
               )}
@@ -216,21 +365,54 @@ export function ConnectView({
                     </p>
                     <ul className="getout-list">
                       {getout.reports.slice(0, 6).map((r) => (
-                        <li key={r.call}>
+                        <li
+                          key={r.call}
+                          className="go-clickable"
+                          onClick={() => onSelectCall(r.call)}
+                          title={`Select ${r.call} on the map`}
+                        >
                           <span className="go-call">{r.call}</span>
                           <span className="go-where">
                             {r.octant} {r.km.toLocaleString()} km
                           </span>
                           <span className="go-band">{r.band}</span>
+                          {/* The receiver-side SNR — how strong YOU are at their end. */}
+                          <span className="go-snr">{r.snr != null ? `${r.snr} dB` : ''}</span>
                         </li>
                       ))}
                     </ul>
                   </>
                 )}
               </section>
-              <OpeningStrip openings={prop.openings} />
+              {!selectedCall && prop.dxpeditions.workableNow.length > 0 && (
+                <section className="connect-worknow panel">
+                  <h3>DXpeditions — work now</h3>
+                  {prop.dxpeditions.workableNow.slice(0, 3).map((c, i) => (
+                    <WorkNowCard
+                      key={`${c.call}-${c.band}-${i}`}
+                      card={c}
+                      onWork={
+                        onWorkSpot
+                          ? (card) =>
+                              onWorkSpot({
+                                call: card.call,
+                                band: card.band,
+                                mode: dxpedWorkMode(card.modes),
+                                freqMhz: null,
+                              })
+                          : undefined
+                      }
+                    />
+                  ))}
+                </section>
+              )}
+              <OpeningStrip openings={prop.openings} onBandClick={toggleFocusBand} />
               <SpaceWxGauges wx={prop.spaceWx} gloss={!expert} />
-              <BandAdvisor bands={prop.advisory.bands} />
+              <BandAdvisor
+                bands={prop.advisory.bands}
+                onBandClick={toggleFocusBand}
+                activeBand={focusBand}
+              />
             </>
           )}
         </aside>

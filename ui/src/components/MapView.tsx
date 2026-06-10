@@ -55,6 +55,9 @@ interface Props {
   /** Double-click-to-work a live spot / DXpedition marker: the app's atomic
    * work path (rig → band+mode+freq, cockpit opens). Omitted = gesture off. */
   onWorkSpot?: (t: { call: string; band: string; mode: string | null; freqMhz: number | null }) => void
+  /** Band focus (from the advisor/openings rail): the heat layer + spot dots
+   * highlight THIS band and recede the rest — "where IS this opening?". */
+  focusBand?: string | null
 }
 
 const INTENT_PRESETS: Record<
@@ -62,13 +65,13 @@ const INTENT_PRESETS: Record<
   { kind: Projection; colorBy: 'need' | 'snr'; layers: Partial<Record<LayerKey, boolean>> }
 > = {
   // Chase DX: spinnable globe, need-colored, openings + DXpeditions + rings on.
-  dx: { kind: 'globe', colorBy: 'need', layers: { dxped: true, rings: true } },
+  dx: { kind: 'globe', colorBy: 'need', layers: { dxped: true, rings: true, heat: true } },
   // POTA/SOTA: world view, need-colored activators; de-emphasize rings.
-  pota: { kind: 'world', colorBy: 'need', layers: { dxped: false, rings: false } },
+  pota: { kind: 'world', colorBy: 'need', layers: { dxped: false, rings: false, heat: false } },
   // Ragchew: globe, who-can-I-hear (signal), calm — dxped off.
-  casual: { kind: 'globe', colorBy: 'snr', layers: { dxped: false, rings: true } },
-  // 6m/VHF: globe, signal-colored, rings on.
-  vhf: { kind: 'globe', colorBy: 'snr', layers: { dxped: false, rings: true } },
+  casual: { kind: 'globe', colorBy: 'snr', layers: { dxped: false, rings: true, heat: false } },
+  // 6m/VHF: heat ON — visualizing the Es/F2 opening footprint IS this intent.
+  vhf: { kind: 'globe', colorBy: 'snr', layers: { dxped: false, rings: true, heat: true } },
 }
 
 /** Need tier → a dot color (matches the decode/roster palette). `null` = no
@@ -100,6 +103,7 @@ type LayerKey =
   | 'coast'
   | 'grid'
   | 'rings'
+  | 'heat'
   | 'liveSpots'
   | 'stations'
   | 'paths'
@@ -117,6 +121,7 @@ const DEFAULT_LAYERS: Record<LayerKey, Layer> = {
   coast: { label: 'Coastlines', visible: true, opacity: 0.85 },
   grid: { label: 'Grid (20°×10°)', visible: true, opacity: 0.5 },
   rings: { label: 'Range rings', visible: true, opacity: 0.55 },
+  heat: { label: 'Band heat (openings)', visible: true, opacity: 0.55 },
   liveSpots: { label: 'Live spots (cluster/RBN)', visible: true, opacity: 0.9 },
   stations: { label: 'My decodes', visible: true, opacity: 1 },
   paths: { label: 'Selected path', visible: true, opacity: 1 },
@@ -157,6 +162,16 @@ const BAND_COLOR: Record<string, string> = {
 const bandColor = (b: string): string => BAND_COLOR[b] ?? '#8aa0b0'
 const GETTING_OUT = '#3ddc6a' // a station that heard ME
 
+/** #rrggbb → rgba(r,g,b,0) — a zero-alpha gradient end stop of the SAME hue.
+ * 'transparent' is rgba(0,0,0,0): fine under 'lighter' compositing but it dirties
+ * the falloff to gray if the composite mode ever changes. Same-hue is robust. */
+function fadeStop(hex: string): string {
+  const m = /^#([0-9a-f]{6})$/i.exec(hex.trim())
+  if (!m) return 'rgba(0,0,0,0)'
+  const n = parseInt(m[1], 16)
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, 0)`
+}
+
 function cssVar(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || '#888'
 }
@@ -177,6 +192,7 @@ export function MapView({
   expert = true,
   intent,
   onWorkSpot,
+  focusBand = null,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
@@ -188,6 +204,15 @@ export function MapView({
   const [hover, setHover] = useState<{ x: number; y: number; text: string } | null>(null)
   // Last pointer-up (time+pos) — lets pointer-up swallow the 2nd click of a dblclick.
   const lastUpRef = useRef<{ t: number; x: number; y: number } | null>(null)
+  // Reused offscreen canvas for the heat layer — allocating one per draw frame
+  // would churn GC for nothing.
+  const heatCanvasRef = useRef<HTMLCanvasElement | null>(null)
+  // Opening-pulse tick: the main nowMs clock is a 60 s greyline tick, far too
+  // coarse to animate the heat pulse (it froze the sine). Run a 1 s tick ONLY
+  // while the heat layer is on AND an opening is actually detected — an idle map
+  // never redraws for a pulse nobody can see.
+  const [pulseTick, setPulseTick] = useState(0)
+  const hasOpening = (prop?.openings?.length ?? 0) > 0
   // Interactive view: zoom (wheel), Globe rotation + flat-map pan (drag). Reset
   // when the projection changes (rotation/pan don't carry across projections).
   const DEFAULT_VIEW: MapView3 = { zoom: 1, rotate: null, panX: 0, panY: 0 }
@@ -223,6 +248,13 @@ export function MapView({
     const id = setInterval(() => setNowMs(Date.now()), 60_000)
     return () => clearInterval(id)
   }, [])
+  // The 1 s opening-pulse tick — only while the heat layer is on and an opening
+  // is live (an idle map never redraws for an animation nobody can see).
+  useEffect(() => {
+    if (!layers.heat.visible || !hasOpening) return
+    const id = setInterval(() => setPulseTick((t) => t + 1), 1_000)
+    return () => clearInterval(id)
+  }, [layers.heat.visible, hasOpening])
   // Apply the Connect intent preset (soft) whenever it changes — sets projection,
   // default color-by, and which optional layers are on. The user can still tweak
   // any control afterwards; switching intent re-applies.
@@ -571,6 +603,51 @@ export function MapView({
       ctx.globalAlpha = 1
     }
 
+    // BAND HEAT — the HamClock-class aura layer: kernel-density glow built from the
+    // SAME live spots (real evidence, not a model), splatted at 1/3 resolution with
+    // radial gradients in each spot's band color and composited additively, so
+    // WHERE a band is open reads as a colored aura at a glance. Bands with a
+    // detected OPENING pulse (animated by the dedicated 1 s pulse tick). With a focus band
+    // only that band's heat draws; spot dots elsewhere also recede (below).
+    if (layers.heat.visible && placedSpots.length > 0) {
+      const hw = Math.max(1, Math.floor(w / 3))
+      const hh = Math.max(1, Math.floor(h / 3))
+      const off = heatCanvasRef.current ?? (heatCanvasRef.current = document.createElement('canvas'))
+      if (off.width !== hw) off.width = hw
+      if (off.height !== hh) off.height = hh
+      const octx = off.getContext('2d')
+      if (octx) {
+        octx.clearRect(0, 0, hw, hh)
+        octx.globalCompositeOperation = 'lighter'
+        const openBands = new Set((prop?.openings ?? []).map((o) => o.band))
+        // Live time, NOT nowMs (the 60 s greyline tick — it froze the sine). The
+        // 1 s pulseTick effect forces the redraws that make this animate.
+        const pulse = 0.7 + 0.3 * Math.sin(Date.now() / 450)
+        for (const { sp, xy } of placedSpots) {
+          if (focusBand && sp.band !== focusBand) continue
+          const ageMin = sp.ageSecs / 60
+          const fade = ageMin < 10 ? 1 : ageMin < 30 ? 0.55 : 0.25
+          const boost = openBands.has(sp.band) ? pulse : 0.55
+          const r = (sp.heardMe ? 46 : 34) / 3
+          const x = xy[0] / 3
+          const y = xy[1] / 3
+          const grad = octx.createRadialGradient(x, y, 0, x, y, r)
+          const col = sp.heardMe ? GETTING_OUT : bandColor(sp.band)
+          grad.addColorStop(0, col)
+          grad.addColorStop(1, fadeStop(col))
+          octx.globalAlpha = 0.16 * fade * boost * (sp.approx ? 0.6 : 1)
+          octx.fillStyle = grad
+          octx.beginPath()
+          octx.arc(x, y, r, 0, Math.PI * 2)
+          octx.fill()
+        }
+        ctx.globalAlpha = layers.heat.opacity
+        ctx.imageSmoothingEnabled = true
+        ctx.drawImage(off, 0, 0, w, h)
+        ctx.globalAlpha = 1
+      }
+    }
+
     // Live spots — the cluster/RBN/PSKR firehose + own decodes, placed by grid or
     // DXCC centroid. Colored by band; green = a station that heard ME ("getting
     // out"); faded by age; centroid-placed (approx) spots dimmer. This is what
@@ -580,7 +657,9 @@ export function MapView({
       for (const { sp, xy: p } of placedSpots) {
         const ageMin = sp.ageSecs / 60
         const fade = ageMin < 10 ? 1 : ageMin < 30 ? 0.6 : 0.35
-        ctx.globalAlpha = layers.liveSpots.opacity * fade * (sp.approx ? 0.7 : 1)
+        // Band focus: the focused band stays bright; everything else recedes.
+        const focusF = focusBand ? (sp.band === focusBand ? 1 : 0.15) : 1
+        ctx.globalAlpha = layers.liveSpots.opacity * fade * (sp.approx ? 0.7 : 1) * focusF
         ctx.beginPath()
         ctx.arc(p[0], p[1], sp.heardMe ? 3 : 2.2, 0, Math.PI * 2)
         ctx.fillStyle = sp.heardMe ? GETTING_OUT : bandColor(sp.band)
@@ -684,9 +763,13 @@ export function MapView({
       ctx.textBaseline = 'middle'
       for (const { card, xy: p } of placedDxped) {
         const nm = needMeta(card.need)
+        // Same band-focus rule as the spot dots — a 15 m dxped glyph must recede
+        // when the operator focuses 20 m, or the focus reads as broken.
+        ctx.globalAlpha = focusBand ? (card.band === focusBand ? 1 : 0.15) : 1
         ctx.fillStyle = cssVar(nm.cssVar)
         ctx.fillText(nm.glyph, p[0], p[1])
       }
+      ctx.globalAlpha = 1
     }
 
     // Own station marker (on top).
@@ -701,7 +784,7 @@ export function MapView({
     }
     // theme is a draw dependency so colors refresh on theme switch.
     void theme
-  }, [me, kind, colorBy, pathMode, view, size, layers, placed, placedSpots, placedDxped, mufGrid, auroraPts, reliefReady, prop, selStation, selectedCall, needByCall, theme, nowMs])
+  }, [me, kind, colorBy, pathMode, view, size, layers, placed, placedSpots, placedDxped, mufGrid, auroraPts, reliefReady, prop, selStation, selectedCall, needByCall, theme, nowMs, focusBand, pulseTick])
 
   if (!me) {
     return (
@@ -999,6 +1082,10 @@ function MapLegend() {
       <span className="map-legend-sep" />
       <span>opening</span>
       <span className="map-legend-bar" style={{ background: `linear-gradient(90deg, ${stops})` }} />
+      <span className="map-legend-sep" />
+      <span title="Colored auras = live spot density per band; pulsing = a detected opening">
+        heat = band activity
+      </span>
     </div>
   )
 }
