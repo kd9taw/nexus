@@ -42,7 +42,12 @@ const WPM_MAX = 50
  * the rig to CW (the rig-mode policy, wired in App). No contest scoring — by design.
  */
 export function CwCockpit({ snap, theme, pendingWork, onConsumeWork, onSnap }: Props) {
-  const [wpm, setWpm] = useState(25)
+  // Source of truth = the engine's actual keyer speed (survives navigation; the
+  // old hard-coded 25 silently re-keyed at the wrong speed after a nav round-trip).
+  const [wpm, setWpm] = useState(() => snap.radio.cwWpm ?? 25)
+  useEffect(() => {
+    if (snap.radio.cwWpm != null) setWpm(snap.radio.cwWpm)
+  }, [snap.radio.cwWpm])
   // Initialize the keyer toggle from the engine's ACTUAL setting (the snapshot is the source
   // of truth) — not a hard-coded 'cat'. A stale local default showed CAT while the backend was
   // on Soundcard, so CW silently went to USB (Soundcard keying = rig in SSB) with no clue why.

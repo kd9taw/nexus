@@ -32,7 +32,6 @@ pub mod opening;
 pub mod pota;
 pub mod predict;
 pub mod pskr_mqtt;
-pub mod rarity;
 pub mod space_wx;
 pub mod spot;
 

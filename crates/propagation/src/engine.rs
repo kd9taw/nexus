@@ -257,7 +257,9 @@ fn confidence_word(score: f32) -> Confidence {
 pub fn demo() -> PropagationSnapshot {
     // Fixed June-midday UTC timestamp (plausible Es; keeps time-of-day stable).
     const NOW: i64 = 1_718_886_000; // ~2024-06-20 13:00 UTC
-    let me_call = "KD9TAW";
+    // A reserved-style placeholder — the demo scene must never collide with a
+    // real operator's callsign (the actual KD9TAW exists and uses this app).
+    let me_call = "N0CALL";
     let me_grid = "EN52";
 
     let mut spots: Vec<PathSpot> = Vec::new();

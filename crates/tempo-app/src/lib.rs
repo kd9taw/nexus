@@ -88,6 +88,7 @@ impl AppState {
                 cat_ok: None,
                 cat_detail: String::new(),
                 cw_keyer: "cat".to_string(),
+                cw_wpm: 25,
                 audio_error: None,
                 tx_even: true,
                 rx_offset_hz: 1500.0,

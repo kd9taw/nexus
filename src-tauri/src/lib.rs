@@ -875,6 +875,34 @@ fn set_settings(
         eng.snapshot()
     }; // release the engine lock before spawning feed threads
 
+    // The live feeds (cluster telnet login, PSKR MQTT topic filters) are BOUND to
+    // the callsign — a changed call tears them down, clears old-call buffers, and
+    // restarts them under the new call (background drain; ~3 s blackout).
+    let prev_call = PREV_FEED_CALL
+        .lock()
+        .map(|c| c.clone())
+        .unwrap_or_default();
+    let call_changed = !prev_call.is_empty()
+        && !mycall.trim().is_empty()
+        && prev_call.to_uppercase() != mycall.trim().to_uppercase();
+    if let Ok(mut c) = PREV_FEED_CALL.lock() {
+        *c = mycall.trim().to_string();
+    }
+    if call_changed {
+        restart_live_feeds(
+            spots.inner().clone(),
+            live_paths.inner().clone(),
+            region_paths.0.clone(),
+            health.inner().clone(),
+            cluster_enabled,
+            cluster_host.clone(),
+            mycall.clone(),
+            mygrid.clone(),
+            opening_regional,
+        );
+        return Ok(snap);
+    }
+
     if cluster_enabled {
         start_cluster_feed(spots.inner(), &cluster_host, &mycall, health.inner());
     }
@@ -883,6 +911,64 @@ fn set_settings(
         start_pskr_region_feed(region_paths.inner(), &mycall, &mygrid);
     }
     Ok(snap)
+}
+
+/// Tear down the callsign-bound live feeds (cluster telnet + PSKR MQTT + region)
+/// and clear their buffers, so `start_*` calls (which the caller issues next, via
+/// the normal set_settings tail or app flow) reconnect under the NEW callsign.
+/// Runs the slow drain on a background thread: the stop flags are polled by the
+/// feed loops within ≤2 s; the start latches reset after the drain so the
+/// freshly-started threads can't race the dying ones for the latch.
+/// The callsign the live feeds were last started under (detects renames).
+static PREV_FEED_CALL: Mutex<String> = Mutex::new(String::new());
+
+#[allow(clippy::too_many_arguments)]
+fn restart_live_feeds(
+    spots: SharedSpots,
+    live_paths: SharedLivePaths,
+    region_paths: Arc<Mutex<propagation::LiveSpots>>,
+    health: SharedHealth,
+    cluster_enabled: bool,
+    cluster_host: String,
+    mycall: String,
+    mygrid: String,
+    opening_regional: bool,
+) {
+    use std::sync::atomic::Ordering::SeqCst;
+    CLUSTER_STOP.store(true, SeqCst);
+    PSKR_STOP.store(true, SeqCst);
+    std::thread::spawn(move || {
+        // Feed loops observe the stop flags within ~2 s (read timeouts); give them 3.
+        std::thread::sleep(std::time::Duration::from_secs(3));
+        // Old-call data must not linger on the boards/map.
+        if let Ok(mut b) = spots.lock() {
+            *b = tempo_net::cluster::SpotBuffer::default();
+        }
+        if let Ok(mut b) = live_paths.lock() {
+            *b = propagation::LiveSpots::default();
+        }
+        if let Ok(mut b) = region_paths.lock() {
+            *b = propagation::LiveSpots::new(propagation::REGION_SPOT_CAP);
+        }
+        health.cluster_last.store(0, SeqCst);
+        health.pskr_last_event.store(0, SeqCst);
+        health.cluster_connected.store(false, SeqCst);
+        health.pskr_connected.store(false, SeqCst);
+        // Re-arm: clear stops + release the once-latches, then start fresh threads
+        // under the NEW callsign right here (the command already returned).
+        CLUSTER_STOP.store(false, SeqCst);
+        PSKR_STOP.store(false, SeqCst);
+        CLUSTER_STARTED.store(false, SeqCst);
+        PSKR_STARTED.store(false, SeqCst);
+        PSKR_REGION_STARTED.store(false, SeqCst);
+        if cluster_enabled {
+            start_cluster_feed(&spots, &cluster_host, &mycall, &health);
+        }
+        start_pskr_feed(&live_paths, &mycall, &health);
+        if opening_regional {
+            start_pskr_region_feed(&SharedRegionPaths(region_paths), &mycall, &mygrid);
+        }
+    });
 }
 
 /// Export the Field Day log as text in `format` ("cabrillo" | "adif"). Errors if
@@ -2949,6 +3035,11 @@ pub fn run() {
     if region_enabled {
         start_pskr_region_feed(&region_paths, &cluster_call, &region_grid);
     }
+    // Record the call the feeds were started under, so a later Settings rename
+    // knows to tear them down and reconnect (topics/login are call-bound).
+    if let Ok(mut c) = PREV_FEED_CALL.lock() {
+        *c = cluster_call.trim().to_string();
+    }
     // Feed the live DXpedition layer the ClubLog key (most-wanted ranks). Pushed,
     // not pulled — keeps the propagation crate decoupled from settings IO.
     if let Ok(eng) = engine.lock() {
@@ -2986,9 +3077,23 @@ pub fn run() {
     {
         let radio_engine = engine.clone();
         std::thread::spawn(move || {
-            if let Err(e) = tempo_audio::service::run_radio(radio_engine, radio_cfg) {
-                eprintln!("tempo: radio loop stopped: {e}");
-            }
+            // The radio loop is the heartbeat — if it dies (error OR panic), TX/RX
+            // is silently dead. Surface it loudly in the UI (the audio_error lane
+            // renders as a persistent banner) instead of an invisible eprintln.
+            let eng_for_report = radio_engine.clone();
+            let eng_for_loop = radio_engine;
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+                tempo_audio::service::run_radio(eng_for_loop, radio_cfg)
+            }));
+            let msg = match result {
+                Ok(Ok(())) => "Radio engine stopped unexpectedly — restart Nexus.".to_string(),
+                Ok(Err(e)) => format!("RADIO ENGINE STOPPED — TX/RX is dead until you restart Nexus ({e})"),
+                Err(_) => "RADIO ENGINE CRASHED — TX/RX is dead until you restart Nexus.".to_string(),
+            };
+            eprintln!("tempo: {msg}");
+            let _ = eng_for_report
+                .lock()
+                .map(|mut eng| eng.set_audio_error(Some(msg)));
         });
     }
 

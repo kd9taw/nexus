@@ -228,6 +228,10 @@ pub struct RadioStatus {
     /// desync made CW land on USB when the persisted keyer was Soundcard.
     #[serde(default)]
     pub cw_keyer: String,
+    /// The keyer speed (WPM) the engine is actually using — round-tripped so the CW
+    /// cockpit's slider doesn't silently reset to 25 on every mount.
+    #[serde(default)]
+    pub cw_wpm: u32,
     /// Set when the sound-card input/output failed to open, so the UI can show
     /// why the waterfall is blank instead of failing silently.
     #[serde(default)]

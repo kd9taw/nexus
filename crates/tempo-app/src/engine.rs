@@ -2107,6 +2107,7 @@ impl Engine {
         s.radio.time_sync_ok = self.time_sync_ok();
         s.radio.cat_ok = self.cat_status.0;
         s.radio.cat_detail = self.cat_status.1.clone();
+        s.radio.cw_wpm = self.cw_wpm;
         s.radio.cw_keyer = match self.settings.cw_keyer {
             crate::settings::CwKeyerBackend::Cat => "cat",
             crate::settings::CwKeyerBackend::Soundcard => "soundcard",
