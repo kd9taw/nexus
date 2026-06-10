@@ -1153,9 +1153,16 @@ impl Transport {
 /// "rigctld answered RPRT 0 but the rig is still in the old mode" (a Hamlib/rig no-op). The
 /// note is surfaced into the CAT status so the operator can see it on the rig.
 fn mode_set_note(rig: &mut Rig, md: &str) -> String {
+    // Read the rig's TRUE mode straight off the wire (raw Yaesu `MD0;` via rigctld send_cmd),
+    // bypassing Hamlib's mode cache — `read_mode` (`m`) can report the commanded mode even
+    // when the rig never moved (which fooled us once). The raw reply (e.g. "MD02;" = USB,
+    // "MD0C;" = DATA-U on Yaesu) is the ground truth of what the radio is actually in.
+    if let Some(raw) = rig.send_raw("MD0;") {
+        return format!("sent {md} → rig raw mode {raw}");
+    }
     match rig.read_mode() {
         Some(m) if m.eq_ignore_ascii_case(md) => format!("rig confirmed in {md}"),
-        Some(m) => format!("set {md} but rig is still in {m} — rigctld accepted it, rig didn't change"),
+        Some(m) => format!("set {md} but rig reports {m}"),
         None => format!("rig set to {md} (mode read-back unavailable)"),
     }
 }

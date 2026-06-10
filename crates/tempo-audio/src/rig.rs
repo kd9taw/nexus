@@ -302,6 +302,24 @@ impl Rig {
             .map(|s| s.to_string())
     }
 
+    /// Send a RAW CAT command string straight to the rig via rigctld's `w` (send_cmd) and
+    /// return the rig's reply. This BYPASSES Hamlib's mode abstraction AND its mode cache —
+    /// `read_mode` (the `m` command) can return the mode Hamlib *thinks* it set even when the
+    /// rig never moved, whereas e.g. raw Yaesu `MD0;` returns the rig's TRUE current mode code
+    /// off the wire. Diagnostic-only; `None` if not a CAT rig or no reply.
+    pub fn send_raw(&mut self, raw: &str) -> Option<String> {
+        if self.control.is_none() {
+            return None;
+        }
+        let reply = self.command(&format!("w {raw}\n")).ok()?;
+        let trimmed = reply.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    }
+
     // --- the all-mode (phone/CW) control surface. All CAT-only (no-op otherwise). ---
 
     /// Set split on/off and which VFO transmits (DX pileups). `tx_vfo` e.g. "VFOB".
