@@ -60,7 +60,6 @@ import { PotaSotaView, type OtaSpotClickArg } from './components/PotaSotaView'
 import { DxpeditionsView } from './components/DxpeditionsView'
 import { ConnectView } from './components/ConnectView'
 import {
-  getLog,
   getPropagation,
   getFeedHealth,
   getNeedAlerts,
