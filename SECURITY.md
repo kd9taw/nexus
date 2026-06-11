@@ -87,7 +87,7 @@ the operator's own LAN. The surfaces most relevant to a security report:
 
 - **Settings file** — operator/station settings are persisted as plain JSON.
   On Windows this is `%APPDATA%\tempo\settings.json` (on Unix,
-  `$XDG_CONFIG_HOME/nexus/settings.json` or `~/.config/nexus/settings.json`).
+  `$XDG_CONFIG_HOME/tempo/settings.json` or `~/.config/tempo/settings.json`).
   It is not encrypted and is readable by the local user account; do not treat
   it as a secret store. Credentials are not present here — see above.
 
