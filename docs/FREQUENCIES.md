@@ -1,8 +1,8 @@
-# Tempo frequency plan
+# Nexus frequency plan
 
-Tempo uses a **new waveform** (FT1 / DX1), so it must **not** transmit on the
+Nexus uses a **new waveform** (FT1 / DX1 — the Tempo chat layer protocols), so it must **not** transmit on the
 established FT8 / FT4 / JS8 / WSPR / PSK watering holes — it would QRM them and
-they would QRM it. Tempo therefore ships its own **calling frequencies**, chosen
+they would QRM it. Nexus therefore ships its own **calling frequencies**, chosen
 to sit clear of every existing narrowband convention while staying inside the
 operator's legal sub-band.
 
@@ -10,15 +10,15 @@ operator's legal sub-band.
 > starting point to coordinate with the digital community. In the app you can pick
 > any band with one tap **or enter any frequency manually** (TopBar and Settings).
 > New modes that squatted on existing watering holes caused real friction, so
-> community buy-in matters.
+> community buy-in matters. Nexus deliberately avoids every established watering hole.
 
 ## How the frequencies were chosen
 
 - **HF — "upper shoulder of the digital cluster."** On each band the dense block
-  (FT8 → JT65 → JS8 → FT4) runs from the FT8 dial up a few kHz. Tempo sits just
+  (FT8 → JT65 → JS8 → FT4) runs from the FT8 dial up a few kHz. Nexus sits just
   **above** that block and **below** the fragile ~200 Hz WSPR window, inside the
   IARU narrowband-modes segment. This is exactly how JS8 was sited relative to
-  FT8 — Tempo takes the next clear notch up.
+  FT8 — Nexus takes the next clear notch up.
 - **VHF/UHF — two tracks.** A **USB weak-signal** calling frequency in the
   bottom-of-band weak-signal segment (for all-mode rigs, like VHF FT8), **and** an
   **FM-simplex data** channel in a band-plan digital/experimental segment (for the
@@ -28,14 +28,14 @@ operator's legal sub-band.
 
 ## Verification
 
-Tempo is USB with ~1500 Hz audio, so the **emitted RF sits ~1.5 kHz above the
+Nexus is USB with ~1500 Hz audio, so the **emitted RF sits ~1.5 kHz above the
 dial**. Every frequency below was checked, on the *emission*, to be:
 
 1. **Inside US General-class privileges** — the General data sub-bands on
    80–10 m, full privileges on 160 m / 6 m, and band-wide data above 50 MHz. None
    land in Extra-only slivers or phone segments. (General is the reference; Extra
    is a superset. There is no Technician HF data access — 10 m and 6 m are the
-   Technician-accessible Tempo frequencies.)
+   Technician-accessible Nexus frequencies.)
 2. **Clear of CW** — above the CW portion of each band and clear of the QRP / SKCC
    / FISTS CW calling frequencies.
 
@@ -45,7 +45,7 @@ All dials are USB suppressed-carrier; the **emission sits ~1.5 kHz higher**, and
 every gap below is measured to that *emission*. General data sub-band edges shown
 where relevant.
 
-| Band | Tempo dial (MHz) | Nearest watering holes / edges (gap to emission) | Notes |
+| Band | Nexus dial (MHz) | Nearest watering holes / edges (gap to emission) | Notes |
 |---|---|---|---|
 | 160 m | **1.8460** | above the whole FT8/JS8 cluster (≤1.843); JS8 1.842 (+5.5 k); PSK31 1.838 | tight band — keep audio low |
 | 80 m | **3.5935** | PSK31/RTTY hole 3.580–3.590 (+5 k); data edge 3.600 (−5 k); FT8/FT4 3.573/3.575 | between the RTTY hole and the band/phone edge |
@@ -59,7 +59,7 @@ where relevant.
 
 ## VHF / UHF
 
-| Band | Tempo freq (MHz) | Mode | Sits clear of | Notes |
+| Band | Nexus freq (MHz) | Mode | Sits clear of | Notes |
 |---|---|---|---|---|
 | 6 m | **50.3450** | USB | FT8/JS8/MSK cluster (ends ~50.328), 50.620 | **Technician-OK** |
 | 2 m | **144.2350** | USB | SSB call 144.200, FT8 144.174, beacons 144.275+ | weak-signal segment |
@@ -72,7 +72,7 @@ where relevant.
 ## Caveats
 
 - **Proposed + editable.** Coordinate with the community before treating any of
-  these as "the" Tempo frequency; the app lets you override any dial.
+  these as "the" Nexus frequency; the app lets you override any dial.
 - **Dial vs emission.** All HF/USB values are suppressed-carrier *dial*
   frequencies; the emission is ~1.5 kHz higher. On tight bands (160 m, 17 m, 12 m)
   verify your audio offset keeps the signal inside the segment and below the band
@@ -88,7 +88,7 @@ where relevant.
   33 cm / 23 cm (sparse; easy to add later).
 - **Cramped bands.** 17 m and 12 m have data windows only ~42 / 40 kHz wide with
   FT8/FT4/JS8/WSPR packed at the top, so there is **no clean ≥2–3 kHz notch**: the
-  Tempo dials (18.0955 / 24.9115) sit in the small gap below the FT8 cluster and
+  Nexus dials (18.0955 / 24.9115) sit in the small gap below the FT8 cluster and
   above the CW calling spots (QRP CW 18.096, SKCC 24.910), leaving only ~1–3 kHz on
   one side. Use **DX1's ~50 Hz** variant on these bands — a ~150 Hz FT1 signal does
   not fit cleanly — and listen before transmitting.
@@ -103,9 +103,9 @@ where relevant.
 - VHF/UHF segments (6 m / 2 m / 1.25 m / 70 cm): ARRL National Band Plan
   (arrl.org/band-plan). 60 m channels: ARRL 60 m channel allocation.
 
-## Changing frequency in Tempo
+## Changing frequency in Nexus
 
 - **Band selector** (TopBar and Settings): grouped HF / VHF / UHF channel list —
-  one tap jumps the rig to that band's Tempo frequency and mode.
-- **Manual entry:** type any dial frequency (MHz) and pick USB/FM; Tempo retunes
+  one tap jumps the rig to that band's Nexus frequency and mode.
+- **Manual entry:** type any dial frequency (MHz) and pick USB/FM; Nexus retunes
   the rig live (via `rigctld`/CAT) and labels the band automatically.

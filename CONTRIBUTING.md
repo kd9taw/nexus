@@ -1,30 +1,35 @@
-# Contributing to Tempo
+# Contributing to Nexus
 
-Thanks for your interest in Tempo — a chat-first HF text-messaging app for the
-off-grid / preparedness ham community. Contributions of all kinds are welcome:
-code, documentation, bug reports, and especially **real on-air decode-rate
-data** (more on that below).
+Thanks for your interest in Nexus — an all-mode amateur radio operations center
+(FT8/FT4 digital with WSJT-X parity, CW, SSB phone, propagation intelligence,
+logging/awards, POTA/SOTA, Field Day) that also carries the experimental Tempo
+FT1/DX1 chat layer. Contributions of all kinds are welcome: code,
+documentation, bug reports, and especially **real on-air decode-rate data from
+the FT1/DX1 tiers** (more on that below).
 
-Tempo is maintained by Seth McCallister (KD9TAW)
+Nexus is maintained by Seth McCallister (KD9TAW)
 &lt;kd9taw@protonmail.com&gt;. The canonical repo is
-<https://github.com/kd9taw/tempo>.
+<https://github.com/kd9taw/nexus>.
 
 ---
 
 ## What we value most
 
-Tempo's FT1 and DX1 waveforms are **validated by simulation only** — AWGN and
-fading sweeps. In simulation FT1 reaches its 50% decode threshold around
-**-15 dB** (AWGN), and DX1 around **-18.6 dB** with only a **~3.7 dB** fading
-penalty (versus 10+ dB for FT8-class coherent modes). These numbers have **not
-yet been confirmed on the air** — that is the project's hard remaining gate.
+The FT8/FT4 tier is in daily production use — it implements the WSJT-X
+protocol and is not what needs validation. The **FT1 and DX1 waveforms** are
+**validated by simulation only** — AWGN and fading sweeps. In simulation FT1
+reaches its 50% decode threshold around **-15 dB** (AWGN), and DX1 around
+**-18.6 dB** with only a **~3.7 dB** fading penalty (versus 10+ dB for
+FT8-class coherent modes). These numbers have **not yet been confirmed on the
+air** — that is the FT1/DX1 tier's hard remaining gate.
 
-So the single most useful thing you can contribute is **honest on-air
-observation**: decode rates, SNR/path notes, antenna/band/conditions, dupes,
-sequencer hiccups, and bug reports from real QSOs. Simulation tells us the
-modem *should* work; only operators can tell us whether it *does*. Please open
-issues with as much detail as you can — band, dial, mode/tier, distance,
-conditions, and what you saw versus what you expected.
+So the single most useful thing you can contribute for the FT1/DX1 tiers is
+**honest on-air observation**: decode rates, SNR/path notes,
+antenna/band/conditions, dupes, sequencer hiccups, and bug reports from real
+QSOs. Simulation tells us the modem *should* work; only operators can tell us
+whether it *does*. Please open issues with as much detail as you can — band,
+dial, mode/tier, distance, conditions, and what you saw versus what you
+expected.
 
 Published Windows binaries are **cross-compiled beta** builds. Treat them
 accordingly and report what breaks.
@@ -33,7 +38,7 @@ accordingly and report what breaks.
 
 ## How the project is organized
 
-Tempo is a Cargo workspace (Rust 2021) plus a Vite/React/TypeScript UI and a
+Nexus is a Cargo workspace (Rust 2021) plus a Vite/React/TypeScript UI and a
 Fortran/C/C++ modem. The workspace members (`Cargo.toml`) are:
 
 | Crate | Path | Responsibility |
@@ -83,9 +88,10 @@ change, and keep the boundary clean — `tempo-core` stays free of I/O,
 
 ### Rust workspace (modem + core + engine + net)
 
-`cargo test` builds and runs the headless test suite (modem, engine, net, and
-DX1 round-trips). Because `ft1-sys` compiles `libft1` via CMake, the Rust build
-needs the native modem toolchain available. On Debian/Ubuntu (or WSL2):
+`cargo test --workspace` builds and runs the headless test suite (modem,
+engine, net, and DX1 round-trips). Because `ft1-sys` compiles `libft1` via
+CMake, the Rust build needs the native modem toolchain available. On
+Debian/Ubuntu (or WSL2):
 
 ```sh
 sudo apt install gfortran cmake ninja-build libfftw3-dev libboost-dev pkg-config
@@ -97,7 +103,7 @@ Then, from the repo root:
 
 ```sh
 cargo build
-cargo test          # headless: modem + engine + net + DX1 round-trips
+cargo test --workspace   # headless: modem + engine + net + DX1 round-trips
 ```
 
 These tests run headless and do not require a sound card or radio.
@@ -107,6 +113,12 @@ These tests run headless and do not require a sound card or radio.
 ```sh
 npm --prefix ui install
 npm --prefix ui run build   # tsc -b && vite build
+```
+
+Type-check and run the UI test suite:
+
+```sh
+cd ui && npx tsc --noEmit && npx vitest run
 ```
 
 `npm --prefix ui run dev` starts the Vite dev server for UI work.
@@ -149,7 +161,7 @@ Tauri bundle resource so the installer ships CAT control offline) and
   ```sh
   cargo fmt --all
   cargo clippy --all-targets
-  cargo test
+  cargo test --workspace
   ```
 
 - **Keep Clippy clean.** `cargo clippy --all-targets` is currently warning-free;
@@ -167,8 +179,10 @@ Tauri bundle resource so the installer ships CAT control offline) and
 1. Fork (or branch off `main` if you have push access) — don't commit
    directly to `main`.
 2. Make your change on a topic branch, with focused commits.
-3. Run `cargo fmt --all`, `cargo clippy --all-targets`, and `cargo test`
-   locally (plus `npm --prefix ui run build` if you touched the UI).
+3. Run `cargo fmt --all`, `cargo clippy --all-targets`, and
+   `cargo test --workspace` locally; if you touched the UI, also run
+   `cd ui && npx tsc --noEmit && npx vitest run`; for a cross-compiled Windows
+   build, run `./scripts/build-windows-cross.sh`.
 4. Open a pull request against `main` describing **what** changed and **why**.
    For modem/waveform or protocol changes, say how you validated it (and call
    out clearly if it's simulation-only).
@@ -182,11 +196,11 @@ its own.
 
 ## License & Developer Certificate of Origin
 
-Tempo is licensed under **GPL-3.0-or-later** (full text in
+Nexus is licensed under **GPL-3.0-or-later** (full text in
 [`COPYING`](COPYING)). By contributing, you agree that your contributions are
 licensed under **GPL-3.0-or-later**.
 
-Tempo derives from WSJT-X (Joe Taylor K1JT and the WSJT Development Group,
+Nexus derives from WSJT-X (Joe Taylor K1JT and the WSJT Development Group,
 GPLv3) and bundles/links other free software — see [`NOTICE`](NOTICE) for the
 heritage and third-party licenses. Keep new dependencies license-compatible
 with GPLv3.
@@ -203,5 +217,5 @@ have the right to submit the contribution under the project's license.
 
 ---
 
-Welcome aboard, and 73. The fastest way to help Tempo cross its remaining gate
-is to get it on the air and tell us what you hear.
+Welcome aboard, and 73. The fastest way to help Nexus cross the FT1/DX1
+remaining gate is to get it on the air and tell us what you hear.

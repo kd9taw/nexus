@@ -1,11 +1,96 @@
 # Changelog
 
-All notable changes to Tempo are documented in this file.
+All notable changes to Nexus (formerly Tempo) are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [Unreleased] — the Nexus transformation
+
+**Tempo became Nexus.** What began as a chat-first app for the FT1/DX1 waveforms
+is now an **all-mode amateur radio operations center**; the Tempo name lives on
+as the FT1/DX1 chat layer inside it. Development builds through this arc ship as
+`Nexus_0.2.0_x64-setup.exe`; the first tagged Nexus release will be **0.3.0**.
+
+### Added
+
+- **FT8/FT4 operating tier with WSJT-X operational parity** — a five-phase
+  program against a 207-row behavior matrix: the WSJT-X auto-sequencer state
+  table (double-click semantics, sender lock, return-to-CQ, disable-after-73),
+  early decode pass (11.8 s FT8 / 5.5 s FT4) + 2 s time-aligned late start,
+  Split Operation (Rig / Fake It) with a single teardown drain, Hound mode with
+  safe Fox-frame splitting, directed CQ, Tx1–Tx6 panel, WSJT-X keyboard
+  shortcuts, F6 redecode, decode depth/passband controls, logbook hash-table
+  seeding, Classic ↔ Roster layout toggle, and chronological bottom-pinned Band
+  Activity with period separators.
+- **Full WSJT-X UDP ecosystem surface** — outbound Heartbeat/Status/Decode/
+  QsoLogged and inbound Reply, HaltTx, Clear, Replay, Location,
+  HighlightCallsign, using the canonical NetworkMessage.hpp type numbers
+  (pinned by test); JTAlert and GridTracker interop verified. Plus **Companion
+  mode** (ride an upstream WSJT-X/JTDX decode stream) and a **rigctld-compatible
+  CAT broker** so other shack software shares the radio through Nexus.
+- **CW cockpit** — CAT (`send_morse`) and soundcard keyer back-ends, 5–50 WPM
+  with on-the-fly nudge, eight token-expanding macros, zero-beat scope,
+  automatic rig-mode policy, license-privilege TX gating, 599-default logging.
+- **Phone cockpit** — live dial read-back, band-correct sideband policy, fast
+  colored bandscope, spacebar/button/rig PTT with stuck-TX safeties, six-slot
+  voice keyer (record/import WAV), crash-safe QSO recording, RF power control.
+- **Needed board 2.0** — eight need types ranked by award value with a per-row
+  **evidence line** ("heard by K9LC (EN52, 26 km), 4 min ago"), corroboration
+  gates (near-receiver geometry, VHF two-receiver rule, Es-patch locality),
+  persisted filters, atomic one-click work with cluster split-comment parsing
+  ("UP 2" → rig split), and a pop-out second-monitor window.
+- **POTA/SOTA hunter** — live activator spots, NEW PARK and BAND OPEN badges,
+  one-click HUNT (QSY + cockpit + pending park tag with a 4 h TTL and base-call
+  matching) writing standard `SIG`/`SIG_INFO`/`SOTA_REF` ADIF.
+- **Field Day event mode** — ARRL FD + Winter FD with correct date rules and
+  scoring (per-mode points, dupes per band per mode, legal power tiers, bonus
+  checklist), all-mode event logging from the CW/Phone cockpits, band-follows-
+  QSY, submittable Cabrillo 3.0/ADIF, **real-time N3FJP push** over the official
+  TCP API (with Test button) and **native N1MM+ `<contactinfo>` broadcast**.
+- **Logbook, awards & connectors** — ADIF 3.1.4 round-trip logbook; offline
+  DXCC / Challenge / Honor Roll / WAS / WAZ from cty.dat; **source-aware
+  confirmations** (eQSL never counts toward LoTW-grade awards); LoTW TQSL-signed
+  upload + two-pull incremental confirmation sync over direct HTTPS; QRZ callbook
+  autofill + logbook push + Test; ClubLog (bring your own free API key) and eQSL
+  connectors; per-QSO upload state machine persisted in ADIF;
+  prior-QSO history panel; credentials exclusively in the OS keychain; and the
+  local-only **Journey** achievement layer.
+- **Connect** — three-projection world map (3-D globe / azimuthal beam / flat)
+  with 12 layers, intent presets, hover/click/double-click-to-work; an
+  operator-anchored **opening detector** with reciprocity gates and Es/F2/
+  aurora/tropo classification; band advisor; getting-out panel; NOAA space
+  weather; and the persistent Now-Bar with feed-health pills.
+- **Zero-config setup** — **Detect my radio** (USB descriptor → rig model +
+  driver hint + paired audio CODEC), goal-driven first-run wizard, license-class
+  transmit lockout (FCC Part 97 sub-bands incl. the 2026 60 m rules), DAG-
+  validated feature registry, detached panel windows, NTP slot-grid steering.
+
+### Changed
+
+- **App renamed Tempo → Nexus**; repository moved to `kd9taw/nexus`.
+- FT8/FT4 is now the production tier; FT1/DX1 remain beta pending on-air
+  validation (unchanged honest framing).
+- Field Log merged into the Field Day workspace; the Logbook is the single log.
+
+### Removed
+
+- **SuperFox** — investigated and abandoned: the WSJT-X QPC table file is
+  licensed "only for use with WSJT-X", which bars vendoring. Hound remains.
+- **Broadcasts section** — removed from the UI (the underlying announce/Roam
+  machinery remains for Coordinated QSY).
+
+### Fixed
+
+- WSJT-X UDP message type numbers were shifted +1 for types ≥ 8 (a real JTAlert
+  FreeText datagram parsed as HaltTx and killed TX) — now canonical and pinned.
+- FT4 transmitted at slot +0.0 s instead of the standard +0.5 s timing.
+- Split restore could strand a shifted VFO through the UDP HaltTx and tune
+  paths; Rig split could latch VFO B.
+- Field Day log band was frozen at event entry — post-QSY contacts exported
+  with the wrong band and corrupted dupe checking.
+- Winter Field Day date math used "last Saturday of January", a week late in
+  years like 2026 — now "last full weekend".
 
 ## [0.2.0] - 2026-06-03
 
@@ -153,5 +238,5 @@ Windows binaries are cross-compiled. Treat this build as experimental.
   decode pipeline is wired up yet.
 - Published Windows binaries are cross-compiled and should be treated as beta.
 
-[0.2.0]: https://github.com/kd9taw/tempo/releases
-[0.1.0]: https://github.com/kd9taw/tempo/releases
+[0.2.0]: https://github.com/kd9taw/nexus/releases
+[0.1.0]: https://github.com/kd9taw/nexus/releases

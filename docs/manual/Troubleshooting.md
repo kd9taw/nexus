@@ -1,77 +1,241 @@
 # Troubleshooting
 
-Work top-to-bottom; most problems are audio device, levels, time sync, frequency, or PTT. If you're stuck, open an issue at <https://github.com/kd9taw/tempo> with band/dial/mode/tier and what you saw vs. expected.
+Work top-to-bottom; most problems are CAT/driver, audio device, time sync, or credentials. Open an issue at <https://github.com/kd9taw/nexus> with band, dial, mode, and what you saw vs. expected.
 
-> **First thing to try:** make sure you're on the **latest release** — several early-build issues below are fixed in current builds. Download: <https://github.com/kd9taw/tempo/releases/latest>.
-
----
-
-## The window is blank — "page cannot be displayed"
-
-Seen on **older builds** where the WebView couldn't load the embedded UI.
-
-- **Update to the latest release** — current builds embed the UI assets (`custom-protocol`) so this shouldn't occur.
-- Make sure the **WebView2** runtime is present. It ships *offline* in the installer; on Windows 10 you can also install Microsoft's Evergreen WebView2 runtime manually.
-
-## SmartScreen warning on install ("Windows protected your PC")
-
-Expected — the published binaries are **cross-compiled and unsigned**. Click **More info → Run anyway**. If you'd rather not trust the binary, [build it from source](Building-from-Source.md). See also [Getting Started](Getting-Started.md).
-
-## The app shows demo / fake stations and QSOs
-
-An **older-build** fallback: if the installed app couldn't detect its Tauri backend, it dropped into the in-browser demo mock (fake stations / QSOs).
-
-- **Update to the latest release** — current builds always use the real engine and no longer fall back to the mock.
+> **First:** make sure you are on the latest release — several issues below are fixed in current builds. Download: <https://github.com/kd9taw/nexus/releases/latest>.
 
 ---
 
-## No decodes
+## Installer / first launch
 
-If you're hearing the band by ear but Tempo decodes nothing, check, in order:
+### SmartScreen warning ("Windows protected your PC")
 
-1. **Audio input device** — Settings → Audio → **Input Device (RX)** must point at the sound card carrying your rig's receive audio (or "System default" if that's your rig). Hit **Refresh** after plugging in.
-2. **RX level** — watch the RX level meter (top bar / Settings → Audio). Aim for the green zone. **Too low** = nothing to decode; raise the input gain. **Red/clipping** = distortion; lower it.
-3. **Time sync** — the top-bar **Sync** dot must be green and **dT** small. If it says **No Sync**, fix the PC clock (see below). Misaligned slots = no decodes.
-4. **Frequency / sideband** — you must be on a **Tempo** calling frequency in the right mode (USB or FM), *not* an FT8/JS8 dial. Use the band-plan presets. See [Frequency Plan](Frequency-Plan.md).
-5. **Tier** — both ends must be on the **same tier**. FT1 and DX1 are different waveforms with different slot timing; a DX1 station won't decode on FT1 and vice-versa. The tier toggle is in the top bar — see [Tiers FT1 vs DX1](Tiers-FT1-vs-DX1.md).
+Expected — the published binaries are cross-compiled and unsigned. Click **More info → Run anyway**. If you prefer to build from source, see [Building from Source](Building-from-Source.md).
 
-## CAT / rigctld won't connect
+### Blank window / "page cannot be displayed"
 
-Symptoms: the rig won't retune, or PTT via CAT does nothing.
+Seen on early builds where the embedded WebView2 runtime was missing.
 
-1. **Rig Model** — confirm the right Hamlib model (Settings → Rig Control). If unsure, run `rigctl -l` to find your exact model number; the curated 56-model list is best-effort.
-2. **COM port** — pick the correct serial port; hit **Refresh** to re-scan. Make sure no other program (WSJT-X, another logger, a previous Tempo instance) already holds the port.
-3. **Baud** — match the rig's CAT baud rate.
-4. **rigctld TCP port** — default `4532`. If something else is using it, change the **rigctld TCP Port** in Settings.
-5. **Bundled rigctld** — installer builds ship Hamlib offline and prefer the bundled copy. If you run a *from-source* build that skipped the Hamlib fetch, put Hamlib's `rigctld.exe` on your `PATH`.
+- Install the Microsoft Evergreen WebView2 runtime (or run the offline installer, which ships it).
+- If the window loads but shows only the demo, update to the current release — current builds always connect to the real engine.
 
-## Audio levels — clipping or too low
+---
 
-- **Clipping (RX meter red):** turn down the rig's audio output (or the sound card's input gain) until the meter sits in the green zone.
-- **Too low (meter barely moves):** raise the input gain.
-- **Transmit too hot:** lower the **Tx Power** slider (Settings → Audio) and watch your rig's ALC — overdrive splatters and decodes poorly. Use **Tune** to set it. See [Rig and Audio Setup](Rig-and-Audio-Setup.md).
+## CAT / rig control
 
-## Time sync is off (No Sync / large dT)
+### No CAT response — Test CAT fails or times out
 
-Decoding needs an accurate UTC clock.
+**Test CAT** (Settings → Rig/CAT) saves settings, restarts rigctld, waits 1300 ms, then reads the dial frequency. A failure means one of:
 
-- Windows: Settings → Time & language → Date & time → **Sync now**, or run `w32tm /resync` from an elevated prompt.
-- **Off-grid / no internet:** use a **GPS** or local **NTP** time source.
-- A few hundred ms is fine; seconds of offset will cost decodes.
+1. **Wrong rig model** — confirm the Hamlib model number. Run `rigctl -l` in a terminal to find your exact model; the in-app list covers approximately 50 radios and is cross-referenced to Hamlib 4.7.1. You can type a model number directly if it is not in the list.
+2. **Wrong COM port** — pick the correct serial port and hit **Refresh** to re-scan. Verify nothing else holds the port (WSJT-X, another logger, a leftover Nexus instance, a `rigctld.exe` from a previous session).
+3. **Wrong baud rate** — match the rig's CAT baud setting exactly. Common values: 9600, 19200, 38400, 57600. Default is 38400.
+4. **rigctld TCP port conflict** — Nexus binds rigctld on port `4532` by default. If another rigctld or the CAT broker is already on that port, change **rigctld Port** in Settings.
+5. **Bundled vs. system rigctld** — the Windows installer ships `rigctld.exe` under `resources/hamlib/` and prefers that over any PATH copy. Linux and macOS must have rigctld on PATH or build with bundled resources manually.
+6. **Slow machine / heavy COM load** — the Test CAT probe has a hard 1300 ms timeout. On a very slow machine or a congested COM port the daemon may not finish initializing in time; try once more after a moment.
 
-## PTT not keying (or won't stop)
+### Driver hint: USB bridge chip detected but rig won't open
 
-1. **PTT Method** — confirm it matches your wiring: **CAT**, **Serial RTS**, **Serial DTR**, or **VOX** (Settings → Rig Control).
-   - **VOX:** the rig's VOX must be enabled and tuned to key on transmit audio.
-   - **Serial RTS/DTR:** the right control line and COM port must be selected.
-   - **CAT:** see "CAT / rigctld won't connect" above.
-2. **Monitor / Muted** — if the top-bar control shows **Muted**, Tempo is listen-only and won't key. Click it to **Monitor**.
-3. **TX watchdog** — if a **TX watchdog** chip appeared in the top bar, transmit was auto-halted after too long keyed; re-enable **Monitor** to clear it (or raise/disable the watchdog in Settings → Operating).
-4. **Won't stop transmitting:** hit **Stop TX** in the top bar — it drops PTT and halts the sequencer immediately.
+Nexus auto-detects CP210x (VID 0x10C4), FTDI (VID 0x0403), CH340 (VID 0x1A86), and Prolific (VID 0x067B) bridge chips and shows a platform-specific driver hint:
+
+- **Windows:** all four bridge chips require a driver download (the hint includes the URL). Without the driver the COM port never appears.
+- **Linux:** all four are in-kernel — no extra driver needed.
+- **macOS:** CP210x and FTDI are in-kernel. CH340 may need a third-party kext on older macOS versions; the hint tells you whether your macOS release bundles it.
+
+After installing the driver, hit **Refresh** in Settings to re-scan ports.
+
+### Generic bridge cable — "select model manually"
+
+If your radio connects via a CH340/FTDI cable that only reports "USB Serial," Nexus identifies the bridge chip and driver need but cannot guess the Hamlib model. Select your rig from the dropdown or type the model number; use `rigctl -l` to find it.
+
+Native-USB rigs (IC-705, IC-7300, etc.) that embed their model name in the USB product string are matched automatically.
+
+### Port is "in use" / COM conflict with WSJT-X
+
+Nexus spawns rigctld internally and holds the COM port. To share the radio with WSJT-X or N1MM+:
+
+1. Enable **CAT Broker** in Settings (default off, default port `4532`).
+2. Point WSJT-X at `localhost:4532` as a NET rigctl rig (Hamlib model 2). The broker handles `f/F`, `m/M`, `t/T`, `v/V`, `s`, `\dump_state`, `\chk_vfo`, `\get_powerstat`.
+3. Advanced Hamlib commands beyond that subset return `RPRT -11` (not implemented).
+
+---
+
+## No decodes (FT8/FT4)
+
+If you hear the band by ear but Nexus decodes nothing, check in order:
+
+1. **Audio input device** — Settings → Audio → **Input Device (RX)** must point at the sound card carrying your rig's receive audio. Hit **Refresh** after plugging in.
+2. **RX level** — watch the level meter in the top bar. Aim for the green zone. Too low = nothing to decode; red/clipping = distortion.
+3. **Passband** — default decoder window is 200–2900 Hz. If you narrowed **F Low** / **F High** in Settings, signals outside the window are silently skipped. Restore defaults if unsure.
+4. **Decode depth** — default is **Deep** (depth 3). If you switched to Fast for CPU reasons, try Normal or Deep first.
+5. **Time sync** — the top-bar clock-offset indicator must be close to zero. Slots that are off by more than a second produce no decodes (see below).
+6. **Companion mode** — if you are riding a WSJT-X UDP decode stream, F6 (Redecode) is a no-op in companion mode; decodes come only from the upstream app.
+
+## No decodes (FT1/DX1)
+
+1. Confirm you are on a **FT1 or DX1 calling frequency**, not an FT8/FT4 dial. The two tier waveforms decode nothing of each other.
+2. Both ends must be on the **same tier** (FT1 or DX1) — the tier toggle is in the top bar.
+3. All SNR performance figures for FT1/DX1 are simulation-validated only; on-air decode behavior may differ from the spec thresholds.
+
+---
+
+## TX problems
+
+### TX won't arm / Enable TX has no effect
+
+- **tx_enabled latch** — Nexus (like WSJT-X) requires you to arm TX explicitly before any transmission. The Enable TX control is in the Operate cockpit top bar. Digital mode does not auto-arm on section entry; Phone and CW do.
+- **License class lockout** — if the dial is outside your declared license-class segment, the TX button shows a lock icon and the engine independently blocks keying. Check Settings → License Class. Default is **Open** (no lockout); US Technician licensees are segment-restricted on 80/40/15 m.
+- **TX watchdog fired** — after 6 minutes of continuous unattended TX (default `tx_watchdog_min: 6`) the engine auto-halts. A watchdog chip appears in the top bar. Re-arm Enable TX to clear it.
+
+### TX won't stop / stuck PTT
+
+Hit `Esc` in any cockpit — it drops PTT and halts the sequencer immediately. For Phone, the PUSH TO TALK button also releases on pointer-leave. If the rig stays keyed after Esc, check the PTT method:
+
+- **CAT PTT:** verify rigctld is still connected (Test CAT).
+- **Serial RTS/DTR:** confirm the correct COM port and control line are selected; verify the `serial` Cargo feature is compiled in (otherwise serial PTT silently becomes a no-op / VOX behavior).
+- **VOX:** your rig's VOX threshold may be set too loosely, causing it to stay keyed on residual noise.
+
+### Split TX — TX lands on wrong frequency
+
+Default split mode is **None** (raw audio offset, no TX frequency shifting). To constrain TX to the 1500–2000 Hz passband the way WSJT-X does:
+
+- **Fake-It** — Nexus shifts the single VFO by a 500 Hz step before PTT and restores it after. TX audio is constrained to `1500 + (tx − 1500) mod 500 Hz`.
+- **Rig Split** — uses VFO B for TX. Requires the rig and Hamlib to support dual-VFO split.
+
+Both modes share a single drain point: the VFO is always restored when PTT is released, whether via `Esc`, HaltTx UDP, or tune auto-release — no path strands a shifted dial.
+
+---
+
+## Audio levels
+
+- **Clipping (meter red):** turn down the rig's audio output or the sound card input gain until the meter sits in the green zone.
+- **Too low (meter barely moves):** raise the input gain. If the rig has an AF output level control, use it.
+- **TX too hot:** lower the **Pwr** slider (default 0.9 / 90% drive) and watch the rig's ALC meter — ALC deflection means splatter. Use **Tune** (12 s auto-release) to set drive level before operating. See [Rig and Audio Setup](Rig-and-Audio-Setup.md).
+
+---
+
+## Time sync
+
+Decoding FT8/FT4 requires UTC clock accuracy within roughly ±1 s; larger offsets cost decodes.
+
+- **Windows:** Settings → Time & Language → Date & time → **Sync now**, or run `w32tm /resync` from an elevated prompt.
+- **Off-grid / no internet:** use a GPS or local NTP time source.
+- Nexus measures the NTP clock offset and steers the TX/RX slot grid independently of the OS clock, but the probe only corrects for a measured offset — an OS clock that is not running NTP at all will drift beyond the correction range.
+
+---
+
+## Connect feeds quiet vs. down
+
+The Now-Bar shows two feed-liveness pills — **Cluster** and **PSKR** — with five possible states:
+
+| Pill label | Meaning |
+|---|---|
+| **live** | Event received within the last 15 minutes |
+| **connected** | TCP/MQTT up, no data yet — normal on a quiet band |
+| **connecting** | First connection attempt in progress |
+| **reconnecting** | Connection was dropped, retrying |
+| **idle** | Last event older than 15 minutes |
+
+"Connected but no data" is normal during a quiet band period — it is **not** a sign the feed is broken. A stuck **reconnecting** pill means the cluster host is unreachable:
+
+- Confirm the cluster host (default `telnet.reversebeacon.net:7001`) is reachable from your network.
+- Firewalls that block outbound TCP on port 7001 are common on corporate or hotel Wi-Fi. Try a different cluster host with port 23 (Telnet default).
+- PSK Reporter MQTT (`mqtt.pskreporter.info:1883`) is blocked by some ISPs. Without MQTT, the app falls back to HTTP queries (rate-limited to every 5 minutes minimum).
+- Your callsign must be set (3–10 characters, at least one letter and one digit) for the PSK Reporter MQTT subscription to start.
+
+---
+
+## Connector auth failures
+
+### LoTW / TQSL
+
+Nexus shells out to your installed TQSL binary with:
+```
+tqsl -d -u -x -a compliant -l <station_location> <adif_path>
+```
+TQSL exit codes are classified:
+
+| Exit code | Meaning in Nexus |
+|---|---|
+| 0, 9 | Pending (submitted to LoTW) |
+| 8 | Duplicate (benign, already uploaded) |
+| 11 | None — network error, no LoTW stamp; retry later |
+| 5 + cert/location marker in stderr | AuthFail — certificate or station location issue |
+| Other | Rejected |
+
+**TQSL is not bundled.** Install it from ARRL at <https://www.arrl.org/tqsl-download>. Nexus auto-detects TQSL from:
+- Windows: `%ProgramFiles(x86)%\TrustedQSL\tqsl.exe` (tried first) and `%ProgramFiles%\TrustedQSL\tqsl.exe` — the x86 path is the primary candidate because 32-bit TQSL installs there on 64-bit Windows
+- macOS: `/Applications/TrustedQSL/…`
+- Linux: `/usr/bin/tqsl`, `/usr/local/bin/tqsl`, `/opt/tqsl/bin/tqsl`, then PATH
+
+If TQSL is in a non-standard location, set **TQSL Path** in Settings explicitly.
+
+**Station location must be set** (`lotw_station_location`) before upload is allowed. TQSL exit 5 with a location marker in stderr means the station location name in Settings does not match any location in your TQSL certificate.
+
+### QRZ — grid and state fields always empty
+
+Grid and state are subscriber-only on QRZ's free XML tier. The app shows a toast explaining this; it cannot work around it. A QRZ.com subscription unlocks those fields.
+
+### ClubLog — uploads stopped after working
+
+A 403 response from ClubLog triggers a session-level suspend flag that stops further auto-upload to avoid an IP ban. The flag clears only when you save new credentials. Check your ClubLog Application Password (not your main password) in Settings → Connectors.
+
+ClubLog integration also requires a developer API key (`CLUBLOG_API_KEY`). Operators building from source must supply their own key; it is not in the public repo.
+
+### eQSL InBox sync fails
+
+The InBox download is a two-step HTTP scrape that depends on the "Your ADIF log file has been built" marker on eQSL's DownloadInBox page. If eQSL changes their page structure, the extractor will fail. Check the **Connector log** (Settings → Connectors, last 200 events) for the actual HTTP response to distinguish a credential problem from a site change.
+
+All fetched URLs are pinned to `*.eqsl.cc` and forced to HTTPS, so a redirect to a non-eQSL host will be rejected as a safety measure.
+
+---
+
+## UDP interop (WSJT-X ecosystem)
+
+### JTAlert / GridTracker / N1MM not receiving Nexus data
+
+Nexus emits outbound UDP on `127.0.0.1:2237` (WSJT-X default) — Decode (type 2), Status (type 1), QsoLogged (type 5), Heartbeat. Inbound: HaltTx, Clear, Replay, Location, HighlightCallsign, FreeText, Reply.
+
+Type numbers are pinned to the canonical WSJT-X 0–15 range (an earlier +1 offset that corrupted JTAlert FreeText as HaltTx is fixed).
+
+If downstream apps receive nothing:
+
+1. Check that **WSJT-X UDP target** in Settings is `127.0.0.1:2237` (or the logger's actual IP if on another machine).
+2. Windows Defender / firewall sometimes blocks UDP on non-standard ports. Add an inbound rule for port 2237 UDP or temporarily disable the firewall to test.
+3. If another app (actual WSJT-X, JTDX) is already bound on port 2237, only one can receive datagrams sent to that port from outside. Use a multicast forwarder (e.g. `logger32bridge`) or point Nexus at a different port and configure the logger to match.
+
+### N3FJP Field Day push not working
+
+N3FJP TCP push (ADDDIRECT + CHECKLOG) requires:
+- N3FJP running with its TCP API enabled (Settings → Application Program Interface in N3FJP).
+- N3FJP host and port (`1100` default) configured in Nexus Settings → Field Day.
+- The host reachable on your LAN — firewall between the two machines will block it.
+
+Use the **Test N3FJP** button in Settings to send the `<CMD><PROGRAM></CMD>` handshake and confirm the connection before the event starts. Push failures are logged to stderr and the Connector log, not surfaced as a UI toast after the initial Test.
+
+---
+
+## Limits / not yet
+
+- **Fox role** for DXpedition operations is not yet implemented; only Hound mode is available.
+- **SuperFox mode** is permanently removed — the QPC table license bars vendoring outside WSJT-X.
+- **VOACAP** is not integrated; per-path predictions use the heuristic engine (labeled "modelled" in Connect).
+- **FM mode** in the Phone cockpit is not yet implemented.
+- **WinKeyer** hardware keyer is not supported; only CAT and soundcard CW keyer back-ends are available.
+- **COUNTY and IOTA** ADIF fields are not stored; contacts imported from other loggers lose these fields silently.
+- **LoTW background periodic sync** is not automatic — trigger downloads manually or on a schedule from Settings.
+- **Transmit-privilege lockout** models US FCC Part 97 / ITU Region 2 rules only. Non-US operators should set license class to **Open**.
+- **Theme and UI scale** are stored in browser localStorage, not in `settings.json` — they do not roam with a copied settings file.
+- **Redecode (F6)** is native-source only; in companion (WSJT-X UDP) mode it is a no-op.
 
 ---
 
 ## Still stuck?
 
 - Re-check the setup pages: [Getting Started](Getting-Started.md), [Rig and Audio Setup](Rig-and-Audio-Setup.md).
-- File an issue with details (band, dial, mode/tier, conditions): <https://github.com/kd9taw/tempo>.
+- Review the Connector log (Settings → Connectors) for per-event detail on upload failures.
+- File an issue with details (band, dial, mode, OS, rig model, what you saw vs. expected): <https://github.com/kd9taw/nexus>.
+
+---
+
+[← Logbook and Awards](Logbook-and-Awards.md) | [Rig and Audio Setup →](Rig-and-Audio-Setup.md)

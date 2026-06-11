@@ -1,8 +1,8 @@
 # Building from Source
 
-You don't need to build Tempo to use it — most operators should just grab the installer (see [Getting Started](Getting-Started.md)). Build from source if you'd rather not run an unsigned binary, want to develop, or are porting.
+You don't need to build Nexus to use it — most operators should just grab the installer (see [Getting Started](Getting-Started.md)). Build from source if you'd rather not run an unsigned binary, want to develop, or are porting.
 
-Tempo's modem (`libft1`) is **Fortran + C/C++ + FFTW**, so the Windows build uses the **GNU toolchain** (MSVC has no Fortran) and the Rust **`x86_64-pc-windows-gnu`** target. The full, authoritative build guide is [`WINDOWS.md`](https://github.com/kd9taw/tempo/blob/main/WINDOWS.md); developer setup and crate layout are in [`CONTRIBUTING.md`](https://github.com/kd9taw/tempo/blob/main/CONTRIBUTING.md). This page condenses both.
+Nexus's modem (`libft1`) is **Fortran + C/C++ + FFTW**, so the Windows build uses the **GNU toolchain** (MSVC has no Fortran) and the Rust **`x86_64-pc-windows-gnu`** target. The full, authoritative build guide is [`WINDOWS.md`](https://github.com/kd9taw/nexus/blob/main/WINDOWS.md); developer setup and crate layout are in [`CONTRIBUTING.md`](https://github.com/kd9taw/nexus/blob/main/CONTRIBUTING.md). This page condenses both.
 
 ---
 
@@ -91,14 +91,14 @@ cargo test          # modem FFI, engine, QSO/Field Day, networking, DX1 round-tr
 
 These run headless — no sound card or radio required. UI build: `npm --prefix ui install` then `npm --prefix ui run build`.
 
-Before opening a PR, the project asks for a clean `cargo fmt --all`, `cargo clippy --all-targets`, and `cargo test` (plus the UI build if you touched `ui/`). See [`CONTRIBUTING.md`](https://github.com/kd9taw/tempo/blob/main/CONTRIBUTING.md).
+Before opening a PR, the project asks for a clean `cargo fmt --all`, `cargo clippy --all-targets`, and `cargo test` (plus the UI build if you touched `ui/`). See [`CONTRIBUTING.md`](https://github.com/kd9taw/nexus/blob/main/CONTRIBUTING.md).
 
 ---
 
 ## What gets built
 
-- `Tempo_0.1.0_x64-setup.exe` — the NSIS installer (per-user; bundles offline WebView2 + Hamlib `rigctld`).
-- `tempo.exe` — the app.
+- `Nexus_0.2.0_x64-setup.exe` — the NSIS installer (per-user; bundles offline WebView2 + Hamlib `rigctld`).
+- `nexus.exe` — the app.
 - `win_smoke.exe` — a fully-static modem self-test.
 
 The GUI is built with `--features radio,custom-protocol` (`radio` = `device` + `serial`; `custom-protocol` embeds the UI assets so the WebView shows the bundled UI).
@@ -108,5 +108,5 @@ The GUI is built with `--features radio,custom-protocol` (`radio` = `device` + `
 ## See also
 
 - [Architecture and Protocol](Architecture-and-Protocol.md) — the layer-by-layer design.
-- [`WINDOWS.md`](https://github.com/kd9taw/tempo/blob/main/WINDOWS.md) — the full Windows build/setup reference.
-- [`CONTRIBUTING.md`](https://github.com/kd9taw/tempo/blob/main/CONTRIBUTING.md) — crate layout, code style, PR workflow.
+- [`WINDOWS.md`](https://github.com/kd9taw/nexus/blob/main/WINDOWS.md) — the full Windows build/setup reference.
+- [`CONTRIBUTING.md`](https://github.com/kd9taw/nexus/blob/main/CONTRIBUTING.md) — crate layout, code style, PR workflow.

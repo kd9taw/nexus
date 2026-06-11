@@ -1,105 +1,213 @@
 # Rig and Audio Setup
 
-This page covers getting Tempo talking to your radio: CAT control and PTT, audio devices and levels, time sync, and the transmit safeguards. For first-time setup in context, see [Getting Started](Getting-Started.md); for the calling frequencies, see [Frequency Plan](Frequency-Plan.md).
-
-All of these live under **Settings** (the gear at the bottom of the left mode bar). Settings persist to `%APPDATA%\tempo\settings.json`.
+The full reference for CAT control, PTT configuration, audio device selection, and the rig-mode policy Nexus enforces per operating section. If you just need to get on the air quickly, start with [Getting Started](Getting-Started.md) — it covers the minimum settings. Come back here when you need to understand why a control exists or how the system behaves at the edges.
 
 ---
 
-## PTT and CAT — pick a method
+## How "Detect My Radio" Works
 
-Tempo handles rig control **in-app**. With CAT you do **not** run `rigctld` yourself — Tempo launches it for you. Choose one **PTT Method** in **Settings → Rig Control**:
+The **Detect my radio** button in Settings → Rig/CAT enumerates connected USB devices and attempts to fill the rig model, serial port, and audio device fields in a single action.
 
-| Method | What it does | When to use it |
-|--------|--------------|----------------|
-| **CAT (via rigctld)** | Tempo launches Hamlib's `rigctld` and keys PTT + retunes the rig over CAT. | Modern rigs with a CAT/USB connection (recommended). |
-| **Serial RTS** | Keys PTT by asserting the serial **RTS** line. | PTT-only interfaces / older rigs. |
-| **Serial DTR** | Keys PTT by asserting the serial **DTR** line. | PTT-only interfaces / older rigs. |
-| **VOX** | No keying — the rig keys itself on transmit audio. | Anything, as a fallback; the safe default. |
+**What auto-matches:**
 
-The default out of the box is **VOX** (`rig_model = 0`), so Tempo runs even before you've wired CAT.
+Nexus identifies four bridge-chip families by USB Vendor ID:
 
-### CAT setup (recommended)
+| Chip | VID | Windows driver | Linux | macOS |
+|---|---|---|---|---|
+| Silicon Labs CP210x | 0x10C4 | Manual install required | In-kernel | In-kernel |
+| FTDI | 0x0403 | Manual install required | In-kernel | In-kernel |
+| WCH CH340 | 0x1A86 | Manual install required | In-kernel | Conditional (recent macOS bundles it; older needs vendor driver) |
+| Prolific PL2303 | 0x067B | Manual install required | In-kernel | In-kernel |
+| Native CDC (IC-705, IC-7300, etc.) | — | No driver needed | No driver needed | No driver needed |
 
-1. **PTT Method → CAT (via rigctld)**.
-2. **Rig Model** — pick your radio from the Hamlib model dropdown (56 curated models: Icom, Yaesu, Kenwood, Elecraft, FlexRadio, Ten-Tec, and more). If your exact model isn't listed, the curated list is best-effort — confirm the right model number with `rigctl -l`.
-3. **Serial Port** — choose the **COM** port (Windows) or **/dev/tty…** device. Hit **Refresh** to re-scan if you plugged the rig in after opening Settings.
-4. **Baud** — match your rig's CAT baud rate (default `38400`).
-5. **rigctld TCP Port** — the local TCP port Tempo launches `rigctld` on (default `4532`, the Hamlib standard). Only change this if something else already uses 4532.
+For **native-USB rigs** that report their model name in the USB product string (IC-705, IC-7300, and similar), Nexus fuzzy-token-matches the product string against a ~50-entry curated Hamlib model table verified against Hamlib 4.7.1. The longest matching token wins, so a K3S match takes priority over a bare K3. Manufacturers in the table: Icom, Yaesu, Kenwood, Elecraft, FlexRadio, Ten-Tec, Xiegu, QRP Labs, Alinco, plus the three Hamlib built-in pseudo-rigs (Dummy model 1, NET rigctl model 2, FLRig model 4).
 
-When you save, Tempo spawns `rigctld` with the right `-m <model> -r <port> -s <baud> -t <tcp_port>` line, sets your dial/mode once, then keys and retunes per slot. The daemon is **kill-on-drop** — it exits when Tempo does.
+**What still requires a manual model pick:**
 
-> **Installer users:** the installer **bundles** `rigctld` and its DLLs, so CAT works **offline** with no separate Hamlib install. Tempo prefers the bundled copy and only falls back to a `rigctld` on your `PATH`. If you run a *from-source* build that skipped the Hamlib fetch, put Hamlib's `rigctld.exe` on `PATH`.
+Generic-cable rigs — a Yaesu FT-991A connected via a CH340 USB-serial cable — report only the bridge chip name ("USB Serial"), not the radio model. Nexus fills the serial port and driver hint but leaves the model field empty with a note to select manually. This is the documented honest result, not an error.
 
-### Serial RTS / DTR
-Pick the **COM port** and choose **RTS** or **DTR** as the PTT method. (This is enabled by the `serial` feature, which the standard `radio` build includes.)
+If your rig is not in the curated table, find its Hamlib model number with `rigctl -l` and type it directly into the model field. The definitive list for your installed Hamlib version is always `rigctl -l`.
 
-### VOX
-No CAT, no keying — just make sure your rig's VOX is enabled and tuned so transmit audio keys it.
+**Audio pairing:**
+
+After matching the serial port, Nexus looks for a sound card whose name matches the USB product string. If that fails, it falls back to any device whose name contains "USB Audio" or "USB Codec" — the near-universal USB audio codec designation used by most soundcard interfaces for FT8-class rigs. Detect fills both the RX input and TX output fields with the same device, which is correct for a typical interface (one codec, two directions). Adjust individually if your setup uses separate devices.
 
 ---
 
-## Audio devices
+## Driver Hints per Chip
 
-Under **Settings → Audio**, point Tempo at your sound card:
+When Detect identifies a bridge chip that needs a driver, it shows the vendor URL directly. OS-aware rules applied:
 
-- **Input Device (RX)** — the device carrying your rig's **receive** audio (a USB CODEC, SignaLink, or the rig's built-in USB audio). Leave it as **System default** to use Windows' default recording device. Use **Refresh** to re-scan.
-- **Output Device (TX)** — the device feeding the rig's **data/mic input** for transmit. **System default** uses Windows' default playback device.
-
-Tempo resamples to/from the modem's internal 12 kHz automatically, so you don't need a specific sample rate on the device.
-
----
-
-## Setting Tx power and reading the RX level meter
-
-### Tx power
-**Settings → Audio → Tx Power** is the transmit drive level (shown as a percentage). Set it **conservatively** and watch your rig's ALC: too much drive causes ALC overdrive, splatter, and a distorted (less-decodable) signal. Start low and bring it up only until the rig reaches its rated power without ALC pumping. Use the top-bar **Tune** button to key a steady carrier while you set this.
-
-### RX level meter
-The **RX Level** meter appears in both the top bar and Settings → Audio. It follows a low / good / hot zoning:
-
-- **Aim for the middle (green) zone** — roughly mid-scale.
-- **Red / hot** (near the top) = **clipping**; turn the rig's audio output (or the sound card's input gain) **down**.
-- **Too low** (barely moving) = raise the input gain so the modem has signal to work with.
-
-A target marker on the meter shows where to aim.
+- **Windows** — CP210x, FTDI, CH340, and Prolific all require a driver download. Install the vendor package and re-run Detect.
+- **Linux** — all four chip families are in-kernel; no download needed.
+- **macOS** — CP210x and FTDI are in-kernel. CH340 is bundled in recent macOS releases; older versions may need the vendor driver (Detect flags this conditionally). Prolific is in-kernel.
+- **Native CDC rigs** — no driver hint on any OS.
 
 ---
 
-## Time-sync health and the Tx watchdog
+## Bundled rigctld and Windows Job Object Cleanup
 
-### Time sync
-Decoding depends on an accurate clock — the T/R slots are UTC-aligned. The top bar shows a **Sync / No Sync** dot and a **dT** readout (the measured timing offset of stations you hear). If it shows **No Sync** or dT is consistently large:
+On Windows, Nexus ships `rigctld.exe` plus the required DLLs (`libhamlib-4.dll`, `libusb-1.0.dll`, `libwinpthread-1.dll`, `libgcc_s_seh-1.dll`) inside the installer's `resources/hamlib/` directory. The app prefers this bundled binary over any `rigctld` on PATH, so CAT works immediately after install with no separate Hamlib download.
 
-- Make sure Windows is syncing time (Settings → Time & language → Date & time → *Sync now*; or `w32tm /resync` from an elevated prompt).
-- For **off-grid** operation with no internet, use a **GPS** or local **NTP** time source.
+Nexus launches rigctld internally, connects to it over a local TCP socket on the configured port (default **4532**), and uses 500 ms read/write timeouts. You do not run rigctld manually.
 
-A few hundred milliseconds is fine; seconds of offset will cost you decodes.
+The spawned rigctld process is placed in a Windows **Job Object** with the `KILL_ON_JOB_CLOSE` flag. When Nexus exits — including abnormal exits and crashes — the OS kills rigctld automatically and releases the COM port. A stuck port or lingering rigctld after a crash is not expected; if it occurs, file a bug.
 
-### Tx watchdog
-**Settings → Operating → Tx Watchdog (min)** auto-halts transmit after that many minutes of continuous keying (default **6**; `0` = off). If it fires you'll see a **TX watchdog** chip in the top bar — re-enable **Monitor** to clear it. This protects you (and the band) from a stuck transmit.
+On **Linux and macOS**, rigctld must be on PATH. The bundled binary is not distributed for those platforms.
 
 ---
 
-## Tune / Monitor / Stop TX
+## Test CAT
 
-Three top-bar controls govern transmit, available in every mode:
+**Settings → Rig/CAT → Test CAT** runs this sequence:
 
-- **Tune** — keys a steady carrier for tuning an antenna or setting power. Click again to stop.
-- **Monitor / Muted** — the global transmit enable. **Monitor** = transmit allowed; **Muted** = listen-only (Tempo still decodes but never keys). Use Muted any time you want to watch the band without risk of transmitting.
-- **Stop TX** — drops PTT and halts the sequencer **immediately**. The panic button.
+1. Saves current settings to disk.
+2. Triggers a rigctld re-probe in the radio loop — Nexus spawns (or re-spawns) rigctld with the new model, port, and baud parameters.
+3. Waits 1300 ms for the daemon to spawn and the TCP socket to connect.
+4. Reads the current dial frequency from the rig with the `f` command and returns it, or returns a specific error string.
 
----
+A successful result showing a real frequency (e.g. `14.074 MHz`) confirms: rigctld started, the serial port opened, and the rig responded. An `RPRT` error or timeout indicates a driver problem, wrong baud rate, wrong model number, or a port conflict with another application.
 
-## Network interop (optional)
-
-Under **Settings → Network**:
-
-- **WSJT-X UDP API** — emits the WSJT-X-compatible UDP protocol so **JTAlert / GridTracker / N1MM+ / loggers** can consume Tempo's decodes and QSOs (and double-click-to-call back). Default target `127.0.0.1:2237` (same as WSJT-X). For another machine on the LAN, set its `host:port` and allow the UDP port through Windows Firewall.
-- **PSK Reporter** — uploads your heard stations (call / freq / mode / SNR) to `report.pskreporter.info:4739` so your reception shows on the global maps. Outbound UDP — allow it through the firewall.
-
-More detail in [Architecture and Protocol](Architecture-and-Protocol.md).
+Run Test CAT any time you change rig model, port, or baud. The test mirrors the WSJT-X "Test CAT" workflow.
 
 ---
 
-If CAT won't connect, audio levels look wrong, PTT won't key, or time sync is off, the **[Troubleshooting](Troubleshooting.md)** page has a checklist for each.
+## PTT Methods and CAT/PTT Decoupling
+
+PTT and CAT frequency/mode control are **fully independent axes**. The PTT method you choose has no effect on whether Nexus commands frequency and mode over CAT. A VOX rig still receives `F` (frequency) and `M` (mode) commands over CAT if a CAT channel is configured. This is the same model WSJT-X uses.
+
+| PTT method | How keying works | Requires rigctld? |
+|---|---|---|
+| **VOX** (default) | No keying command sent; rig VOX activates on audio | No (CAT still works if configured separately) |
+| **CAT** | `T 1` / `T 0` command via rigctld | Yes |
+| **Serial RTS** | RTS line asserted on the configured serial port | No (requires `serial` Cargo feature) |
+| **Serial DTR** | DTR line asserted on the configured serial port | No (requires `serial` Cargo feature) |
+
+**CAT + VOX is a valid and common combination.** Configure CAT for rig control (frequency, mode, power), choose VOX if your interface has no PTT line.
+
+**Serial RTS/DTR** requires the `serial` Cargo feature. Without it, serial PTT falls back silently to VOX behavior — the port opens, no RTS or DTR assertion is made, and no error is shown. If your rig is not keying and you have RTS or DTR selected, confirm you are running a build with the `serial` feature enabled.
+
+**CAT PTT** sends the Hamlib `T` command. Most Icom, Yaesu, and Kenwood rigs support PTT via CAT and require an active rigctld connection.
+
+---
+
+## Rig-Mode Policy per Section
+
+Nexus enforces rig mode via CAT on every section entry. The mode is re-asserted immediately when you enter a section, even without a frequency change — you do not set mode manually.
+
+| Section | Mode commanded over CAT |
+|---|---|
+| **Digital (FT8/FT4/FT1/DX1)** | `PKTUSB` / `PKTLSB` (Hamlib DATA submode — Yaesu DATA-U, Icom USB-D, Kenwood DATA) |
+| **Phone (SSB)** | `USB` if dial ≥ 10 MHz; `LSB` if dial < 10 MHz |
+| **CW — CAT keyer** | `CW` |
+| **CW — Soundcard keyer** | `USB` if dial ≥ 10 MHz; `LSB` if dial < 10 MHz |
+
+If your rig rejects `PKTUSB`/`PKTLSB` (returns `RPRT -1`), the radio loop performs a bounded retry — it does not loop indefinitely. Some older rigs do not implement the DATA submode; in that case, plain USB mode will work for FT8 audio paths, but your rig's audio DSP (NR, NB, APF) may interfere with decodes if left active.
+
+---
+
+## The CAT Broker
+
+The CAT broker (Settings → Rig/CAT → CAT Broker, **off by default**) makes Nexus act as a rigctld-compatible TCP server so WSJT-X, N1MM+, and other loggers can share the radio through Nexus without competing on the serial port.
+
+- **Broker listen port:** default **4532** (configurable)
+- Commands handled: `f`/`F` (frequency), `m`/`M` (mode), `t`/`T` (PTT), `v`/`V` (VFO), `s` (split), `\dump_state`, `\chk_vfo`, `\get_powerstat`, `q`
+- The broker's `\dump_state` response uses protocol version 0 (classic format) and declares an RX/TX range of 135.7 kHz to 1300 MHz with all-mode bits, so WSJT-X accepts the rig without restriction.
+- All commands not in the handled set above return `RPRT -11` (not implemented), including `L RFPOWER` and `L KEYSPD`.
+
+To run WSJT-X alongside Nexus: enable the broker in Nexus, then point WSJT-X's Hamlib "Network rigctl" at `127.0.0.1:4532`. Both applications can then tune, read frequency, and key PTT through the same physical serial port.
+
+---
+
+## Audio Device Selection
+
+In Settings → Audio, select:
+
+- **Input Device (RX)** — the sound card carrying your rig's received audio (the output side of your interface). This is what Nexus decodes.
+- **Output Device (TX)** — the sound card feeding audio into the rig's data/mic input (the input side of your interface). This is what Nexus transmits.
+
+Leave either as **System default** to use the OS default device. For most USB interfaces (SignaLink, DigiRig, and similar), one device appears under two names — pick the same device for both, or use Detect to fill them from the USB product string.
+
+### TX Level
+
+The **Tx Power** slider sets the audio output gain from 0.0 to 1.0 before it reaches the sound card. Default: **0.9 (90% drive)**.
+
+This is software drive level, not RF power. Set it so your rig's ALC reads **zero** during transmit. Trim down if ALC is deflecting. Overdrive causes IMD and splatter and degrades your signal decodability — a slightly conservative level is always correct for a digital mode.
+
+Use the **Tune** button to hold a steady carrier while adjusting.
+
+### Tune Carrier
+
+The **Tune** button emits a steady carrier at the current TX audio offset for ALC alignment and antenna tuning. Tune auto-releases after **12 seconds** (`tuneTimeoutSecs: 12`, configurable). A single cleanup path in the radio loop drops PTT on any exit from tune — navigating away, halting TX, or the watchdog firing all share the same drain point so no path strands a transmitting carrier.
+
+### TX Watchdog
+
+The transmit watchdog halts TX automatically after **6 minutes** of continuous unattended keying (`txWatchdogMin: 6`, configurable). This applies to manual PTT in Phone and CW, and to the digital auto-sequencer alike. It is a backstop; it does not substitute for monitoring your own signal.
+
+---
+
+## CAT Verb Reference
+
+When a CAT channel is active, Nexus issues these Hamlib commands:
+
+| Command | Purpose |
+|---|---|
+| `T` | PTT set (1=TX, 0=RX) |
+| `F` | Frequency set |
+| `f` | Frequency read (polled every 750 ms) |
+| `M` | Mode + passband set |
+| `S` | Split on/off + TX VFO (e.g. `S 1 VFOB`) |
+| `I` | Split TX frequency set in Hz (e.g. `I 14205000`) |
+| `V` | VFO select |
+| `J` / `Z` | RIT/XIT offset via `U enable` |
+| `L RFPOWER` | RF power (0.0–1.0 fraction) |
+| `L KEYSPD` | CW keyer speed (WPM) |
+| `b` | Send Morse (Hamlib `send_morse`) |
+| `\stop_morse` | Abort CW send |
+| `w` | Raw pass-through (diagnostics) |
+
+Frequency is polled continuously — a manual VFO knob turn is reflected in the cockpit header within one poll cycle (≤ 750 ms). Mode is **commanded** on section entry but not polled back. The sideband badge displayed in the cockpit is computed from the dial MHz, not confirmed from the rig's hardware state. See Limits.
+
+---
+
+## Settings Defaults
+
+| Setting | Default | Notes |
+|---|---|---|
+| `pttMethod` | `vox` | Change to `cat`, `rts`, or `dtr` |
+| `rigModel` | `0` (none) | Select from dropdown or type Hamlib model number |
+| `baud` | `38400` | Match your rig's CAT baud setting |
+| `rigctldPort` | `4532` | Local TCP port; Hamlib NET rigctl default |
+| `serialPort` | `''` (empty) | Fill via Detect or manually |
+| `audioIn` / `audioOut` | `''` (system default) | Fill via Detect or manually |
+| `txLevel` | `0.9` (90%) | Trim until ALC reads zero |
+| `txWatchdogMin` | `6` | Minutes of continuous TX before auto-halt |
+| `tuneTimeoutSecs` | `12` | Carrier auto-release |
+| `catBroker` | `false` | Enable to share radio with WSJT-X / N1MM+ |
+| `catBrokerPort` | `4532` | Broker listen port |
+| `splitMode` | `none` | Set `FakeIt` or `Rig` for TX passband constraint in FT8 |
+| `operatingMode` | `digital` | Forces PKTUSB/PKTLSB on section entry |
+| `dialMhz` | `14.074` | FT8 20 m calling frequency |
+| `licenseClass` | `open` | No lockout until declared in wizard or Settings |
+| UI theme | `dark` | Stored in `localStorage`; does not follow settings.json |
+| UI scale | `125%` | Stored in `localStorage`; does not follow settings.json |
+
+---
+
+## Limits / Not Yet
+
+- **Rig auto-detection requires the `radio` Cargo feature.** The headless/UI-dev build returns empty lists for ports, audio, and detected rigs.
+- **Bundled Hamlib is Windows-only.** Linux and macOS require `rigctld` on PATH.
+- **Generic-cable rigs always need a manual model pick.** Only native-USB rigs that embed a model name in the USB product string auto-match a Hamlib model.
+- **The curated model table is ~50 entries.** Use `rigctl -l` for the full list. Out-of-table rigs can be entered by Hamlib model number but receive no friendly name in the dropdown.
+- **Serial PTT (RTS/DTR) requires the `serial` Cargo feature.** Without it, falls back silently to VOX — no hardware keying, no error shown.
+- **Mode is not read back from the rig over CAT.** The sideband badge in the cockpit is computed from dial MHz. A rig left in the wrong mode by another application is not detected until the next section-entry mode command.
+- **Test CAT waits a hard-coded 1300 ms** for rigctld to spawn. On a slow machine or heavily loaded COM port this timeout may be insufficient; retry the test if it fails once.
+- **The CAT broker handles only the WSJT-X command subset.** All commands not in the handled set (`f`/`F`, `m`/`M`, `t`/`T`, `v`/`V`, `s`, `\dump_state`, `\chk_vfo`, `\get_powerstat`, `q`) return `RPRT -11`, including `L RFPOWER` and `L KEYSPD`.
+- **FM mode is not yet commanded** in the Phone section — only USB/LSB are sent via CAT. FM is noted as a future addition.
+- **Theme and UI scale are stored in `localStorage`, not in `settings.json`.** They do not roam with a copied or synced settings file.
+- **Transmit-privilege lockout enforces FCC Part 97, ITU Region 2 rules only.** Non-US operators should select `Open` to disable the lockout; no other national band plans are modeled.
+
+---
+
+[Getting Started](Getting-Started.md) · [Troubleshooting](Troubleshooting.md) · [Operating Guide](Operate-FT8-FT4.md) · [Frequency Plan](Frequency-Plan.md)

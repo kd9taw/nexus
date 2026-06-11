@@ -1,247 +1,225 @@
 <div align="center">
 
-<img src="docs/img/banner.png" alt="Tempo — modern, chat-first off-grid ham radio text" width="840" />
+<img src="docs/img/nexus-banner.svg" alt="Nexus — the all-mode amateur radio operations center" width="840" />
 
-**A modern, chat-first HF/VHF/UHF text-messaging app for the off-grid / preparedness ham community.**
+**One app from antenna to award — FT8/FT4 digital, CW, and SSB phone in a single modern operations center.**
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](COPYING)
 ![Platform](https://img.shields.io/badge/platform-Windows-0078D6)
-[![CI](https://github.com/kd9taw/tempo/actions/workflows/ci.yml/badge.svg)](https://github.com/kd9taw/tempo/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/kd9taw/tempo?include_prereleases&label=release)](https://github.com/kd9taw/tempo/releases)
-[![Downloads](https://img.shields.io/github/downloads/kd9taw/tempo/total?label=downloads)](https://github.com/kd9taw/tempo/releases)
-![Status](https://img.shields.io/badge/status-beta%20(simulation--validated)-orange)
+[![CI](https://github.com/kd9taw/nexus/actions/workflows/ci.yml/badge.svg)](https://github.com/kd9taw/nexus/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/kd9taw/nexus?include_prereleases&label=release)](https://github.com/kd9taw/nexus/releases)
+[![Downloads](https://img.shields.io/github/downloads/kd9taw/nexus/total?label=downloads)](https://github.com/kd9taw/nexus/releases)
+![Status](https://img.shields.io/badge/status-beta-orange)
 
-[![Download for Windows](https://img.shields.io/badge/⬇_Download_for_Windows-.exe-0078D6?style=for-the-badge&logo=windows)](https://github.com/kd9taw/tempo/releases/latest)
+[![Download for Windows](https://img.shields.io/badge/⬇_Download_for_Windows-.exe-0078D6?style=for-the-badge&logo=windows)](https://github.com/kd9taw/nexus/releases/latest)
 [![Operator manual](https://img.shields.io/badge/📖_Operator_manual-docs-8957e5?style=for-the-badge)](docs/manual/)
 
-<sub>**Download** is a ~199 MB offline installer (bundles WebView2 + Hamlib; no internet/admin needed). · **[Operator manual](docs/manual/)** — setup, operating, rig/audio, FAQ, troubleshooting. · Beta, simulation-validated.</sub>
+<sub>Offline installer — bundles WebView2 **and Hamlib**, per-user install, no admin rights. ·
+**[Operator manual](docs/manual/)** · **[Comprehensive overview](docs/OVERVIEW.md)**</sub>
 
 </div>
 
-Tempo wraps the **FT1** weak-signal waveform — and a new non-coherent **DX1** mode — as a
-headless Fortran→C modem library (`libft1`) behind a clean **Rust core + Tauri web UI**. It
-delivers fast conversational two-way text, fading-resilient national reach, presence/heartbeat,
-store-and-forward relay, and a one-click ARRL **Field Day** exchange — in a single-window,
-ham-aware interface that deliberately diverges from the dated, multi-window feel of
-WSJT-X / JTDX / JS8Call (without hiding the radio).
+---
 
-> **Status — honest version.** The application is feature-complete and runs on Windows. The
-> FT1 and DX1 waveforms are **validated by simulation** (AWGN + fading sweeps), **not yet by
-> on-air operation** — that's the remaining gate. The FT8/FT4 tier is Phase 2. See
-> [Status & roadmap](#status--roadmap), and [help validate it on the air](#help-validate-tempo).
+**Nexus** is a free, GPLv3, all-mode amateur radio operations center for the desktop. It puts a
+WSJT-X-parity **FT8/FT4** cockpit, a **CW** keying station, an **SSB phone** cockpit with a voice
+keyer, a live **propagation map**, an evidence-backed **"work this now"** board, a **POTA/SOTA
+hunter**, a club-ready **Field Day** mode, and a **DXCC-first logbook** with LoTW / QRZ / ClubLog /
+eQSL connectors — in one window, on one rig, with one log.
 
-<div align="center">
+It is built in **Rust** (DSP, sequencing, CAT, networking) behind a **Tauri** desktop shell, and it
+treats **WSJT-X as the golden standard** for FT8/FT4 behavior: the auto-sequencer state machine,
+decode cadence, split handling, Hound mode, and the UDP ecosystem protocol all match stock — your
+WSJT-X muscle memory just works, inside a UI built this decade.
 
-<img src="docs/img/demo.gif" alt="Tempo in motion — live waterfall, arriving decodes, and the Fast↔Robust tier toggle (simulated data)" width="860" />
+## Why Nexus
 
-<sub>Tempo in motion — scrolling waterfall, arriving decodes, and the always-visible <b>Fast (FT1) ↔ Robust (DX1)</b> tier toggle (simulated data).</sub>
+- **🎛️ All-mode, one app.** Digital, CW, and phone cockpits share one rig, one CAT layer, one
+  logbook, and one needs engine. Entering a cockpit sets the rig up for it automatically — DATA
+  submode for digital, CW for the keyer, the correct sideband by band for phone. No mode fumbling,
+  no app-switching, no five stitched programs.
+- **📡 WSJT-X operational parity in a modern shell.** The FT8/FT4 core replicates the stock
+  behavior the whole ecosystem depends on: the QSO sequencer state table, the early decode pass at
+  11.8 s, Split Operation (Rig / Fake It), Hound mode, directed CQ, the Tx1–Tx6 panel, the F-key
+  shortcuts, and the full WSJT-X UDP protocol — JTAlert, GridTracker, and loggers see Nexus as a
+  WSJT-X. A **Classic ↔ Roster** toggle gives you the stock layout or a modern sortable call roster.
+- **🧭 An honest "work this now" board.** Every Needed row shows its evidence — *“heard by K9LC
+  (EN52, 26 km), 4 min ago”* — and admission is gated by corroboration rules: multiple receivers
+  near **you**, Es-patch locality on VHF, reciprocal-path checks. A superstation on a mountain
+  can't tell you a band is open when it isn't open *at your QTH*. One click QSYs the rig, opens
+  the right cockpit, and prefills the log — split offsets parsed from cluster comments included.
+- **🏞️ POTA & SOTA hunting built in.** Live activator spots with **NEW PARK** and **BAND OPEN**
+  badges, and a one-click **HUNT** that tunes the radio and pre-tags your next QSO with the park
+  or summit reference in standard ADIF. Hunter-focused, zero bookkeeping.
+- **🏕️ Field Day that runs the club.** ARRL FD and Winter FD event modes with correct scoring
+  (per-mode points, dupes per band *per mode*, legal power tiers, live bonus checklist),
+  submittable Cabrillo 3.0 — and every contact pushed in real time to the club's **N3FJP** master
+  log over its official TCP API and broadcast as native **N1MM+** `<contactinfo>` datagrams.
+  One laptop logs digital, CW, and phone into one dupe-checked event log.
+- **🏆 A logbook that chases awards properly.** DXCC, DXCC Challenge, Honor Roll, WAS, and WAZ
+  computed offline from your log, with source-aware confirmations (eQSL never silently counts
+  toward LoTW-grade awards), two-pull incremental LoTW sync, a per-QSO upload state machine that
+  survives restarts, callbook autofill, and a local-only **Journey** achievement layer that makes
+  the first 100 QSOs as motivating as the last 10 entities.
+- **🗺️ Propagation you can act on.** A live world map (3-D globe / azimuthal beam map / flat) fused
+  from PSK Reporter, RBN/DX-cluster, and NOAA space weather; an opening detector anchored to *your*
+  QTH with reciprocity gates and propagation-mode classification (Es / F2 / aurora / tropo); and a
+  persistent **Now-Bar** answering “am I getting out?” from anywhere in the app.
+- **🔌 Zero-config setup.** Plug in the radio and click **Detect my radio** — Nexus reads the USB
+  descriptors, matches the rig model, pairs the audio CODEC, and links the one driver you need if
+  it's missing. Hamlib ships inside the installer. A goal-driven first-run wizard (“what do you
+  want to do?”) shapes the app to you, and your declared license class becomes a real Part 97
+  transmit lockout — the rig physically won't key outside your privileges.
+- **💬 Novel weak-signal chat tiers.** The original Tempo layer: **FT1** (4-second conversational
+  cycle) and **DX1** (fading-resilient non-coherent 8-FSK) with IR-HARQ retransmission combining
+  and presence-gated store-and-forward — simulation-validated, seeking on-air reports.
 
-</div>
+## Who it's for
 
-## See it
+**The new ham.** Nexus compresses the painful first month into an afternoon: auto rig detection
+instead of driver archaeology, a wizard that asks what you want to *do* rather than what you know,
+a license-class lockout so you can't transmit out of segment, an auto-sequencer that completes
+FT8 QSOs while you learn the flow by watching, a Needed board that says *who* to work and *why*,
+and a Journey layer that celebrates your firsts. You can be making contacts the day your callsign
+hits the FCC database.
 
-<table>
-  <tr>
-    <td width="50%"><img src="docs/img/view-qso.png" alt="QSO auto-sequencer" /></td>
-    <td width="50%"><img src="docs/img/view-fieldday.png" alt="Field Day rate workspace" /></td>
-  </tr>
-  <tr>
-    <td align="center"><sub><b>QSO</b> — auto-sequenced 1:1 contacts (Run / Search&amp;Pounce)</sub></td>
-    <td align="center"><sub><b>Field Day</b> — rate workspace, dupe-checked log, section multipliers</sub></td>
-  </tr>
-  <tr>
-    <td width="50%"><img src="docs/img/app-amber.png" alt="Amber-Night theme" /></td>
-    <td width="50%"><img src="docs/img/view-settings.png" alt="Settings — rig, audio, band" /></td>
-  </tr>
-  <tr>
-    <td align="center"><sub><b>Amber-Night</b> theme — night-vision-safe; also Light and Dark</sub></td>
-    <td align="center"><sub><b>Settings</b> — callsign, band/frequency, rig &amp; PTT, audio levels</sub></td>
-  </tr>
-</table>
+**The WSJT-X operator.** Same gestures, same flow: double-click semantics straight from
+`processMessage`, Esc / F4 / F6 / Alt+1–6, Band Activity bottom-pinned in chronological order,
+early decodes at 11.8 s, Fake-It split keeping TX audio in 1500–2000 Hz, Hound auto-move on the
+Fox's report. Plus what stock never had: country and need annotations on every decode row, a
+sortable roster view, in-app LoTW/QRZ sync, and always-on decode (no accidental deaf Monitor-off).
 
-## Why Tempo
+**The DX chaser.** ATNO / new-band / new-mode / new-zone ranking across **all** bands
+simultaneously (not just the one you're tuned to), DXpedition tracking with workable-now cards,
+cluster split comments (“UP 2”) parsed and applied to the rig at click time, Honor Roll math, and
+confirmation diagnostics that explain exactly why a QSO isn't credited yet — with a one-click fix
+where one exists.
 
-Existing weak-signal text modes force a hard choice. FT8/JS8Call are extremely sensitive but
-**slow** — rigid 15-second slots plus multi-frame messages make a round trip ~30 s. Faster modes
-buy speed by giving up 4–6 dB of sensitivity. The off-grid/preparedness community needs *both*
-fast two-way text **and** regional + national reach, plus a Field-Day-capable workflow.
+**The club.** Field Day mode reshapes the app for the event weekend and feeds club infrastructure
+natively — no JTAlert bridge, no end-of-day log merges. Plus a built-in CAT broker so other shack
+software can share the radio *through* Nexus.
 
-"Shorten the cycle" vs "national weak-signal reach" is a **physics tradeoff**, not an engineering
-gap. Tempo's answer is a **tiered waveform architecture** with a chat-first layer on top, and a
-clear, always-visible tier toggle:
+## Works with your shack
 
-| Tier | Waveform | T/R | Character | Use |
-|------|----------|-----|-----------|-----|
-| **Fast** | **FT1** (4-CPM, turbo-eq, IR-HARQ) | 4 s | coherent, conversational | regional NVIS, good-condition national, Field Day rate |
-| **Robust** | **DX1** (non-coherent 8-FSK + soft LDPC) | 15 s | fading-immune, deep | disturbed/multipath national paths, store-and-forward |
+| Integration | What it does |
+|---|---|
+| **WSJT-X UDP protocol** | Full outbound Decode / Status / QsoLogged / Heartbeat + inbound HaltTx, Clear, Replay, Location, Highlight — JTAlert and GridTracker see a WSJT-X |
+| **CAT broker** | Nexus serves a rigctld-compatible TCP port so WSJT-X, N1MM+, and loggers share the radio through it |
+| **Companion mode** | Ride an upstream WSJT-X/JTDX decode stream over UDP instead of owning the rig |
+| **N3FJP** | Real-time Field Day QSO push over the official TCP API, with a connection Test button |
+| **N1MM+** | Native `<contactinfo>` UDP broadcast per contact |
+| **LoTW** | TQSL upload + two-pull incremental confirmation sync |
+| **QRZ.com** | Callbook autofill, logbook push, connection test |
+| **ClubLog / eQSL** | Real-time push (bring your own free ClubLog API key — open-source builds can't ship one) / InBox confirmation import |
+| **DX cluster / RBN** | Telnet feed with locality-gated VHF admission |
+| **PSK Reporter** | MQTT firehose in for propagation; standard UDP spot uploads out (you appear on the map) |
 
-DX1's point is fading immunity: in simulation it loses only **~3.7 dB** under per-symbol Rayleigh
-fading, where FT8-class coherent modes lose 10+ dB. Both tiers carry the **same 77-bit messages**,
-so Chat, QSO, and Field Day work identically on either. (See
-[Tiers — FT1 vs DX1](docs/manual/Tiers-FT1-vs-DX1.md) in the manual.)
+Credentials for every service live **only in the OS keychain** — never in config files, never in
+logs, never shown back to the UI beyond “configured.”
 
-## Features
+## Quick start
 
-- **Chat-first, ham-aware UI** — people/conversations like a modern messenger, but SNR, audio
-  offset, dT, dial/band/sideband, mode/tier, RV, and T/R slot timing stay first-class. Three
-  field themes: **Light** (sun), **Dark** (shack), **Amber-Night** (night-vision-safe).
-- **Prominent, modernized waterfall** with palettes, RX/TX markers, and telemetry.
-- **Adaptive reliability** — FT1's **IR-HARQ** is live and on by default: a frame that fails to
-  decode is recovered by joint-turbo-combining its retransmissions (RV0→RV1→RV2), worth ≈ +2.5 dB /
-  ~2× completion in the marginal zone. The **DX1 robust tier decodes the whole passband** each slot
-  (every signal across 200–2900 Hz), not just the tuned carrier — like FT1's acquisition.
-- **Operating modes:**
-  - **Chat** — presence/roster, word-wrapped free-text auto-chunked across frames, directed
-    inbox with sender attribution, presence-gated **store-and-forward** relay.
-  - **QSO** — auto-sequencer (calling CQ or answering).
-  - **Field Day** — native `CALL CALL [R] CLASS SECTION` exchange, dupe-checked log with section
-    multipliers + scoring, and **ADIF / Cabrillo** export.
-- **Open broadcast** (`DE <CALL> …`) + a color-coded **live decode feed** (CQ / calling-you /
-  worked-before / new).
-- **Work-a-station + logbook** — click a heard station (or decode) to start a directed QSO; a
-  persistent **ADIF logbook** auto-logs contacts and drives **worked-before (B4)** highlighting.
-- **WSJT-X-familiar operating controls** — RX **level meter** + **Tx power** + audio-device
-  pick, **Tune** / **Monitor** / **Stop-TX**, **alerts** on your-call/CQ/new, UTC clock + bearing,
-  editable quick-reply macros, time-sync health, and a Tx watchdog.
-- **Rig control + band/frequency selection** — Tempo launches Hamlib's `rigctld` for CAT
-  (bundled in the Windows installer — no separate install, **56-rig dropdown**), or keys PTT via
-  **serial RTS/DTR** or **VOX**. One-tap **band selector** + **manual frequency entry** (top bar
-  and Settings) retune the rig live.
-- **Its own calling frequencies** — Tempo runs *off* the FT8/FT4/JS8 watering holes on a
-  researched, **US-General-legal, CW-clear** plan across **HF and VHF/UHF** (USB weak-signal +
-  FM-simplex). See **[docs/FREQUENCIES.md](docs/FREQUENCIES.md)** and the
-  [Frequency Plan](docs/manual/Frequency-Plan.md) manual page.
-- **Starts passive (hunt-and-pounce)** — it listens and only transmits when you act; the CQ
-  beacon is opt-in.
-- **Ecosystem interop** — a **WSJT-X-compatible UDP API** (JTAlert, GridTracker, N1MM+, loggers)
-  and **PSK Reporter** spotting.
+1. **[Download the Windows installer](https://github.com/kd9taw/nexus/releases/latest)** — offline,
+   bundles WebView2 and Hamlib, per-user, no admin needed.
+2. Plug in the radio, open **Settings ▸ Rig & Audio**, click **Detect my radio**.
+3. Answer the first-run wizard: callsign, grid, license class, and what you want to do.
+4. Watch decodes arrive. Double-click a station — the sequencer runs the QSO, and the contact
+   lands in the logbook, on PSK Reporter, and (if configured) on QRZ and LoTW.
 
-## Install (Windows)
-
-Tempo's primary target is **Windows**. Download and run the installer:
-
-**➡ [`Tempo_0.1.0_x64-setup.exe`](https://github.com/kd9taw/tempo/releases/latest)** (~199 MB,
-[all releases](https://github.com/kd9taw/tempo/releases)) — installs per-user (no admin), bundles
-the **WebView2** runtime *offline* (clean install on an air-gapped PC) and **Hamlib** (`rigctld`)
-so CAT works with zero extra installs.
-
-First run: open **Settings** → set callsign/grid, band/dial/sideband, your rig (CAT model + COM
-port, or VOX/serial), and pick your **audio input/output device** + **Tx power**. Pick **Fast
-(FT1)** or **Robust (DX1)** in the top bar. Full walkthrough:
-**[Getting Started](docs/manual/Getting-Started.md)**.
+New here? Start with **[Getting Started](docs/manual/Getting-Started.md)**.
 
 > The installer is **unsigned** (cross-compiled on Linux), so SmartScreen may warn — *More info →
-> Run anyway*. The published binaries are **pending on-air validation**; treat this as beta and
-> verify on your own station. Verify the download with the `SHA-256` on the
-> [release](https://github.com/kd9taw/tempo/releases/latest).
+> Run anyway*. Verify the download against the `SHA-256` on the
+> [release page](https://github.com/kd9taw/nexus/releases/latest).
 
-## Build from source
+## Status — the honest version
 
-Full details in **[WINDOWS.md](WINDOWS.md)** / the
-[Building from Source](docs/manual/Building-from-Source.md) manual page. In short:
-
-**Native Windows** (produces the installer + MSI):
-```bash
-# In the MSYS2 UCRT64 shell:
-./scripts/build-windows.sh
-# …or from PowerShell:
-scripts\build-windows.ps1
-```
-
-**Cross-compile from Linux / WSL2** (no MSYS2 needed; produces the same installer):
-```bash
-./scripts/build-windows-cross.sh
-```
-
-**Headless modem/engine tests** (needs gfortran + CMake + Ninja + single-precision FFTW3 + Boost headers + a Rust toolchain — see [CONTRIBUTING.md](CONTRIBUTING.md) for the exact package list):
-```bash
-cargo test          # modem FFI, engine, QSO/Field Day, networking, DX1 round-trips
-```
+- The **FT8/FT4 tier is the production core**: operational parity with stock WSJT-X, verified
+  against a 207-row behavior matrix and exercised on the air daily.
+- **CW and Phone cockpits** are casual/ragchew-grade by design: macros, voice keyer, scope, full
+  logging — no contest exchanges, no CW receive decoding, no WinKeyer hardware yet.
+- The **FT1/DX1 chat tiers are simulation-validated, not yet proven on the air** — AWGN and fading
+  sweeps say they work; on-air decode-rate reports are the remaining gate and the single most
+  useful contribution you can make.
+- **Windows installer** is the supported package today; the codebase is cross-platform Rust/Tauri
+  and builds on Linux.
+- Not implemented (yet): Fox role (running a DXpedition end), contest modes (NA VHF / RTTY RU /
+  WW Digi), WSPR, Q65/MSK144, CW receive decoding, rotator control, VOACAP integration (the path
+  predictor is an in-house heuristic model, and it's labeled as such in the UI).
 
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│ Tauri v2 desktop shell (src-tauri) + web UI (ui/, React+TS)    │
-│   chat-first three-zone layout · Light/Dark/Amber themes       │
-├──────────────────────────────────────────────────────────────┤
+┌────────────────────────────────────────────────────────────────┐
+│ Tauri v2 desktop shell (src-tauri) + web UI (ui/, React + TS)  │
+│   cockpits: Operate · CW · Phone · Field Day · Connect map     │
+│   boards: Needed · POTA/SOTA · Logbook · Awards · Journey      │
+├────────────────────────────────────────────────────────────────┤
 │ Rust core (crates/)                                            │
-│   tempo-app   UI logic + serde DTOs + live TX/RX Engine        │
-│   tempo-core  slot timing · channel · message · QSO · Field    │
-│               Day · roster · inbox · store-and-forward · DSP   │
-│   tempo-audio cpal sound card + rig control (rigctld/serial)   │
-│   tempo-net   WSJT-X UDP API + PSK Reporter                    │
-│   ft1 / ft1-sys  safe wrapper + raw FFI over libft1            │
-├──────────────────────────────────────────────────────────────┤
+│   tempo-app    live TX/RX engine · settings · DTOs             │
+│   tempo-core   slot timing · 77-bit messages · QSO sequencer · │
+│                logbook/ADIF · Field Day · reconcile            │
+│   tempo-audio  cpal audio · rigctld CAT · CW keyer · voice     │
+│                keyer · decode scheduler · CAT broker           │
+│   tempo-net    WSJT-X UDP · PSK Reporter · DX cluster ·        │
+│                LoTW/QRZ/ClubLog/eQSL · N3FJP · N1MM            │
+│   propagation  needs engine · opening detector · space wx ·    │
+│                awards · Journey                                │
+│   ft1/ft1-sys  safe wrapper + FFI over libft1                  │
+├────────────────────────────────────────────────────────────────┤
 │ libft1 (Fortran → C ABI, FFTW3, no Qt)                         │
-│   Fast tier: FT1 4-CPM turbo modem + IR-HARQ                   │
-│   Robust tier: DX1 non-coherent M-FSK + soft LDPC (libft1/dx1) │
-└──────────────────────────────────────────────────────────────┘
+│   FT8/FT4 encode+decode · FT1 4-CPM turbo + IR-HARQ ·          │
+│   DX1 non-coherent 8-FSK + soft LDPC                           │
+└────────────────────────────────────────────────────────────────┘
 ```
 
-See **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** for the full design, the tiering rationale,
-and the protocol/DSP details.
+See **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** for the full design.
 
-## Status & roadmap
+## Building from source
 
-**Done:** the full application (modes, messaging, Field Day, rig control, WSJT-X/PSK interop,
-broadcast, settings, themes); FT1 fast tier and DX1 robust tier wired end-to-end, now with **live
-IR-HARQ** (joint-turbo retransmission combining, on by default) on FT1 and **full-passband RX** on
-DX1 (decodes every signal across 200–2900 Hz per slot); a clean Windows installer. Headless test
-suite green.
+```bash
+git clone https://github.com/kd9taw/nexus.git
+cd nexus
+cargo test --workspace                  # Rust core (modem FFI, engine, sequencer, exports)
+cd ui && npm install && npx vitest run  # UI suites
+# Windows installer, cross-compiled from Linux/WSL2:
+./scripts/build-windows-cross.sh
+```
 
-**Validated by simulation + Windows cross-build** (the hard gate before relying on it): FT1 AWGN
-50% ≈ −15 dB; DX1 AWGN 50% ≈ −18.6 dB with a ~3.7 dB fading penalty; live IR-HARQ adds ≈ +2.5 dB /
-~2× completion in the marginal zone. All modem self-tests + the installer cross-build and smoke-test
-clean on Windows. **On-air decode-rate-vs-SNR is still pending — that's the open gate.**
+The FT1/FT8 modem is Fortran + C behind a Rust FFI, so the **GNU toolchain** is required — see
+**[Building from Source](docs/manual/Building-from-Source.md)** and [WINDOWS.md](WINDOWS.md).
 
-**Phase 2:** on-air validation; lower-rate LDPC for DX1's deeper thresholds + the wider DX1
-variants and multi-slot stacking; the FT8/FT4 tier (internals exist in `libft1`, decode pipeline
-not wired); macOS/Linux desktop builds. Full list: the [Roadmap](docs/manual/Roadmap.md) manual page.
+## Documentation
 
-## Help validate Tempo
-
-This is the part that needs the community. The waveforms are proven in simulation — **the open
-gate is real RF**. If you run it on the air:
-
-- **Share on-air reports** in [Discussions](https://github.com/kd9taw/tempo/discussions) — paths,
-  bands, distances, decode rates vs. SNR, what worked and what didn't.
-- **File bugs** with the [issue templates](https://github.com/kd9taw/tempo/issues).
-- **⭐ Star the repo** if you want to follow along.
-
-New here? The **[operator manual](docs/manual/)** covers everything —
-[Getting Started](docs/manual/Getting-Started.md),
-[Operating Guide](docs/manual/Operating-Guide.md),
-[Rig & Audio Setup](docs/manual/Rig-and-Audio-Setup.md),
-[Troubleshooting](docs/manual/Troubleshooting.md), and an
-[FAQ](docs/manual/FAQ.md).
+- **[Comprehensive overview](docs/OVERVIEW.md)** — every surface, in depth
+- **[Operator manual](docs/manual/)** — setup, per-mode operating guides, integrations, troubleshooting
+- **[FT1 protocol specification](docs/FT1-Protocol.md)** — the native waveform, for implementers
+- **[Frequency plan](docs/FREQUENCIES.md)** — where the FT1/DX1 tiers live on the bands
 
 ## License & credits
 
-Tempo is **free software under the [GNU GPL v3](COPYING)** (or later), inherited from its
-upstream lineage.
+Nexus is **free software under the [GNU GPL v3](COPYING)** (or later).
 
-- **WSJT-X** (Joe Taylor **K1JT** and the WSJT Development Group) — the FT8/FT4 heritage, the
-  77-bit message packing, LDPC(174,91) FEC, and DSP infrastructure that `libft1` reuses. GPLv3.
-- **FT1** — the 4-CPM turbo weak-signal waveform by **KD9TAW**.
+- **WSJT-X** (Joe Taylor **K1JT** and the WSJT Development Group) — the FT8/FT4 modes, the 77-bit
+  message packing, LDPC(174,91) FEC, and the behavioral reference for the entire digital tier. GPLv3.
+- **FT1 / DX1** — the native weak-signal waveforms by **KD9TAW**.
 - **[Hamlib](https://hamlib.github.io/)** — bundled `rigctld` for CAT control (GPL/LGPL).
-- **[FFTW](https://www.fftw.org/)** (GPL), **[Tauri](https://tauri.app/)**, React, and
-  [cpal](https://github.com/RustAudio/cpal).
+- **[FFTW](https://www.fftw.org/)** (GPL), **[Tauri](https://tauri.app/)**, React,
+  [cpal](https://github.com/RustAudio/cpal), Natural Earth basemap (public domain).
 
 This is **experimental amateur-radio software**. You are responsible for operating within your
-license privileges and local regulations. ARRL Field Day prohibits fully-automated contacts;
-Tempo's Field Day workflow is operator-initiated by design.
+license privileges and local regulations. Nexus never transmits on launch; ARRL Field Day
+prohibits fully-automated contacts, and Nexus's Field Day workflow is operator-initiated by design.
 
-**Author / open-source contact:** Seth McCallister (**KD9TAW**) · kd9taw@protonmail.com
-
-Contributions welcome — see **[CONTRIBUTING.md](CONTRIBUTING.md)** and the
+**Author:** Seth McCallister (**KD9TAW**) · kd9taw@protonmail.com ·
+contributions welcome — see **[CONTRIBUTING.md](CONTRIBUTING.md)** and the
 [Code of Conduct](CODE_OF_CONDUCT.md).
 
 <div align="center"><sub>
 
-**[⬇ Download](https://github.com/kd9taw/tempo/releases/latest)** ·
+**[⬇ Download](https://github.com/kd9taw/nexus/releases/latest)** ·
 **[📖 Manual](docs/manual/)** ·
-**[💬 Discussions](https://github.com/kd9taw/tempo/discussions)** ·
-**[⭐ Star](https://github.com/kd9taw/tempo)**
+**[💬 Discussions](https://github.com/kd9taw/nexus/discussions)** ·
+**[⭐ Star](https://github.com/kd9taw/nexus)**
 
 </sub></div>

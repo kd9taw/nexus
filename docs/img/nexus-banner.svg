@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="840" height="200" viewBox="0 0 840 200" role="img" aria-label="Nexus — the all-mode amateur radio operations center">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b1220"/>
+      <stop offset="0.55" stop-color="#101b30"/>
+      <stop offset="1" stop-color="#0b1220"/>
+    </linearGradient>
+    <linearGradient id="wordmark" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#7dd3fc"/>
+      <stop offset="0.5" stop-color="#a5b4fc"/>
+      <stop offset="1" stop-color="#c084fc"/>
+    </linearGradient>
+    <linearGradient id="wf" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f59e0b" stop-opacity="0.85"/>
+      <stop offset="0.45" stop-color="#dc2626" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#1e1b4b" stop-opacity="0.0"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="840" height="200" rx="14" fill="url(#bg)"/>
+  <rect x="0.5" y="0.5" width="839" height="199" rx="13.5" fill="none" stroke="#334155" stroke-width="1"/>
+
+  <!-- waterfall traces (right side) -->
+  <g opacity="0.9">
+    <rect x="560" y="38" width="3" height="124" fill="url(#wf)"/>
+    <rect x="578" y="58" width="2" height="104" fill="url(#wf)" opacity="0.7"/>
+    <rect x="596" y="30" width="4" height="132" fill="url(#wf)"/>
+    <rect x="617" y="74" width="2" height="88"  fill="url(#wf)" opacity="0.55"/>
+    <rect x="634" y="48" width="3" height="114" fill="url(#wf)" opacity="0.8"/>
+    <rect x="660" y="66" width="2" height="96"  fill="url(#wf)" opacity="0.6"/>
+    <rect x="676" y="36" width="4" height="126" fill="url(#wf)"/>
+    <rect x="700" y="80" width="2" height="82"  fill="url(#wf)" opacity="0.5"/>
+    <rect x="716" y="52" width="3" height="110" fill="url(#wf)" opacity="0.75"/>
+    <rect x="740" y="44" width="2" height="118" fill="url(#wf)" opacity="0.65"/>
+    <rect x="757" y="68" width="3" height="94"  fill="url(#wf)" opacity="0.7"/>
+    <rect x="781" y="34" width="2" height="128" fill="url(#wf)" opacity="0.6"/>
+  </g>
+
+  <!-- great-circle arcs -->
+  <g fill="none" stroke="#38bdf8" stroke-opacity="0.28" stroke-width="1.4">
+    <path d="M 40 168 Q 300 -40 770 130"/>
+    <path d="M 60 178 Q 360 20 800 160"/>
+    <path d="M 30 150 Q 240 -10 620 96"/>
+  </g>
+  <g fill="#7dd3fc">
+    <circle cx="40"  cy="168" r="3.2"/>
+    <circle cx="770" cy="130" r="2.6" opacity="0.9"/>
+    <circle cx="620" cy="96"  r="2.2" opacity="0.8"/>
+    <circle cx="800" cy="160" r="2.2" opacity="0.7"/>
+  </g>
+
+  <!-- wordmark -->
+  <text x="48" y="104" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="64" font-weight="800" letter-spacing="10" fill="url(#wordmark)">NEXUS</text>
+  <text x="50" y="138" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="17" font-weight="500" letter-spacing="2.2" fill="#94a3b8">THE ALL-MODE AMATEUR RADIO OPERATIONS CENTER</text>
+  <text x="50" y="166" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="13" letter-spacing="1.2" fill="#64748b">FT8 · FT4 · CW · SSB · FT1 · POTA · FIELD DAY · DXCC</text>
+</svg>

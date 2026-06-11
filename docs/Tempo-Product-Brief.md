@@ -119,8 +119,8 @@ This is an open invitation to the club. If you have an HF station and a soundcar
 
 ### Get involved
 
-- **Download for Windows (latest release):** https://github.com/kd9taw/tempo/releases/latest
-- **Source, issues & feedback:** https://github.com/kd9taw/tempo
+- **Download for Windows (latest release):** https://github.com/kd9taw/nexus/releases/latest
+- **Source, issues & feedback:** https://github.com/kd9taw/nexus
 - **Direct contact:** kd9taw@protonmail.com — or grab Seth at the club meeting.
 
 The best feedback is a GitHub issue with your **rig, band, observed SNR, and decode result** — but an email or a note after the meeting works too.
@@ -129,4 +129,4 @@ The best feedback is a GitHub issue with your **rig, band, observed SNR, and dec
 
 ---
 
-*Tempo — © Seth McCallister, KD9TAW. Free and open source under GPL-3.0-or-later. github.com/kd9taw/tempo*
+*Tempo — © Seth McCallister, KD9TAW. Free and open source under GPL-3.0-or-later. github.com/kd9taw/nexus*

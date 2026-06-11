@@ -1,24 +1,30 @@
-# Tempo Architecture
+# Nexus Architecture — the Tempo chat layer and modem core
 
-> Deep design document for **Tempo**, a chat-first HF text-messaging app for the
-> off-grid / preparedness amateur-radio community.
+> Deep design document for the **Tempo chat layer** (FT1/DX1 waveforms, chat,
+> store-and-forward) and the modem/audio/rig substrate it shares with the rest
+> of **Nexus**, the all-mode amateur radio operations center this project became.
 >
 > **Author / contact:** Seth McCallister (KD9TAW) &lt;kd9taw@protonmail.com&gt;
-> **Repository:** https://github.com/kd9taw/tempo
+> **Repository:** https://github.com/kd9taw/nexus
 > **License:** GPL-3.0-or-later (full text in [`COPYING`](../COPYING)).
 
-This document explains *why* Tempo is shaped the way it is and *how* the layers
-fit together. For build/setup instructions see [`WINDOWS.md`](../WINDOWS.md); for
-the user-facing tour see [`README.md`](../README.md).
+This document explains *why* this layer is shaped the way it is and *how* the
+layers fit together. It predates the Nexus expansion, and its deep dives (tiering
+rationale, DSP, HARQ, slot engine, rig control, build system) remain accurate for
+the subsystems they cover. For the current app-level surface — the FT8/FT4
+WSJT-X-parity cockpit, CW/Phone, the Needed board, POTA/SOTA, Field Day, awards,
+and the Connect map — see the [README](../README.md) crate map and the
+[comprehensive overview](OVERVIEW.md).
 
-> **Validation status — read this first.** Tempo's two waveforms are validated by
-> **simulation and Windows cross-build only** (AWGN and Rayleigh-fading sweeps,
+> **Validation status — read this first.** The FT1 and DX1 waveforms are validated
+> by **simulation and Windows cross-build only** (AWGN and Rayleigh-fading sweeps,
 > plus the Windows test exes), **not yet on-air / hardware-validated**. IR-HARQ
 > joint combining and full-passband DX1 receive are **live** (see §6), but their
-> on-air gains are unproven. The FT8/FT4 tier is **Phase 2** (its DSP internals
-> are compiled into `libft1`, but no decode pipeline is wired). Published Windows
-> binaries are **cross-compiled beta (v0.2.0)**. Nothing here should be read as an
-> on-air sensitivity claim — **on-air decode-rate-vs-SNR is the open gate**.
+> on-air gains are unproven. Nothing here should be read as an on-air sensitivity
+> claim for FT1/DX1 — **on-air decode-rate-vs-SNR is their open gate.**
+> (The **FT8/FT4 tier**, by contrast, is now fully wired — encode, decode, and a
+> WSJT-X-parity operating surface — and is the production core of Nexus; the
+> "Phase 2" framing in older revisions of this document is obsolete.)
 
 ---
 
@@ -651,8 +657,8 @@ Tempo's GPLv3.
   `gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64 gfortran-mingw-w64-x86-64 cmake
   ninja-build nodejs npm nsis`, the `x86_64-pc-windows-gnu` Rust target, tauri-cli;
   FFTW3f cross-built by the script.
-- Output: the NSIS installer `Tempo_0.2.0_x64-setup.exe` (per-user; bundles
-  offline WebView2 + Hamlib), `tempo.exe`, and the **5 fully-static modem test
+- Output: the NSIS installer `Nexus_0.2.0_x64-setup.exe` (per-user; bundles
+  offline WebView2 + Hamlib), `nexus.exe`, and the **5 fully-static modem test
   exes** (each statically linking the gfortran runtime; see §10).
 
 The GUI app is built with `--features radio,custom-protocol` (radio =
@@ -673,7 +679,7 @@ the bundled UI rather than a blank page).
   (FT1 AWGN sweep), `dx1_test_standalone` (DX1 AWGN + Rayleigh-fading sweep), and
   C-ABI harnesses (`roundtrip`, `acquire`). `crates/tempo-core/tests/awgn_threshold.rs`
   re-checks FT1's ~−15 dB threshold inside the Rust suite.
-- **Windows cross-build:** all modem self-tests, `tempo.exe`, and the NSIS
+- **Windows cross-build:** all modem self-tests, `nexus.exe`, and the NSIS
   installer cross-build clean, and **5/5 Windows test exes pass** (FT1 −15 dB,
   DX1 −18.6 dB, the 3-signal full-band scan, and FT1 acquisition + IR-HARQ `rv`
   through the C-ABI). The test exes now **statically link the gfortran runtime**

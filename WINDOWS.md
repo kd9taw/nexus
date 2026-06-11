@@ -1,12 +1,12 @@
-# Building & running Tempo on Windows
+# Building & running Nexus on Windows
 
-Tempo's modem (`libft1`) is **Fortran + C/C++ + FFTW**, so the Windows build uses
+Nexus's modem (`libft1`) is **Fortran + C/C++ + FFTW**, so the Windows build uses
 the **GNU toolchain** (MSVC has no Fortran). This is the same MinGW environment
 used to cross-compile FT1 for Windows. The Tauri shell uses the built-in
 **WebView2** runtime, audio uses **WASAPI** (via `cpal`, no extra libs), and
 PTT/CAT uses Hamlib's **`rigctld.exe`** over TCP.
 
-Tempo has two waveform tiers, switched with the **Fast · Robust** toggle (never
+Nexus has two waveform tiers (the Tempo chat layer protocols), switched with the **Fast · Robust** toggle (never
 silently — the active tier is always shown):
 - **Fast = FT1** — 4 s T/R, coherent; regional NVIS / good-condition national /
   Field Day / conversational.
@@ -57,7 +57,7 @@ you. From Windows PowerShell (it finds MSYS2 and runs the above inside UCRT64):
 manual steps below are what that script automates.
 
 ```bash
-cd tempo
+cd nexus
 # Web UI deps (once):
 npm --prefix ui install
 
@@ -85,13 +85,13 @@ Settings persist to `%APPDATA%\tempo\settings.json`:
 
 ### Rig control (CAT / PTT)
 
-Tempo handles rig control in-app — **you do not run rigctld yourself**:
+Nexus handles rig control in-app — **you do not run rigctld yourself**:
 
 - **CAT (recommended):** choose your **rig model** (dropdown) and **COM port** +
-  **baud** in Settings. Tempo launches Hamlib's `rigctld` for you and keys/tunes
+  **baud** in Settings. Nexus launches Hamlib's `rigctld` for you and keys/tunes
   the rig. **The installer bundles `rigctld` + its DLLs** (staged by
   `scripts/fetch-hamlib.sh` into `src-tauri/resources/hamlib/`), so installer
-  users need **no separate Hamlib install** — Tempo prefers the bundled copy and
+  users need **no separate Hamlib install** — Nexus prefers the bundled copy and
   only falls back to a `rigctld` on `PATH`. (If you run a *from-source* build that
   skips the Hamlib fetch, put Hamlib's `rigctld.exe` on `PATH`.) The curated model
   list is best-effort — confirm your exact model number with `rigctl -l` if needed.
@@ -110,9 +110,9 @@ devices; Tempo resamples to/from the modem's 12 kHz automatically.
 
 Enable these in Settings → Network for ecosystem compatibility:
 
-- **WSJT-X UDP API** — Tempo emits the WSJT-X-compatible UDP protocol
+- **WSJT-X UDP API** — Nexus emits the WSJT-X-compatible UDP protocol
   (Heartbeat / Status / Decode / QSO-Logged) so **JTAlert, GridTracker, N1MM and
-  loggers** can consume Tempo's decodes/QSOs and (where supported) control it.
+  loggers** can consume Nexus's decodes/QSOs and (where supported) control it.
   Default target `127.0.0.1:2237` (same as WSJT-X). For another machine on the
   LAN, set its address (and allow the UDP port through Windows Firewall). It also
   accepts inbound Reply / HaltTx / FreeText.
