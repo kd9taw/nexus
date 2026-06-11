@@ -289,6 +289,18 @@ pub struct Engine {
 const SPECTRUM_WINDOW: usize = 4096;
 
 /// Window of recent decode DT samples used for the time-sync health median.
+/// Snap a stored power multiplier to the LEGAL ARRL FD tiers {1, 2, 5} — a
+/// hand-edited settings file must never score with ×3/×4 (not real tiers).
+fn legal_fd_power(v: u32) -> u32 {
+    if v >= 5 {
+        5
+    } else if v >= 2 {
+        2
+    } else {
+        1
+    }
+}
+
 /// A pending one-click POTA/SOTA hunt expires after this long — activations
 /// end; a stale pend must never stamp a park on an unrelated contact.
 const HUNT_TTL_SECS: u64 = 4 * 3600;
@@ -481,6 +493,16 @@ impl Engine {
     /// operating mode or queues (unlike [`Engine::apply_settings`]). Updates the
     /// settings + the UI radio readout; the radio loop re-tunes the rig from
     /// settings each slot. `mode` is "USB" (weak-signal) or "FM" (simplex).
+    /// Keep an active Field Day log's band in step with the dial — it was
+    /// frozen at mode-entry, so a mid-event QSY logged every later contact
+    /// under the ENTRY band (wrong Cabrillo/N3FJP band, corrupted dupe keys).
+    fn sync_fd_band(&mut self) {
+        let band = self.settings.band.clone();
+        if let Mode::FieldDay { station, .. } = &mut self.mode {
+            station.log.band = band;
+        }
+    }
+
     pub fn set_frequency(&mut self, dial_mhz: f64, band: &str, mode: &str) {
         // Band change invalidates the decode context: answering a HISTORY row from
         // the old band would target a station that isn't here and derive parity
@@ -500,6 +522,7 @@ impl Engine {
         if self.split_tx_mhz.take().is_some() {
             self.split_dirty = true;
         }
+        self.sync_fd_band();
     }
 
     /// The rig reported a dial frequency we did NOT set — the operator turned the VFO knob
@@ -518,6 +541,7 @@ impl Engine {
         }
         self.app
             .set_radio(self.settings.dial_mhz, &self.settings.band, &self.settings.sideband);
+        self.sync_fd_band();
     }
 
     /// The active tier's band plan with the operator's working-frequency
@@ -1114,6 +1138,48 @@ impl Engine {
         }
     }
 
+    /// Manually log a Field Day contact from the CW/Phone cockpits (the
+    /// digital sequencer logs its own). `mode` = scoring class "CW" | "PH".
+    /// Returns false on a band+mode dupe (nothing logged).
+    pub fn fd_log_manual(
+        &mut self,
+        call: &str,
+        class: &str,
+        section: &str,
+        mode: &str,
+    ) -> Result<bool, String> {
+        self.sync_fd_band(); // a knob-QSY between contacts must stamp the REAL band
+        let Mode::FieldDay { station, .. } = &mut self.mode else {
+            return Err("Field Day mode is not active".into());
+        };
+        Ok(station.log.log_mode_at(
+            call,
+            class,
+            section,
+            mode,
+            0,
+            now_unix_secs(),
+        ))
+    }
+
+    /// Field Day score = QSO points × power multiplier + claimed bonuses.
+    /// (Section count is the reported multiplier-equivalent; ARRL FD totals
+    /// QSO-points × power, plus bonus points, and lists sections separately.)
+    pub fn fd_score(&self) -> Option<(u32, u32, u32)> {
+        let Mode::FieldDay { station, .. } = &self.mode else {
+            return None;
+        };
+        let qso_pts = station.log.qso_points();
+        let powered = qso_pts * legal_fd_power(self.settings.fd_power_mult);
+        let bonus: u32 = self
+            .settings
+            .fd_bonuses
+            .iter()
+            .filter_map(|id| crate::fd_bonus_points(id))
+            .sum();
+        Some((qso_pts, powered, bonus))
+    }
+
     /// One-click HUNT: remember the activator + park so the NEXT QSO logged
     /// with that call auto-tags `SIG`/`SIG_INFO` (POTA) / `SOTA_REF` — the
     /// hunter-side ADIF credit. Validates like [`Engine::set_activation`].
@@ -1618,13 +1684,22 @@ impl Engine {
                 running: false,
             },
             "fieldday-run" => Mode::FieldDay {
-                station: Box::new(FieldDayStation::running(&mycall, &mygrid, exch, &band)),
+                station: Box::new({
+                    let mut st = FieldDayStation::running(&mycall, &mygrid, exch, &band);
+                    st.log.event =
+                        tempo_core::fieldday::FdEvent::from_code(&self.settings.fd_event);
+                    st
+                }),
                 running: true,
             },
             "fieldday-sp" => Mode::FieldDay {
-                station: Box::new(FieldDayStation::search_and_pounce(
-                    &mycall, &mygrid, exch, &band,
-                )),
+                station: Box::new({
+                    let mut st =
+                        FieldDayStation::search_and_pounce(&mycall, &mygrid, exch, &band);
+                    st.log.event =
+                        tempo_core::fieldday::FdEvent::from_code(&self.settings.fd_event);
+                    st
+                }),
                 running: false,
             },
             other => return Err(format!("unknown mode {other:?}")),
@@ -2619,6 +2694,14 @@ impl Engine {
             Mode::FieldDay { station, running } => {
                 s.mode = OpMode::FieldDay;
                 let log = &station.log;
+                let qso_pts = log.qso_points();
+                let powered = qso_pts * legal_fd_power(self.settings.fd_power_mult);
+                let bonus: u32 = self
+                    .settings
+                    .fd_bonuses
+                    .iter()
+                    .filter_map(|id| crate::fd_bonus_points(id))
+                    .sum();
                 s.field_day = Some(FieldDayStatus {
                     my_class: log.myexch.class.clone(),
                     my_section: log.myexch.section.clone(),
@@ -2626,7 +2709,15 @@ impl Engine {
                     state: format!("{:?}", station.state),
                     qso_count: log.qso_count(),
                     sections: log.sections(),
-                    points: log.qso_points(),
+                    points: qso_pts,
+                    event: if matches!(log.event, tempo_core::fieldday::FdEvent::WinterFd) {
+                        "wfd".into()
+                    } else {
+                        "arrlfd".into()
+                    },
+                    powered_points: powered,
+                    bonus_points: bonus,
+                    total_score: powered + bonus,
                     log: log
                         .qsos()
                         .iter()
@@ -2635,6 +2726,8 @@ impl Engine {
                             class: q.class.clone(),
                             section: q.section.clone(),
                             band: q.band.clone(),
+                            mode: q.mode.clone(),
+                            when_unix: q.when_unix,
                         })
                         .collect(),
                 });

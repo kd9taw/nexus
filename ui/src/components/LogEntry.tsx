@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { AppSnapshot, LoggedQso } from '../types'
-import { getLog, logQso, qrzLookup } from '../api'
+import type { AppSnapshot, FieldDayStatus, LoggedQso } from '../types'
+import { fdLogManual, getLog, logQso, qrzLookup } from '../api'
 import { callHistory } from '../features/callHistory'
 import { pushToast, withErrorToast } from '../toast'
 
@@ -15,6 +15,17 @@ interface Props {
   pendingWork?: { call: string; ts: number } | null
   /** Called once the prefill has been applied, so the parent can clear it. */
   onConsumeWork?: () => void
+  /**
+   * When provided, the component enters FD mode: contacts go to fdLogManual()
+   * instead of the general logbook.  The `mode` prop determines the FD mode
+   * code ('CW' in CwCockpit, 'PH' in PhoneCockpit).
+   */
+  fieldDay?: FieldDayStatus | null
+  /**
+   * The FD mode code to pass to fdLogManual.
+   * Must be 'CW' or 'PH' when fieldDay is active.
+   */
+  fdMode?: 'CW' | 'PH'
 }
 
 function fmtUtc(whenUnix: number): string {
@@ -24,12 +35,18 @@ function fmtUtc(whenUnix: number): string {
 }
 
 /**
- * Shared rich log strip for the CW + Phone cockpits (the two were line-for-line identical).
- * Adds the HRD/DXLab "rich entry" feel: QRZ callbook autofill (fills blanks only), a prior-QSO
- * panel (B4 / dupe / last contact, from the log filtered client-side), and name/QTH/comment/
- * notes that round-trip to the ADIF logbook. Click-to-work prefill still lands the call + RST.
+ * Shared rich log strip for the CW + Phone cockpits.
+ *
+ * When `fieldDay` is active (non-null) the strip shows Class + Section inputs
+ * and routes the log through fdLogManual() — a dupe rejection shows the error
+ * toast. A "FD" chip on the strip signals contacts go to the FD log, not the
+ * general logbook.
+ *
+ * When fieldDay is null/undefined, behaviour is the standard logbook path.
  */
-export function LogEntry({ snap, mode, defaultRst, pendingWork, onConsumeWork }: Props) {
+export function LogEntry({ snap, mode, defaultRst, pendingWork, onConsumeWork, fieldDay, fdMode }: Props) {
+  const fdActive = fieldDay != null
+
   const [logCall, setLogCall] = useState('')
   const [logRst, setLogRst] = useState(defaultRst)
   const [logName, setLogName] = useState('')
@@ -43,6 +60,30 @@ export function LogEntry({ snap, mode, defaultRst, pendingWork, onConsumeWork }:
   const [qrzBusy, setQrzBusy] = useState(false)
   const [allLog, setAllLog] = useState<LoggedQso[]>([])
   const rstRef = useRef<HTMLInputElement>(null)
+
+  // FD-specific: class + section, defaulting from the last entry / fieldDay status.
+  const [fdClass, setFdClass] = useState(() => fieldDay?.myClass ?? '')
+  const [fdSection, setFdSection] = useState('')
+
+  // Pre-fill class/section from the last logged FD contact — but ONLY when the
+  // log actually GREW. `fieldDay` is a fresh object every 300 ms snapshot poll;
+  // keying the effect on it overwrote whatever the operator was TYPING with the
+  // last contact's exchange (the digital sequencer logging in the background
+  // made the fields jump mid-keystroke).
+  const fdLogLen = fieldDay?.log?.length ?? 0
+  const fdSeenLen = useRef(fdLogLen)
+  useEffect(() => {
+    if (fdActive && fieldDay && fdLogLen > fdSeenLen.current) {
+      const lastEntry = fieldDay.log?.[fdLogLen - 1]
+      if (lastEntry) {
+        setFdClass(lastEntry.class)
+        setFdSection(lastEntry.section)
+      }
+    }
+    fdSeenLen.current = fdLogLen
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fdActive, fdLogLen])
+
   // Live mirror of the typed call so a slow lookup can tell if the operator has since
   // changed the call (drop the stale result rather than fill the wrong call's data).
   const logCallRef = useRef(logCall)
@@ -50,8 +91,10 @@ export function LogEntry({ snap, mode, defaultRst, pendingWork, onConsumeWork }:
 
   const refreshLog = () => void getLog().then(setAllLog).catch(() => {})
   useEffect(() => {
+    // In FD mode we don't use the general logbook for dupe checking, so skip the fetch.
+    if (fdActive) return
     refreshLog()
-  }, [])
+  }, [fdActive])
 
   // Click-to-work prefill: land the call + drop focus on RST so the operator types the report
   // and hits Enter. Keyed on `ts` to refire on re-click of the same call.
@@ -73,7 +116,7 @@ export function LogEntry({ snap, mode, defaultRst, pendingWork, onConsumeWork }:
   // explicit button toasts; the on-blur auto-lookup is silent on failure so an operator
   // without QRZ configured isn't nagged on every Tab.
   const lookup = async (silent: boolean) => {
-    if (qrzBusy) return // a lookup is already in flight — don't double it
+    if (qrzBusy) return
     const call = logCall.trim()
     if (!call) return
     setQrzBusy(true)
@@ -82,10 +125,7 @@ export function LogEntry({ snap, mode, defaultRst, pendingWork, onConsumeWork }:
       : await withErrorToast(() => qrzLookup(call), 'QRZ lookup failed')
     setQrzBusy(false)
     if (!r) return
-    // Drop a stale result: the operator edited the call while this was in flight.
     if (logCallRef.current.trim().toUpperCase() !== call.toUpperCase()) return
-    // Functional updaters so "fill blanks only" is re-checked against CURRENT state at apply
-    // time — never clobber a name/QTH the operator typed during the round-trip.
     if (r.name) setLogName((v) => (v.trim() ? v : r.name ?? ''))
     if (r.qth) setLogQth((v) => (v.trim() ? v : r.qth ?? ''))
     if (r.grid) setLogGrid((v) => (v.trim() ? v : r.grid ?? ''))
@@ -99,7 +139,7 @@ export function LogEntry({ snap, mode, defaultRst, pendingWork, onConsumeWork }:
   }
 
   const onCallBlur = () => {
-    if (!qrzBusy && logCall.trim().length >= 3 && !logName.trim()) void lookup(true)
+    if (!fdActive && !qrzBusy && logCall.trim().length >= 3 && !logName.trim()) void lookup(true)
   }
 
   const reset = () => {
@@ -112,11 +152,30 @@ export function LogEntry({ snap, mode, defaultRst, pendingWork, onConsumeWork }:
     setLogGrid('')
     setLogState('')
     setLogCountry('')
+    // Keep fdClass/fdSection across resets for speed in FD runs.
   }
 
   const logIt = async () => {
     const call = logCall.trim().toUpperCase()
     if (!call) return
+
+    if (fdActive) {
+      // FD path: fdLogManual rejects on band+mode dupe.
+      const cls = fdClass.trim().toUpperCase() || '?'
+      const sec = fdSection.trim().toUpperCase() || '?'
+      const fmode = fdMode ?? 'PH'
+      const r = await withErrorToast(
+        () => fdLogManual(call, cls, sec, fmode),
+        'FD log failed',
+      )
+      if (r) {
+        pushToast(`FD: logged ${call} ${cls}/${sec} (${fmode})`, 'success')
+        reset()
+      }
+      return
+    }
+
+    // Standard logbook path.
     const rst = logRst.trim() || defaultRst
     const rec: LoggedQso = {
       call,
@@ -140,7 +199,7 @@ export function LogEntry({ snap, mode, defaultRst, pendingWork, onConsumeWork }:
     if (r) {
       pushToast(`Logged ${call} (${mode})`, 'success')
       reset()
-      refreshLog() // so the dupe/B4 panel reflects the contact just made
+      refreshLog()
     }
   }
 
@@ -148,6 +207,55 @@ export function LogEntry({ snap, mode, defaultRst, pendingWork, onConsumeWork }:
     if (e.key === 'Enter') void logIt()
   }
 
+  // ---- FD variant render ----
+  if (fdActive) {
+    return (
+      <div className="log-entry log-entry-fd">
+        <div className="le-fd-header">
+          <span className="le-fd-chip">FD LOG</span>
+          <span className="le-fd-mode">{fdMode ?? 'PH'}</span>
+          <span className="le-fd-hint">{snap.radio.band} · contacts go to the Field Day log</span>
+        </div>
+
+        <div className="le-row">
+          <input
+            className="settings-input mono le-call"
+            value={logCall}
+            onChange={(e) => setLogCall(e.target.value.toUpperCase())}
+            onKeyDown={onEnter}
+            placeholder="Call"
+            autoComplete="off"
+            spellCheck={false}
+          />
+          <input
+            className="settings-input mono le-fd-class"
+            value={fdClass}
+            onChange={(e) => setFdClass(e.target.value.toUpperCase())}
+            onKeyDown={onEnter}
+            placeholder="Class (1D)"
+            autoComplete="off"
+            spellCheck={false}
+            title="Their Field Day class"
+          />
+          <input
+            className="settings-input mono le-fd-section"
+            value={fdSection}
+            onChange={(e) => setFdSection(e.target.value.toUpperCase())}
+            onKeyDown={onEnter}
+            placeholder="Sec (WI)"
+            autoComplete="off"
+            spellCheck={false}
+            title="Their ARRL section"
+          />
+          <button type="button" className="le-log-btn" onClick={logIt} disabled={!logCall.trim()}>
+            Log FD
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  // ---- Standard logbook variant render ----
   return (
     <div className="log-entry">
       <h2>Log this QSO</h2>

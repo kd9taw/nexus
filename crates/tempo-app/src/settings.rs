@@ -67,6 +67,26 @@ pub struct Settings {
     pub sideband: String,
     /// ARRL Field Day class, e.g. "1D", "3A".
     pub fd_class: String,
+    /// Which Field Day event: "arrlfd" (June) | "wfd" (Winter Field Day).
+    #[serde(default)]
+    pub fd_event: String,
+    /// Power multiplier tier: 5 = QRP battery/natural, 2 = <=150 W, 1 = >150 W.
+    #[serde(default = "default_fd_power")]
+    pub fd_power_mult: u32,
+    /// Claimed bonus ids (the UI checklist; each maps to points in the bonus
+    /// table). Stored as ids so the table can evolve.
+    #[serde(default)]
+    pub fd_bonuses: Vec<String>,
+    /// N3FJP real-time push: each FD QSO lands in the club's N3FJP master log
+    /// over its TCP API. Empty host = off.
+    #[serde(default)]
+    pub n3fjp_host: String,
+    #[serde(default = "default_n3fjp_port")]
+    pub n3fjp_port: u16,
+    /// N1MM+ contact broadcast: emit the native <contactinfo> XML datagram per
+    /// FD QSO. Empty = off; "host:port" or "host" (default port 12060).
+    #[serde(default)]
+    pub n1mm_addr: String,
     /// ARRL/RAC section, e.g. "WI".
     pub fd_section: String,
     /// Periodically transmit a presence beacon ("CQ <call> <grid>") in Chat
@@ -388,6 +408,14 @@ fn default_tune_timeout() -> u32 {
     12
 }
 
+fn default_fd_power() -> u32 {
+    2
+}
+
+fn default_n3fjp_port() -> u16 {
+    1100
+}
+
 fn default_decode_depth() -> u8 {
     3
 }
@@ -445,6 +473,12 @@ impl Default for Settings {
             dial_mhz: 14.074, // FT8 20m — the default mode/band
             sideband: "USB".to_string(),
             fd_class: "1D".to_string(),
+            fd_event: String::new(), // "" = arrlfd
+            fd_power_mult: 2,
+            fd_bonuses: Vec::new(),
+            n3fjp_host: String::new(),
+            n3fjp_port: 1100,
+            n1mm_addr: String::new(),
             fd_section: "WI".to_string(),
             beacon: false,
             harq_enabled: true,

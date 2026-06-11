@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { AppSnapshot } from '../types'
+import type { AppSnapshot, FieldDayStatus } from '../types'
 import { PhoneScope } from './PhoneScope'
 import { BandPicker } from './BandPicker'
 import { VoiceKeyer } from './VoiceKeyer'
@@ -19,6 +19,8 @@ interface Props {
   /** Apply a fresh snapshot returned by a command (so the REC toggle updates instantly
    * instead of waiting for the next poll). */
   onSnap?: (snap: AppSnapshot) => void
+  /** Field Day status — when non-null the log strip switches to FD mode. */
+  fieldDay?: FieldDayStatus | null
 }
 
 /**
@@ -27,7 +29,7 @@ interface Props {
  * audio bridge + voice keyer land in P3-b/c). Entering forces USB/LSB by band (the
  * rig-mode keystone, wired in App). See `tasks/specs/phone-operating.md`.
  */
-export function PhoneCockpit({ snap, theme, pendingWork, onConsumeWork, onSnap }: Props) {
+export function PhoneCockpit({ snap, theme, pendingWork, onConsumeWork, onSnap, fieldDay }: Props) {
   const [power, setPower] = useState(100) // % — only pushed to the rig once touched
   const [keyed, setKeyed] = useState(false)
   const [lock, setLock] = useState(false) // hands-free PTT (toggle instead of hold)
@@ -195,6 +197,8 @@ export function PhoneCockpit({ snap, theme, pendingWork, onConsumeWork, onSnap }
         defaultRst="59"
         pendingWork={pendingWork}
         onConsumeWork={onConsumeWork}
+        fieldDay={fieldDay}
+        fdMode="PH"
       />
     </main>
   )

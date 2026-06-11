@@ -1173,6 +1173,87 @@ impl RadioLoop {
                         }
                     }
                 }
+                // Club-network push (independent of the WSJT-X sink): every NEW
+                // Field Day QSO goes to N3FJP (the club master log, TCP) and/or
+                // an N1MM-network dashboard (UDP <contactinfo>) when configured.
+                // Spawned: a parked N3FJP box must never stall the slot loop.
+                if let Some(fd) = snap.field_day.as_ref() {
+                    if fd.qso_count > self.last_fd_qsos {
+                        let st = eng.settings();
+                        let n3_host = st.n3fjp_host.trim().to_string();
+                        let n3_port = st.n3fjp_port;
+                        let n1_addr = st.n1mm_addr.trim().to_string();
+                        if !n3_host.is_empty() || !n1_addr.is_empty() {
+                            let new_qsos: Vec<_> =
+                                fd.log[self.last_fd_qsos.min(fd.log.len())..].to_vec();
+                            let mycall = snap.mycall.clone();
+                            let myexch = format!("{} {}", fd.my_class, fd.my_section);
+                            let contest = if fd.event == "wfd" { "WFD" } else { "ARRL-FIELD-DAY" };
+                            let dial_mhz = cur_dial as f64 / 1e6;
+                            let fallback_unix = (now / 1000.0) as u64;
+                            std::thread::spawn(move || {
+                                for (i, q) in new_qsos.iter().enumerate() {
+                                    let mode_str = match q.mode.as_str() {
+                                        "CW" => "CW",
+                                        "PH" => "SSB",
+                                        _ => "FT8",
+                                    };
+                                    // Per-QSO log time (a multi-contact batch must not
+                                    // collapse onto one wall-clock second).
+                                    let when = if q.when_unix > 0 { q.when_unix } else { fallback_unix };
+                                    if !n3_host.is_empty() {
+                                        let push = tempo_net::n3fjp::N3fjpQso {
+                                            call: q.call.clone(),
+                                            class: q.class.clone(),
+                                            section: q.section.clone(),
+                                            band_meters: band_for_interop(&q.band),
+                                            mode: mode_str.to_string(),
+                                            freq_mhz: dial_mhz,
+                                            when_unix: when,
+                                            operator: mycall.clone(),
+                                        };
+                                        if let Err(e) =
+                                            tempo_net::n3fjp::push_qso(&n3_host, n3_port, &push)
+                                        {
+                                            eprintln!("tempo: N3FJP push failed: {e}");
+                                        }
+                                    }
+                                    if !n1_addr.is_empty() {
+                                        let c = tempo_net::n1mm::N1mmContact {
+                                            mycall: mycall.clone(),
+                                            call: q.call.clone(),
+                                            band: band_for_interop(&q.band),
+                                            mode: mode_str.to_string(),
+                                            timestamp: {
+                                                let (d, t) = cabrillo_like_dt(when);
+                                                format!("{d} {t}")
+                                            },
+                                            section: q.section.clone(),
+                                            points: tempo_core::fieldday::qso_points_for_mode(
+                                                &q.mode,
+                                            ),
+                                            contestname: contest.to_string(),
+                                            freq_10hz: (dial_mhz * 1e5) as u64,
+                                            sent_exchange: myexch.clone(),
+                                            operator: mycall.clone(),
+                                            // 32-hex dedup id: time + index + call hash.
+                                            id: format!(
+                                                "{:016x}{:016x}",
+                                                when.wrapping_mul(31).wrapping_add(i as u64),
+                                                q.call.bytes().fold(0u64, |a, b| {
+                                                    a.wrapping_mul(131).wrapping_add(b as u64)
+                                                })
+                                            ),
+                                        };
+                                        if let Err(e) = tempo_net::n1mm::send_contact(&n1_addr, &c) {
+                                            eprintln!("tempo: N1MM broadcast failed: {e}");
+                                        }
+                                    }
+                                }
+                            });
+                        }
+                    }
+                }
                 self.last_fd_qsos = snap.field_day.as_ref().map(|f| f.qso_count).unwrap_or(0);
             }
         }
@@ -1204,6 +1285,45 @@ impl RadioLoop {
 // callsign-gating live here where they can be tested.
 
 /// The WSJT-X mode string for a link [`Tier`].
+/// Band label → the meter-string the club-log protocols expect ("20m" → "20").
+/// The centimeter bands need real values, not a blind alpha-strip ("70cm"
+/// would have read as SEVENTY METERS in N3FJP).
+fn band_for_interop(label: &str) -> String {
+    match label {
+        "70cm" => "0.7".to_string(),
+        "33cm" => "0.33".to_string(),
+        "23cm" => "0.23".to_string(),
+        other => other
+            .trim_end_matches(|c: char| c.is_alphabetic())
+            .to_string(),
+    }
+}
+
+/// Unix secs → ("YYYY-MM-DD", "HH:MM:SS") UTC for the N1MM timestamp.
+fn cabrillo_like_dt(unix: u64) -> (String, String) {
+    let secs_of_day = unix % 86_400;
+    let days = (unix / 86_400) as i64;
+    let (h, m, sec) = (
+        (secs_of_day / 3600) as u32,
+        ((secs_of_day % 3600) / 60) as u32,
+        (secs_of_day % 60) as u32,
+    );
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let mo = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    let y = if mo <= 2 { y + 1 } else { y };
+    (
+        format!("{y:04}-{mo:02}-{d:02}"),
+        format!("{h:02}:{m:02}:{sec:02}"),
+    )
+}
+
 fn tier_mode(tier: Tier) -> &'static str {
     match tier {
         Tier::Ft1 => "FT1",

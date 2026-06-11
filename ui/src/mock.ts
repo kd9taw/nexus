@@ -329,6 +329,12 @@ function defaultSettings(): Settings {
     sideband: 'USB',
     fdClass: '1D',
     fdSection: 'WI',
+    fdEvent: 'arrlfd',
+    fdPowerMult: 1,
+    fdBonuses: [],
+    n3fjpHost: '',
+    n3fjpPort: 1100,
+    n1mmAddr: '',
     licenseClass: 'open',
     // rig control
     pttMethod: 'vox',

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { AppSnapshot } from '../types'
+import type { AppSnapshot, FieldDayStatus } from '../types'
 import { PhoneScope } from './PhoneScope'
 import { BandPicker } from './BandPicker'
 import { LogEntry } from './LogEntry'
@@ -18,6 +18,8 @@ interface Props {
   onConsumeWork?: () => void
   /** Apply a snapshot returned by a command (e.g. a band QSY) without waiting for the poll. */
   onSnap?: (snap: AppSnapshot) => void
+  /** Field Day status — when non-null the log strip switches to FD mode. */
+  fieldDay?: FieldDayStatus | null
 }
 
 /** Default CASUAL/ragchew macro set (no contest serial/exchange), per
@@ -43,7 +45,7 @@ const WPM_MAX = 50
  * strip logs the QSO into the multi-mode logbook (RST 599). Entering the section forces
  * the rig to CW (the rig-mode policy, wired in App). No contest scoring — by design.
  */
-export function CwCockpit({ snap, theme, pitchHz = 600, pendingWork, onConsumeWork, onSnap }: Props) {
+export function CwCockpit({ snap, theme, pitchHz = 600, pendingWork, onConsumeWork, onSnap, fieldDay }: Props) {
   // Source of truth = the engine's actual keyer speed (survives navigation; the
   // old hard-coded 25 silently re-keyed at the wrong speed after a nav round-trip).
   const [wpm, setWpm] = useState(() => snap.radio.cwWpm ?? 25)
@@ -245,6 +247,8 @@ export function CwCockpit({ snap, theme, pitchHz = 600, pendingWork, onConsumeWo
         defaultRst="599"
         pendingWork={pendingWork}
         onConsumeWork={onConsumeWork}
+        fieldDay={fieldDay}
+        fdMode="CW"
       />
     </main>
   )

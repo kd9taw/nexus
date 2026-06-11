@@ -1070,6 +1070,7 @@ export default function App() {
           pendingWork={pendingWork?.view === 'cw' ? pendingWork : null}
           onConsumeWork={() => setPendingWork(null)}
           onSnap={setSnap}
+          fieldDay={snap.fieldDay}
         />
       )
       break
@@ -1081,6 +1082,7 @@ export default function App() {
           pendingWork={pendingWork?.view === 'phone' ? pendingWork : null}
           onConsumeWork={() => setPendingWork(null)}
           onSnap={setSnap}
+          fieldDay={snap.fieldDay}
         />
       )
       break

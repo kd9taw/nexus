@@ -386,7 +386,11 @@ pub struct FieldDayQso {
     pub call: String,
     pub class: String,
     pub section: String,
-    pub band: String,
+    pub band: String,    /// Scoring class: "DIG" | "CW" | "PH".
+    #[serde(default)]
+    pub mode: String,    /// Unix seconds when logged (drives interop-push timestamps).
+    #[serde(default)]
+    pub when_unix: u64,
 }
 
 /// Field Day mode status: my exchange, the log, score and multipliers.
@@ -399,7 +403,20 @@ pub struct FieldDayStatus {
     pub state: String,
     pub qso_count: usize,
     pub sections: usize,
+    /// Raw per-mode QSO points (phone 1, CW/digital 2) before multipliers.
     pub points: u32,
+    /// Which event: "arrlfd" | "wfd".
+    #[serde(default)]
+    pub event: String,
+    /// QSO points × the power multiplier (the submittable QSO score).
+    #[serde(default)]
+    pub powered_points: u32,
+    /// Claimed bonus points (the Settings checklist).
+    #[serde(default)]
+    pub bonus_points: u32,
+    /// powered_points + bonus_points — the claimed total.
+    #[serde(default)]
+    pub total_score: u32,
     pub log: Vec<FieldDayQso>,
 }
 

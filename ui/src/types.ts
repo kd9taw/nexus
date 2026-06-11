@@ -891,7 +891,8 @@ export interface FieldDayQso {
   call: string
   class: string
   section: string
-  band: string
+  band: string  /** Scoring class: 'DIG' | 'CW' | 'PH'. */
+  mode?: string
 }
 
 /** Field Day operating + scoring status. */
@@ -903,7 +904,14 @@ export interface FieldDayStatus {
   qsoCount: number
   sections: number
   points: number
-  log: FieldDayQso[]
+  log: FieldDayQso[]  /** Which event: 'arrlfd' | 'wfd'. */
+  event?: string
+  /** QSO points × the power multiplier. */
+  poweredPoints?: number
+  /** Claimed bonus points. */
+  bonusPoints?: number
+  /** poweredPoints + bonusPoints. */
+  totalScore?: number
 }
 
 /** Persistent operator + radio settings. */
@@ -1016,6 +1024,17 @@ export interface Settings {
   doubleClickSetsTx?: boolean
   /** Tune carrier auto-release (seconds). */
   tuneTimeoutSecs?: number
+  /** Field Day event: 'arrlfd' (default when empty) | 'wfd'. */
+  fdEvent?: string
+  /** FD power multiplier tier: 5 QRP-battery, 2 <=100W, 1 >100W. */
+  fdPowerMult?: number
+  /** Claimed FD bonus ids (the checklist). */
+  fdBonuses?: string[]
+  /** N3FJP real-time push (club master log). Empty host = off. */
+  n3fjpHost?: string
+  n3fjpPort?: number
+  /** N1MM contact broadcast target ("host" or "host:port"). Empty = off. */
+  n1mmAddr?: string
   /** DXpedition special op: 'none' | 'hound' | 'superhound' (SuperFox hound). */
   specialOp?: 'none' | 'hound' | 'superhound'
   /** WSJT-X Split Operation: keep TX audio 1500-2000 Hz via dial shifts. */

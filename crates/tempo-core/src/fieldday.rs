@@ -11,6 +11,46 @@ use crate::message::Msg;
 use modes::Decode;
 use std::collections::HashSet;
 
+/// Which Field Day event is running — they share the exchange SHAPE
+/// (designator + ARRL/RAC section) but differ in designator grammar, contest
+/// ids, and scoring.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum FdEvent {
+    /// ARRL Field Day (4th full June weekend): class like `3A`, phone 1 pt,
+    /// CW/digital 2 pts, power multiplier, ~100-pt bonus menu.
+    #[default]
+    ArrlFd,
+    /// Winter Field Day (last full January weekend): category like `2O`
+    /// (count + Home/Indoor/Mobile/Outdoor).
+    WinterFd,
+}
+
+impl FdEvent {
+    pub fn contest_id(self) -> &'static str {
+        match self {
+            FdEvent::ArrlFd => "ARRL-FIELD-DAY",
+            FdEvent::WinterFd => "WFD",
+        }
+    }
+    pub fn from_code(s: &str) -> Self {
+        if s.trim().eq_ignore_ascii_case("wfd") {
+            FdEvent::WinterFd
+        } else {
+            FdEvent::ArrlFd
+        }
+    }
+}
+
+/// Per-QSO points by operating mode class (both events: phone 1, CW/digital 2 —
+/// the long-standing ARRL FD values; WFD currently matches for the base QSO
+/// point, with its own multiplier system handled at the score layer).
+pub fn qso_points_for_mode(mode: &str) -> u32 {
+    match mode.to_ascii_uppercase().as_str() {
+        "PH" | "PHONE" | "SSB" | "FM" => 1,
+        _ => 2, // CW + digital
+    }
+}
+
 /// A Field Day exchange: transmitter class (e.g. `3A`) + ARRL/RAC section (`WI`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Exchange {
@@ -34,6 +74,8 @@ pub struct LoggedQso {
     pub class: String,
     pub section: String,
     pub band: String,
+    /// Mode class for scoring + per-band-mode dupes: "DIG" | "CW" | "PH".
+    pub mode: String,
     pub slot: u64,
     /// Unix seconds when the contact was logged — Cabrillo requires a real
     /// `yyyy-mm-dd hhmm` per QSO line (the old `----------` placeholder would
@@ -48,8 +90,9 @@ pub struct FieldDayLog {
     pub mycall: String,
     pub myexch: Exchange,
     pub band: String,
+    pub event: FdEvent,
     qsos: Vec<LoggedQso>,
-    worked: HashSet<(String, String)>, // (call, band)
+    worked: HashSet<(String, String, String)>, // (call, band, mode class)
 }
 
 impl FieldDayLog {
@@ -58,19 +101,30 @@ impl FieldDayLog {
             mycall: mycall.to_string(),
             myexch,
             band: band.to_string(),
+            event: FdEvent::ArrlFd,
             qsos: Vec::new(),
             worked: HashSet::new(),
         }
     }
 
-    /// Already worked this call on this band?
+    /// Already worked this call on this band IN THIS MODE CLASS? (ARRL FD
+    /// rules: each station counts once per band-mode — CW, digital and phone
+    /// are separate contacts.) The digital sequencer always logs "DIG".
     pub fn is_dupe(&self, call: &str) -> bool {
-        self.worked.contains(&(call.to_string(), self.band.clone()))
+        self.is_dupe_mode(call, "DIG")
+    }
+
+    pub fn is_dupe_mode(&self, call: &str, mode: &str) -> bool {
+        self.worked.contains(&(
+            call.to_uppercase(),
+            self.band.clone(),
+            mode.to_ascii_uppercase(),
+        ))
     }
 
     /// Log a contact. Returns false (and logs nothing) if it's a dupe.
     pub fn log(&mut self, call: &str, class: &str, section: &str, slot: u64) -> bool {
-        self.log_at(call, class, section, slot, now_unix())
+        self.log_mode_at(call, class, section, "DIG", slot, now_unix())
     }
 
     /// As [`log`](Self::log) with an explicit timestamp (tests / replays).
@@ -82,15 +136,32 @@ impl FieldDayLog {
         slot: u64,
         when_unix: u64,
     ) -> bool {
-        if self.is_dupe(call) {
+        self.log_mode_at(call, class, section, "DIG", slot, when_unix)
+    }
+
+    /// All-mode entry (the CW/Phone cockpits log FD contacts too): mode is the
+    /// scoring class "DIG" | "CW" | "PH".
+    pub fn log_mode_at(
+        &mut self,
+        call: &str,
+        class: &str,
+        section: &str,
+        mode: &str,
+        slot: u64,
+        when_unix: u64,
+    ) -> bool {
+        let mode = mode.to_ascii_uppercase();
+        if self.is_dupe_mode(call, &mode) {
             return false;
         }
-        self.worked.insert((call.to_string(), self.band.clone()));
+        self.worked
+            .insert((call.to_uppercase(), self.band.clone(), mode.clone()));
         self.qsos.push(LoggedQso {
             call: call.to_string(),
             class: class.to_string(),
             section: section.to_string(),
             band: self.band.clone(),
+            mode,
             slot,
             when_unix,
         });
@@ -114,9 +185,13 @@ impl FieldDayLog {
             .len()
     }
 
-    /// Digital QSOs score 2 points each on Field Day.
+    /// Per-mode QSO points (phone 1, CW/digital 2) — power multiplier and
+    /// bonuses are applied at the score layer (engine), not here.
     pub fn qso_points(&self) -> u32 {
-        self.qsos.len() as u32 * 2
+        self.qsos
+            .iter()
+            .map(|q| qso_points_for_mode(&q.mode))
+            .sum()
     }
 
     /// Export the log as ADIF records (one `<EOR>` per QSO).
@@ -124,9 +199,16 @@ impl FieldDayLog {
         let mut s = String::from("ADIF Export from Nexus\n<PROGRAMID:5>Nexus\n<EOH>\n");
         for q in &self.qsos {
             s.push_str(&adif_field("CALL", &q.call));
-            s.push_str(&adif_field("MODE", "FT1"));
+            s.push_str(&adif_field(
+                "MODE",
+                match q.mode.as_str() {
+                    "CW" => "CW",
+                    "PH" => "SSB",
+                    _ => "FT8",
+                },
+            ));
             s.push_str(&adif_field("BAND", &q.band));
-            s.push_str(&adif_field("CONTEST_ID", "ARRL-FIELD-DAY"));
+            s.push_str(&adif_field("CONTEST_ID", self.event.contest_id()));
             s.push_str(&adif_field("CLASS", &q.class));
             s.push_str(&adif_field("ARRL_SECT", &q.section));
             s.push_str("<EOR>\n");
@@ -138,8 +220,12 @@ impl FieldDayLog {
     pub fn cabrillo(&self, freq_khz: u32) -> String {
         let mut s = String::new();
         s.push_str("START-OF-LOG: 3.0\n");
-        s.push_str("CONTEST: ARRL-FIELD-DAY\n");
+        s.push_str(&format!("CONTEST: {}\n", self.event.contest_id()));
         s.push_str(&format!("CALLSIGN: {}\n", self.mycall));
+        s.push_str(&format!(
+            "CATEGORY-OPERATOR: MULTI-OP\nLOCATION: {}\nCREATED-BY: Nexus\n",
+            self.myexch.section
+        ));
         for q in &self.qsos {
             // QSO: freq mo date time mycall myexch call exch — ARRL requires a
             // REAL `yyyy-mm-dd hhmm`; the old `----------` placeholder failed
@@ -150,8 +236,14 @@ impl FieldDayLog {
             } else {
                 ("----------".to_string(), "----".to_string()) // HHMM is 4 chars
             };
+            // Mode token per Cabrillo 3.0: DG digital, CW, PH phone.
+            let mo = match q.mode.as_str() {
+                "CW" => "CW",
+                "PH" => "PH",
+                _ => "DG",
+            };
             s.push_str(&format!(
-                "QSO: {freq_khz} DG {date} {time} {} {} {} {} {} {}\n",
+                "QSO: {freq_khz} {mo} {date} {time} {} {} {} {} {} {}\n",
                 self.mycall, self.myexch.class, self.myexch.section, q.call, q.class, q.section
             ));
         }
@@ -399,6 +491,34 @@ pub fn run_loopback_fieldday(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn arrl_scoring_per_mode_and_band_mode_dupes() {
+        // ARRL FD: phone 1 pt, CW/digital 2 pts; a station counts once per
+        // band PER MODE CLASS (the old (call, band) dupe key under-counted —
+        // K1ABC on 20m CW and 20m FT8 are two legal contacts).
+        let mut log = FieldDayLog::new(
+            "W9XYZ",
+            Exchange { class: "3A".into(), section: "WI".into() },
+            "20m",
+        );
+        assert!(log.log_mode_at("K1ABC", "2A", "CT", "DIG", 0, 100));
+        assert!(log.log_mode_at("K1ABC", "2A", "CT", "CW", 0, 110), "same call, new mode");
+        assert!(log.log_mode_at("K1ABC", "2A", "CT", "PH", 0, 120));
+        assert!(!log.log_mode_at("K1ABC", "2A", "CT", "DIG", 0, 130), "band+mode dupe");
+        assert!(!log.log_mode_at("k1abc", "2A", "CT", "dig", 0, 140), "case-insensitive dupe");
+        assert_eq!(log.qso_count(), 3);
+        assert_eq!(log.qso_points(), 2 + 2 + 1, "DIG 2 + CW 2 + PH 1");
+        // Cabrillo mode tokens per row.
+        let cab = log.cabrillo(14074);
+        assert!(cab.contains(" DG "));
+        assert!(cab.contains(" CW "));
+        assert!(cab.contains(" PH "));
+        // WFD event flips the contest ids in both exports.
+        log.event = FdEvent::WinterFd;
+        assert!(log.cabrillo(14074).contains("CONTEST: WFD"));
+        assert!(log.adif().contains("WFD"));
+    }
+
     #[test]
     fn cabrillo_lines_carry_real_utc_timestamps() {
         // 2026-06-27 18:05:00 UTC (Field Day Saturday) = 1782583500.

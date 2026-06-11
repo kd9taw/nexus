@@ -2988,6 +2988,26 @@ async fn qrz_push_qso(
     )
 }
 
+/// Test the N3FJP connection: handshake `<CMD><PROGRAM></CMD>` and report
+/// what's listening ("N3FJP's Field Day Contest Log v6.6") — run this at the
+/// club site BEFORE the event starts.
+#[tauri::command]
+async fn n3fjp_test_connection(state: State<'_, SharedEngine>) -> Result<String, String> {
+    let (host, port) = {
+        let eng = state.lock().map_err(|e| e.to_string())?;
+        let st = eng.settings();
+        (st.n3fjp_host.trim().to_string(), st.n3fjp_port)
+    };
+    if host.is_empty() {
+        return Err("No N3FJP host configured — set it in Settings ▸ Field Day.".into());
+    }
+    conn_logged(
+        "N3FJP",
+        |s: &String| format!("connection test OK — {s}"),
+        tempo_net::n3fjp::test_connection(&host, port),
+    )
+}
+
 /// Test the QRZ Logbook connection: a real STATUS round-trip that validates
 /// the API key (and shows which logbook it unlocks) WITHOUT inserting anything.
 /// This is the verification the operator runs after entering credentials.
@@ -3333,6 +3353,24 @@ fn set_hunt_target(
 ) -> Result<AppSnapshot, String> {
     let mut eng = state.lock().map_err(|e| e.to_string())?;
     eng.set_hunt_target(&call, &program, &reference)?;
+    Ok(eng.snapshot())
+}
+
+/// Log a Field Day contact from the CW/Phone cockpits (all-mode FD). `mode` =
+/// "CW" | "PH". Err when FD mode is off; Ok(false) = band+mode dupe.
+#[tauri::command]
+fn fd_log_manual(
+    state: State<'_, SharedEngine>,
+    call: String,
+    class: String,
+    section: String,
+    mode: String,
+) -> Result<AppSnapshot, String> {
+    let mut eng = state.lock().map_err(|e| e.to_string())?;
+    let logged = eng.fd_log_manual(&call, &class, &section, &mode)?;
+    if !logged {
+        return Err(format!("{call} is a dupe on this band/mode"));
+    }
     Ok(eng.snapshot())
 }
 
@@ -3742,6 +3780,8 @@ pub fn run() {
             qrz_test_connection,
             set_hunt_target,
             clear_hunt_target,
+            fd_log_manual,
+            n3fjp_test_connection,
             set_hold_tx_freq,
             call_station,
             open_panel_window,

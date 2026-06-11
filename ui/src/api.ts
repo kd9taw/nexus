@@ -204,6 +204,27 @@ export async function notifyErase(window: 0 | 1 | 2): Promise<void> {
   if (invoke) await invoke('notify_erase', { window })
 }
 
+/** Log a Field Day contact from the CW/Phone cockpits (all-mode FD).
+ * Rejects with a message on a band+mode dupe. */
+export async function fdLogManual(
+  call: string,
+  klass: string,
+  section: string,
+  mode: 'CW' | 'PH',
+): Promise<AppSnapshot> {
+  const invoke = tauriInvoke()
+  if (invoke) return invoke<AppSnapshot>('fd_log_manual', { call, class: klass, section, mode })
+  return mockEngine.getSnapshot()
+}
+
+/** Test the N3FJP TCP API ("N3FJP's Field Day Contest Log v6.6") — run at the
+ * club site before the event. */
+export async function n3fjpTestConnection(): Promise<string> {
+  const invoke = tauriInvoke()
+  if (invoke) return invoke<string>('n3fjp_test_connection', {})
+  return 'demo — no live N3FJP in the browser'
+}
+
 /** One-click hunt: remember the activator + park so the next QSO logged with
  * that call auto-tags SIG/SIG_INFO (the hunter-side ADIF credit). */
 export async function setHuntTarget(

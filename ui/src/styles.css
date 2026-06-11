@@ -4633,6 +4633,223 @@ body.resizing {
   color: var(--state-weak);
 }
 
+
+/* Field Day event banner */
+.fd-event-banner {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-elev));
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border-soft));
+}
+.fd-event-name {
+  font-weight: 800;
+  font-size: 13px;
+  color: var(--accent);
+  white-space: nowrap;
+}
+.fd-event-subtitle {
+  font-size: 12px;
+  color: var(--text-dim);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Score math formula */
+.fd-score-math {
+  flex: 2 1 auto;
+  min-width: 160px;
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+}
+.fd-score-math-line {
+  font-size: 12px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.fd-score-math-line strong {
+  color: var(--text);
+}
+.fd-score-total {
+  color: var(--accent) !important;
+  font-size: 14px;
+}
+
+/* Per-mode chips in scoreboard */
+.fd-mode-chips {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.fd-mode-chip {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border-radius: 999px;
+  padding: 3px 8px;
+  border: 1px solid transparent;
+}
+.fd-mode-chip.dig {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.fd-mode-chip.cw {
+  color: var(--state-good);
+  background: color-mix(in srgb, var(--state-good) 16%, transparent);
+  border-color: color-mix(in srgb, var(--state-good) 30%, transparent);
+}
+.fd-mode-chip.ph {
+  color: var(--state-info, #5ba8f5);
+  background: color-mix(in srgb, var(--state-info, #5ba8f5) 16%, transparent);
+  border-color: color-mix(in srgb, var(--state-info, #5ba8f5) 30%, transparent);
+}
+/* Small variant used in the log table */
+.fd-mode-chip.sm {
+  font-size: 9px;
+  padding: 1px 5px;
+}
+
+/* Bonuses collapsible */
+.fd-bonuses-section {
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--border-soft);
+}
+.fd-bonuses-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  text-align: left;
+  transition: var(--transition);
+}
+.fd-bonuses-toggle:hover {
+  background: var(--bg-elev);
+}
+.fd-bonuses-count {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-dim);
+  flex: 1;
+}
+.fd-bonuses-chevron {
+  font-size: 10px;
+  color: var(--text-faint);
+}
+.fd-bonuses-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 2px;
+  padding: 8px 12px 12px;
+  background: var(--bg-elev);
+}
+.fd-bonus-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-dim);
+  transition: var(--transition);
+}
+.fd-bonus-row:hover {
+  background: var(--bg-elev-2);
+}
+.fd-bonus-row.checked {
+  color: var(--text);
+}
+.fd-bonus-row input[type='checkbox'] {
+  flex: 0 0 auto;
+  accent-color: var(--accent);
+  width: 15px;
+  height: 15px;
+}
+.fd-bonus-label {
+  flex: 1;
+  min-width: 0;
+}
+.fd-bonus-pts {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+/* Log table: 5 columns (added Mode) */
+.fd-log-head,
+.fd-log-row {
+  grid-template-columns: 1.4fr 0.7fr 0.9fr 0.7fr 0.6fr;
+}
+.fd-col.mode {
+  /* Mode chip column */
+}
+.fd-wfd-hint {
+  font-size: 9px;
+  font-weight: 400;
+  color: var(--text-faint);
+}
+
+/* LogEntry FD variant */
+.log-entry-fd {
+  border-top: 1px solid var(--border-soft);
+  padding: 12px 16px;
+}
+.le-fd-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.le-fd-chip {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-radius: 999px;
+  padding: 3px 9px;
+}
+.le-fd-mode {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-dim);
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+.le-fd-hint {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.le-fd-class,
+.le-fd-section {
+  max-width: 90px;
+}
+
 /* ===========================================================================
    Log view (full-width screen)
    =========================================================================== */

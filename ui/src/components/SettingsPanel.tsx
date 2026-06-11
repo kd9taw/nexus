@@ -22,6 +22,7 @@ import {
   setSettings,
   testCat,
   qrzTestConnection,
+  n3fjpTestConnection,
 } from '../api'
 import { pushToast, withErrorToast } from '../toast'
 import { getConnectionLog, getCredentialsStatus } from '../api'
@@ -78,8 +79,6 @@ const BASIC_FIELDS: FieldDef[] = [
   { key: 'mycall', label: 'Callsign', type: 'text', placeholder: 'KD9TAW', hint: 'Your station callsign (required).' },
   { key: 'mygrid', label: 'Grid', type: 'text', placeholder: 'EN52', hint: 'Maidenhead locator.' },
   { key: 'opName', label: 'Operator name', type: 'text', placeholder: 'Seth', hint: 'Used by the CW {NAME} macro and logging.' },
-  { key: 'fdClass', label: 'Field Day Class', type: 'text', placeholder: '1D' },
-  { key: 'fdSection', label: 'Field Day Section', type: 'text', placeholder: 'WI' },
 ]
 
 const PTT_METHODS: { value: string; label: string }[] = [
@@ -147,6 +146,7 @@ type SettingsTab =
   | 'confirmations'
   | 'features'
   | 'workspace'
+  | 'fieldday'
 
 const SETTINGS_TABS: { id: SettingsTab; label: string }[] = [
   { id: 'station', label: 'Station' },
@@ -159,6 +159,7 @@ const SETTINGS_TABS: { id: SettingsTab; label: string }[] = [
   { id: 'confirmations', label: 'Confirmations' },
   { id: 'features', label: 'Features' },
   { id: 'workspace', label: 'Workspace' },
+  { id: 'fieldday', label: 'Field Day' },
 ]
 
 export function SettingsPanel({
@@ -197,6 +198,13 @@ export function SettingsPanel({
     qrzTestConnection()
       .then((msg) => setQrzTest({ state: 'ok', msg }))
       .catch((e) => setQrzTest({ state: 'fail', msg: String(e) }))
+  }
+  const [n3fjpTest, setN3fjpTest] = useState<{ state: 'idle' | 'testing' | 'ok' | 'fail'; msg: string }>({ state: 'idle', msg: '' })
+  const runN3fjpTest = () => {
+    setN3fjpTest({ state: 'testing', msg: 'testing…' })
+    n3fjpTestConnection()
+      .then((msg) => setN3fjpTest({ state: 'ok', msg }))
+      .catch((e) => setN3fjpTest({ state: 'fail', msg: String(e) }))
   }
   useEffect(() => {
     if (status !== 'saved') return
@@ -2498,6 +2506,187 @@ export function SettingsPanel({
                   Push each logged QSO to ClubLog in real time (needs the email, app-password, and API key above).
                 </span>
               </div>
+            </div>
+          </fieldset>
+          </>
+          )}
+          {/* ---- Field Day ---- */}
+          {tab === 'fieldday' && (
+          <>
+          <fieldset className="settings-section">
+            <legend>Field Day Setup</legend>
+            <div className="settings-grid">
+              <div className="settings-field">
+                <span className="settings-label">Event</span>
+                <div className="theme-switcher" role="group" aria-label="Field Day event">
+                  {([
+                    { value: 'arrlfd', label: 'ARRL Field Day' },
+                    { value: 'wfd',    label: 'Winter Field Day' },
+                  ] as { value: string; label: string }[]).map((ev) => (
+                    <button
+                      key={ev.value}
+                      type="button"
+                      className={`theme-chip${(form.fdEvent ?? 'arrlfd') === ev.value ? ' active' : ''}`}
+                      aria-pressed={(form.fdEvent ?? 'arrlfd') === ev.value}
+                      onClick={() => {
+                        markDirty()
+                        setForm((prev) => prev ? { ...prev, fdEvent: ev.value } : prev)
+                      }}
+                    >
+                      {ev.label}
+                    </button>
+                  ))}
+                </div>
+                <span className="settings-hint">Which event you're operating in — affects scoring labels and export headers.</span>
+              </div>
+
+              <label className="settings-field">
+                <span className="settings-label">
+                  {(form.fdEvent ?? 'arrlfd') === 'wfd' ? 'WFD Category' : 'FD Class'}
+                </span>
+                <input
+                  className="settings-input mono"
+                  type="text"
+                  value={form.fdClass}
+                  placeholder={(form.fdEvent ?? 'arrlfd') === 'wfd' ? '2O' : '1D'}
+                  onChange={(e) => update('fdClass', e.target.value.toUpperCase())}
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                <span className="settings-hint">
+                  {(form.fdEvent ?? 'arrlfd') === 'wfd'
+                    ? 'Transmitters + location: H=Home, I=Indoor, M=Mobile, O=Outdoor (e.g. 2O = 2 transmitters, outdoor).'
+                    : 'E.g. 1D (1 transmitter, EOC). Set before Field Day starts.'}
+                </span>
+              </label>
+
+              <label className="settings-field">
+                <span className="settings-label">ARRL Section</span>
+                <input
+                  className="settings-input mono"
+                  type="text"
+                  value={form.fdSection}
+                  placeholder="WI"
+                  onChange={(e) => update('fdSection', e.target.value.toUpperCase())}
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                <span className="settings-hint">Your ARRL / RAC section (e.g. WI, ENY, ONN). Required for the Cabrillo log.</span>
+              </label>
+
+              <div className="settings-field">
+                <span className="settings-label">Power multiplier</span>
+                <div className="theme-switcher" role="group" aria-label="Field Day power multiplier">
+                  {([
+                    { value: 5, label: '×5 QRP / battery', hint: 'Runs entirely on battery or other natural power, ≤5W output' },
+                    { value: 2, label: '×2 ≤100W',         hint: '100W or less from any power source' },
+                    { value: 1, label: '×1 >100W',         hint: 'Over 100W — commercial/generator power' },
+                  ] as { value: number; label: string; hint: string }[]).map((p) => (
+                    <button
+                      key={p.value}
+                      type="button"
+                      className={`theme-chip${(form.fdPowerMult ?? 1) === p.value ? ' active' : ''}`}
+                      aria-pressed={(form.fdPowerMult ?? 1) === p.value}
+                      title={p.hint}
+                      onClick={() => {
+                        markDirty()
+                        setForm((prev) => prev ? { ...prev, fdPowerMult: p.value } : prev)
+                      }}
+                    >
+                      {p.label}
+                    </button>
+                  ))}
+                </div>
+                <span className="settings-hint">
+                  Multiplies your QSO points. QRP/battery = ×5 (ARRL bonus for going off-grid). Choose before the event.
+                </span>
+              </div>
+            </div>
+          </fieldset>
+
+          <fieldset className="settings-section">
+            <legend>N3FJP Integration (club master log)</legend>
+            <p className="settings-note">
+              Each FD contact lands in the club's{' '}
+              <strong>N3FJP Field Day Contest Log</strong> the moment you log it — so the whole
+              club's score updates in real time. Run N3FJP on the master computer; point Nexus at
+              its IP + port (default 1100).
+            </p>
+            <div className="settings-grid">
+              <label className="settings-field">
+                <span className="settings-label">N3FJP host</span>
+                <input
+                  className="settings-input"
+                  type="text"
+                  value={form.n3fjpHost ?? ''}
+                  placeholder="192.168.1.10 (empty = off)"
+                  onChange={(e) => update('n3fjpHost', e.target.value)}
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                <span className="settings-hint">IP or hostname of the master log computer. Leave blank to disable.</span>
+              </label>
+
+              <label className="settings-field">
+                <span className="settings-label">N3FJP port</span>
+                <input
+                  className="settings-input"
+                  type="number"
+                  inputMode="numeric"
+                  value={form.n3fjpPort ?? 1100}
+                  placeholder="1100"
+                  onChange={(e) => {
+                    markDirty()
+                    setForm((prev) => prev ? { ...prev, n3fjpPort: Number(e.target.value) || 1100 } : prev)
+                  }}
+                  autoComplete="off"
+                />
+                <span className="settings-hint">N3FJP's API TCP port (default 1100).</span>
+              </label>
+
+              <div className="settings-field">
+                <span className="settings-label">Connection test</span>
+                <div className="settings-input-row">
+                  <button
+                    type="button"
+                    className="settings-refresh"
+                    onClick={runN3fjpTest}
+                    disabled={n3fjpTest.state === 'testing' || !form.n3fjpHost?.trim()}
+                    title="Save settings, then test the N3FJP TCP connection"
+                  >
+                    {n3fjpTest.state === 'testing' ? 'Testing…' : 'Test N3FJP'}
+                  </button>
+                </div>
+                {n3fjpTest.state !== 'idle' && n3fjpTest.state !== 'testing' && (
+                  <span className={`cat-result ${n3fjpTest.state}`} role="status">
+                    {n3fjpTest.state === 'ok' ? '✓ ' : '✗ '}{n3fjpTest.msg}
+                  </span>
+                )}
+                <span className="settings-hint">Run this at the club site before the event starts to confirm the API link works.</span>
+              </div>
+            </div>
+          </fieldset>
+
+          <fieldset className="settings-section">
+            <legend>N1MM+ Integration</legend>
+            <div className="settings-grid">
+              <label className="settings-field">
+                <span className="settings-label">N1MM contact broadcast address</span>
+                <input
+                  className="settings-input"
+                  type="text"
+                  value={form.n1mmAddr ?? ''}
+                  placeholder="127.0.0.1:12060 (empty = off)"
+                  onChange={(e) => update('n1mmAddr', e.target.value)}
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                <span className="settings-hint">
+                  N1MM+ contact broadcast target (host:port, UDP). Nexus sends an N1MM-compatible
+                  contact UDP packet for each FD QSO, so N1MM can display the contact on the network.
+                  Leave blank to disable.
+                </span>
+              </label>
             </div>
           </fieldset>
           </>
