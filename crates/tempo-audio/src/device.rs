@@ -29,10 +29,28 @@ fn err_fn(e: cpal::StreamError) {
 /// sample): the meter falls smoothly when the signal goes quiet.
 const RX_METER_DECAY: f32 = 0.85;
 
+/// Serializes ALL cpal host/device/stream access in this process.
+///
+/// cpal's host init and stream construction/teardown are NOT safe to drive from
+/// two threads at once: on ALSA (`snd_config`/`snd_pcm`) and on WASAPI/COM the
+/// native device-graph activation has shared, non-reentrant global state. The
+/// crash this guards against: opening Settings right after launch fires
+/// `available_devices()` (enumeration) on a Tauri command thread *while* the radio
+/// loop is still inside [`CpalBackend::open`] building the streams — two concurrent
+/// `cpal::default_host()` callers fault natively and hard-kill the process (the
+/// default `unwind` strategy can't catch a native SIGSEGV/abort).
+///
+/// Every entry point that touches the cpal host/devices/streams must hold this for
+/// the full duration of that work, so enumeration can never overlap a stream open.
+static AUDIO_HOST_LOCK: Mutex<()> = Mutex::new(());
+
 /// Enumerate the host's input and output device names. Errors (and devices whose
 /// name can't be read) are ignored, yielding empty/partial lists rather than
 /// failing — this feeds a UI dropdown.
 pub fn available_devices() -> (Vec<String>, Vec<String>) {
+    // Serialize against CpalBackend::open() (see AUDIO_HOST_LOCK) — concurrent cpal
+    // host/device access during stream construction crashes natively.
+    let _host_guard = AUDIO_HOST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let host = cpal::default_host();
     let inputs = host
         .input_devices()
@@ -87,6 +105,11 @@ impl CpalBackend {
     /// a name that matches no device also falls back to the default) and start
     /// streaming.
     pub fn open(in_name: Option<&str>, out_name: Option<&str>) -> Result<Self, String> {
+        // Hold the host lock across the ENTIRE host/device/stream-construction
+        // sequence (through both `.play()` calls below) so a concurrent
+        // `available_devices()` — e.g. the Settings panel enumerating at startup —
+        // can never drive cpal's native init at the same time. See AUDIO_HOST_LOCK.
+        let _host_guard = AUDIO_HOST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let host = cpal::default_host();
         let in_dev = pick_device(
             host.input_devices().ok(),

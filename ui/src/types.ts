@@ -28,6 +28,50 @@ export interface BandReport {
   bestRegion: RegionReport | null
   confidence: Confidence
   reason: string
+  /** MODELED openness from physics (MUF vs band freq + absorption/aurora/greyline),
+   * independent of observed spots: "Open" | "Marginal" | "Closed". Lets the UI show
+   * "open per model, no spots heard" so a quiet band never reads as dead. */
+  modeled?: BandModeled
+  /** One-clause reason for the modeled state ("open per model" / "below MUF"). */
+  modeledReason?: string
+}
+
+/** Coarse modeled band openness (collapses the engine's 5-bucket workability). */
+export type BandModeled = 'Open' | 'Marginal' | 'Closed'
+
+/** Direction of a space-weather quantity's recent change. */
+export type TrendDir = 'rising' | 'steady' | 'falling'
+
+/** One scalar's current value + recent slope. */
+export interface ScalarTrend {
+  now: number
+  deltaPerHr: number
+  dir: TrendDir
+}
+
+/** Rolling space-weather trend (so the UI can say "MUF building / Kp rising"). */
+export interface WxTrend {
+  sfi: ScalarTrend
+  kp: ScalarTrend
+  muf: ScalarTrend
+  xray: ScalarTrend
+  windowSecs: number
+  samples: number
+}
+
+/** How urgently/positively an insight reads (drives colour + ordering). */
+export type InsightLevel = 'good' | 'info' | 'caution' | 'alert'
+
+/** What a predictive insight is about (drives the icon). */
+export type InsightKind = 'mufTrend' | 'solarFlux' | 'geomagnetic' | 'flare' | 'greyline' | 'esWatch'
+
+/** One plain-language predictive insight line (dual-audience: plain + technical). */
+export interface Insight {
+  kind: InsightKind
+  level: InsightLevel
+  plain: string
+  technical: string
+  band?: string
 }
 export interface PropAdvisory {
   headline: string
@@ -83,6 +127,8 @@ export interface BandOutlook {
   workability: string
   score: number
   window: string
+  /** True when the best window is a short low-band greyline (terminator) spike. */
+  grayline: boolean
   /** Per-UTC-hour likelihood (24 values, hour 0..23) — the heatmap row. */
   hourly: number[]
 }
@@ -91,6 +137,10 @@ export interface PathPrediction {
   /** Engine that produced it: "heuristic" today; "voacap"/"p533" later. */
   engine: string
   bands: BandOutlook[]
+  /** Controlling MUF (MHz) on the path now — the band ceiling. */
+  mufNow: number
+  /** Per-UTC-hour MUF (24 values) — the ceiling line above the heatmap. */
+  mufHourly: number[]
 }
 /** One receiver who decoded the operator ("getting out"). */
 export interface HeardMe {
@@ -149,12 +199,24 @@ export interface PropagationSnapshot {
   openings: OpeningView[]
   dxpeditions: DxpedDashboard
   spaceWx: SpaceWxView
-  /** Provenance: 'live' (fresh), 'cached' (stale last-good), or 'demo'. */
-  source: 'live' | 'cached' | 'demo'
+  /** Provenance: 'live' (both feeds fresh), 'partial' (some feeds live, others
+   *  unreachable), 'cached' (stale last-good), or 'offline' (no live data — an
+   *  honest empty snapshot; NEVER fabricated/demo data). */
+  source: 'live' | 'partial' | 'cached' | 'offline'
   /** When this data was produced (Unix seconds, UTC). */
   asOf: number
   /** Located spots for the map (own-call + region + cluster/RBN + own decodes). */
   spots?: MapSpot[]
+  /** "Worldwide activity" band ranking (the same advisor over the GLOBAL firehose),
+   *  shown beside the operator-reachable `advisory` so a chaser sees busy-worldwide
+   *  vs workable-for-you. Absent when the firehose adds nothing beyond reachable. */
+  worldwide?: PropAdvisory
+  /** Rolling space-weather trend (SFI/MUF/Kp/X-ray rising/steady/falling) — drives the
+   *  "MUF building" insight + trend arrows. All-steady until the buffer fills. */
+  wxTrend?: WxTrend
+  /** Ranked plain-language predictive insights ("MUF building → 6m soon", flare, Kp,
+   *  greyline, Es watch). */
+  insights?: Insight[]
 }
 
 /** One located spot for the map (placed by grid, or DXCC centroid if grid-less). */
@@ -338,6 +400,12 @@ export interface RadioStatus {
   audioError?: string | null
   /** Transmit on even/"1st" slots (true) or odd/"2nd" (false). */
   txEven: boolean
+  /** Smart auto-cycle on: answering a heard station auto-picks the opposite cycle
+   * (FT8-style). False = the operator fixed the cycle manually. */
+  txCycleAuto?: boolean
+  /** Active T/R period (s) — FT1 4s, FT8 15s, FT4 7.5s — so the UI labels the cycle
+   * with the real period. */
+  trPeriodSecs?: number
   /** Receive audio offset (Hz) — the green waterfall marker. */
   rxOffsetHz: number
   /** Transmit audio offset (Hz) — the red waterfall marker. */

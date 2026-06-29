@@ -52,6 +52,11 @@ type AuroraCache = Arc<Mutex<Option<(std::time::Instant, Vec<propagation::live::
 /// by `get_need_alerts`.
 type SharedSpots = Arc<Mutex<tempo_net::cluster::SpotBuffer>>;
 
+/// Rolling space-weather sample history (SFI/Kp/X-ray + representative MUF), fed once
+/// per fresh SWPC fetch in `get_propagation`, read for the "MUF building / Kp rising"
+/// trend. Distinct payload type → distinct TypeId for `.manage()`.
+type SharedWxHistory = Arc<Mutex<propagation::SpaceWxHistory>>;
+
 /// The cluster thread runs for the process lifetime (a desktop daemon thread);
 /// this stop flag exists only so `cluster::run`'s signature is satisfied.
 static CLUSTER_STOP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -385,6 +390,11 @@ fn get_feed_health(health: State<'_, SharedHealth>) -> FeedHealth {
 /// How long a live propagation nowcast is reused before refetching (seconds).
 const PROP_TTL_SECS: u64 = 300;
 
+/// When the last live-propagation refetch was ATTEMPTED (success or failure).
+/// Rate-limits refetches to one per [`PROP_TTL_SECS`] independent of the UI poll
+/// cadence, so a failing fetch on a cold cache can't storm PSK Reporter into 429s.
+static PROP_FETCH_BACKOFF: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+
 /// Where settings are persisted: `%APPDATA%\tempo\settings.json` on Windows,
 /// `$XDG_CONFIG_HOME`/`~/.config/tempo/settings.json` on Unix, else CWD.
 fn settings_path() -> PathBuf {
@@ -408,6 +418,41 @@ fn logbook_path() -> PathBuf {
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| PathBuf::from("."))
         .join("log.adi")
+}
+
+/// Where Tempo conversation threads persist (so chat history survives a restart):
+/// `<config dir>/conversations.json`, beside settings.json + the logbook.
+fn conversations_path() -> PathBuf {
+    settings_path()
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("conversations.json")
+}
+
+/// Atomically write the conversation JSON: create the dir if missing (fresh
+/// profile), write a temp file, then rename — so a crash mid-write can't truncate
+/// the history (mirrors `Logbook::save`). Returns whether it succeeded.
+fn write_conversations_atomic(text: &str) -> bool {
+    let path = conversations_path();
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, text).is_ok() && std::fs::rename(&tmp, &path).is_ok()
+}
+
+/// Export + atomically persist the engine's conversation threads. Used for the
+/// flush-on-exit (so quitting within the periodic-save window doesn't lose recent
+/// chat or resurrect an archived thread). Recovers a poisoned lock.
+fn persist_conversations(engine: &SharedEngine) {
+    let convs = engine
+        .lock()
+        .map(|e| e.export_conversations())
+        .unwrap_or_else(|e| e.into_inner().export_conversations());
+    if let Ok(text) = serde_json::to_string(&convs) {
+        write_conversations_atomic(&text);
+    }
 }
 
 /// Directory for phone voice-keyer recordings: `<settings dir>/voice` (12 kHz mono WAVs).
@@ -464,6 +509,18 @@ fn select_peer(
     Ok(eng.snapshot())
 }
 
+/// Archive (hide) a conversation thread (the recents-list hide affordance).
+/// Returns the refreshed snapshot.
+#[tauri::command]
+fn archive_conversation(
+    state: State<'_, SharedEngine>,
+    peer: String,
+) -> Result<AppSnapshot, String> {
+    let mut eng = state.lock().map_err(|e| e.to_string())?;
+    eng.archive_conversation(&peer);
+    Ok(eng.snapshot())
+}
+
 /// Switch the waveform mode/tier ("FT1" | "FT8" | "FT4" | "DX1"). Operator-
 /// visible via `LinkState.tier`. FT1 = fast 4 s coherent; FT8 = 15 s; FT4 =
 /// 7.5 s; DX1 = robust non-coherent 15 s. All decode/encode natively through the
@@ -498,7 +555,8 @@ fn set_source(state: State<'_, SharedEngine>, kind: String) -> Result<AppSnapsho
 /// The propagation & opening-intelligence nowcast, built from LIVE NOAA SWPC +
 /// PSK Reporter data for the operator's call/grid. Cached for [`PROP_TTL_SECS`]
 /// to respect PSK Reporter's query cadence; falls back to the last good snapshot
-/// (then a demo scene) if a fetch fails or the operator hasn't set a callsign.
+/// (then an honest, empty `offline` snapshot — never fabricated data) if a fetch
+/// fails or the operator hasn't set a real callsign.
 #[tauri::command]
 async fn get_propagation(
     state: State<'_, SharedEngine>,
@@ -507,6 +565,7 @@ async fn get_propagation(
     region_paths: State<'_, SharedRegionPaths>,
     opening_tracker: State<'_, SharedOpeningTracker>,
     spots: State<'_, SharedSpots>,
+    wx_history: State<'_, SharedWxHistory>,
 ) -> Result<propagation::PropagationSnapshot, String> {
     let (mycall, mygrid, needs, local_spots) = {
         let eng = state.lock().map_err(|e| e.to_string())?;
@@ -550,14 +609,16 @@ async fn get_propagation(
 
     let now = now_unix();
 
-    // No callsign → can't query "who hears me"; show the demo scene (which keeps
-    // its own openings). Checked BEFORE the cache so a cleared callsign can't keep
-    // serving the previous identity's live-labeled openings from a warm cache.
-    if mycall.trim().is_empty() {
-        return Ok(propagation::demo());
+    // No real callsign → can't query "who hears me"; return an honest, EMPTY offline
+    // snapshot (never fabricated data). Gated on `is_real_call` (not just non-empty)
+    // so a garbage call also yields offline instead of a guaranteed-fail live query.
+    // Checked BEFORE the cache so a cleared/changed callsign can't keep serving the
+    // previous identity's live-labeled openings from a warm cache.
+    if !is_real_call(&mycall) {
+        return Ok(propagation::offline(now, &mycall, &mygrid));
     }
 
-    // --- base snapshot: fresh cache, else a live refetch, else last-good/demo ---
+    // --- base snapshot: fresh cache, else a live refetch, else last-good/offline ---
     let cached = {
         let guard = cache.lock().map_err(|e| e.to_string())?;
         guard
@@ -566,23 +627,51 @@ async fn get_propagation(
             .map(|(_, snap)| snap.clone())
     };
 
+    // Track whether THIS poll fetched fresh space weather — only then do we push a
+    // trend sample (the SWPC values change at most every PROP_TTL_SECS, and pushing on
+    // every 30 s UI poll would just dedup-collapse and never accumulate a real trend).
+    let mut fetched_fresh = false;
     let mut snap = if let Some(s) = cached {
         s
     } else {
-        // Live PSK Reporter MQTT spots since the last rebuild, merged with the
-        // rate-limited XML query. Refetch (blocking HTTP); on failure keep the
-        // last good snapshot (marked stale), else demo.
-        let extra = live_paths
+        // Rate-limit live refetches to PROP_TTL_SECS even on FAILURE. The snapshot
+        // cache is written only on success, so without this a cold cache + a failing
+        // fetch would let the 30 s UI poll hammer PSK Reporter (1 query / 5 min) into
+        // a perpetual 429 storm — the root cause of "propagation stays stuck". The
+        // live MQTT firehose still feeds spots between XML refreshes, so backing off
+        // the XML query loses nothing.
+        let backoff_active = PROP_FETCH_BACKOFF
             .lock()
-            .map(|b| b.recent(now, 1800))
-            .unwrap_or_default();
-        match propagation::live::snapshot_with_spots(&mycall, &mygrid, 1800, &needs, &extra) {
+            .ok()
+            .and_then(|g| *g)
+            .is_some_and(|t| t.elapsed().as_secs() < PROP_TTL_SECS);
+
+        let live = if backoff_active {
+            Err("propagation refetch backing off".to_string())
+        } else {
+            // Stamp the attempt BEFORE fetching so a failure still arms the back-off.
+            if let Ok(mut g) = PROP_FETCH_BACKOFF.lock() {
+                *g = Some(std::time::Instant::now());
+            }
+            // Live PSK Reporter MQTT spots since the last rebuild, merged with the
+            // rate-limited XML query. Refetch (blocking HTTP).
+            let extra = live_paths
+                .lock()
+                .map(|b| b.recent(now, 1800))
+                .unwrap_or_default();
+            propagation::live::snapshot_with_spots(&mycall, &mygrid, 1800, &needs, &extra)
+        };
+
+        match live {
             Ok(snap) => {
                 if let Ok(mut guard) = cache.lock() {
                     *guard = Some((std::time::Instant::now(), snap.clone()));
                 }
+                fetched_fresh = true;
                 snap
             }
+            // Fetch failed (or backing off): serve the last good snapshot marked
+            // stale, else an honest empty offline snapshot — NEVER fabricated data.
             Err(_) => {
                 let guard = cache.lock().map_err(|e| e.to_string())?;
                 guard
@@ -592,7 +681,7 @@ async fn get_propagation(
                         s.source = "cached".to_string();
                         s
                     })
-                    .unwrap_or_else(propagation::demo)
+                    .unwrap_or_else(|| propagation::offline(now, &mycall, &mygrid))
             }
         }
     };
@@ -607,13 +696,18 @@ async fn get_propagation(
         sfi: snap.space_wx.sfi,
         kp: snap.space_wx.kp,
         a_index: snap.space_wx.a_index,
-        xray_long: if snap.space_wx.flare { 1e-5 } else { 1e-7 },
+        // Use the lossless flux (not the flare bool), so the flare insight reports the
+        // true R-scale — an X-class blackout no longer collapses to "R1 / M-class".
+        xray_long: snap.space_wx.xray_long,
     };
-    // Merge the operator's own-call window with the near-region window (disjoint —
-    // the region feed drops own-call spots). The regional opening gate is enabled
-    // only when there's regional data, so a band can light up from activity around
-    // the operator, not just their own contacts.
-    let mut wide = live_paths
+    // ANCHORED window = operator-REACHABLE evidence only: own-call PSK Reporter MQTT
+    // + the near-region (≤REGION_RADIUS_KM) census (disjoint — the region feed drops
+    // own-call spots) + the operator's own decodes. This is what drives the BAND
+    // ADVISOR ("best band FOR YOU"). The continent-wide DX-cluster / RBN firehose is
+    // deliberately EXCLUDED here: 10 m is the busiest band worldwide at high solar,
+    // and its raw global spot volume would otherwise always win the "best band"
+    // headline regardless of what the operator can actually work.
+    let mut anchored = live_paths
         .lock()
         .map(|b| b.recent(now, cfg.base_w))
         .unwrap_or_default();
@@ -622,16 +716,21 @@ async fn get_propagation(
         let regional = r.recent(now, cfg.base_w);
         if !regional.is_empty() {
             regional_scope = true;
-            wide.extend(regional);
+            anchored.extend(regional);
         }
     }
-    // Bridge the DX-cluster / RBN firehose (a continent-wide who-hears-whom stream
-    // on every band) into the SAME window so the band ladder + opening detector see
-    // real band activity, not just the operator's own-call traffic. CW/RTTY (RBN)
-    // skimmers are the reality of propagation here, NOT needed-roster candidates: we
-    // geolocate each skimmer via the real RBN skimmer→grid table so its reception
-    // carries true near/far geometry into the opening detector + advisor. Skimmers
-    // not in the table still light up band LIVENESS (no grid → activity census only).
+    // The operator's own decodes (IHeard spots) are operator-anchored, so they join
+    // the anchored window (driving the advisor + the operator-anchored opening gate).
+    anchored.extend(local_spots);
+
+    // WIDE window = anchored + the continent-wide DX-cluster / RBN firehose. This
+    // drives the MAP (which SHOULD show worldwide activity) and the opening detector
+    // (whose operator/regional gates already stop a one-directional skimmer from
+    // opening a band on its own — cluster only adds legitimate HF liveness/anomaly
+    // signal). CW/RTTY (RBN) skimmers are geolocated via the real skimmer→grid table
+    // so reception carries true near/far geometry; skimmers not in the table still
+    // light band LIVENESS (no grid → activity census only).
+    let mut wide = anchored.clone();
     let me_ll_for_gate = propagation::geo::maidenhead_to_latlon(mygrid.trim());
     if let Ok(buf) = spots.lock() {
         let cluster = buf.recent_within(
@@ -679,10 +778,6 @@ async fn get_propagation(
             }
         }
     }
-    // The operator's own decodes (collected above): IHeard spots that drive the
-    // operator-anchored opening gate + the band ladder from monitoring alone.
-    let had_local = !local_spots.is_empty();
-    wide.extend(local_spots);
     if let Ok(mut tr) = opening_tracker.lock() {
         snap.openings = propagation::detect_openings_tracked(
             &mycall,
@@ -695,19 +790,58 @@ async fn get_propagation(
         );
     }
 
-    // Rebuild the band advisor on the SAME merged window (own paths + near-region
-    // census) the opening detector uses — so the "Bands — what's open now" list
-    // reflects activity AROUND the operator, not only bands they've personally
-    // been heard on. (The cached snapshot's advisory was built from own-call spots
-    // alone, which is why bands you weren't using all read "Closed".)
-    if regional_scope || had_local {
-        snap.advisory = propagation::PropAdvisor::new(&mycall, &mygrid).advise(now, &wide, &wx);
+    // Rebuild the band advisor on the ANCHORED (operator-reachable) window — "best
+    // band FOR YOU", reflecting activity AROUND the operator, NOT the busiest band
+    // worldwide. Rebuild whenever we have any anchored evidence (own-call MQTT,
+    // near-region, or own decodes); when empty we keep the cached snapshot's
+    // own-call advisory (never the global firehose, which `anchored` excludes).
+    if !anchored.is_empty() {
+        snap.advisory = propagation::PropAdvisor::new(&mycall, &mygrid).advise(now, &anchored, &wx);
+    }
+    // "Worldwide activity" = the SAME advisor over the GLOBAL firehose window, so the
+    // UI can show busy-worldwide beside best-FOR-YOU (workable vs merely-loud). Only
+    // when the firehose actually adds something beyond the anchored set.
+    if wide.len() > anchored.len() {
+        snap.worldwide =
+            Some(propagation::PropAdvisor::new(&mycall, &mygrid).advise(now, &wide, &wx));
     }
 
     // Locate the merged window for the map (grid or DXCC centroid), so the map
     // fills with the cluster/RBN/PSKR firehose + own decodes, not just the native
     // roster. Capped so a busy RBN window can't flood the canvas.
     snap.spots = propagation::build_map_spots(now, &mycall, &wide, 400);
+
+    // --- space-weather trend + trend-aware predictive insights (A2 + A3) ---
+    // Push ONE sample per fresh SWPC fetch (rate-limited), then compute the rolling
+    // trend and regenerate the insight feed with it (overwriting the engine layer's
+    // threshold-only insights). me_ll drives the representative MUF + greyline test.
+    let me_ll = propagation::geo::maidenhead_to_latlon(&mygrid);
+    if fetched_fresh {
+        if let Ok(mut h) = wx_history.lock() {
+            let muf = me_ll
+                .map(|me| propagation::representative_muf(me, now, &wx))
+                .unwrap_or(0.0);
+            h.push(propagation::SpaceWxSample {
+                t: now,
+                sfi: wx.sfi,
+                kp: wx.kp,
+                xray_long: wx.xray_long,
+                muf,
+            });
+        }
+    }
+    snap.wx_trend = wx_history
+        .lock()
+        .map(|h| h.trend(now, 3 * 3600))
+        .unwrap_or_default();
+    snap.insights = propagation::generate_insights(
+        now,
+        &wx,
+        Some(&snap.wx_trend),
+        &snap.advisory.bands,
+        &snap.openings,
+        me_ll,
+    );
 
     Ok(snap)
 }
@@ -732,6 +866,8 @@ async fn get_path_outlook(
         return Ok(propagation::PathPrediction {
             engine: "heuristic".to_string(),
             bands: Vec::new(),
+            muf_now: 0.0,
+            muf_hourly: Vec::new(),
         });
     };
     // Current space weather from the propagation cache's last snapshot (the same
@@ -751,6 +887,43 @@ async fn get_path_outlook(
     use propagation::PathPredictor as _; // bring the trait's `predict` into scope
     let eng = propagation::HeuristicEngine::new(me);
     Ok(eng.predict(dx, now_unix(), &wx))
+}
+
+/// The no-selection "Band outlook (modelled)": modeled per-band workability + MUF to
+/// a ring of representative long-haul DX directions (best per band over the ring), so
+/// the Connect view can answer "which bands are modeled-open for DX right now" without
+/// a selected station. Needs only the operator's grid; empty if it's unset.
+#[tauri::command]
+async fn get_band_outlook(
+    state: State<'_, SharedEngine>,
+    cache: State<'_, PropCache>,
+) -> Result<propagation::PathPrediction, String> {
+    let mygrid = {
+        let eng = state.lock().map_err(|e| e.to_string())?;
+        eng.settings().mygrid.clone()
+    };
+    let Some(me) = propagation::geo::maidenhead_to_latlon(mygrid.trim()) else {
+        return Ok(propagation::PathPrediction {
+            engine: "heuristic".to_string(),
+            bands: Vec::new(),
+            muf_now: 0.0,
+            muf_hourly: Vec::new(),
+        });
+    };
+    let wx = {
+        let guard = cache.lock().map_err(|e| e.to_string())?;
+        guard
+            .as_ref()
+            .map(|(_, s)| propagation::SpaceWx {
+                sfi: s.space_wx.sfi,
+                kp: s.space_wx.kp,
+                a_index: s.space_wx.a_index,
+                xray_long: if s.space_wx.flare { 1e-5 } else { 1e-7 },
+            })
+            .unwrap_or_default()
+    };
+    // 8 azimuths at ~9000 km — direction-agnostic "best band to ANY far DX now".
+    Ok(propagation::band_outlook_ring(me, 9000.0, 8, now_unix(), &wx))
 }
 
 /// "Am I getting out?" — who is hearing the operator right now, from the live PSK
@@ -850,6 +1023,7 @@ fn set_settings(
     live_paths: State<'_, SharedLivePaths>,
     region_paths: State<'_, SharedRegionPaths>,
     health: State<'_, SharedHealth>,
+    cache: State<'_, PropCache>,
     mut settings: Settings,
 ) -> Result<AppSnapshot, String> {
     // Capture the feed config before `settings` moves into the engine.
@@ -906,6 +1080,16 @@ fn set_settings(
         changed
     };
     if call_changed {
+        // The propagation cache + refetch back-off are keyed to the OLD identity.
+        // Drop both so the new callsign refetches live immediately — no previous
+        // identity's openings served from a warm cache, and no back-off delay
+        // carried over (otherwise a new call could wait up to PROP_TTL_SECS).
+        if let Ok(mut g) = cache.lock() {
+            *g = None;
+        }
+        if let Ok(mut g) = PROP_FETCH_BACKOFF.lock() {
+            *g = None;
+        }
         if !FEED_RESTART_IN_FLIGHT.swap(true, std::sync::atomic::Ordering::SeqCst) {
             restart_live_feeds(
                 state.inner().clone(),
@@ -1694,6 +1878,16 @@ fn set_tx_even(state: State<'_, SharedEngine>, even: bool) -> Result<AppSnapshot
     Ok(eng.snapshot())
 }
 
+/// Toggle smart auto-cycle — when on, answering a heard station auto-picks the opposite
+/// T/R cycle (FT8-style). Turning it on re-enables the auto pick; a manual Tx 1st/2nd
+/// selection (set_tx_even) turns it off.
+#[tauri::command]
+fn set_tx_cycle_auto(state: State<'_, SharedEngine>, auto: bool) -> Result<AppSnapshot, String> {
+    let mut eng = state.lock().map_err(|e| e.to_string())?;
+    eng.set_tx_cycle_auto(auto);
+    Ok(eng.snapshot())
+}
+
 /// The operator erased a decode pane — queue the WSJT-X UDP Clear so
 /// cooperating apps (JTAlert/GridTracker) mirror it. 0 = Band, 1 = Rx, 2 = both.
 #[tauri::command]
@@ -1718,6 +1912,16 @@ fn redecode(state: State<'_, SharedEngine>) -> Result<AppSnapshot, String> {
 fn start_cq(state: State<'_, SharedEngine>, dir: Option<String>) -> Result<AppSnapshot, String> {
     let mut eng = state.lock().map_err(|e| e.to_string())?;
     eng.start_cq(dir.as_deref())?;
+    Ok(eng.snapshot())
+}
+
+/// Call CQ from Tempo (chat-first): emit ONE structured `CQ <mycall> <mygrid>` frame
+/// and arm TX, staying in Chat mode. Errors if the callsign/grid aren't set (so a CQ
+/// never goes out malformed). `dir` = an optional directed-CQ token (None = plain CQ).
+#[tauri::command]
+fn call_cq(state: State<'_, SharedEngine>, dir: Option<String>) -> Result<AppSnapshot, String> {
+    let mut eng = state.lock().map_err(|e| e.to_string())?;
+    eng.call_cq(dir.as_deref())?;
     Ok(eng.snapshot())
 }
 
@@ -2092,12 +2296,15 @@ async fn get_need_alerts(
             heard.extend(propagation::heard_near_me(&buf.recent(now, 900), me));
         }
     }
-    // VOICE / CW needs come from the DX-cluster + RBN spot firehose, which carries an
-    // EXACT frequency (→ click-to-work can QSY to the spot, not just the band). Cluster
-    // spots have no structured mode, so classify each from its comment token / band
-    // segment. We admit only CW and Phone here: Digital needs stay empirical (the
-    // near-me / getting-out geometry above), so a pure-digital operator's board is
-    // unchanged — the frontend then shows CW/Phone rows only when those features are on.
+    // CW / Phone (all bands) AND digital on HF come from the DX-cluster + RBN spot
+    // firehose, which carries an EXACT frequency (→ click-to-work can QSY to the spot).
+    // Cluster spots have no structured mode, so classify each from its comment token /
+    // band segment. Digital is admitted on HF ONLY: a pure-digital operator's near-me
+    // PSKR census is hardcoded to 10m/6m/4m/2m (region_topics), so without this an HF
+    // FT8 new-one (20/40/15m) that's actively spotted has NO path to the Needed board —
+    // the "I have HF needs that never show" gap. VHF digital stays out (VHF locality is
+    // gated above and Es/MS digital adds noise); the frontend's mode gating still hides
+    // CW/Phone rows unless those features are on, so a digital board gains only HF digital.
     if let Ok(buf) = spots.lock() {
         let recent = buf.recent_within(
             std::time::Instant::now(),
@@ -2160,7 +2367,14 @@ async fn get_need_alerts(
                 }
             }
             let class = propagation::classify_spot_mode(freq, &cs.comment);
-            if matches!(class, propagation::ModeClass::Cw | propagation::ModeClass::Phone) {
+            // CW/Phone on any band; digital on HF only (the missing HF evidence path
+            // for a digital op). The need-matcher is demand-driven, so a busy HF FT8
+            // firehose only surfaces the stations the operator actually NEEDS.
+            let surface = matches!(
+                class,
+                propagation::ModeClass::Cw | propagation::ModeClass::Phone
+            ) || (!band.is_vhf() && matches!(class, propagation::ModeClass::Digital));
+            if surface {
                 // Evidence line: who spotted it (RBN/cluster path). Cluster
                 // lines age out of the buffer at 15 min, so "recently" is the
                 // honest stamp without per-spot wall-clock plumbing.
@@ -3855,11 +4069,42 @@ pub fn run() {
             propagation::dxcc::resolve(call).map(|i| i.entity.to_string())
         });
         eng.set_log_path(logbook_path());
+        // Restore persisted Tempo conversation threads so chat history (and the `*`
+        // band feed) survives an app restart. Best-effort: a missing/corrupt file
+        // just yields an empty roster of threads.
+        if let Ok(text) = std::fs::read_to_string(conversations_path()) {
+            if let Ok(convs) = serde_json::from_str::<Vec<tempo_app::dto::Conversation>>(&text) {
+                eng.load_conversations(convs);
+            }
+        }
         if persisted_source == SourceKind::Companion {
             if let Err(e) = eng.set_source(SourceKind::Companion) {
                 eprintln!("tempo: could not restore Companion source ({e}); using native");
             }
         }
+    }
+
+    // Persist Tempo conversation threads to disk on a slow cadence so chat history
+    // survives a restart — only writes when something changed (no idle disk churn).
+    {
+        let save_engine = engine.clone();
+        std::thread::spawn(move || {
+            let mut last: Option<String> = None;
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(15));
+                let convs = save_engine
+                    .lock()
+                    .map(|e| e.export_conversations())
+                    .unwrap_or_else(|e| e.into_inner().export_conversations());
+                if let Ok(text) = serde_json::to_string(&convs) {
+                    if last.as_deref() != Some(text.as_str())
+                        && write_conversations_atomic(&text)
+                    {
+                        last = Some(text);
+                    }
+                }
+            }
+        });
     }
 
     // Connector auto-upload worker — THE single funnel for QRZ / ClubLog / eQSL
@@ -3959,11 +4204,13 @@ pub fn run() {
         .manage(region_paths)
         .manage(health)
         .manage(SharedOpeningTracker::default())
+        .manage(SharedWxHistory::default())
         .manage(SharedQrzSession::default())
         .invoke_handler(tauri::generate_handler![
             get_snapshot,
             send_message,
             select_peer,
+            archive_conversation,
             set_tier,
             set_source,
             get_spectrum_row,
@@ -4008,11 +4255,13 @@ pub fn run() {
             halt_tx,
             test_cat,
             set_tx_even,
+            set_tx_cycle_auto,
             set_rx_offset,
             set_tx_offset,
             override_next_tx,
             redecode,
             start_cq,
+            call_cq,
             notify_erase,
             qrz_test_connection,
             set_hunt_target,
@@ -4062,6 +4311,7 @@ pub fn run() {
             get_need_alerts,
             get_propagation,
             get_path_outlook,
+            get_band_outlook,
             get_getting_out,
             get_aurora,
             get_feed_health,
@@ -4085,6 +4335,14 @@ pub fn run() {
                 }
             }
         })
-        .run(tauri::generate_context!())
-        .expect("error while running the Nexus application");
+        .build(tauri::generate_context!())
+        .expect("error while building the Nexus application")
+        .run(|app_handle, event| {
+            // Flush Tempo conversation history on app exit so a quit within the 15 s
+            // periodic-save window doesn't lose recent chat or resurrect an archived
+            // thread. ExitRequested fires on the app-level quit (Alt+F4 / menu quit).
+            if let tauri::RunEvent::ExitRequested { .. } = event {
+                persist_conversations(app_handle.state::<SharedEngine>().inner());
+            }
+        });
 }

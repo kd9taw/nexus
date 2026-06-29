@@ -306,6 +306,7 @@ export function NeededPanel({
           {th('call', 'Call')}
           {th('entity', 'Entity')}
           {th('band', 'Band')}
+          <span className="np-th-static">Mode</span>
           <span className="np-th-static">Zone</span>
           <span className="np-th-static">Why</span>
         </div>
@@ -359,11 +360,12 @@ export function NeededPanel({
                 </span>
                 <span className="np-call">{a.call}</span>
                 <span className="np-entity">{a.entity || '—'}</span>
-                <span className="np-band">
-                  {a.band}
-                  {isVoiceCw && (
-                    <span className={`np-mode np-mode-${a.mode.toLowerCase()}`}>{a.mode}</span>
-                  )}
+                <span className="np-band">{a.band}</span>
+                <span
+                  className={`np-mode-col np-mode-${a.mode.toLowerCase()}`}
+                  title={`Needed on ${a.mode}`}
+                >
+                  {a.mode}
                 </span>
                 <span className="np-zone">{a.zone > 0 ? a.zone : '—'}</span>
                 <span className="np-why">

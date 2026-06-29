@@ -116,6 +116,13 @@ jobs:
       - name: Test UI (Vitest)
         run: npm --prefix ui test
 
+      # Guardrail: no demo/mock/fabricated data may reach an operator. Greps the
+      # Rust + TS sources AND the just-built UI bundle for the deleted demo/mock
+      # fingerprints (propagation::demo, mockEngine, demoPropagation, …). Runs
+      # after the build so it also proves the mock tree-shook out of dist/.
+      - name: No demo/mock data guard
+        run: bash scripts/check-no-demo.sh
+
   # Job 3 — MSRV: the workspace must compile on the pinned minimum toolchain
   # (Cargo.toml [workspace.package] rust-version = "1.87"). Build-only check,
   # incl. the propagation `live` feature (the heaviest dep set).

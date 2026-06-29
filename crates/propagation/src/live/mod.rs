@@ -33,8 +33,13 @@ fn now_unix() -> i64 {
 /// the NG3K announced-DXpedition calendar overlaid with ClubLog's live active
 /// set.
 ///
-/// A DXpedition-feed failure degrades gracefully (empty board) rather than
-/// failing the whole nowcast, which still has space weather and spots.
+/// Every live feed degrades **independently**: a DXpedition-feed failure yields an
+/// empty board, a SWPC blip drops space weather, and a PSK Reporter outage/429
+/// drops the XML spots — none of them fails the whole nowcast as long as *some*
+/// data is present. The snapshot is stamped `"live"` only when both primary feeds
+/// (space weather + spots) answered, else `"partial"`. The call returns `Err` only
+/// when EVERYTHING is unreachable, so the command layer can fall back to its cache
+/// or an honest offline empty-state — never to fabricated data.
 ///
 /// `needs` is the operator's needs model — typically a [`crate::LogNeeds`] built
 /// from their ADIF logbook by the caller (which owns the log). Pass an empty
@@ -60,9 +65,34 @@ pub fn snapshot_with_spots(
     needs: &dyn OperatorNeeds,
     extra_spots: &[PathSpot],
 ) -> Result<PropagationSnapshot, String> {
-    let wx = swpc::fetch_space_wx()?;
-    let mut spots = pskreporter::fetch_paths(mycall, window_secs)?;
+    // Each feed degrades on its own — one source being down must NOT blank the whole
+    // nowcast (this was the bug behind "stays in demo": a single PSK Reporter 429
+    // `?`-aborted the entire snapshot).
+    let wx_opt = swpc::fetch_space_wx().ok();
+    let xml_spots = pskreporter::fetch_paths(mycall, window_secs).ok();
+    let xml_ok = xml_spots.is_some();
+    let mut spots = xml_spots.unwrap_or_default();
     spots.extend_from_slice(extra_spots);
     let plans = dxped::fetch_plans().unwrap_or_default();
-    Ok(PropagationEngine::new(mycall, mygrid).snapshot(now_unix(), &spots, &wx, &plans, needs))
+
+    // Nothing at all from any source → let the caller fall back to its cache or an
+    // honest offline empty-state. Never fabricate.
+    if wx_opt.is_none() && spots.is_empty() {
+        return Err("no live propagation data: space weather and spot feeds unreachable".to_string());
+    }
+
+    // Absent space weather degrades to NEUTRAL mid-cycle values (flagged by
+    // source="partial"), not all-zero — zero SFI reads as a dead band and would
+    // wrongly close the high bands when real spots are present.
+    let wx = wx_opt.unwrap_or_default();
+    let mut snap =
+        PropagationEngine::new(mycall, mygrid).snapshot(now_unix(), &spots, &wx, &plans, needs);
+    // "live" only when BOTH primary feeds answered; otherwise we served partial data.
+    snap.source = if wx_opt.is_some() && xml_ok {
+        "live"
+    } else {
+        "partial"
+    }
+    .to_string();
+    Ok(snap)
 }

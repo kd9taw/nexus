@@ -13,8 +13,10 @@ use std::collections::HashSet;
 use serde::Serialize;
 
 use crate::geo::{bearing_deg, compass_octant, maidenhead_to_latlon};
+use crate::likelihood::{is_es_season, Workability};
 use crate::model::{ActivityTier, Band, Confidence, PathSpot, Region, Side, SpaceWx};
-use crate::space_wx::{g_kp, g_sfi, sfi_closed_reason};
+use crate::predict::{self, ModeledNow};
+use crate::space_wx::sfi_closed_reason;
 
 /// The strongest region on a band, with a compass heading from the operator.
 #[derive(Debug, Clone, Serialize)]
@@ -41,6 +43,13 @@ pub struct BandReport {
     pub confidence: Confidence,
     /// One-clause plain-language reason ("12 stations", "solar flux too low").
     pub reason: String,
+    /// MODELED openness from physics (MUF vs band freq + absorption/aurora/greyline),
+    /// INDEPENDENT of observed spots: "Open" | "Marginal" | "Closed". This is what
+    /// keeps a wide-open-but-unheard band from reading "quiet/dead" — the UI shows it
+    /// alongside `tier` (observed), so quiet means "open per model, no spots heard".
+    pub modeled: String,
+    /// One-clause reason for the modeled state ("open per model" / "below MUF").
+    pub modeled_reason: String,
 }
 
 /// The full advisory the UI renders.
@@ -82,6 +91,20 @@ impl Default for AdvisorConfig {
     }
 }
 
+/// VHF modeled openness ([`crate::likelihood::PathModel`] is HF-only): a season +
+/// geomagnetic heuristic. Kept at/below the prior cap so it can never alone promote a
+/// VHF band past Quiet — it just makes 6m/4m read "watch for Es" in season and
+/// "closed" out of season, instead of a flat year-round Quiet.
+fn vhf_modeled(band: Band, now: i64, wx: &SpaceWx) -> (Workability, f32) {
+    if wx.kp >= 5.0 {
+        (Workability::Marginal, 0.20) // auroral VHF
+    } else if band.is_vhf() && is_es_season(now) {
+        (Workability::Marginal, 0.18) // Es season — watch
+    } else {
+        (Workability::Closed, 0.02)
+    }
+}
+
 /// Produces a [`PropAdvisory`] from a window of [`PathSpot`]s + space weather.
 pub struct PropAdvisor {
     pub config: AdvisorConfig,
@@ -102,9 +125,14 @@ impl PropAdvisor {
 
     pub fn advise(&self, now: i64, spots: &[PathSpot], wx: &SpaceWx) -> PropAdvisory {
         let cutoff = now - self.config.window_secs;
+        // Model-only band openness "right now" (zero spots needed) — the physics prior
+        // for sparse bands. Computed once over a DX ring, then shared across bands.
+        let modeled = self
+            .me_latlon
+            .map(|me| predict::modeled_now(me, 9000.0, 8, now, wx));
         let mut reports: Vec<BandReport> = Band::ALL
             .iter()
-            .map(|&b| self.band_report(b, now, cutoff, spots, wx))
+            .map(|&b| self.band_report(b, now, cutoff, spots, wx, modeled.as_ref()))
             .collect();
         reports.sort_by(|a, b| {
             b.score
@@ -124,10 +152,11 @@ impl PropAdvisor {
     fn band_report(
         &self,
         band: Band,
-        _now: i64,
+        now: i64,
         cutoff: i64,
         spots: &[PathSpot],
         wx: &SpaceWx,
+        modeled: Option<&ModeledNow>,
     ) -> BandReport {
         // Spots on this band, in window, involving the operator.
         let mut hear_me: HashSet<String> = HashSet::new(); // far calls who heard me
@@ -191,40 +220,48 @@ impl PropAdvisor {
 
         // Band liveness counts ALL distinct stations active on the band (operator
         // paths + regional census), so bands the operator isn't personally on still
-        // read open when there's activity around them. VHF anti-superstation rule:
-        // with NO operator-anchored evidence, regional census only counts when it
-        // spans MULTIPLE distinct receiver endpoints — one tall tower hearing
-        // twenty DX is one endpoint, and must not light 6 m/2 m "Active" for an
-        // operator who can't hear any of it (weak-signal-sleuth principle).
-        let observed = if band.is_vhf()
-            && hear_me.is_empty()
-            && i_hear.is_empty()
-            && neither_rx.len() < 2
-        {
+        // read open when there's activity around them. Anti-superstation rule (ALL
+        // bands, not just VHF): with NO operator-anchored evidence, the census only
+        // counts when it spans MULTIPLE distinct receiver endpoints — one tall tower
+        // (or a single global RBN skimmer) hearing twenty DX is ONE endpoint, and
+        // must not light a band "Active" for an operator who can't hear any of it
+        // (weak-signal-sleuth principle). On HF this is what stops the busiest band
+        // worldwide (10 m at high solar) from always winning the "best band" headline
+        // off raw global spot volume — only operator-reachable, multi-endpoint
+        // activity should rank a band.
+        let observed = if hear_me.is_empty() && i_hear.is_empty() && neither_rx.len() < 2 {
             0
         } else {
             activity.len()
         };
 
         let best_region = self.best_region(&by_region, &region_pts);
-        let polar = best_region
-            .as_ref()
-            .map(|r| !(45.0..=315.0).contains(&r.bearing_deg)) // northerly heading
-            .unwrap_or(false);
+
+        // MODELED openness from physics (MUF/absorption/aurora/greyline), independent
+        // of spots. HF comes from the shared ring; VHF (Es/aurora) from a season+Kp
+        // heuristic since PathModel is HF-only.
+        let (modeled_work, mscore) = if band.is_vhf() {
+            vhf_modeled(band, now, wx)
+        } else {
+            modeled
+                .and_then(|m| m.bands.get(&band).copied())
+                .unwrap_or((Workability::Closed, 0.0))
+        };
 
         // Gradient fusion: score = w·observation + (1−w)·physics-prior.
         // - obs: evidence strength, saturating with the unique-station count. A
         //   decoded spot PROVES the path, so observation is taken at face value
         //   (NOT gated by space weather — a real opening shows even at low SFI).
-        // - prior: what space weather says the band should do with no evidence,
-        //   discounted by `prior_cap` so a silent-but-eligible band reads as a
-        //   gradient (Quiet, not a flat "Closed") yet never outranks an observed
-        //   band nor alone drives the "best band" headline.
-        // - w: rises with spot count — trust observation as spots accumulate, lean
-        //   on the prior when silent. Replaces the old `obs·g_sfi·g_kp`, which read
-        //   every spotless band as dead (the binary open/closed complaint).
+        // - prior: the MODELED openness (MUF vs band freq + absorption/aurora/greyline)
+        //   discounted by `prior_cap` (0.2 < the 0.25 Moderate threshold) so a
+        //   model-open-but-unheard band reads a soft Quiet — never Active/Moderate on
+        //   physics alone, and never outranking an actually-observed band. Replaces the
+        //   crude `g_sfi·g_kp` gate, which read open-but-unheard bands as dead (the
+        //   "everything quiet" complaint).
+        // - w: rises with spot count — trust observation as spots accumulate, lean on
+        //   the modeled prior when silent.
         let obs = 1.0 - (-(observed as f32) / self.config.saturate_k).exp();
-        let prior = self.config.prior_cap * g_sfi(band, wx.sfi) * g_kp(wx.kp, polar);
+        let prior = self.config.prior_cap * mscore;
         let w = (observed as f32 / self.config.obs_full).clamp(0.0, 1.0);
         let score = w * obs + (1.0 - w) * prior;
         let tier = ActivityTier::from_score(score);
@@ -238,10 +275,26 @@ impl PropAdvisor {
             format!("{observed} station{}", if observed == 1 { "" } else { "s" })
         } else if let Some(r) = sfi_closed_reason(band, wx.sfi) {
             r // physically suppressed (e.g. high band, low flux)
-        } else if score > 0.03 {
-            "no spots yet — physics says workable".to_string() // the gradient prior
+        } else if modeled_work.is_open() {
+            "open per model (physics), no spots heard".to_string() // quiet ≠ closed
         } else {
             "no activity heard".to_string()
+        };
+
+        let modeled_reason = if modeled_work.is_open() {
+            "open per model".to_string()
+        } else if band.is_vhf() {
+            "VHF — needs Es/aurora".to_string()
+        } else {
+            // A closed HF band is either ABOVE the MUF (high band, low flux) or
+            // below-MUF-but-absorbed (low band, daytime). Don't print the inverted
+            // "below MUF" for the common high-band ceiling case.
+            let muf = modeled.map(|m| m.muf_now).unwrap_or(0.0);
+            if band.center_mhz() as f32 > muf {
+                "above MUF — too high now".to_string()
+            } else {
+                "weak path — absorption".to_string()
+            }
         };
 
         BandReport {
@@ -253,6 +306,8 @@ impl PropAdvisor {
             best_region,
             confidence,
             reason,
+            modeled: modeled_work.openness3().to_string(),
+            modeled_reason,
         }
     }
 
@@ -400,6 +455,73 @@ mod tests {
     }
 
     #[test]
+    fn hf_superstation_alone_does_not_light_the_band_ladder() {
+        // The HF generalization of the anti-superstation rule: one global RBN/cluster
+        // skimmer (K9BIG) hearing TWENTY 10m DX is a SINGLE endpoint — 10m must NOT
+        // rank Active off that raw volume (this is the "always 10m" bug). A second
+        // distinct receiver makes the census legitimate and the score rises.
+        let wx = SpaceWx {
+            sfi: 120.0,
+            kp: 2.0,
+            ..Default::default()
+        };
+        let mut one_ear: Vec<PathSpot> = Vec::new();
+        for i in 0..20 {
+            one_ear.push(path(&format!("XE{i}DX"), "EK09", "K9BIG", "EN52", Band::B10));
+        }
+        let adv = PropAdvisor::new("KD9TAW", "EN61").advise(NOW, &one_ear, &wx);
+        let b10 = adv.bands.iter().find(|b| b.band == "10m").unwrap();
+        assert!(
+            !matches!(b10.tier, ActivityTier::Active),
+            "one superstation endpoint must not light 10m Active, got {:?}",
+            b10.tier
+        );
+
+        let mut two_ears = one_ear.clone();
+        for i in 0..20 {
+            two_ears.push(path(&format!("XE{i}DX"), "EK09", "W9EAR", "EN62", Band::B10));
+        }
+        let adv2 = PropAdvisor::new("KD9TAW", "EN61").advise(NOW, &two_ears, &wx);
+        let b10b = adv2.bands.iter().find(|b| b.band == "10m").unwrap();
+        assert!(
+            b10b.score > b10.score,
+            "two distinct endpoints make the 10m census count: {} > {}",
+            b10b.score,
+            b10.score
+        );
+    }
+
+    #[test]
+    fn anchored_reachable_band_outranks_busy_unreachable_band() {
+        // 12 operator-anchored 20m paths (reachable) vs a flood of 10m far↔far census
+        // all heard by ONE receiver (the global-firehose signature). 20m must rank #1
+        // — proving operator-reachable activity beats raw busy-band volume, the core
+        // of the "always 10m" fix.
+        let wx = SpaceWx {
+            sfi: 140.0,
+            kp: 2.0,
+            ..Default::default()
+        };
+        let eu = ["JN58", "JO31", "IO91", "JN47"];
+        let mut spots = Vec::new();
+        for i in 0..12 {
+            let g = eu[i % eu.len()];
+            spots.push(path("KD9TAW", "EN52", &format!("DL{i}AA"), g, Band::B20));
+            if i < 5 {
+                spots.push(path(&format!("DL{i}AA"), g, "KD9TAW", "EN52", Band::B20));
+            }
+        }
+        for i in 0..30 {
+            spots.push(path(&format!("XE{i}DX"), "EK09", "K9BIG", "EN52", Band::B10));
+        }
+        let adv = PropAdvisor::new("KD9TAW", "EN52").advise(NOW, &spots, &wx);
+        assert_eq!(
+            adv.bands[0].band, "20m",
+            "reachable 20m must outrank busy single-endpoint 10m"
+        );
+    }
+
+    #[test]
     fn ranks_open_band_and_names_region() {
         // 12 EU stations hear me (I'm in EN52, WI) on 20m; I hear several back.
         let eu = ["JN58", "JO31", "IO91", "JN47", "JO62", "IM98"];
@@ -514,6 +636,99 @@ mod tests {
         assert!(matches!(ten.tier, ActivityTier::Closed));
         assert!(ten.reason.contains("solar flux"));
         assert!(adv.headline.contains("quiet"));
+    }
+
+    #[test]
+    fn modeled_open_unheard_band_is_quiet_not_closed() {
+        // No spots at all, but SFI 150 — the model says 20m is wide open. It must read a
+        // soft Quiet ("open per model, no spots heard"), NOT Closed, and carry the
+        // modeled openness independently of the (absent) observed activity. This is the
+        // core fix for the "everything but 10m/6m is quiet" complaint.
+        let wx = SpaceWx {
+            sfi: 150.0,
+            kp: 2.0,
+            ..Default::default()
+        };
+        let adv = PropAdvisor::new("KD9TAW", "EN52").advise(NOW, &[], &wx);
+        let twenty = adv.bands.iter().find(|b| b.band == "20m").unwrap();
+        assert!(
+            matches!(twenty.tier, ActivityTier::Quiet),
+            "modeled-open 20m with no spots should be Quiet, got {:?} (score {})",
+            twenty.tier,
+            twenty.score
+        );
+        assert_eq!(twenty.modeled, "Open", "20m modeled openness");
+        assert!(
+            twenty.reason.contains("open per model"),
+            "reason: {}",
+            twenty.reason
+        );
+    }
+
+    #[test]
+    fn modeled_never_promotes_to_active_without_spots() {
+        // Even at a screaming SFI 200, with ZERO spots no band may reach Active/Moderate
+        // — the prior cap (0.2 < 0.25) guarantees physics alone can't fake activity.
+        let wx = SpaceWx {
+            sfi: 200.0,
+            kp: 1.0,
+            ..Default::default()
+        };
+        let adv = PropAdvisor::new("KD9TAW", "EN52").advise(NOW, &[], &wx);
+        for b in &adv.bands {
+            assert!(
+                !matches!(b.tier, ActivityTier::Active | ActivityTier::Moderate),
+                "{} reached {:?} on physics alone (no spots)",
+                b.band,
+                b.tier
+            );
+        }
+    }
+
+    #[test]
+    fn observed_band_outranks_modeled_open_unheard_band() {
+        // 30m with real anchored spots must outrank a modeled-open-but-silent band.
+        let wx = SpaceWx {
+            sfi: 150.0,
+            kp: 2.0,
+            ..Default::default()
+        };
+        let mut spots = Vec::new();
+        for i in 0..8 {
+            spots.push(path("KD9TAW", "EN52", &format!("VE{i}AA"), "FN20", Band::B30));
+            spots.push(path(&format!("VE{i}AA"), "FN20", "KD9TAW", "EN52", Band::B30));
+        }
+        let adv = PropAdvisor::new("KD9TAW", "EN52").advise(NOW, &spots, &wx);
+        let thirty = adv.bands.iter().find(|b| b.band == "30m").unwrap();
+        let fifteen = adv.bands.iter().find(|b| b.band == "15m").unwrap();
+        assert!(
+            thirty.score > fifteen.score,
+            "observed 30m ({}) must outrank modeled-open silent 15m ({})",
+            thirty.score,
+            fifteen.score
+        );
+        assert!(matches!(
+            thirty.tier,
+            ActivityTier::Active | ActivityTier::Moderate
+        ));
+    }
+
+    #[test]
+    fn vhf_modeled_is_season_aware() {
+        // 6m with no spots: "watch" (Marginal) in boreal Es season, Closed out of it —
+        // not a flat year-round Quiet.
+        const JUNE: i64 = 1_687_000_000; // solar declination > 15° → Es season
+        let wx = SpaceWx {
+            sfi: 120.0,
+            kp: 2.0,
+            ..Default::default()
+        };
+        let summer = PropAdvisor::new("KD9TAW", "EN52").advise(JUNE, &[], &wx);
+        let fall = PropAdvisor::new("KD9TAW", "EN52").advise(NOW, &[], &wx); // Nov, decl < 15°
+        let six_s = summer.bands.iter().find(|b| b.band == "6m").unwrap();
+        let six_f = fall.bands.iter().find(|b| b.band == "6m").unwrap();
+        assert_eq!(six_s.modeled, "Marginal", "6m in Es season is a watch");
+        assert_eq!(six_f.modeled, "Closed", "6m out of Es season is closed");
     }
 
     #[test]

@@ -6,7 +6,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { geoPath } from 'd3-geo'
 import { RotateCcw } from 'lucide-react'
-import type { AuroraPoint, MapSpot, NeedTag, PropagationSnapshot, Station, WorkableCard } from '../types'
+import type {
+  AuroraPoint,
+  MapSpot,
+  NeedTag,
+  PathPrediction,
+  PropagationSnapshot,
+  Station,
+  WorkableCard,
+} from '../types'
+import { MapInsightRail } from './prop/MapInsightRail'
 import type { Theme } from '../useTheme'
 import { getAurora } from '../api'
 import { gridToLatLon, haversineKm, bearingDeg, type LatLon } from '../grid'
@@ -58,6 +67,11 @@ interface Props {
   /** Band focus (from the advisor/openings rail): the heat layer + spot dots
    * highlight THIS band and recede the rest — "where IS this opening?". */
   focusBand?: string | null
+  /** Toggle the focused band (from the right-edge insight overlay's band strip /
+   * insight rows). Omitted = the overlay's band clicks are inert. */
+  onFocusBand?: (band: string) => void
+  /** Current path / general modelled outlook, for the overlay's MUF ceiling + heatmap. */
+  outlook?: PathPrediction | null
 }
 
 const INTENT_PRESETS: Record<
@@ -65,7 +79,7 @@ const INTENT_PRESETS: Record<
   { kind: Projection; colorBy: 'need' | 'snr'; layers: Partial<Record<LayerKey, boolean>> }
 > = {
   // Chase DX: spinnable globe, need-colored, openings + DXpeditions + rings on.
-  dx: { kind: 'globe', colorBy: 'need', layers: { dxped: true, rings: true, heat: true } },
+  dx: { kind: 'globe', colorBy: 'need', layers: { dxped: false, rings: true, heat: true } },
   // POTA/SOTA: world view, need-colored activators; de-emphasize rings.
   pota: { kind: 'world', colorBy: 'need', layers: { dxped: false, rings: false, heat: false } },
   // Ragchew: globe, who-can-I-hear (signal), calm — dxped off.
@@ -125,7 +139,9 @@ const DEFAULT_LAYERS: Record<LayerKey, Layer> = {
   liveSpots: { label: 'Live spots (cluster/RBN)', visible: true, opacity: 0.9 },
   stations: { label: 'My decodes', visible: true, opacity: 1 },
   paths: { label: 'Selected path', visible: true, opacity: 1 },
-  dxped: { label: 'DXpeditions', visible: true, opacity: 1 },
+  // Off by default: Connect is the PROPAGATION view (DXpeditions have their own area).
+  // The layer toggle stays for anyone who wants DX-target markers on the map.
+  dxped: { label: 'DXpeditions', visible: false, opacity: 1 },
 }
 const RINGS_KM = [1000, 3000, 5000, 10000]
 
@@ -193,6 +209,8 @@ export function MapView({
   intent,
   onWorkSpot,
   focusBand = null,
+  onFocusBand,
+  outlook = null,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
@@ -653,12 +671,23 @@ export function MapView({
     // out"); faded by age; centroid-placed (approx) spots dimmer. This is what
     // fills the map with real activity (HamClock-style), under the operator's own
     // decode roster + needed/selected stations.
+    // Band focus only DIMS when the focused band actually has something to highlight.
+    // A modeled-open-but-unheard band (clicked from the band-condition strip / insight
+    // feed) has no spots, so dimming everything would black out the map — when there's
+    // no match, don't dim (the band still reads "focused" in the rail; the map stays
+    // legible). This is what makes those strip/feed clicks not dead.
+    const focusHasMatch =
+      !!focusBand &&
+      (placedSpots.some(({ sp }) => sp.band === focusBand) ||
+        placedDxped.some(({ card }) => card.band === focusBand))
+    const dimBand = (band: string) =>
+      focusBand && focusHasMatch ? (band === focusBand ? 1 : 0.15) : 1
     if (layers.liveSpots.visible) {
       for (const { sp, xy: p } of placedSpots) {
         const ageMin = sp.ageSecs / 60
         const fade = ageMin < 10 ? 1 : ageMin < 30 ? 0.6 : 0.35
         // Band focus: the focused band stays bright; everything else recedes.
-        const focusF = focusBand ? (sp.band === focusBand ? 1 : 0.15) : 1
+        const focusF = dimBand(sp.band)
         ctx.globalAlpha = layers.liveSpots.opacity * fade * (sp.approx ? 0.7 : 1) * focusF
         ctx.beginPath()
         ctx.arc(p[0], p[1], sp.heardMe ? 3 : 2.2, 0, Math.PI * 2)
@@ -765,7 +794,7 @@ export function MapView({
         const nm = needMeta(card.need)
         // Same band-focus rule as the spot dots — a 15 m dxped glyph must recede
         // when the operator focuses 20 m, or the focus reads as broken.
-        ctx.globalAlpha = focusBand ? (card.band === focusBand ? 1 : 0.15) : 1
+        ctx.globalAlpha = dimBand(card.band)
         ctx.fillStyle = cssVar(nm.cssVar)
         ctx.fillText(nm.glyph, p[0], p[1])
       }
@@ -935,8 +964,8 @@ export function MapView({
     }
   }
 
-  // null snapshot = still LOADING the first poll — never mislabel a real
-  // session as demo for its first 30 seconds.
+  // null snapshot = still LOADING the first poll — show a neutral loading badge
+  // rather than "no live data" for the first poll.
   const prov = prop ? prop.source : 'loading'
 
   return (
@@ -971,7 +1000,15 @@ export function MapView({
         </div>
         <span className="map-center">◎ {myGrid}</span>
         <span className={`map-prov prov-${prov}`}>
-          {prov === 'live' ? 'LIVE' : prov === 'cached' ? 'CACHED' : prov === 'loading' ? '…' : 'DEMO'}
+          {prov === 'live'
+            ? 'LIVE'
+            : prov === 'partial'
+              ? 'PARTIAL'
+              : prov === 'cached'
+                ? 'CACHED'
+                : prov === 'loading'
+                  ? '…'
+                  : 'NO LIVE DATA'}
         </span>
         <button
           className="map-reset"
@@ -1031,6 +1068,15 @@ export function MapView({
             </div>
           )}
           <MapLegend />
+          {prop && (
+            <MapInsightRail
+              prop={prop}
+              expert={expert}
+              outlook={outlook}
+              onBandClick={onFocusBand}
+              activeBand={focusBand}
+            />
+          )}
         </div>
 
         {expert && (

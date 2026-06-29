@@ -16,6 +16,12 @@ fn two_engines_exchange_a_directed_message() {
     // TX is disarmed by default now (WSJT-X Enable-Tx) — arm both ends.
     a.set_tx_enabled(true);
     b.set_tx_enabled(true);
+    // Pin the pre-arranged static parities: this loopback ingests a decode in the SAME
+    // slot it was transmitted (real radio decodes one slot LATER), so the smart
+    // auto-cycle's real-radio slot-parity derivation doesn't apply here. The auto-cycle
+    // itself is covered by the engine unit tests.
+    a.set_tx_cycle_auto(false);
+    b.set_tx_cycle_auto(false);
     // Directed free-text chat is FT1-native; default tier is now FT8, so pin FT1.
     a.set_tier(Tier::Ft1);
     b.set_tier(Tier::Ft1);

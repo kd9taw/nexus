@@ -375,6 +375,20 @@ impl SpaceWx {
     }
 }
 
+/// NOAA radio-blackout R-scale (0 = none) from the GOES long X-ray flux (W/m²):
+/// R1 ≥ M1 (1e-5), R2 ≥ M5 (5e-5), R3 ≥ X1 (1e-4), R4 ≥ X10 (1e-3), R5 ≥ X20 (2e-3).
+/// An M/X flare raises daytime D-layer absorption → sunlit-side HF blackout (low bands).
+pub fn r_scale(xray_long: f32) -> u8 {
+    match xray_long {
+        x if x >= 2e-3 => 5,
+        x if x >= 1e-3 => 4,
+        x if x >= 1e-4 => 3,
+        x if x >= 5e-5 => 2,
+        x if x >= 1e-5 => 1,
+        _ => 0,
+    }
+}
+
 /// The propagation mode behind an opening (grounded in the research thresholds).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PropMode {

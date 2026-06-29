@@ -80,6 +80,24 @@ pub fn haversine_km(a: (f64, f64), b: (f64, f64)) -> f64 {
     2.0 * R * h.sqrt().asin()
 }
 
+/// Destination point (lat, lon in degrees) reached from `origin` by travelling
+/// `dist_km` along the great circle on initial `bearing_deg` (0 = N). Spherical
+/// earth; longitude normalized to [-180, 180]. Inverse of [`bearing_deg`] +
+/// [`haversine_km`]. Used to synthesize representative DX points for the
+/// no-selection modeled band outlook.
+pub fn destination_point(origin: (f64, f64), bearing_deg: f64, dist_km: f64) -> (f64, f64) {
+    const R: f64 = 6371.0;
+    let ang = dist_km / R; // angular distance (radians)
+    let brg = bearing_deg.to_radians();
+    let lat1 = origin.0.to_radians();
+    let lon1 = origin.1.to_radians();
+    let lat2 = (lat1.sin() * ang.cos() + lat1.cos() * ang.sin() * brg.cos()).asin();
+    let lon2 = lon1
+        + (brg.sin() * ang.sin() * lat1.cos()).atan2(ang.cos() - lat1.sin() * lat2.sin());
+    let lon_deg = ((lon2.to_degrees() + 540.0).rem_euclid(360.0)) - 180.0;
+    (lat2.to_degrees(), lon_deg)
+}
+
 /// Initial great-circle bearing (degrees, 0 = N) from `a` to `b`.
 pub fn bearing_deg(a: (f64, f64), b: (f64, f64)) -> f64 {
     let (lat1, lon1) = (a.0.to_radians(), a.1.to_radians());
@@ -238,6 +256,23 @@ mod tests {
         assert!(km > 7000.0 && km < 8000.0, "EN52->JN58 = {km} km");
         // Same grid ~ 0.
         assert!(grid_distance_km("EN52", "EN52").unwrap() < 1.0);
+    }
+
+    #[test]
+    fn destination_point_round_trips_distance_and_bearing() {
+        let origin = maidenhead_to_latlon("EN52").unwrap();
+        for &(brg, dist) in &[(60.0, 5000.0), (300.0, 9000.0), (180.0, 3000.0)] {
+            let dx = destination_point(origin, brg, dist);
+            // Travelling `dist` on `brg` then measuring back must reproduce both.
+            assert!(
+                (haversine_km(origin, dx) - dist).abs() < 1.0,
+                "distance round-trips: {} vs {dist}",
+                haversine_km(origin, dx)
+            );
+            let back = bearing_deg(origin, dx);
+            let diff = ((back - brg + 540.0).rem_euclid(360.0)) - 180.0;
+            assert!(diff.abs() < 0.5, "bearing round-trips: {back} vs {brg}");
+        }
     }
 
     #[test]

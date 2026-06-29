@@ -18,6 +18,7 @@ interface Props {
   onSetTune: (on: boolean) => void
   onHaltTx: () => void
   onSetTxEven: (even: boolean) => void
+  onSetTxCycleAuto: (auto: boolean) => void
   onSetHoldTxFreq: (on: boolean) => void
   /** Stop the in-progress QSO recording (audio bridge). The REC badge only shows while
    * `radio.qsoRecording` is true, giving a persistent, mode-independent stop. */
@@ -79,6 +80,7 @@ export function TopBar({
   onSetTune,
   onHaltTx,
   onSetTxEven,
+  onSetTxCycleAuto,
   onSetHoldTxFreq,
   onStopRecording,
   wfLayout,
@@ -253,22 +255,32 @@ export function TopBar({
         </button>
       </div>
 
-      <div className="topbar-group tier-toggle tx-period" role="group" aria-label="Transmit period">
+      <div className="topbar-group tier-toggle tx-period" role="group" aria-label="Transmit cycle">
         <button
           type="button"
-          className={`tier-btn${radio.txEven ? ' active' : ''}`}
-          aria-pressed={radio.txEven}
+          className={`tier-btn${radio.txCycleAuto ? ' active' : ''}`}
+          aria-pressed={radio.txCycleAuto ?? false}
+          onClick={() => onSetTxCycleAuto(true)}
+          title="Auto-cycle (FT8-style): when you answer a station, transmit on the opposite T/R cycle to theirs"
+        >
+          Auto{' '}
+          <small>{radio.txCycleAuto ? (radio.txEven ? '1st' : '2nd') : 'cycle'}</small>
+        </button>
+        <button
+          type="button"
+          className={`tier-btn${!radio.txCycleAuto && radio.txEven ? ' active' : ''}`}
+          aria-pressed={!radio.txCycleAuto && radio.txEven}
           onClick={() => onSetTxEven(true)}
-          title="Transmit in the even (1st) T/R slots — the station you work must be Tx 2nd"
+          title="Lock transmit to the even (1st) T/R slots — the station you work must be Tx 2nd"
         >
           Tx 1st <small>even</small>
         </button>
         <button
           type="button"
-          className={`tier-btn${!radio.txEven ? ' active' : ''}`}
-          aria-pressed={!radio.txEven}
+          className={`tier-btn${!radio.txCycleAuto && !radio.txEven ? ' active' : ''}`}
+          aria-pressed={!radio.txCycleAuto && !radio.txEven}
           onClick={() => onSetTxEven(false)}
-          title="Transmit in the odd (2nd) T/R slots — the station you work must be Tx 1st"
+          title="Lock transmit to the odd (2nd) T/R slots — the station you work must be Tx 1st"
         >
           Tx 2nd <small>odd</small>
         </button>

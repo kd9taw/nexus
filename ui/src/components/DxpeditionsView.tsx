@@ -30,11 +30,12 @@ function dxpedWorkMode(modes?: string[]): string | null {
 
 function provenance(source: PropagationSnapshot['source'], asOf: number): { label: string; cls: string } {
   if (source === 'live') return { label: 'LIVE', cls: 'live' }
+  if (source === 'partial') return { label: 'PARTIAL', cls: 'partial' }
   if (source === 'cached') {
     const m = Math.max(0, Math.round((Date.now() / 1000 - asOf) / 60))
     return { label: `CACHED ${m}m`, cls: 'cached' }
   }
-  return { label: 'DEMO DATA', cls: 'demo' }
+  return { label: 'NO LIVE DATA', cls: 'offline' }
 }
 
 export function DxpeditionsView({ snap, onWorkSpot, onShowOnMap }: Props) {

@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-theme="dark" data-layout="right">
+<html lang="en" data-theme="dark" data-layout="right" data-viewport="md">
   <head>
     <meta charset="UTF-8" />
     <!-- Apply persisted theme / layout / scale / pane widths before first paint
@@ -15,8 +15,24 @@
           var den = localStorage.getItem('nexus-density')
           if (den === 'guided' || den === 'standard' || den === 'dense') d.setAttribute('data-density', den)
           if (localStorage.getItem('nexus-motion') === 'reduce') d.setAttribute('data-motion', 'reduce')
+          // Auto-fit zoom from the screen when there's no saved preference — keep
+          // this logic in sync with pickInitialZoom() in src/useScale.ts.
           var s = Number(localStorage.getItem('tempo-ui-scale'))
-          if ([90, 100, 110, 125].indexOf(s) !== -1) d.style.setProperty('--ui-zoom', String(s / 100))
+          var zoom
+          if ([90, 100, 110, 125].indexOf(s) !== -1) {
+            zoom = s / 100
+          } else {
+            var w = window.innerWidth, h = window.innerHeight
+            var z = w >= 3400 ? 125 : w >= 1600 ? 110 : w >= 1200 ? 100 : 90
+            if (h < 820 && z > 100) z = 100
+            if (h < 720 && z > 90) z = 90
+            zoom = z / 100
+          }
+          d.style.setProperty('--ui-zoom', String(zoom))
+          // Initial size class from EFFECTIVE width (mirror classifyViewport() in
+          // src/useViewport.ts) so the first paint is already at the right breakpoint.
+          var ew = window.innerWidth / (zoom || 1)
+          d.setAttribute('data-viewport', ew < 768 ? 'xs' : ew < 1100 ? 'sm' : ew < 1600 ? 'md' : ew < 2400 ? 'lg' : 'xl')
           var lw = Number(localStorage.getItem('tempo-left-rail-w'))
           if (lw > 0) d.style.setProperty('--left-rail-w', lw + 'px')
           var rw = Number(localStorage.getItem('tempo-right-rail-w'))

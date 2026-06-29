@@ -17,7 +17,7 @@ import type {
   WorkableCard,
 } from '../types'
 import type { Theme } from '../useTheme'
-import { getPathOutlook, getGettingOut } from '../api'
+import { getPathOutlook, getBandOutlook, getGettingOut } from '../api'
 import { latLonToGrid } from '../grid'
 import { modeClassOf } from '../features/needs'
 import { MapView, type MapIntent } from './MapView'
@@ -25,7 +25,6 @@ import { StateBlock } from './StateBlock'
 import { SpaceWxGauges } from './prop/SpaceWxGauges'
 import { BandAdvisor } from './prop/BandAdvisor'
 import { OpeningStrip } from './prop/OpeningStrip'
-import { WorkNowCard } from './prop/WorkNowCard'
 import { LikelihoodHeatmap } from './prop/LikelihoodHeatmap'
 
 /** Need tag → the chip label/class the Needed board uses — ONE color language. */
@@ -54,7 +53,7 @@ function dxpedWorkMode(modes?: string[]): string | null {
 
 /** Intent presets — beginner picks a goal once; map + prop configure themselves. */
 const INTENTS: { id: MapIntent; label: string; title: string }[] = [
-  { id: 'dx', label: 'Chase DX', title: 'Beam map, need-colored, openings + DXpeditions' },
+  { id: 'dx', label: 'Chase DX', title: 'Beam map, need-colored, live openings' },
   { id: 'pota', label: 'POTA/SOTA', title: 'World view, park/summit activators' },
   { id: 'casual', label: 'Ragchew', title: 'Who can I hear — signal-colored, calm' },
   { id: 'vhf', label: '6m/VHF', title: 'Openings front-and-center (Es / F2 / aurora)' },
@@ -87,11 +86,12 @@ interface Props {
 
 function provLabel(source: PropagationSnapshot['source'], asOf: number): { label: string; cls: string } {
   if (source === 'live') return { label: 'LIVE', cls: 'live' }
+  if (source === 'partial') return { label: 'PARTIAL', cls: 'partial' }
   if (source === 'cached') {
     const m = Math.max(0, Math.round((Date.now() / 1000 - asOf) / 60))
     return { label: `CACHED ${m}m`, cls: 'cached' }
   }
-  return { label: 'DEMO', cls: 'demo' }
+  return { label: 'NO LIVE DATA', cls: 'offline' }
 }
 
 export function ConnectView({
@@ -132,13 +132,11 @@ export function ConnectView({
   // + spots; click the same band again (or the clear chip) to release.
   const [focusBand, setFocusBand] = useState<string | null>(null)
   const toggleFocusBand = (band: string) => setFocusBand((f) => (f === band ? null : band))
-  // Auto-release a stale focus: when the focused band no longer has any spots on
-  // the map (the opening ended / activity died), dimming everything else would
-  // leave a near-black map with no obvious cause. Release rather than puzzle.
-  useEffect(() => {
-    if (!focusBand || !prop?.spots) return
-    if (!prop.spots.some((sp) => sp.band === focusBand)) setFocusBand(null)
-  }, [focusBand, prop])
+  // NOTE: focus is a deliberate user action and STICKS until toggled — we no longer
+  // auto-clear it when the band has no spots. A modeled-open-but-unheard band is a
+  // legitimate focus target (clicked from the band-condition strip / insight feed);
+  // the map handles the no-spots case by simply not dimming (MapView), so focusing it
+  // can't black out the map. (The old auto-clear made those clicks dead.)
   // Resolve the selection against EVERYTHING plotted: my decoded stations, the
   // live cluster/RBN/PSKR spots, and the DXpedition cards — so clicking ANY map
   // pixel populates this rail (the map's "so what" panel).
@@ -188,6 +186,22 @@ export function ConnectView({
     }
   }, [selGrid])
   const pathOpen = pathPred?.bands.filter((b) => b.workability !== 'Closed') ?? []
+
+  // The no-selection general "Band outlook (modelled)": modeled per-band workability
+  // + MUF to a long-haul DX ring. Fetched only when no station is selected; refreshed
+  // on the prop cadence so the modeled day tracks the current space weather.
+  const [bandOutlook, setBandOutlook] = useState<PathPrediction | null>(null)
+  useEffect(() => {
+    if (selectedCall) return
+    let live = true
+    getBandOutlook()
+      .then((p) => live && setBandOutlook(p))
+      .catch(() => {})
+    return () => {
+      live = false
+    }
+  }, [selectedCall, prop?.asOf])
+  const outlookOpen = bandOutlook?.bands.filter((b) => b.workability !== 'Closed') ?? []
   // "Am I getting out?" — who is hearing me now (observed). Polled on the prop
   // cadence; the backend reads the live PSK Reporter / RBN firehose each call.
   const [getout, setGetout] = useState<GettingOut | null>(null)
@@ -243,11 +257,19 @@ export function ConnectView({
             intent={intent}
             onWorkSpot={onWorkSpot}
             focusBand={focusBand}
+            onFocusBand={toggleFocusBand}
+            outlook={selectedCall ? pathPred : bandOutlook}
           />
         </div>
         <aside className="connect-side">
           {!prop ? (
             <StateBlock kind="loading" title="Reading the band…" detail="Fetching the propagation nowcast." />
+          ) : prop.source === 'offline' ? (
+            <StateBlock
+              kind="empty"
+              title="No live propagation yet"
+              detail="Set your callsign in Settings and check your internet connection — live openings, band conditions, and space weather will appear here as soon as the feeds answer."
+            />
           ) : (
             <>
               <div className="connect-hero-row">
@@ -339,12 +361,20 @@ export function ConnectView({
                 <section className="connect-path panel">
                   <h3>
                     Path to {selectedCall}
-                    {pathPred.engine !== 'demo' && (
+                    {pathPred.engine && (
                       <span className="cp-engine">
                         {pathPred.engine === 'heuristic' ? 'modelled' : pathPred.engine}
                       </span>
                     )}
                   </h3>
+                  {pathPred.mufNow > 0 && (
+                    <p
+                      className="cp-muf"
+                      title="Maximum Usable Frequency — the path's ceiling right now. Bands below it are open; bands above it are closed."
+                    >
+                      Ceiling (MUF): <strong>{pathPred.mufNow.toFixed(1)} MHz</strong>
+                    </p>
+                  )}
                   {pathOpen.length === 0 ? (
                     <p className="cp-none">No HF band modelled workable on this path right now.</p>
                   ) : (
@@ -354,13 +384,63 @@ export function ConnectView({
                           <li key={b.band}>
                             <span className="cp-band">{b.band}</span>
                             <span className={`cp-work w-${b.workability.toLowerCase()}`}>{b.workability}</span>
-                            <span className="cp-win">{b.window}</span>
+                            <span className="cp-win">
+                              {b.grayline && (
+                                <span className="cp-grayline" title="Greyline (terminator) opening">
+                                  ◐{' '}
+                                </span>
+                              )}
+                              {b.window}
+                            </span>
                           </li>
                         ))}
                       </ul>
                       {/* WHEN can I work them — the 24 h band×hour heatmap (the data
                           was always in the prediction; now it's visible). */}
                       <LikelihoodHeatmap outlook={pathOpen.slice(0, 6)} />
+                    </>
+                  )}
+                </section>
+              )}
+              {!selectedCall && bandOutlook && (
+                <section className="connect-path panel">
+                  <h3>
+                    Band outlook
+                    <span className="cp-engine">modelled · DX</span>
+                  </h3>
+                  {bandOutlook.mufNow > 0 && (
+                    <p
+                      className="cp-muf"
+                      title="Maximum Usable Frequency — the modeled ceiling to long-haul DX right now. Bands below it are open; above it, closed."
+                    >
+                      Ceiling (MUF): <strong>{bandOutlook.mufNow.toFixed(1)} MHz</strong>
+                    </p>
+                  )}
+                  {outlookOpen.length === 0 ? (
+                    <p className="cp-none">No HF band modelled workable to DX right now.</p>
+                  ) : (
+                    <>
+                      <ul className="connect-path-list">
+                        {outlookOpen.slice(0, 8).map((b) => (
+                          <li key={b.band}>
+                            <span className="cp-band">{b.band}</span>
+                            <span className={`cp-work w-${b.workability.toLowerCase()}`}>
+                              {b.workability}
+                            </span>
+                            <span className="cp-win">
+                              {b.grayline && (
+                                <span className="cp-grayline" title="Greyline (terminator) opening">
+                                  ◐{' '}
+                                </span>
+                              )}
+                              {b.window}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                      {/* Best modelled workability to long-haul DX in ANY direction,
+                          with the band×hour heatmap for the day. */}
+                      <LikelihoodHeatmap outlook={outlookOpen.slice(0, 8)} />
                     </>
                   )}
                 </section>
@@ -396,28 +476,9 @@ export function ConnectView({
                   </>
                 )}
               </section>
-              {!selectedCall && prop.dxpeditions.workableNow.length > 0 && (
-                <section className="connect-worknow panel">
-                  <h3>DXpeditions — work now</h3>
-                  {prop.dxpeditions.workableNow.slice(0, 3).map((c, i) => (
-                    <WorkNowCard
-                      key={`${c.call}-${c.band}-${i}`}
-                      card={c}
-                      onWork={
-                        onWorkSpot
-                          ? (card) =>
-                              onWorkSpot({
-                                call: card.call,
-                                band: card.band,
-                                mode: dxpedWorkMode(card.modes),
-                                freqMhz: null,
-                              })
-                          : undefined
-                      }
-                    />
-                  ))}
-                </section>
-              )}
+              {/* DXpeditions intentionally NOT shown here — Connect is the propagation
+                  view; DXpeditions have their own dedicated area, so listing them here
+                  duplicated it. (Removed per operator feedback.) */}
               {!selectedCall && (needAlerts?.length ?? 0) > 0 && (
                 <section className="connect-needs panel">
                   <h3>Needs heard now</h3>
@@ -446,6 +507,7 @@ export function ConnectView({
               <SpaceWxGauges wx={prop.spaceWx} gloss={!expert} />
               <BandAdvisor
                 bands={prop.advisory.bands}
+                worldwideBands={prop.worldwide?.bands ?? null}
                 onBandClick={toggleFocusBand}
                 activeBand={focusBand}
               />

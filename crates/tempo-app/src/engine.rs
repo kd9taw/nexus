@@ -73,6 +73,10 @@ pub struct Engine {
     /// Real PC-clock-vs-UTC offset (ms) from the NTP probe, or None if disabled/offline.
     clock_offset_ms: Option<i64>,
     tx_parity: u64,
+    /// When true (default), answering a heard station in chat auto-picks the OPPOSITE
+    /// T/R cycle (FT8-style); an explicit 1st/2nd selection clears it. A CQ run holds
+    /// its current cycle regardless.
+    tx_cycle_auto: bool,
     beacon_every: u64,
     tx_queue: VecDeque<String>,
     /// Open-broadcast (to-all) free-text frames, sent unconditionally on TX
@@ -369,6 +373,7 @@ impl Engine {
             hold_tx_freq,
             clock_offset_ms: None,
             tx_parity,
+            tx_cycle_auto: true,
             beacon_every: 8,
             tx_queue: VecDeque::new(),
             broadcast_queue: VecDeque::new(),
@@ -451,12 +456,16 @@ impl Engine {
         &self.settings
     }
 
-    /// Apply new settings. A change of callsign/grid resets the session
-    /// (roster/conversations); band/dial/Field-Day fields update in place. The
+    /// Apply new settings. A change of callsign/grid rebinds identity IN PLACE
+    /// (preserving roster + conversations + the `*` band feed — see
+    /// [`AppState::set_identity`]); band/dial/Field-Day fields update in place. The
     /// operating mode returns to Chat.
     pub fn apply_settings(&mut self, s: Settings) {
+        // Rebind identity IN PLACE (not a fresh AppState) so editing the callsign or
+        // grid in Settings — or a GPS/UDP grid update routed through a save — does
+        // NOT wipe conversation history, the `*` band feed, or the roster.
         if s.mycall != self.settings.mycall || s.mygrid != self.settings.mygrid {
-            self.app = AppState::new(&s.mycall, &s.mygrid);
+            self.app.set_identity(&s.mycall, &s.mygrid);
         }
         self.app.set_radio(s.dial_mhz, &s.band, &s.sideband);
         // The signal source is owned by `set_source` (which binds the socket), not
@@ -1935,9 +1944,10 @@ impl Engine {
         // 50/50 WRONG for a click on an older row — a wrong parity transmits while
         // the DX transmits: never heard, and reads as "waits multiple cycles".
         // (A decode's audio is from the slot before its ingest slot, so the
-        // opposite of the DX's period is exactly `ingest_slot % 2`.)
+        // opposite of the DX's period is exactly `ingest_slot % 2`.) This is a DERIVED
+        // parity (the sequencer answering), not a manual pick — keep auto-cycle on.
         if let Some(s) = context_slot.or(self.last_decode_slot) {
-            self.set_tx_even(s % 2 == 0);
+            self.apply_cycle_parity(s % 2 == 0);
         }
         // Move our RX onto the DX's audio frequency (and TX with it, unless Hold Tx
         // Freq is on) — WSJT-X's double-click-to-work behavior. set_rx_offset clamps to
@@ -2111,6 +2121,15 @@ impl Engine {
 
     pub fn send_message(&mut self, peer: &str, text: &str) {
         self.reset_tx_watchdog();
+        // Smart cycle (FT8-style): when auto and not in a CQ run, answer a heard station
+        // on the OPPOSITE T/R parity to the one we decoded them in, so we key while they
+        // listen (the 50/50-collision fix). A decode's audio is from the slot before its
+        // ingest slot, so the opposite of the DX's period is `ingest_slot % 2`.
+        if self.tx_cycle_auto && !self.cq_running {
+            if let Some(s) = self.latest_decode_slot_from(peer).or(self.last_decode_slot) {
+                self.apply_cycle_parity(s % 2 == 0);
+            }
+        }
         self.app.send_message(peer, text);
     }
 
@@ -2129,9 +2148,24 @@ impl Engine {
             self.broadcast_queue.push_back(f);
         }
         self.app.note_broadcast(text);
+        // Broadcasting IS an explicit "put this on the air" action — arm TX so the
+        // canned band macros key on the next over without a separate Enable-Tx click.
+        self.arm_tx_now();
     }
     pub fn select_peer(&mut self, peer: &str) {
         self.app.select_peer(peer);
+    }
+    /// Archive (hide) a conversation thread (the recents-list hide affordance).
+    pub fn archive_conversation(&mut self, peer: &str) {
+        self.app.archive_conversation(peer);
+    }
+    /// Export conversation threads for on-disk persistence (bounded per thread).
+    pub fn export_conversations(&self) -> Vec<crate::dto::Conversation> {
+        self.app.export_conversations()
+    }
+    /// Restore persisted conversation threads at startup (chat history across restarts).
+    pub fn load_conversations(&mut self, convs: Vec<crate::dto::Conversation>) {
+        self.app.load_conversations(convs);
     }
     /// Clear the active peer (map/roster deselect).
     pub fn clear_peer(&mut self) {
@@ -2266,6 +2300,59 @@ impl Engine {
     /// [`Engine::poll_tx`] returns nothing and any queued audio is dropped.
     /// `true` is an operator action: it clears a tripped watchdog and resets the
     /// continuous-TX count.
+    /// Arm transmit for an operator-initiated broadcast / CQ: enable TX (which cancels
+    /// a deferred after-73 disable and clears a tripped watchdog) and request the snappy
+    /// "first-over" so it keys THIS period when the over still fits. Mirrors how every
+    /// FT8 operator action arms; preserves the launch-safety invariant (TX is only ever
+    /// armed by an explicit operator action, never on startup).
+    fn arm_tx_now(&mut self) {
+        self.set_tx_enabled(true);
+        self.immediate_tx = true;
+    }
+
+    /// Call CQ from Tempo (chat-first) — emit ONE structured `CQ <mycall> <mygrid>`
+    /// frame into the broadcast queue and arm TX, staying in Chat mode (unlike
+    /// [`start_cq`](Self::start_cq), which switches to the Operate QSO sequencer). The
+    /// frame is the clean WSJT-X i3=1 CQ ("CQ KD9TAW EN52"), packed structurally by the
+    /// encoder — NOT the chunked `DE <CALL> …` free-text broadcast that leaked chunk
+    /// headers ("A12…") and dropped the grid. `dir` is an optional directed-CQ token;
+    /// only WSJT-X-packable tokens stay structured (an unsupported one would fall back
+    /// to free text), so callers should validate or pass `None`.
+    pub fn call_cq(&mut self, dir: Option<&str>) -> Result<(), String> {
+        let mycall = self.settings.mycall.trim().to_string();
+        let grid = self.settings.mygrid.trim();
+        if mycall.is_empty() {
+            return Err("Set your callsign in Settings before calling CQ".to_string());
+        }
+        // A COMPOUND call (W9XYZ/P, VP2E/W9XYZ) packs only as the grid-less i3=4 CQ —
+        // a grid OR a directed-CQ token would force the packer to TRUNCATED free text
+        // ("CQ W9XYZ/P EN" / "CQ DX W9XYZ/P"). Mirror `qso::compound_form`: clear BOTH.
+        // A standard call needs its 4-char grid (i3=1) and may carry a directed token.
+        let compound = tempo_core::message::is_compound(&mycall);
+        if !compound && grid.len() < 4 {
+            return Err("Set your 4-character grid in Settings before calling CQ".to_string());
+        }
+        let (grid, dir) = if compound {
+            (String::new(), String::new())
+        } else {
+            (
+                grid.chars().take(4).collect::<String>().to_uppercase(),
+                dir.map(|d| d.trim().to_uppercase()).unwrap_or_default(),
+            )
+        };
+        let msg = Msg::Cq {
+            de: mycall,
+            grid,
+            dir,
+        };
+        let text = msg.to_text(); // "CQ KD9TAW EN52" — encoder packs it as one i3=1 frame
+        self.reset_tx_watchdog();
+        self.broadcast_queue.push_back(text.clone()); // structured frame, no DE/chunk
+        self.arm_tx_now();
+        self.app.note_broadcast(&text); // echo into the "*" band feed
+        Ok(())
+    }
+
     pub fn set_tx_enabled(&mut self, on: bool) {
         // ANY operator arm cancels a deferred after-73 disable from the PREVIOUS
         // contact — every arm path funnels here (Enable-Tx button, Call CQ,
@@ -2411,9 +2498,43 @@ impl Engine {
     /// Set the operator's TX-slot parity live. `true` = transmit on even/"1st"
     /// slots, `false` = odd/"2nd". Read by `poll_tx` each slot. Two stations must
     /// use OPPOSITE periods to complete a QSO.
-    pub fn set_tx_even(&mut self, even: bool) {
+    /// Set the T/R cycle parity WITHOUT touching the auto flag (used by the smart
+    /// auto-cycle and by the operator setter below).
+    fn apply_cycle_parity(&mut self, even: bool) {
         self.tx_parity = if even { 0 } else { 1 };
         self.settings.tx_even = even;
+    }
+
+    /// Operator picks a fixed cycle (Tx 1st = even, Tx 2nd = odd). An explicit pick
+    /// disables auto-cycle — the operator is now in manual control.
+    pub fn set_tx_even(&mut self, even: bool) {
+        self.apply_cycle_parity(even);
+        self.tx_cycle_auto = false;
+    }
+
+    /// Toggle smart auto-cycle (FT8-style: answer on the opposite cycle of the station
+    /// you reply to). On by default; turning it back on re-enables the auto pick.
+    pub fn set_tx_cycle_auto(&mut self, auto: bool) {
+        self.tx_cycle_auto = auto;
+    }
+
+    pub fn tx_cycle_auto(&self) -> bool {
+        self.tx_cycle_auto
+    }
+
+    /// Slot of the most recent decode whose SENDER is `peer` — any frame (not just
+    /// addressed-to-me), newest first. Drives the chat answer-cycle derivation.
+    fn latest_decode_slot_from(&self, peer: &str) -> Option<u64> {
+        self.decode_history
+            .iter()
+            .rev()
+            .find(|(_, d)| {
+                Msg::parse(&d.message)
+                    .sender()
+                    .map(|s| same_call(s, peer))
+                    .unwrap_or(false)
+            })
+            .map(|(slot, _)| *slot)
     }
     /// Whether the operator transmits on even/"1st" slots.
     pub fn tx_even(&self) -> bool {
@@ -2725,6 +2846,8 @@ impl Engine {
         .to_string();
         s.radio.audio_error = self.audio_error.clone();
         s.radio.tx_even = self.tx_even();
+        s.radio.tx_cycle_auto = self.tx_cycle_auto;
+        s.radio.tr_period_secs = self.active_slot_secs();
         s.radio.tx_offset_hz = self.tx_offset_hz;
         s.radio.rx_offset_hz = self.rx_offset_hz;
         s.radio.tx_level = self.settings.tx_level;
@@ -4157,6 +4280,46 @@ mod tests {
     }
 
     #[test]
+    fn callsign_is_single_source_of_truth_after_apply_settings() {
+        // The DISPLAYED call (snapshot.mycall) and the TX call (settings.mycall, used
+        // by BOTH the FT8 CQ and the Tempo broadcast wire) must never diverge —
+        // changing the callsign in Settings updates both. Guards the user's "Tempo CQ
+        // must use my configured callsign (the same one FT8 uses)" invariant.
+        let mut e = Engine::new("OLDCALL", "EN52", 0);
+        assert_eq!(e.snapshot().mycall, "OLDCALL");
+        let mut s = e.settings().clone();
+        s.mycall = "NEWCALL".into();
+        e.apply_settings(s);
+        // Display tracks the configured call…
+        assert_eq!(e.snapshot().mycall, "NEWCALL");
+        // …and TX reads the same settings field (what broadcast()/FT8 CQ use)…
+        assert_eq!(e.settings().mycall, "NEWCALL");
+        // …so the on-air broadcast prefix carries the new call.
+        let wire = tempo_core::inbox::broadcast_text(&e.settings().mycall, "CQ EN52");
+        assert!(wire.starts_with("DE NEWCALL "), "broadcast wire = {wire}");
+    }
+
+    #[test]
+    fn apply_settings_grid_change_preserves_band_feed() {
+        // Regression for "saving Settings blanks the band feed": a callsign/grid
+        // change must rebind identity in place (not rebuild AppState), so the `*`
+        // band feed (and all conversations) survive.
+        let mut e = Engine::new("K2DEF", "FN31", 0);
+        e.broadcast("CQ FN31");
+        assert!(
+            e.snapshot().conversations.iter().any(|c| c.peer == "*"),
+            "broadcast seeded the band feed"
+        );
+        let mut s = e.settings().clone();
+        s.mygrid = "FN42".into();
+        e.apply_settings(s);
+        assert!(
+            e.snapshot().conversations.iter().any(|c| c.peer == "*"),
+            "band feed survives a grid change"
+        );
+    }
+
+    #[test]
     fn poll_tx_empty_when_tx_disabled() {
         let mut e = Engine::new("W9XYZ", "EN37", 0);
         e.set_tx_enabled(true); // TX is disarmed by default (WSJT-X Enable-Tx) — arm it
@@ -4188,6 +4351,101 @@ mod tests {
             "stays stopped across slots — the sequencer does NOT re-arm"
         );
         assert!(!e.snapshot().radio.transmitting);
+    }
+
+    #[test]
+    fn call_cq_emits_one_structured_cq_and_arms_tx() {
+        let mut e = Engine::new("KD9TAW", "EN52", 0);
+        e.set_tier(Tier::Ft1);
+        assert!(!e.tx_enabled(), "TX disarmed at start (launch safety)");
+
+        e.call_cq(None).expect("call_cq with a valid grid");
+
+        // ONE clean structured CQ — NOT a chunked "DE … A12…" free-text broadcast.
+        assert_eq!(e.broadcast_queue.len(), 1, "exactly one frame");
+        assert_eq!(e.broadcast_queue[0], "CQ KD9TAW EN52");
+        // Auto-armed: keys without a separate Enable-Tx click.
+        assert!(e.tx_enabled(), "call_cq arms TX");
+        assert!(!e.poll_tx(0).is_empty(), "CQ keys on the next TX-parity slot");
+        // Echoed into the band feed as outbound.
+        let feed = e.app.conversation("*").expect("band feed");
+        assert!(feed
+            .messages
+            .iter()
+            .any(|m| m.outbound && m.text == "CQ KD9TAW EN52"));
+    }
+
+    #[test]
+    fn call_cq_compound_call_uses_grid_less_form() {
+        // A compound call packs only as the grid-less i3=4 CQ — keeping a grid or a
+        // directed token would force TRUNCATED free text (the bug). It must also be
+        // allowed to call CQ WITHOUT a grid.
+        let mut e = Engine::new("W9XYZ/P", "", 0);
+        e.set_tier(Tier::Ft1);
+        e.call_cq(Some("DX")).expect("compound CQ succeeds without a grid");
+        assert_eq!(e.broadcast_queue.len(), 1);
+        assert_eq!(
+            e.broadcast_queue[0], "CQ W9XYZ/P",
+            "compound packs grid-less + drops the dir token"
+        );
+    }
+
+    #[test]
+    fn call_cq_requires_a_grid_and_does_not_arm_on_error() {
+        let mut e = Engine::new("KD9TAW", "", 0); // no grid
+        assert!(e.call_cq(None).is_err(), "CQ needs a 4-char grid");
+        assert!(!e.tx_enabled(), "a failed CQ must not arm TX");
+        assert!(e.broadcast_queue.is_empty(), "nothing queued");
+    }
+
+    #[test]
+    fn broadcast_arms_tx() {
+        let mut e = Engine::new("KD9TAW", "EN52", 0);
+        e.set_tier(Tier::Ft1);
+        assert!(!e.tx_enabled());
+        e.broadcast("QRZ?");
+        assert!(e.tx_enabled(), "an explicit broadcast arms TX too");
+    }
+
+    fn cq_decode_from(call: &str) -> modes::Decode {
+        modes::Decode {
+            message: format!("CQ {call} EN37"),
+            sync: 1.0,
+            snr: -8,
+            dt: 0.1,
+            freq: 1500.0,
+            nap: 0,
+            qual: 1.0,
+            rv: None,
+            mode: None,
+        }
+    }
+
+    #[test]
+    fn chat_reply_auto_picks_the_opposite_cycle() {
+        let mut e = Engine::new("K2DEF", "FN31", 0); // starts Tx 1st (even)
+        e.set_tier(Tier::Ft1);
+        assert!(e.tx_even() && e.tx_cycle_auto(), "starts even + auto");
+        // W9XYZ decoded at slot 7 → answer on tx_parity 7%2=1 (odd) = the OPPOSITE of
+        // their period, so we key while they listen.
+        e.decode_history.push_back((7, cq_decode_from("W9XYZ")));
+        e.send_message("W9XYZ", "HI");
+        assert!(!e.tx_even(), "auto-cycle flipped to the opposite cycle");
+        assert!(e.tx_cycle_auto(), "a reply is not a manual pick — auto stays on");
+    }
+
+    #[test]
+    fn manual_cycle_pick_disables_auto_and_holds() {
+        let mut e = Engine::new("K2DEF", "FN31", 0);
+        assert!(e.tx_cycle_auto());
+        e.set_tx_even(false); // operator picks Tx 2nd
+        assert!(!e.tx_cycle_auto(), "a manual pick disables auto-cycle");
+        assert!(!e.tx_even());
+        // A later reply (whose slot would auto-pick EVEN) must NOT override the manual cycle.
+        e.set_tier(Tier::Ft1);
+        e.decode_history.push_back((8, cq_decode_from("W9XYZ")));
+        e.send_message("W9XYZ", "HI");
+        assert!(!e.tx_even(), "manual cycle held — auto did not override it");
     }
 
     #[test]

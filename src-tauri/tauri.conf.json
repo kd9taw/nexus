@@ -16,10 +16,10 @@
       {
         "title": "Nexus",
         "label": "main",
-        "width": 1280,
-        "height": 800,
-        "minWidth": 900,
-        "minHeight": 600,
+        "width": 1200,
+        "height": 720,
+        "minWidth": 800,
+        "minHeight": 560,
         "resizable": true,
         "fullscreen": false,
         "center": true

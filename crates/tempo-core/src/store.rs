@@ -42,6 +42,14 @@ impl StoreForward {
         }
     }
 
+    /// Rebind the operator identity used to stamp the `DE <call>` / grid prefix on
+    /// released frames, WITHOUT dropping the pending queue (keyed by recipient). For
+    /// an in-place callsign/grid change in Settings (see `AppState::set_identity`).
+    pub fn set_identity(&mut self, mycall: &str, mygrid: &str) {
+        self.mycall = mycall.to_string();
+        self.mygrid = mygrid.to_string();
+    }
+
     /// Queue a directed message for later delivery.
     pub fn queue(&mut self, to: &str, text: &str, slot: u64) {
         let id = (b'A' + self.next_id) as char;

@@ -65,6 +65,81 @@ impl AppState {
         self.mygrid = grid.to_uppercase();
     }
 
+    /// Rebind the operator identity (callsign + grid) IN PLACE, preserving
+    /// conversation history, the roster, the slot counter, and the active peer.
+    /// Used when the operator edits their call/grid in Settings — a typo fix or a
+    /// grid update must NOT blank the chat or the `*` band feed (contrast
+    /// [`AppState::new`], which starts fresh). Future decodes attribute against the
+    /// new call; already-threaded messages keep their historical directed-to-me flag
+    /// (correct — they were/weren't addressed to who you were at the time).
+    pub fn set_identity(&mut self, mycall: &str, mygrid: &str) {
+        self.mycall = mycall.to_string();
+        self.mygrid = mygrid.to_string();
+        self.inbox.mycall = mycall.to_string();
+        self.store.set_identity(mycall, mygrid);
+    }
+
+    /// Archive (hide) a conversation thread — drops it from the in-memory thread map
+    /// and clears the active peer if it was selected. A deliberate operator action
+    /// (the recents-list hide affordance); the `*` band feed re-creates on the next
+    /// broadcast, and a directed peer re-creates when next heard.
+    pub fn archive_conversation(&mut self, peer: &str) {
+        self.conversations.remove(peer);
+        if self.active_peer.as_deref() == Some(peer) {
+            self.active_peer = None;
+        }
+    }
+
+    /// Snapshot the conversation threads for on-disk persistence — BOUNDED two ways
+    /// so the file can't grow without limit on an always-on station: at most
+    /// `MAX_PERSIST_MSGS` messages per thread, and at most `MAX_PERSIST_THREADS`
+    /// directed threads (the most-recently-active win) plus the `*` band feed. Pairs
+    /// with [`AppState::load_conversations`].
+    pub fn export_conversations(&self) -> Vec<Conversation> {
+        const MAX_PERSIST_MSGS: usize = 200;
+        const MAX_PERSIST_THREADS: usize = 200;
+        let trim = |c: &Conversation| {
+            let start = c.messages.len().saturating_sub(MAX_PERSIST_MSGS);
+            Conversation {
+                peer: c.peer.clone(),
+                messages: c.messages[start..].to_vec(),
+            }
+        };
+        let mut out: Vec<Conversation> = Vec::new();
+        // Always keep the band feed.
+        if let Some(band) = self.conversations.get("*") {
+            out.push(trim(band));
+        }
+        // Then the most-recently-active directed threads (by last-message slot), capped.
+        let mut directed: Vec<&Conversation> =
+            self.conversations.values().filter(|c| c.peer != "*").collect();
+        directed.sort_by_key(|c| std::cmp::Reverse(c.messages.last().map(|m| m.slot).unwrap_or(0)));
+        out.extend(directed.into_iter().take(MAX_PERSIST_THREADS).map(|c| trim(c)));
+        out
+    }
+
+    /// Restore persisted conversation threads at startup (the in-memory map is empty
+    /// then), so chat history survives an app restart. Keyed by peer.
+    pub fn load_conversations(&mut self, convs: Vec<Conversation>) {
+        for c in convs {
+            // Drop PHANTOM threads persisted before the FT1 gate above: a directed
+            // conversation whose messages are ALL inbound and non-FT1 (folded FT8/FT4
+            // QSO fragments — never a real chat). Keep the `*` band feed and any thread
+            // with operator participation (an outbound message) or a genuine FT1 message,
+            // so a real unanswered inbound chat survives. This cleans an operator's
+            // existing conversations.json of the leaked decode "chats" on next launch.
+            let phantom = c.peer != "*"
+                && !c.messages.is_empty()
+                && c.messages
+                    .iter()
+                    .all(|m| !m.outbound && m.tier != Some(Tier::Ft1));
+            if phantom {
+                continue;
+            }
+            self.conversations.insert(c.peer.clone(), c);
+        }
+    }
+
     pub fn new(mycall: &str, mygrid: &str) -> Self {
         Self {
             mycall: mycall.to_string(),
@@ -98,6 +173,8 @@ impl AppState {
                 split_tx_mhz: None,
                 audio_error: None,
                 tx_even: true,
+                tx_cycle_auto: true,
+                tr_period_secs: 0.0,
                 rx_offset_hz: 1500.0,
                 tx_offset_hz: 1500.0,
                 hold_tx_freq: false,
@@ -279,7 +356,18 @@ impl AppState {
         }
 
         self.inbox.observe(decodes, slot);
-        self.drain_inbox();
+        // Conversation threads are a Tempo (FT1) feature. FT8 / FT4 / DX1 decodes are
+        // QSO traffic — folding their CQ/exchange/free-text fragments into per-peer
+        // threads turned the recents list into a feed of phantom "chats" the operator
+        // never started. Keep `inbox.observe` above (it feeds the shared roster used by
+        // Operate too), but only FOLD into conversations in FT1/Tempo; otherwise advance
+        // the cursor so this slot's frames are discarded (and can't replay on an FT1
+        // switch). Outbound chats (send_message) bypass this — they push directly.
+        if self.link.tier == Tier::Ft1 {
+            self.drain_inbox();
+        } else {
+            self.drained = self.inbox.messages.len();
+        }
     }
 
     /// Fold any inbound messages the inbox has newly attributed into per-peer
@@ -459,8 +547,69 @@ mod tests {
     }
 
     #[test]
+    fn set_identity_preserves_conversations_roster_and_band_feed() {
+        let mut app = AppState::new("K2DEF", "FN31");
+        app.send_message("W9XYZ", "MEET AT THE REPEATER"); // directed thread + store queue
+        app.note_broadcast("CQ FN31"); // the `*` band feed
+        assert!(app.conversation("W9XYZ").is_some());
+        assert!(app.conversation("*").is_some());
+        let pending_before = app.store.pending();
+
+        // Fix a typo'd callsign (and bump the grid) — an in-place rebind must keep
+        // ALL history (the reported "Settings save blanks the band feed" defect).
+        app.set_identity("K2DEFX", "FN42");
+        assert_eq!(app.mycall, "K2DEFX");
+        assert_eq!(app.mygrid, "FN42");
+        assert_eq!(app.inbox.mycall, "K2DEFX", "inbox attribution rebound to the new call");
+        assert!(app.conversation("W9XYZ").is_some(), "directed thread preserved");
+        assert!(app.conversation("*").is_some(), "band feed preserved");
+        assert_eq!(app.store.pending(), pending_before, "pending queue preserved");
+    }
+
+    #[test]
+    fn conversations_round_trip_through_export_load() {
+        let mut app = AppState::new("K2DEF", "FN31");
+        app.send_message("W9XYZ", "MEET AT NOON");
+        app.note_broadcast("CQ FN31");
+        let saved = app.export_conversations();
+        assert_eq!(saved.len(), 2, "directed thread + the * band feed");
+
+        // A fresh session (e.g. app restart) restores them.
+        let mut restored = AppState::new("K2DEF", "FN31");
+        restored.load_conversations(saved);
+        assert!(restored.conversation("W9XYZ").is_some(), "directed thread restored");
+        assert!(restored.conversation("*").is_some(), "band feed restored");
+        assert_eq!(restored.conversation("W9XYZ").unwrap().messages[0].text, "MEET AT NOON");
+    }
+
+    #[test]
+    fn export_conversations_bounds_thread_count_and_keeps_band_feed() {
+        let mut app = AppState::new("K2DEF", "FN31");
+        app.note_broadcast("CQ"); // the `*` band feed
+        for i in 0..250 {
+            app.send_message(&format!("W{i}AA"), "HI");
+        }
+        let saved = app.export_conversations();
+        assert!(saved.len() <= 201, "thread count bounded (200 directed + band), got {}", saved.len());
+        assert!(saved.iter().any(|c| c.peer == "*"), "band feed is always kept");
+    }
+
+    #[test]
+    fn archive_conversation_removes_only_the_targeted_thread() {
+        let mut app = AppState::new("K2DEF", "FN31");
+        app.send_message("W9XYZ", "HI");
+        app.send_message("K7ABC", "HELLO");
+        app.select_peer("W9XYZ");
+        app.archive_conversation("W9XYZ");
+        assert!(app.conversation("W9XYZ").is_none(), "archived thread removed");
+        assert!(app.conversation("K7ABC").is_some(), "other threads preserved");
+        assert_eq!(app.active_peer, None, "active peer cleared when its thread is archived");
+    }
+
+    #[test]
     fn observe_directed_decode_updates_roster_and_creates_attributed_inbound() {
         let mut app = AppState::new("K2DEF", "FN31");
+        app.set_tier(Tier::Ft1); // conversation folding is a Tempo (FT1) feature
 
         // W9XYZ identifies via a directed grid frame to me (establishes context),
         // then sends a chunked free-text message.
@@ -489,6 +638,64 @@ mod tests {
         // LinkState picked up the decode parameters.
         assert_eq!(app.link.snr_db, -8.0);
         assert_eq!(app.link.freq_hz, 1500.0);
+    }
+
+    #[test]
+    fn ft8_decodes_do_not_create_tempo_conversations() {
+        // The reported leak: operating FT8, its decodes must NOT become phantom chats.
+        let mut app = AppState::new("K2DEF", "FN31");
+        app.set_tier(Tier::Ft8);
+        // A directed-context frame + free text that WOULD thread under FT1.
+        app.observe(&[dec("K2DEF W9XYZ EN37", -8)], 0);
+        for (i, f) in text::chunk("TNX 73 GL DX", 'A').iter().enumerate() {
+            app.observe(&[dec(f, -8)], (i as u64) + 1);
+        }
+        assert!(
+            app.conversation("W9XYZ").is_none(),
+            "FT8 decodes must not create a Tempo conversation"
+        );
+        // The roster still learns the station (inbox.observe runs for Operate).
+        assert!(app.inbox.roster.get("W9XYZ").is_some(), "roster still updates");
+        // Switching to FT1 resumes real chat folding (no replay of the FT8 frames).
+        app.set_tier(Tier::Ft1);
+        app.observe(&[dec("K2DEF N0ABC EM48", -8)], 10);
+        for (i, f) in text::chunk("HI SETH", 'B').iter().enumerate() {
+            app.observe(&[dec(f, -8)], 11 + i as u64);
+        }
+        assert!(app.conversation("N0ABC").is_some(), "FT1 chat still threads");
+        assert!(app.conversation("W9XYZ").is_none(), "no FT8 replay on FT1 switch");
+    }
+
+    #[test]
+    fn load_conversations_drops_phantom_ft8_threads() {
+        let mut app = AppState::new("K2DEF", "FN31");
+        let inbound = |tier: Tier| ChatMessage {
+            from: Some("W9XYZ".into()),
+            to: Some("K2DEF".into()),
+            text: "RR73".into(),
+            slot: 0,
+            directed_to_me: true,
+            outbound: false,
+            snr: None,
+            freq_hz: None,
+            dt_sec: None,
+            tier: Some(tier),
+        };
+        let outbound = ChatMessage { outbound: true, ..inbound(Tier::Ft1) };
+        app.load_conversations(vec![
+            // Phantom: all inbound, FT8 tier → dropped.
+            Conversation { peer: "PHANTOM".into(), messages: vec![inbound(Tier::Ft8)] },
+            // Real FT1 inbound chat → kept.
+            Conversation { peer: "REALRX".into(), messages: vec![inbound(Tier::Ft1)] },
+            // Operator participated (outbound), even if FT8 tier → kept.
+            Conversation { peer: "REALTX".into(), messages: vec![outbound] },
+            // The band feed is always kept.
+            Conversation { peer: "*".into(), messages: vec![inbound(Tier::Ft8)] },
+        ]);
+        assert!(app.conversation("PHANTOM").is_none(), "FT8 phantom dropped");
+        assert!(app.conversation("REALRX").is_some(), "real FT1 inbound kept");
+        assert!(app.conversation("REALTX").is_some(), "operator-participated kept");
+        assert!(app.conversation("*").is_some(), "band feed kept");
     }
 
     #[test]

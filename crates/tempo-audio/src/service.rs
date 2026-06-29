@@ -1753,7 +1753,7 @@ mod tests {
 
     #[test]
     fn build_decode_carries_decode_fields() {
-        let d = build_decode("CQ W1AW FN31", -7, 0.1, 1200.0, "FT8", 5000);
+        let d = build_decode("CQ W1AW FN31", -7, 0.1, 1200.0, "FT8", 5000, false);
         assert_eq!(d.message, "CQ W1AW FN31");
         assert_eq!(d.snr, -7);
         assert_eq!(d.mode, "FT8");
@@ -1944,7 +1944,10 @@ mod tests {
             state.step(&engine, &mut backend, &mut rig, &sinks, now, &mut ra, &mut rr).unwrap();
             assert_eq!(state.clock_offset_ms, offset_ms, "offset read from engine");
             state.step(&engine, &mut backend, &mut rig, &sinks, now, &mut ra, &mut rr).unwrap();
-            engine.lock().unwrap().snapshot().radio.next_slot_ms
+            // Bind out of the tail expression so the MutexGuard temporary drops
+            // before `engine` (the local) does — else the guard outlives its lock.
+            let next_slot_ms = engine.lock().unwrap().snapshot().radio.next_slot_ms;
+            next_slot_ms
         };
         // A 3 s clock skew shifts the next-slot countdown by 3 s (mod the 4 s slot)
         // — proof the offset reaches the slot clock, not just the UI chip.

@@ -15,7 +15,10 @@ use quick_xml::Reader;
 
 use crate::model::{Band, PathSpot};
 
-const APPCONTACT: &str = "secmeh44@gmail.com";
+// PSK Reporter's `appcontact` is how they reach the APP's maintainer about query
+// behavior — a project contact, never an end-user's personal address (this ships
+// in every binary). Use the public project repo.
+const APPCONTACT: &str = "https://github.com/kd9taw/nexus";
 const UA: &str = "nexus-propagation/0.1 (+ham radio propagation nowcast)";
 
 /// Fetch the operator's reception reports from the last `window_secs` seconds.

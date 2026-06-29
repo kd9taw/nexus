@@ -1893,6 +1893,18 @@ export function SettingsPanel({
                 />
                 <span className="settings-hint">Chips for sequenced QSOs.</span>
               </label>
+              <label className="settings-field">
+                <span className="settings-label">Band / CQ</span>
+                <input
+                  className="settings-input"
+                  type="text"
+                  value={form.macros.band.join(', ')}
+                  onChange={(e) => updateMacros('band', e.target.value)}
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                <span className="settings-hint">Open broadcasts — the Call CQ launchpad + band feed.</span>
+              </label>
             </div>
           </fieldset>
           </>

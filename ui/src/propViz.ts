@@ -4,7 +4,14 @@
 // except the heatmap, which uses the perceptual inferno LUT (dark=low, bright=high).
 import { sampleLut } from './colormaps'
 import { STATUS, type StatusMeta } from './statusMeta'
-import type { ActivityTier, NeedKind } from './types'
+import type {
+  ActivityTier,
+  BandModeled,
+  Insight,
+  InsightLevel,
+  NeedKind,
+  TrendDir,
+} from './types'
 
 /** Workability word → a semantic color token (`var(--…)`). */
 export function workabilityVar(word: string): string {
@@ -96,4 +103,99 @@ export function xrayImpact(cls: string): Impact {
   if (c === 'X' || c === 'M') return { sev: 'warn', text: 'flare — low-band shortwave fade' }
   if (c === 'C') return { sev: 'active', text: 'C-class — minor low-band absorption' }
   return { sev: 'quiet', text: 'no significant flares' }
+}
+
+// ───────────────── nerve-center: modeled state, trend, insights ─────────────────
+
+/** Modeled openness → a band-state color token (green / amber / red). */
+export function modeledVar(m: BandModeled): string {
+  switch (m) {
+    case 'Open':
+      return 'var(--band-open)'
+    case 'Marginal':
+      return 'var(--band-marginal)'
+    default: // Closed
+      return 'var(--band-closed)'
+  }
+}
+
+/** Insight level → a semantic color token. */
+export function insightLevelVar(level: InsightLevel): string {
+  switch (level) {
+    case 'good':
+      return 'var(--band-open)'
+    case 'caution':
+      return 'var(--alert-warning)'
+    case 'alert':
+      return 'var(--snr-weak)'
+    default: // info
+      return 'var(--text-dim)'
+  }
+}
+
+/** Stable sort, most-prominent first: alert → caution → good → info. */
+export function sortInsights(xs: Insight[]): Insight[] {
+  const rank: Record<InsightLevel, number> = { alert: 0, caution: 1, good: 2, info: 3 }
+  return xs
+    .map((x, i) => [x, i] as const)
+    .sort((a, b) => rank[a[0].level] - rank[b[0].level] || a[1] - b[1])
+    .map(([x]) => x)
+}
+
+/** Trend direction → a glyph. */
+export function trendArrow(dir: TrendDir): string {
+  return dir === 'rising' ? '↑' : dir === 'falling' ? '↓' : '→'
+}
+
+/** Trend direction → a color token (rising reads positive in MUF/SFI context). */
+export function trendVar(dir: TrendDir): string {
+  return dir === 'rising'
+    ? 'var(--band-open)'
+    : dir === 'falling'
+      ? 'var(--snr-weak)'
+      : 'var(--text-dim)'
+}
+
+// Highest band whose nominal frequency sits at/below the MUF (the ceiling band).
+// Mirrors the backend `band_at_or_below`; HF + 6m.
+const MUF_LADDER: ReadonlyArray<readonly [number, string]> = [
+  [1.9, '160m'],
+  [3.6, '80m'],
+  [5.36, '60m'],
+  [7.1, '40m'],
+  [10.13, '30m'],
+  [14.1, '20m'],
+  [18.1, '17m'],
+  [21.2, '15m'],
+  [24.9, '12m'],
+  [28.5, '10m'],
+  [50.2, '6m'],
+]
+
+/** Which band the MUF ceiling sits at (e.g. 22 MHz → "15m"); "" if below/at the floor. */
+export function mufCeilingBand(mufMhz: number): string {
+  if (!(mufMhz > 0)) return ''
+  let label = ''
+  for (const [f, l] of MUF_LADDER) {
+    if (f <= mufMhz) label = l
+    else break
+  }
+  return label
+}
+
+/** Combine MODELED openness + OBSERVED tier into the dual-state label that kills the
+ * false "quiet = dead" reading: a band the model says is Open but with no spots reads
+ * "Open · none heard", never "Quiet"/"dead". */
+export function dualStateLabel(
+  modeled: BandModeled | undefined,
+  tier: ActivityTier,
+): { word: string; sub: string } {
+  // Observed activity PROVES the band is open, regardless of what the model says.
+  if (tier === 'Active') return { word: 'Open', sub: 'active' }
+  if (tier === 'Moderate') return { word: 'Open', sub: 'some activity' }
+  // Silent band: defer to the model. Open-but-unheard reads "Open · none heard" — the
+  // key fix so a quiet band never reads as dead.
+  const m: BandModeled = modeled ?? 'Open'
+  if (m === 'Closed') return { word: 'Closed', sub: '' }
+  return { word: m, sub: 'none heard' }
 }

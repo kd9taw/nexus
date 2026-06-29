@@ -453,9 +453,12 @@ impl Default for Macros {
     fn default() -> Self {
         let v = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect();
         Self {
-            chat: v(&["73", "QSL", "Name?", "QTH?", "CQ"]),
+            chat: v(&["73", "QSL", "Name?", "QTH?"]),
             qso: v(&["R-09", "RRR", "RR73", "73"]),
-            band: v(&["CQ CQ", "QRZ?", "Net check-in", "73 to all"]),
+            // Genuine free-text band chatter only — a CQ goes through the structured
+            // Call-CQ button (a "CQ CQ" free-text chip went out as a chunked, gridless
+            // "DE <CALL> A12CQ CQ", never a real CQ).
+            band: v(&["QRZ?", "Net check-in", "73 to all"]),
         }
     }
 }
@@ -563,10 +566,22 @@ impl Default for Settings {
 impl Settings {
     /// Load settings from `path`, or return defaults if missing/invalid.
     pub fn load(path: &Path) -> Self {
-        std::fs::read_to_string(path)
+        let mut s: Settings = std::fs::read_to_string(path)
             .ok()
             .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        // One-time migration: drop the known-bad free-text "CQ"/"CQ CQ" macro chips that
+        // persisted from older defaults. A CQ now goes through the structured Call-CQ
+        // button; a free-text "CQ CQ" chip went out as a chunked, gridless "DE <CALL>
+        // A12CQ CQ" — and broadcasts now auto-arm TX, making that chip a one-click
+        // malformed-CQ footgun. Custom macros are preserved.
+        s.macros
+            .band
+            .retain(|m| !matches!(m.trim().to_uppercase().as_str(), "CQ" | "CQ CQ"));
+        s.macros
+            .chat
+            .retain(|m| !matches!(m.trim().to_uppercase().as_str(), "CQ" | "CQ CQ"));
+        s
     }
 
     /// Persist settings to `path` (creating parent directories).
@@ -703,6 +718,23 @@ mod tests {
         assert_eq!(back.mycall, "W9XYZ");
         assert_eq!(back.serial_port, "/dev/ttyUSB0");
         assert_eq!(back.ptt_method, "cat");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn load_drops_stale_cq_macros_but_keeps_custom() {
+        let path = std::env::temp_dir()
+            .join("tempo_settings_cqmacro")
+            .join("settings.json");
+        let mut s = Settings::default();
+        s.macros.band = vec!["CQ CQ".into(), "QRZ?".into(), "73 to all".into()];
+        s.macros.chat = vec!["73".into(), "CQ".into(), "QSL".into()];
+        s.save(&path).unwrap();
+        let back = Settings::load(&path);
+        assert!(!back.macros.band.iter().any(|m| m == "CQ CQ"), "stale CQ CQ dropped");
+        assert!(back.macros.band.iter().any(|m| m == "QRZ?"), "custom band macro kept");
+        assert!(!back.macros.chat.iter().any(|m| m == "CQ"), "stale chat CQ dropped");
+        assert!(back.macros.chat.iter().any(|m| m == "73"), "custom chat macro kept");
         let _ = std::fs::remove_file(&path);
     }
 }

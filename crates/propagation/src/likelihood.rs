@@ -115,6 +115,16 @@ impl Workability {
     pub fn is_open(self) -> bool {
         !matches!(self, Workability::Closed)
     }
+
+    /// Coarse Open / Marginal / Closed — the 3-state the band-condition strip and the
+    /// advisor's `modeled` field use (collapses the 5-bucket).
+    pub fn openness3(self) -> &'static str {
+        match self {
+            Workability::Fair | Workability::Good | Workability::Excellent => "Open",
+            Workability::Marginal => "Marginal",
+            Workability::Closed => "Closed",
+        }
+    }
 }
 
 /// One band's outlook on a path: the best workability over the scanned day and
@@ -128,6 +138,10 @@ pub struct BandOutlook {
     pub score: f32,
     /// Human window, e.g. "1400–1700Z", "~1015Z greyline", or "—".
     pub window: String,
+    /// True when this band's best window is a short low-band terminator (greyline)
+    /// spike — the UI shows a greyline glyph. Structured so the UI need not parse
+    /// the `window` string.
+    pub grayline: bool,
     /// Per-UTC-hour likelihood (24 values, hour 0..23) for the day containing the
     /// scan — drives the band×hour calendar heatmap in the UI.
     pub hourly: Vec<f32>,
@@ -223,6 +237,7 @@ impl PathModel {
 
         let workability = Workability::from_score(peak);
         // Window = the contiguous ≥Fair run containing the peak.
+        let mut grayline = false;
         let window = if peak < 0.30 {
             "—".to_string()
         } else {
@@ -241,6 +256,7 @@ impl PathModel {
             let low_band = matches!(band, Band::B160 | Band::B80 | Band::B40);
             if low_band && width <= 2 * 3600 {
                 // A short low-band spike around the terminator → greyline label.
+                grayline = true;
                 format!("~{} greyline", hhmm_z(from_unix + peak_i as i64 * STEP))
             } else {
                 format!("{}–{}", hhmm(start), hhmm_z(end))
@@ -260,8 +276,34 @@ impl PathModel {
             workability: workability.label().to_string(),
             score: peak,
             window,
+            grayline,
             hourly,
         }
+    }
+
+    /// The path's controlling **MUF** (MHz) — the band CEILING on the path to `dx`
+    /// at `unix`: the minimum across the hop control points of foF2·obliquity.
+    /// Bands whose center frequency is below this are open; above it, closed. This
+    /// is per-path-per-time (NOT per band), so the UI surfaces it as the one-glance
+    /// "ceiling" line above the band ladder. Returns 0 when the operator location is
+    /// unknown. Mirrors the `path_muf` computed inside [`PathModel::score`].
+    pub fn muf(&self, dx: (f64, f64), unix: i64, wx: &SpaceWx) -> f64 {
+        let Some(me) = self.me else {
+            return 0.0;
+        };
+        let dist = haversine_km(me, dx);
+        let cps = [
+            interpolate(me, dx, 1.0 / 7.0),
+            interpolate(me, dx, 0.5),
+            interpolate(me, dx, 6.0 / 7.0),
+        ];
+        let m = self.obliquity(dist);
+        let mut path_muf = f64::MAX;
+        for cp in cps {
+            let elev = solar_elevation_deg(cp.0, cp.1, unix);
+            path_muf = path_muf.min(self.fof2(elev, wx) * m);
+        }
+        path_muf
     }
 
     /// foF2 (MHz) at a control point given the sun's elevation there.

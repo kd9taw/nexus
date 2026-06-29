@@ -7,7 +7,7 @@ use serde::Serialize;
 
 use crate::advisor::{PropAdvisor, PropAdvisory};
 use crate::dxped::{
-    DxpedDashboard, DxpeditionPlan, DxpeditionTracker, Ft8DxpMode, NeedsSet, OperatorNeeds,
+    DxpedDashboard, DxpeditionPlan, DxpeditionTracker, NeedsSet, OperatorNeeds,
 };
 use crate::geo::compass_octant;
 use crate::model::{Band, Confidence, PathSpot, PropMode, SpaceWx};
@@ -66,6 +66,10 @@ pub struct SpaceWxView {
     pub a_index: f32,
     pub xray_class: String,
     pub flare: bool,
+    /// Raw GOES long X-ray flux (W/m²) — carried losslessly so the command layer can
+    /// recover the true flare magnitude (R-scale) instead of collapsing it to a bool.
+    #[serde(default)]
+    pub xray_long: f32,
 }
 
 /// The whole propagation nowcast the UI section renders.
@@ -78,15 +82,32 @@ pub struct PropagationSnapshot {
     pub space_wx: SpaceWxView,
     /// Provenance so the UI never silently shows stale/fake data:
     /// `"live"` (fresh fetch), `"cached"` (last-good after a failed refetch),
-    /// or `"demo"` (the offline demo scene). Set by the caller.
+    /// `"partial"` (some feeds live, others unreachable), or `"offline"` (no live
+    /// data — an empty, honest snapshot). Set by the caller.
     pub source: String,
     /// When this snapshot's data was produced (Unix seconds, UTC).
     pub as_of: i64,
     /// Located spots for the map (own-call + region + cluster/RBN + own decodes),
     /// placed by grid or DXCC centroid. Populated by the command layer (which owns
-    /// the merged spot window); empty in the pure-engine assembly + demo.
+    /// the merged spot window); empty in the pure-engine assembly.
     #[serde(default)]
     pub spots: Vec<crate::mapspots::MapSpot>,
+    /// "Worldwide activity" band ranking — the SAME advisor run over the GLOBAL
+    /// firehose window (cluster/RBN) instead of the operator-reachable window. Lets
+    /// the UI show "busy worldwide" beside "best FOR YOU" so a chaser never confuses
+    /// merely-loud with workable. Filled by the command layer; `None` otherwise.
+    #[serde(default)]
+    pub worldwide: Option<PropAdvisory>,
+    /// Rolling space-weather trend (SFI/MUF/Kp/X-ray rising/steady/falling) so the UI
+    /// and insight layer can say "MUF building". `WxTrend::default()` (all Steady)
+    /// until the command layer fills it from the sample history.
+    #[serde(default)]
+    pub wx_trend: crate::space_wx::WxTrend,
+    /// Ranked plain-language predictive insights ("MUF building → 6m soon", flare,
+    /// Kp, greyline, Es watch). Threshold-only at the engine layer (no trend); the
+    /// command layer overwrites with trend-aware lines.
+    #[serde(default)]
+    pub insights: Vec<crate::insight::Insight>,
 }
 
 /// Ties the three pillars to one operator identity.
@@ -119,6 +140,11 @@ impl PropagationEngine {
         let advisory = self.advisor.advise(now, spots, wx);
         let openings = self.detect_openings(now, spots, wx);
         let dxpeditions = self.tracker.dashboard(now, plans, needs, &advisory, wx);
+        // Threshold-only insights here (no trend history at the engine layer); the
+        // command layer overwrites with trend-aware lines from the sample buffer.
+        let me_latlon = crate::geo::maidenhead_to_latlon(&self.me_grid);
+        let insights =
+            crate::insight::generate_insights(now, wx, None, &advisory.bands, &openings, me_latlon);
         PropagationSnapshot {
             advisory,
             openings,
@@ -129,11 +155,15 @@ impl PropagationEngine {
                 a_index: wx.a_index,
                 xray_class: format!("{}-class", wx.xray_class()),
                 flare: wx.flare_in_progress(),
+                xray_long: wx.xray_long,
             },
             // Default provenance; live/cached callers override `source`.
             source: "live".to_string(),
             as_of: now,
             spots: Vec::new(), // command layer fills this from the merged window
+            worldwide: None,   // command layer fills this from the global firehose
+            wx_trend: crate::space_wx::WxTrend::default(), // command layer fills from history
+            insights,
         }
     }
 
@@ -252,134 +282,163 @@ fn confidence_word(score: f32) -> Confidence {
     }
 }
 
-/// A deterministic demo nowcast — a 6 m Es opening + a 20 m run to Europe + an
-/// active needed DXpedition — so the Propagation UI renders without live feeds.
-pub fn demo() -> PropagationSnapshot {
-    // Fixed June-midday UTC timestamp (plausible Es; keeps time-of-day stable).
-    const NOW: i64 = 1_718_886_000; // ~2024-06-20 13:00 UTC
-    // A reserved-style placeholder — the demo scene must never collide with a
-    // real operator's callsign (the actual KD9TAW exists and uses this app).
-    let me_call = "N0CALL";
-    let me_grid = "EN52";
-
-    let mut spots: Vec<PathSpot> = Vec::new();
-    let mk = |tx: &str, txg: &str, rx: &str, rxg: &str, band: Band, dt: i64| PathSpot {
-        time: NOW - dt,
-        tx_call: tx.to_string(),
-        tx_grid: Some(txg.to_string()),
-        rx_call: rx.to_string(),
-        rx_grid: Some(rxg.to_string()),
-        band,
-        mode: Some("FT8".to_string()),
-        snr: Some(-12.0),
-        freq_mhz: None,
-    };
-
-    // 6 m Sporadic-E burst: many stations both ways across ~1000–2000 km grids,
-    // plus one short-skip path (escalator).
-    let six = ["EM12", "FM18", "EL96", "DM79", "EN90", "FN42", "EN61"];
-    for (i, g) in six.iter().cycle().take(16).enumerate() {
-        spots.push(mk(
-            me_call,
-            me_grid,
-            &format!("W{i}ES"),
-            g,
-            Band::B6,
-            (i as i64) * 20,
-        ));
-        spots.push(mk(
-            &format!("W{i}ES"),
-            g,
-            me_call,
-            me_grid,
-            Band::B6,
-            (i as i64) * 20 + 7,
-        ));
-    }
-
-    // 20 m run to Europe.
-    let eu = ["JN58", "JO31", "IO91", "JN47", "JO62"];
-    for (i, g) in eu.iter().cycle().take(14).enumerate() {
-        spots.push(mk(
-            me_call,
-            me_grid,
-            &format!("DL{i}EU"),
-            g,
-            Band::B20,
-            (i as i64) * 25,
-        ));
-        if i < 6 {
-            spots.push(mk(
-                &format!("DL{i}EU"),
-                g,
-                me_call,
-                me_grid,
-                Band::B20,
-                (i as i64) * 25 + 5,
-            ));
-        }
-    }
-    // A little 40 m.
-    for i in 0..3 {
-        spots.push(mk(
-            me_call,
-            me_grid,
-            &format!("K{i}NA"),
-            "FN31",
-            Band::B40,
-            (i as i64) * 40,
-        ));
-    }
-
-    let wx = SpaceWx {
-        sfi: 155.0, // high flux — the long-haul 20 m EU run classifies as F2
-        kp: 3.0,
-        a_index: 9.0,
-        xray_long: 3e-7,
-    };
-
-    let plans = vec![
-        DxpeditionPlan {
-            call: "C91RU".to_string(),
-            entity: "Mozambique".to_string(),
-            grid: Some("KG43".to_string()),
-            start_unix: NOW - 7200,
-            end_unix: NOW + 7200,
-            bands: vec![Band::B20, Band::B40],
-            modes: vec!["CW".into(), "SSB".into(), "FT8".into()],
-            ft8_mode: Some(Ft8DxpMode::FoxHound),
-            most_wanted_rank: Some(38),
-        },
-        DxpeditionPlan {
-            call: "VP8XYZ".to_string(),
-            entity: "South Georgia".to_string(),
-            grid: Some("GD18".to_string()),
-            start_unix: NOW + 86_400 * 5,
-            end_unix: NOW + 86_400 * 18,
-            bands: vec![Band::B20, Band::B15, Band::B6],
-            modes: vec!["CW".into(), "FT8".into()],
-            ft8_mode: Some(Ft8DxpMode::SuperFox),
-            most_wanted_rank: Some(7),
-        },
-    ];
-
-    let mut needs = NeedsSet::default();
-    needs.atno.insert("Mozambique".to_string());
-    needs.atno.insert("South Georgia".to_string());
-
-    let mut snap =
-        PropagationEngine::new(me_call, me_grid).snapshot(NOW, &spots, &wx, &plans, &needs);
-    snap.source = "demo".to_string();
+/// An empty but structurally-valid nowcast for when there is no live data yet —
+/// no callsign entered, or every live feed unreachable. It fabricates NOTHING:
+/// no spots, no openings, no DXpeditions, neutral space-wx. `source` is stamped
+/// `"offline"` so the UI renders an honest empty-state instead of stale or fake
+/// data. The caller passes `now` so the timestamp is real.
+pub fn offline(now: i64, me_call: &str, me_grid: &str) -> PropagationSnapshot {
+    // Neutral mid-cycle space weather (NOT all-zero, which reads as a dead band and
+    // would mislabel high bands "solar flux too low"). This is a modeled prior, not
+    // fabricated observation — `offline` still carries no spots/openings/DXpeditions.
+    let wx = SpaceWx::default();
+    let needs = NeedsSet::default();
+    let mut snap = PropagationEngine::new(me_call, me_grid).snapshot(now, &[], &wx, &[], &needs);
+    snap.source = "offline".to_string();
     snap
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dxped::Ft8DxpMode;
+
+    /// A deterministic, RICH nowcast used ONLY to exercise the engine's
+    /// classification logic (Es detection, F2 long-haul, DXpedition cards) in the
+    /// tests below. Test-only — never compiled into the shipped binary and never
+    /// re-exported, so it can never reach an operator (that was the old `demo()`).
+    fn rich_fixture() -> PropagationSnapshot {
+        // Fixed June-midday UTC timestamp (plausible Es; keeps time-of-day stable).
+        const NOW: i64 = 1_718_886_000; // ~2024-06-20 13:00 UTC
+        let me_call = "N0CALL";
+        let me_grid = "EN52";
+
+        let mut spots: Vec<PathSpot> = Vec::new();
+        let mk = |tx: &str, txg: &str, rx: &str, rxg: &str, band: Band, dt: i64| PathSpot {
+            time: NOW - dt,
+            tx_call: tx.to_string(),
+            tx_grid: Some(txg.to_string()),
+            rx_call: rx.to_string(),
+            rx_grid: Some(rxg.to_string()),
+            band,
+            mode: Some("FT8".to_string()),
+            snr: Some(-12.0),
+            freq_mhz: None,
+        };
+
+        // 6 m Sporadic-E burst: many stations both ways across ~1000–2000 km grids,
+        // plus one short-skip path (escalator).
+        let six = ["EM12", "FM18", "EL96", "DM79", "EN90", "FN42", "EN61"];
+        for (i, g) in six.iter().cycle().take(16).enumerate() {
+            spots.push(mk(
+                me_call,
+                me_grid,
+                &format!("W{i}ES"),
+                g,
+                Band::B6,
+                (i as i64) * 20,
+            ));
+            spots.push(mk(
+                &format!("W{i}ES"),
+                g,
+                me_call,
+                me_grid,
+                Band::B6,
+                (i as i64) * 20 + 7,
+            ));
+        }
+
+        // 20 m run to Europe.
+        let eu = ["JN58", "JO31", "IO91", "JN47", "JO62"];
+        for (i, g) in eu.iter().cycle().take(14).enumerate() {
+            spots.push(mk(
+                me_call,
+                me_grid,
+                &format!("DL{i}EU"),
+                g,
+                Band::B20,
+                (i as i64) * 25,
+            ));
+            if i < 6 {
+                spots.push(mk(
+                    &format!("DL{i}EU"),
+                    g,
+                    me_call,
+                    me_grid,
+                    Band::B20,
+                    (i as i64) * 25 + 5,
+                ));
+            }
+        }
+        // A little 40 m.
+        for i in 0..3 {
+            spots.push(mk(
+                me_call,
+                me_grid,
+                &format!("K{i}NA"),
+                "FN31",
+                Band::B40,
+                (i as i64) * 40,
+            ));
+        }
+
+        let wx = SpaceWx {
+            sfi: 155.0, // high flux — the long-haul 20 m EU run classifies as F2
+            kp: 3.0,
+            a_index: 9.0,
+            xray_long: 3e-7,
+        };
+
+        let plans = vec![
+            DxpeditionPlan {
+                call: "C91RU".to_string(),
+                entity: "Mozambique".to_string(),
+                grid: Some("KG43".to_string()),
+                start_unix: NOW - 7200,
+                end_unix: NOW + 7200,
+                bands: vec![Band::B20, Band::B40],
+                modes: vec!["CW".into(), "SSB".into(), "FT8".into()],
+                ft8_mode: Some(Ft8DxpMode::FoxHound),
+                most_wanted_rank: Some(38),
+            },
+            DxpeditionPlan {
+                call: "VP8XYZ".to_string(),
+                entity: "South Georgia".to_string(),
+                grid: Some("GD18".to_string()),
+                start_unix: NOW + 86_400 * 5,
+                end_unix: NOW + 86_400 * 18,
+                bands: vec![Band::B20, Band::B15, Band::B6],
+                modes: vec!["CW".into(), "FT8".into()],
+                ft8_mode: Some(Ft8DxpMode::SuperFox),
+                most_wanted_rank: Some(7),
+            },
+        ];
+
+        let mut needs = NeedsSet::default();
+        needs.atno.insert("Mozambique".to_string());
+        needs.atno.insert("South Georgia".to_string());
+
+        PropagationEngine::new(me_call, me_grid).snapshot(NOW, &spots, &wx, &plans, &needs)
+    }
 
     #[test]
-    fn demo_snapshot_is_rich() {
-        let s = demo();
+    fn offline_snapshot_is_empty_and_honest() {
+        let s = offline(1_700_000_000, "KD9TAW", "EN52");
+        assert_eq!(s.source, "offline");
+        assert_eq!(s.as_of, 1_700_000_000);
+        // Neutral mid-cycle prior, NOT all-zero (zero SFI reads as a dead band).
+        assert_eq!(s.space_wx.sfi, 120.0, "offline uses the neutral SpaceWx default");
+        assert!(s.openings.is_empty(), "offline must invent no openings");
+        assert!(s.spots.is_empty(), "offline must invent no spots");
+        assert!(
+            s.dxpeditions.workable_now.is_empty() && s.dxpeditions.upcoming.is_empty(),
+            "offline must invent no DXpeditions"
+        );
+    }
+
+    #[test]
+    fn rich_fixture_classifies() {
+        let s = rich_fixture();
         // 6 m opening detected and classified Es, with the escalator note.
         let six = s
             .openings
@@ -420,8 +479,7 @@ mod tests {
         assert!(card.how_to_call.contains("Hound"));
         // South Georgia is upcoming (calendar), not active.
         assert!(s.dxpeditions.upcoming.iter().any(|c| c.call == "VP8XYZ"));
-        // Provenance is stamped so the UI can flag non-live data.
-        assert_eq!(s.source, "demo");
-        assert_eq!(s.as_of, 1_718_886_000); // demo()'s fixed NOW
+        // The fixture's fixed NOW flows through to as_of.
+        assert_eq!(s.as_of, 1_718_886_000); // rich_fixture()'s fixed NOW
     }
 }

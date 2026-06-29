@@ -1,5 +1,7 @@
 import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type { DecodeRow, Tier } from '../types'
+import type { DecodeRow, NeedAlert, Tier } from '../types'
+import { resolveDecodeNeeds, isAwardNeed } from '../features/decodeNeeds'
+import { NEED_VISUALS, type NeedCat } from '../features/needVisuals'
 import {
   DecodeHistory,
   fmtUtc,
@@ -80,6 +82,13 @@ interface Props {
    */
   highlights?: Map<string, HighlightEntry>
   /**
+   * Live NeedAlerts keyed by UPPERCASE callsign (App builds it from the gated
+   * alert set). Drives the per-row need micro-icons + need-based row colour so the
+   * operator sees WHY a station is needed without leaving the band-activity view.
+   * Optional — the Tempo rail / detached panel pass none and tagging no-ops.
+   */
+  needAlertsByCall?: Map<string, NeedAlert[]>
+  /**
    * Called AFTER the internal erase() wipe so the cockpit can mirror the
    * operator's clear gesture to cooperating loggers via notifyErase (UDP Clear).
    * Only called on operator-initiated Erase, NOT on snap.clearTick (no echo loop).
@@ -102,6 +111,12 @@ const NO_IGNORES: ReadonlySet<string> = new Set()
 
 /** Shared empty map so the highlight lookups stay allocation-free per render. */
 const NO_HIGHLIGHTS: Map<string, HighlightEntry> = new Map()
+
+/** Shared empty map so need lookups stay allocation-free when no alerts are supplied. */
+const NO_NEEDS: Map<string, NeedAlert[]> = new Map()
+
+/** Max need micro-icons shown per row before collapsing into a "+N" chip. */
+const MAX_NEED_ICONS = 3
 
 /**
  * Band Activity / Rx Frequency pane with stock WSJT-X flow: oldest at the top,
@@ -133,6 +148,7 @@ export function OperateDecodes({
   compact = false,
   title = 'Band Activity',
   highlights = NO_HIGHLIGHTS,
+  needAlertsByCall = NO_NEEDS,
   onErase,
   clearTick = 0,
 }: Props) {
@@ -299,6 +315,9 @@ export function OperateDecodes({
             : undefined
           // Tooltip suffix for highlighted rows so the operator knows why the color appeared.
           const hlTip = hlEntry ? ' · highlighted by your logger (UDP)' : ''
+          // Need context for this row (why is this station worth working) — icons + colour.
+          const rowAlerts = d.from ? (needAlertsByCall.get(d.from.toUpperCase()) ?? []) : []
+          const needs = resolveDecodeNeeds(d, band, rowAlerts)
           return (
             <Fragment key={d.id}>
               {/* WSJT-X period separator: a dim bar with the period's UTC start +
@@ -313,7 +332,7 @@ export function OperateDecodes({
                 </div>
               )}
               <div
-                className={`decode-row ${rowClass(d)}${selectedRow ? ' selected' : ''}${ignoredRow ? ' ignored' : ''}`}
+                className={`decode-row ${rowClass(d, needs.rowNeed)}${selectedRow ? ' selected' : ''}${ignoredRow ? ' ignored' : ''}`}
                 role="listitem"
                 style={hlStyle}
                 onClick={() =>
@@ -351,14 +370,36 @@ export function OperateDecodes({
                       )}
                     </span>
                   )}
-                  {d.newDxcc && (
-                    <span className="decode-tag newdxcc" title="New DXCC entity — a new one!">
-                      DXCC
-                    </span>
-                  )}
-                  {d.newGrid && !d.newDxcc && (
-                    <span className="decode-tag newgrid" title="New grid square">
-                      GRID
+                  {/* Need micro-icons: WHY this station is worth working (new DXCC/zone/
+                      band/mode/grid, DXpedition, worked-but-unconfirmed) — capped, with
+                      a +N overflow. Matches the Needed panel's vocabulary + colours. */}
+                  {needs.cats.length > 0 && (
+                    <span className="decode-needs" aria-label="needs">
+                      {needs.cats.slice(0, MAX_NEED_ICONS).map((c: NeedCat) => {
+                        const v = NEED_VISUALS[c]
+                        const Ic = v.Icon
+                        return (
+                          <span
+                            key={c}
+                            className={`decode-need-ic ${v.cls}`}
+                            title={v.title}
+                            aria-label={v.title}
+                          >
+                            <Ic size={12} />
+                          </span>
+                        )
+                      })}
+                      {needs.cats.length > MAX_NEED_ICONS && (
+                        <span
+                          className="decode-need-more"
+                          title={needs.cats
+                            .slice(MAX_NEED_ICONS)
+                            .map((c) => NEED_VISUALS[c].title)
+                            .join('\n')}
+                        >
+                          +{needs.cats.length - MAX_NEED_ICONS}
+                        </span>
+                      )}
                     </span>
                   )}
                   {d.worked && <span className="b4-chip" title="Worked before">B4</span>}
@@ -419,15 +460,18 @@ function dtClass(dt: number): string {
   return Math.abs(dt) > 1.0 ? 'bad' : Math.abs(dt) > 0.5 ? 'warn' : 'ok'
 }
 
-/** Stock WSJT-X highlight priority: own TX (yellow) > directed to me (pink) >
- * new-DXCC/new-grid (the "new one" chase outranks a plain CQ, as in the stock
- * Colors list) > CQ (green) > worked-before B4 (dimmed). */
-function rowClass(d: DecodeRow): string {
+/** Row highlight priority — a superset of stock WSJT-X: own TX (yellow) > directed to
+ * me (pink) > award-grade need (new DXCC/zone/band/mode/grid — the chase outranks a
+ * plain CQ) > CQ (green) > worked-but-unconfirmed (grey) > worked-before B4 (dimmed) >
+ * new. `rowNeed` is the resolved need colour class (or null); `dxped/pota/sota` are
+ * icon-only and never reach here. Falls back to the decode's own flags when no
+ * NeedAlerts are supplied (Tempo rail / detached panel). */
+function rowClass(d: DecodeRow, rowNeed: string | null): string {
   if (d.mine) return 'mine own-tx' // our own transmitted message — WSJT-X yellow
   if (d.directedToMe) return 'directed'
-  if (d.newDxcc) return 'newdxcc'
-  if (d.newGrid) return 'newgrid'
+  if (isAwardNeed(rowNeed)) return rowNeed as string // need-entity/zone/band/mode/grid
   if (d.isCq) return 'cq'
+  if (rowNeed === 'need-confirm') return 'need-confirm' // worked, needs a QSL
   if (d.worked) return 'worked'
   return 'new'
 }

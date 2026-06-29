@@ -8,7 +8,14 @@ import {
   sfiImpact,
   kpImpact,
   xrayImpact,
+  modeledVar,
+  insightLevelVar,
+  sortInsights,
+  trendArrow,
+  mufCeilingBand,
+  dualStateLabel,
 } from './propViz'
+import type { Insight } from './types'
 
 describe('propViz', () => {
   it('maps workability words to tokens (good=open, closed=closed)', () => {
@@ -51,5 +58,60 @@ describe('propViz', () => {
     expect(kpImpact(2).sev).toBe('quiet')
     expect(xrayImpact('M1').sev).toBe('warn')
     expect(xrayImpact('A0').sev).toBe('quiet')
+  })
+})
+
+describe('propViz nerve-center helpers', () => {
+  it('modeledVar maps Open/Marginal/Closed to band tokens', () => {
+    expect(modeledVar('Open')).toBe('var(--band-open)')
+    expect(modeledVar('Marginal')).toBe('var(--band-marginal)')
+    expect(modeledVar('Closed')).toBe('var(--band-closed)')
+  })
+
+  it('insightLevelVar distinguishes alert/caution/good/info', () => {
+    expect(insightLevelVar('alert')).toBe('var(--snr-weak)')
+    expect(insightLevelVar('caution')).toBe('var(--alert-warning)')
+    expect(insightLevelVar('good')).toBe('var(--band-open)')
+    expect(insightLevelVar('info')).toBe('var(--text-dim)')
+  })
+
+  it('sortInsights puts alert before good before info (stable)', () => {
+    const mk = (level: Insight['level'], plain: string): Insight => ({
+      kind: 'solarFlux',
+      level,
+      plain,
+      technical: 't',
+    })
+    const sorted = sortInsights([mk('info', 'a'), mk('good', 'b'), mk('alert', 'c'), mk('info', 'd')])
+    expect(sorted.map((i) => i.level)).toEqual(['alert', 'good', 'info', 'info'])
+    // Stable within the same level (a before d).
+    expect(sorted[2].plain).toBe('a')
+    expect(sorted[3].plain).toBe('d')
+  })
+
+  it('trendArrow glyphs', () => {
+    expect(trendArrow('rising')).toBe('↑')
+    expect(trendArrow('falling')).toBe('↓')
+    expect(trendArrow('steady')).toBe('→')
+  })
+
+  it('mufCeilingBand finds the band at/below the MUF', () => {
+    expect(mufCeilingBand(14.1)).toBe('20m')
+    expect(mufCeilingBand(22)).toBe('15m') // 21.2 ≤ 22 < 24.9
+    expect(mufCeilingBand(29)).toBe('10m')
+    expect(mufCeilingBand(0)).toBe('') // unknown / below floor
+  })
+
+  it('dualStateLabel: Open + Quiet reads "Open · none heard", never "Quiet"/"dead"', () => {
+    const open = dualStateLabel('Open', 'Quiet')
+    expect(open.word).toBe('Open')
+    expect(open.sub).toBe('none heard')
+    expect(open.word).not.toBe('Quiet')
+    expect(open.sub).not.toContain('dead')
+    // Active observed → "active"; Closed model → just "Closed".
+    expect(dualStateLabel('Open', 'Active')).toEqual({ word: 'Open', sub: 'active' })
+    expect(dualStateLabel('Closed', 'Quiet')).toEqual({ word: 'Closed', sub: '' })
+    // Missing modeled falls back sensibly (non-closed tier → Open).
+    expect(dualStateLabel(undefined, 'Quiet').word).toBe('Open')
   })
 })

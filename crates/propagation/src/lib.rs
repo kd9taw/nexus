@@ -23,6 +23,7 @@ pub mod dxped;
 pub mod engine;
 pub mod geo;
 pub mod gettingout;
+pub mod insight;
 pub mod journey;
 pub mod likelihood;
 pub mod mapspots;
@@ -47,11 +48,14 @@ pub use dxped::{
     NeedKind, NeedsSet, OperatorNeeds, WorkStatus, WorkableCard,
 };
 pub use engine::{
-    demo, detect_openings_tracked, OpeningView, PropagationEngine, PropagationSnapshot,
+    detect_openings_tracked, offline, OpeningView, PropagationEngine, PropagationSnapshot,
     SpaceWxView, OPENING_BANDS,
 };
 pub use likelihood::{BandOutlook, PathModel, PropParams, Workability};
-pub use predict::{HeuristicEngine, PathPredictor, PathPrediction};
+pub use predict::{
+    band_outlook_ring, modeled_now, representative_muf, HeuristicEngine, ModeledNow, PathPredictor,
+    PathPrediction,
+};
 pub use gettingout::{getting_out, GettingOut, HeardMe};
 pub use journey::{
     compute as compute_journey, Cell as JourneyCell, Collection as JourneyCollection, Feat,
@@ -76,4 +80,6 @@ pub use pskr_mqtt::{
     mqtt_topics as pskr_mqtt_topics, parse_mqtt_report as parse_pskr_mqtt,
     region_topics as pskr_region_topics, LiveSpots, REGION_SPOT_CAP,
 };
+pub use insight::{generate_insights, Insight, InsightKind, InsightLevel};
+pub use space_wx::{ScalarTrend, SpaceWxHistory, SpaceWxSample, TrendDir, WxTrend};
 pub use spot::Spot;

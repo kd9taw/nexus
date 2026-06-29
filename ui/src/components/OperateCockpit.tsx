@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import type { AppSnapshot, ModeRequest, NeedTag, Settings, SourceKind, Tier } from '../types'
+import type {
+  AppSnapshot,
+  ModeRequest,
+  NeedAlert,
+  NeedTag,
+  Settings,
+  SourceKind,
+  Tier,
+} from '../types'
 import {
   clampOffsetHz,
   cqDirFromText,
@@ -34,6 +42,7 @@ interface Props {
   onSetMode: (mode: ModeRequest) => void
   /** Set the transmit period (Tx 1st/even vs Tx 2nd/odd). */
   onSetTxEven: (even: boolean) => void
+  onSetTxCycleAuto: (auto: boolean) => void
   /** Re-arm the current QSO message. */
   onResend: () => void
   /** Send in-QSO free text (Tx5). */
@@ -57,6 +66,9 @@ interface Props {
   roster: ReactNode
   /** Award-need tier per call — drives the Roster layout's Need column + sort. */
   needByCall: Map<string, NeedTag>
+  /** Full NeedAlerts per call — drives the band-activity decode feed's need icons +
+   * row colour. Forwarded to every OperateDecodes instance. */
+  needAlertsByCall?: Map<string, NeedAlert[]>
   /** Currently selected/open station (highlighted in the Roster layout). */
   selectedCall: string | null
   /** Select (open) a station from the Roster layout (single click). */
@@ -118,6 +130,7 @@ export function OperateCockpit({
   onSetTxLevel,
   onSetMode,
   onSetTxEven,
+  onSetTxCycleAuto,
   onResend,
   onFreetext,
   onLog,
@@ -129,6 +142,7 @@ export function OperateCockpit({
   qsoMacros = NO_MACROS,
   roster,
   needByCall,
+  needAlertsByCall,
   selectedCall,
   onSelect,
   layoutMode,
@@ -529,11 +543,20 @@ export function OperateCockpit({
         <span className="cs-spacer" />
         <button
           type="button"
-          className="cs-period"
-          onClick={() => onSetTxEven(!snap.radio.txEven)}
-          title="Your transmit period — click to switch. The station you work must be on the OPPOSITE period (auto-set when you double-click a decode)."
+          className={`cs-period${snap.radio.txCycleAuto ? ' is-auto' : ''}`}
+          onClick={() => {
+            // Cycle: Auto → lock 1st → lock 2nd → Auto.
+            if (snap.radio.txCycleAuto) onSetTxEven(true)
+            else if (snap.radio.txEven) onSetTxEven(false)
+            else onSetTxCycleAuto(true)
+          }}
+          title="Transmit cycle — click to cycle Auto → Tx 1st → Tx 2nd. Auto picks the opposite cycle of the station you answer; the station you work must be on the OPPOSITE period."
         >
-          {snap.radio.txEven ? 'TX EVEN / 1st' : 'TX ODD / 2nd'}
+          {snap.radio.txCycleAuto
+            ? `TX AUTO / ${snap.radio.txEven ? '1st' : '2nd'}`
+            : snap.radio.txEven
+              ? 'TX 1st / even'
+              : 'TX 2nd / odd'}
         </button>
         <span className="cs-next" title="Time to the next slot">
           next {nextSlotSec}s
@@ -617,6 +640,7 @@ export function OperateCockpit({
                     tier={tier}
                     harqRescues={snap.harqRescues}
                     onCall={onCall}
+                    needAlertsByCall={needAlertsByCall}
                     {...decodeClickProps}
                     onErase={() => notifyErase(0)}
                     compact
@@ -632,6 +656,7 @@ export function OperateCockpit({
                     tier={tier}
                     harqRescues={snap.harqRescues}
                     onCall={onCall}
+                    needAlertsByCall={needAlertsByCall}
                     {...decodeClickProps}
                     onErase={() => notifyErase(1)}
                     lockedFilter="rx"
@@ -654,6 +679,7 @@ export function OperateCockpit({
                   tier={tier}
                   harqRescues={snap.harqRescues}
                   onCall={onCall}
+                  needAlertsByCall={needAlertsByCall}
                   {...decodeClickProps}
                   onErase={() => notifyErase(0)}
                 />
@@ -668,6 +694,7 @@ export function OperateCockpit({
                     tier={tier}
                     harqRescues={snap.harqRescues}
                     onCall={onCall}
+                    needAlertsByCall={needAlertsByCall}
                     {...decodeClickProps}
                     onErase={() => notifyErase(1)}
                     lockedFilter="rx"

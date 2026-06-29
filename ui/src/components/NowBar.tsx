@@ -174,7 +174,13 @@ export function NowBar({ snap, prop, feedHealth, connectEnabled, dxpedEnabled, o
           className={`nb-src ${prop.source}`}
           title={`Propagation nowcast data is ${prop.source} — separate from the Cluster/PSKR connection pills`}
         >
-          {prop.source === 'live' ? 'PROP LIVE' : prop.source === 'cached' ? 'PROP CACHED' : 'DEMO'}
+          {prop.source === 'live'
+            ? 'PROP LIVE'
+            : prop.source === 'partial'
+              ? 'PROP PARTIAL'
+              : prop.source === 'cached'
+                ? 'PROP CACHED'
+                : 'NO LIVE DATA'}
         </span>
       )}
 

@@ -268,6 +268,14 @@ pub struct RadioStatus {
     /// stations must use OPPOSITE periods to complete a QSO.
     #[serde(default = "default_true")]
     pub tx_even: bool,
+    /// Smart auto-cycle on: answering a heard station auto-picks the opposite cycle
+    /// (FT8-style). False = the operator fixed the cycle manually (Tx 1st/2nd).
+    #[serde(default = "default_true")]
+    pub tx_cycle_auto: bool,
+    /// The active T/R period in seconds (FT1 = 4 s, FT8 = 15 s, FT4 = 7.5 s) — lets the
+    /// UI label "1st/2nd" with the real period instead of assuming 15 s.
+    #[serde(default)]
+    pub tr_period_secs: f64,
     /// Receive audio offset (Hz) — the green waterfall marker.
     #[serde(default = "default_offset")]
     pub rx_offset_hz: f32,

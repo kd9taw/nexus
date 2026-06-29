@@ -13,9 +13,11 @@ import {
   getBandPlan,
   getSettings,
   getSnapshot,
-  peerIsTyping,
   selectPeer as apiSelectPeer,
+  archiveConversation as apiArchiveConversation,
   sendMessage as apiSendMessage,
+  broadcast as apiBroadcast,
+  callCq as apiCallCq,
   setFrequency as apiSetFrequency,
   setMode as apiSetMode,
   setTier as apiSetTier,
@@ -25,17 +27,18 @@ import {
   setTune as apiSetTune,
   haltTx as apiHaltTx,
   setTxEven as apiSetTxEven,
+  setTxCycleAuto as apiSetTxCycleAuto,
   setRxOffset as apiSetRxOffset,
   setTxOffset as apiSetTxOffset,
   setHoldTxFreq as apiSetHoldTxFreq,
   subscribeSnapshot,
-  isTauri,
 } from './api'
 import { withErrorToast, pushToast } from './toast'
 import { processDecodes } from './alerts'
 import { useTheme } from './useTheme'
 import { useLayout } from './useLayout'
 import { useScale } from './useScale'
+import { useViewport } from './useViewport'
 import { useDensity } from './useDensity'
 import { useMotion } from './useMotion'
 import { useAchievements } from './useAchievements'
@@ -73,7 +76,7 @@ import type { PropagationSnapshot, FeedHealth, NeedTag, NeedAlert } from './type
 import { NeededPanel } from './components/NeededPanel'
 import { LogConfirm } from './components/LogConfirm'
 import { FieldDayView } from './components/FieldDayView'
-import { DecodeFeed } from './components/DecodeFeed'
+import { OperateDecodes } from './components/OperateDecodes'
 import { Logbook } from './components/Logbook'
 import { RoamPanel } from './components/RoamPanel'
 import { SettingsPanel } from './components/SettingsPanel'
@@ -82,7 +85,6 @@ import { OnboardingBanner } from './components/OnboardingBanner'
 import { RevealNudge } from './components/RevealNudge'
 import { SetupWizard } from './components/SetupWizard'
 import type { ProfileId } from './features/profiles'
-import { DemoBanner } from './components/DemoBanner'
 
 const ONBOARD_KEY = 'tempo-onboarded'
 // First-run setup wizard: shown once on a fresh install, re-openable from Settings.
@@ -117,15 +119,22 @@ function storageWritable(): boolean {
 
 // Macros fall back to these until settings load (keeps chips populated).
 const DEFAULT_MACROS: Settings['macros'] = {
-  chat: ['73', 'QSL', 'Name?', 'QTH?', 'CQ'],
+  // 'chat' chips are DIRECTED replies to the selected peer. (CQ moved to 'band':
+  // calling CQ is a broadcast, not a message to one station.)
+  chat: ['73', 'QSL', 'Name?', 'QTH?', 'GE'],
   qso: ['R-09', 'RRR', 'RR73', '73'],
-  band: ['CQ CQ', 'QRZ?', 'Net check-in', '73 to all'],
+  // 'band' chips are open free-text BROADCASTS. A CQ goes through the structured
+  // Call-CQ button (not a free-text chip, which chunked into a gridless "A12CQ").
+  band: ['QRZ?', 'PSE K', '73', 'GL'],
 }
 
 export default function App() {
   const [theme, setTheme] = useTheme()
   const [wfLayout, setWfLayout] = useLayout()
   const [scale, setScale] = useScale()
+  // Publishes the zoom-aware `data-viewport` size class on <html> (live on resize
+  // AND on scale change) so the layout adapts to the EFFECTIVE width.
+  useViewport(scale)
   // Activates + persists the density + motion attributes (control UI lands later).
   useDensity()
   useMotion()
@@ -320,11 +329,12 @@ export default function App() {
             )
           }
           // Honest-state: surface non-live propagation in the Now-Bar lane.
-          if (p.source === 'demo') {
+          if (p.source === 'offline') {
             setStatus('prop', {
               tier: 'warning',
-              message: 'Prop: demo data',
-              detail: 'Propagation is showing the offline demo scene — set your callsign in Settings for live data.',
+              message: 'Prop: no live data',
+              detail:
+                'No live propagation data yet — set your callsign in Settings and check your internet connection.',
             })
           } else if (p.source === 'cached') {
             const ageMin = Math.max(0, Math.round((Date.now() / 1000 - p.asOf) / 60))
@@ -395,6 +405,19 @@ export default function App() {
     }
     return m
   }, [visibleAlerts])
+  // Full alert set per heard call (all bands/modes) for the band-activity decode feed's
+  // need-icons + row colouring — richer than needByCall's top-tag-only map. Keyed
+  // UPPERCASE; from the same GATED visibleAlerts so a disabled mode never tags a row.
+  const needAlertsByCall = useMemo(() => {
+    const m = new Map<string, NeedAlert[]>()
+    for (const a of visibleAlerts) {
+      const k = a.call.toUpperCase()
+      const arr = m.get(k)
+      if (arr) arr.push(a)
+      else m.set(k, [a])
+    }
+    return m
+  }, [visibleAlerts])
   const [typingTick, setTypingTick] = useState(0)
   const [bandPlan, setBandPlan] = useState<BandChannel[]>([])
   const [settings, setSettings] = useState<Settings | null>(null)
@@ -442,7 +465,8 @@ export default function App() {
     }
   }, [activeTier])
 
-  // poll the (mock) typing state so the indicator re-renders smoothly
+  // Periodic re-eval ticker so the unread badges refresh smoothly between snapshot
+  // polls (the unread memos read a ref cursor that a dep change alone won't catch).
   useEffect(() => {
     const id = window.setInterval(() => setTypingTick((t) => t + 1), 400)
     return () => window.clearInterval(id)
@@ -459,7 +483,15 @@ export default function App() {
 
   // mark the active conversation as read whenever it updates
   useEffect(() => {
-    if (!snap || !activePeer) return
+    if (!snap) return
+    // Prune read-cursors for threads that no longer exist (archived, or rebuilt) so
+    // a re-created thread starts unread from 0 instead of inheriting a stale cursor
+    // that would collapse its unread count to zero.
+    const live = new Set(snap.conversations.map((c) => c.peer))
+    for (const k of Object.keys(readCounts.current)) {
+      if (!live.has(k)) delete readCounts.current[k]
+    }
+    if (!activePeer) return
     const conv = snap.conversations.find((c) => c.peer === activePeer)
     if (conv) readCounts.current[activePeer] = conv.messages.length
   }, [snap, activePeer])
@@ -481,10 +513,29 @@ export default function App() {
     return out
   }, [snap, activePeer, typingTick])
 
+  // Unread on the "*" band feed (CQs/broadcasts from others). Tracked separately
+  // from unreadByPeer (which is per-station) and shown on the pinned Band row; the
+  // read cursor is bumped by the same effect above when "*" is the active peer.
+  const bandUnread = useMemo(() => {
+    if (!snap || activePeer === '*') return 0
+    const band = snap.conversations.find((c) => c.peer === '*')
+    if (!band) return 0
+    const read = readCounts.current['*'] ?? 0
+    const readInbound = Math.min(read, band.messages.length)
+    return band.messages.slice(readInbound).filter((m) => !m.outbound).length
+  }, [snap, activePeer, typingTick])
+
   const handleSelect = useCallback((call: string) => {
     void withErrorToast(() => apiSelectPeer(call), 'Could not select station').then(
       (s) => s && setSnap(s),
     )
+  }, [])
+
+  const handleArchive = useCallback((peer: string) => {
+    void withErrorToast(
+      () => apiArchiveConversation(peer),
+      'Could not archive conversation',
+    ).then((s) => s && setSnap(s))
   }, [])
 
   // The Map and the roster share ONE selection: the active peer. Clicking a map
@@ -562,6 +613,35 @@ export default function App() {
     [activePeer],
   )
 
+  // Call CQ / canned broadcast: not directed at a peer — goes to everyone on
+  // frequency (the engine prefixes `DE <MYCALL>` and echoes it into the "*" band
+  // feed). Surfacing "*" makes that feed visible so the operator sees their own
+  // call go out and any replies land in the same pane.
+  const surfaceBandFeed = useCallback((s: AppSnapshot | null) => {
+    // Only surface the "*" band feed if the broadcast/CQ actually went out (don't yank
+    // the operator into the feed on a failure); route the select through withErrorToast
+    // so a select failure can't throw an unhandled rejection.
+    if (!s) return
+    setSnap(s)
+    void withErrorToast(() => apiSelectPeer('*'), 'Could not open the band feed').then(
+      (s2) => s2 && setSnap(s2),
+    )
+  }, [])
+
+  const handleBroadcast = useCallback(
+    (text: string) => {
+      void withErrorToast(() => apiBroadcast(text), 'Could not broadcast').then(surfaceBandFeed)
+    },
+    [surfaceBandFeed],
+  )
+
+  // Call CQ sends a STRUCTURED `CQ <call> <grid>` frame + arms TX (distinct from the
+  // free-text broadcast). The backend rejects it if the callsign/grid aren't set, so a
+  // CQ never goes out malformed — the error surfaces as a toast.
+  const handleCallCq = useCallback(() => {
+    void withErrorToast(() => apiCallCq(null), 'Could not call CQ').then(surfaceBandFeed)
+  }, [surfaceBandFeed])
+
   const handleSetFrequency = useCallback(
     (dialMhz: number, band: string, mode: string) => {
       void withErrorToast(
@@ -624,6 +704,14 @@ export default function App() {
     void withErrorToast(() => apiSetTxEven(even), 'Could not set transmit period').then((s) => {
       if (s) setSnap(s)
     })
+  }, [])
+
+  const handleSetTxCycleAuto = useCallback((auto: boolean) => {
+    void withErrorToast(() => apiSetTxCycleAuto(auto), 'Could not set the cycle mode').then(
+      (s) => {
+        if (s) setSnap(s)
+      },
+    )
   }, [])
 
   const handleSetHoldTxFreq = useCallback((on: boolean) => {
@@ -910,9 +998,6 @@ export default function App() {
 
   const activeConversation =
     snap.conversations.find((c) => c.peer === activePeer) ?? null
-  const peerTyping = activePeer ? peerIsTyping(activePeer) : false
-  // typingTick keeps this expression re-evaluated
-  void typingTick
 
   // displayed tier is the authoritative link tier from the snapshot
   const tier = snap.link.tier
@@ -938,6 +1023,11 @@ export default function App() {
       needByCall={needByCall}
       onSelect={handleSelect}
       onCall={handleCall}
+      conversations={snap.conversations}
+      onArchive={handleArchive}
+      bandActive={activePeer === '*'}
+      bandUnread={bandUnread}
+      onSelectBand={() => handleSelect('*')}
     />
   )
 
@@ -982,7 +1072,18 @@ export default function App() {
         theme={theme}
         onTune={handleTune}
       />
-      <DecodeFeed decodes={snap.recentDecodes} harqRescues={snap.harqRescues} onCall={handleCall} />
+      <OperateDecodes
+        decodes={snap.recentDecodes}
+        slot={snap.radio.slot}
+        rxOffsetHz={snap.radio.rxOffsetHz}
+        band={snap.radio.band}
+        tier={snap.link.tier}
+        harqRescues={snap.harqRescues}
+        onCall={handleCall}
+        needAlertsByCall={needAlertsByCall}
+        compact
+        title="Band Activity — heard on the band"
+      />
       <LinkPill link={snap.link} radio={snap.radio} />
     </aside>
   )
@@ -1163,8 +1264,11 @@ export default function App() {
           mode={snap.mode}
           fieldDay={snap.fieldDay}
           macros={macros}
-          peerTyping={peerTyping}
           onSend={handleSend}
+          onBroadcast={handleBroadcast}
+          onCallCq={handleCallCq}
+          mycall={snap.mycall}
+          mygrid={snap.mygrid}
         />,
       )
       break
@@ -1172,7 +1276,6 @@ export default function App() {
 
   return (
     <div className="app">
-      {!isTauri() && <DemoBanner />}
       <TopBar
         mycall={snap.mycall}
         mygrid={snap.mygrid}
@@ -1184,6 +1287,7 @@ export default function App() {
         onSetTune={handleSetTune}
         onHaltTx={handleHaltTx}
         onSetTxEven={handleSetTxEven}
+            onSetTxCycleAuto={handleSetTxCycleAuto}
         onSetHoldTxFreq={handleSetHoldTxFreq}
         onStopRecording={handleStopRecording}
         wfLayout={wfLayout}
@@ -1246,6 +1350,7 @@ export default function App() {
             onSetTxLevel={handleSetTxLevel}
             onSetMode={handleSetMode}
             onSetTxEven={handleSetTxEven}
+            onSetTxCycleAuto={handleSetTxCycleAuto}
             onResend={handleQsoResend}
             onFreetext={handleQsoFreetext}
             onLog={handleLogCurrent}
@@ -1257,6 +1362,7 @@ export default function App() {
             qsoMacros={macros.qso}
             roster={stationsPanel}
             needByCall={needByCall}
+            needAlertsByCall={needAlertsByCall}
             selectedCall={activePeer}
             onSelect={handleSelect}
             layoutMode={operateLayout}

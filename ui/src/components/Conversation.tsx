@@ -16,8 +16,14 @@ interface Props {
   mode: OpMode
   fieldDay: FieldDayStatus | null
   macros: Settings['macros']
-  peerTyping: boolean
   onSend: (text: string) => void
+  /** Open broadcast (band chips) — free text, not directed at a peer. */
+  onBroadcast: (text: string) => void
+  /** Call CQ — sends ONE structured `CQ <call> <grid>` frame + arms TX (NOT a chunked
+   * free-text broadcast). Distinct from onBroadcast so the CQ goes out clean. */
+  onCallCq: () => void
+  mycall: string
+  mygrid: string
 }
 
 /**
@@ -50,34 +56,61 @@ export function Conversation({
   mode,
   fieldDay,
   macros,
-  peerTyping,
   onSend,
+  onBroadcast,
+  onCallCq,
+  mycall,
+  mygrid,
 }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     const el = scrollRef.current
     if (el) el.scrollTop = el.scrollHeight
-  }, [conversation?.messages.length, peerTyping])
+  }, [conversation?.messages.length])
 
+  // No peer selected → the Call CQ launchpad: call CQ (a broadcast) to be heard
+  // on the band without first picking a station, plus the editable band macros.
   if (!peer) {
+    const cqText = `CQ ${mycall || 'YOURCALL'} ${mygrid || '----'}`.trim()
     return (
       <section className="conversation panel empty-conv">
         <div className="empty-conv-inner">
           <h2>No conversation selected</h2>
-          <p>Pick a station from the roster to start a QSO.</p>
+          <p>Pick a station from the roster, or call CQ to be heard on the band.</p>
+          <button type="button" className="cq-btn" onClick={onCallCq}>
+            📣 Call CQ
+          </button>
+          <p className="cq-onair">
+            Transmits the standard <strong>{cqText}</strong> and arms TX.
+          </p>
+          <div className="quick-replies band-quickbar" aria-label="Band broadcasts">
+            {macros.band.map((q, i) => (
+              <button
+                key={`${q}-${i}`}
+                type="button"
+                className="quick-chip"
+                onClick={() => onBroadcast(q)}
+              >
+                {q}
+              </button>
+            ))}
+          </div>
         </div>
       </section>
     )
   }
 
+  const isBand = peer === '*'
   const messages = conversation?.messages ?? []
 
   return (
     <section className="conversation panel">
       <div className="panel-header conv-header">
-        <h2 className="conv-peer">{peer}</h2>
-        <span className="conv-sub">{messages.length} messages</span>
+        <h2 className="conv-peer">{isBand ? 'Band — open calls' : peer}</h2>
+        <span className="conv-sub">
+          {isBand ? `You broadcast as DE ${mycall || 'YOURCALL'}` : `${messages.length} messages`}
+        </span>
       </div>
 
       <div className="message-scroll" ref={scrollRef}>
@@ -95,21 +128,17 @@ export function Conversation({
             }
           />
         ))}
-        {peerTyping && (
-          <div className="bubble-row theirs">
-            <div className="bubble theirs typing">
-              <span className="typing-label">{peer} is sending</span>
-              <span className="typing-dots">
-                <i />
-                <i />
-                <i />
-              </span>
-            </div>
-          </div>
-        )}
       </div>
 
-      <Composer peer={peer} mode={mode} fieldDay={fieldDay} macros={macros} onSend={onSend} />
+      <Composer
+        peer={peer}
+        mode={mode}
+        fieldDay={fieldDay}
+        macros={macros}
+        onSend={isBand ? onBroadcast : onSend}
+        broadcast={isBand}
+        mycall={mycall}
+      />
     </section>
   )
 }
