@@ -450,6 +450,12 @@ export async function getNeedAlerts(): Promise<NeedAlert[]> {
   return invoke<NeedAlert[]>('get_need_alerts')
 }
 
+/** Raw spot firehose for the Spots panel — every recent spot (all modes/sources),
+ * newest first, NOT needs-gated. The panel filters client-side. */
+export async function getAllSpots(): Promise<import('./types').SpotRow[]> {
+  return invoke<import('./types').SpotRow[]>('get_all_spots')
+}
+
 /** Liveness of the background live feeds (cluster/RBN + PSK Reporter MQTT) for the
  *  Now-Bar connector pills. */
 export async function getFeedHealth(): Promise<FeedHealth> {

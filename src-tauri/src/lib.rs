@@ -2516,6 +2516,79 @@ fn get_confirmation_diagnostics(
     Ok(report.into())
 }
 
+/// One raw cluster/RBN spot for the Spots panel (the SpotCollector-style firehose view).
+/// UNLIKE the Needed board, this is NOT needs-gated — every recent spot is returned and
+/// the UI filters client-side. Mode is the same classification the need-matcher uses.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SpotRow {
+    call: String,
+    /// DXCC entity, "" if the call doesn't resolve.
+    entity: String,
+    /// CQ zone, 0 if unknown.
+    zone: u8,
+    /// Band label ("20m"), "" if off the band plan.
+    band: String,
+    freq_mhz: f64,
+    /// "CW" | "Phone" | "Digital".
+    mode: String,
+    spotter: String,
+    /// Other spotters of the same DX (multi-endpoint evidence the buffer carries forward).
+    corroborators: Vec<String>,
+    /// Seconds since the spot was received; -1 if unknown (no receive stamp).
+    age_secs: i64,
+    comment: String,
+}
+
+/// Raw spot firehose for the Spots panel — every recent spot (CW/Phone/Digital, all
+/// sources), newest first, NOT filtered by operator needs. The buffer's age-based
+/// retention (≈20 min) bounds the set; the UI applies band/mode/age filters client-side.
+#[tauri::command]
+fn get_all_spots(spots: State<'_, SharedSpots>) -> Vec<SpotRow> {
+    let now = now_unix();
+    let recent = match spots.lock() {
+        Ok(buf) => buf.recent_within(
+            std::time::Instant::now(),
+            std::time::Duration::from_secs(1200),
+        ),
+        Err(_) => return Vec::new(),
+    };
+    let mut rows: Vec<SpotRow> = recent
+        .into_iter()
+        .map(|cs| {
+            let freq = cs.freq_mhz();
+            let band = propagation::Band::from_mhz(freq)
+                .map(|b| b.label().to_string())
+                .unwrap_or_default();
+            let (entity, zone) = propagation::dxcc::resolve(&cs.dx_call)
+                .map(|i| (i.entity.to_string(), i.cq_zone))
+                .unwrap_or_default();
+            let age_secs = if cs.received_unix > 0 {
+                (now - cs.received_unix as i64).max(0)
+            } else {
+                -1
+            };
+            SpotRow {
+                call: cs.dx_call.clone(),
+                entity,
+                zone,
+                band,
+                freq_mhz: freq,
+                mode: propagation::classify_spot_mode(freq, &cs.comment)
+                    .label()
+                    .to_string(),
+                spotter: cs.spotter.clone(),
+                corroborators: cs.corroborators.clone(),
+                age_secs,
+                comment: cs.comment.clone(),
+            }
+        })
+        .collect();
+    // Newest first; unknown-age spots sort last.
+    rows.sort_by_key(|r| if r.age_secs < 0 { i64::MAX } else { r.age_secs });
+    rows
+}
+
 /// Need-aware spotting: rank the stations WORKABLE FROM HERE RIGHT NOW by award
 /// value (new DXCC / CQ zone / band-slot / mode). Crucially, the value is the bands
 /// you're NOT tuned to — so the evidence is EMPIRICAL near-me reception, not a
@@ -4596,6 +4669,7 @@ pub fn run() {
             clear_activation,
             get_activation,
             get_need_alerts,
+            get_all_spots,
             get_propagation,
             get_path_outlook,
             get_band_outlook,

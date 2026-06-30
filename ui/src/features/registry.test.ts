@@ -20,6 +20,7 @@ const EXPECTED_SECTIONS: FeatureId[] = [
   'phone',
   'connect',
   'needed',
+  'spots',
   'logbook',
   'settings',
   'chat',

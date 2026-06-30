@@ -17,6 +17,7 @@ export type View =
   | 'connect'
   | 'dxped'
   | 'needed'
+  | 'spots'
   | 'chat'
   | 'fieldDay'
   | 'roam'
@@ -209,6 +210,18 @@ export const FEATURES: FeatureDef[] = [
     view: 'needed',
     // global (no workspace): what you need, on the air now, in both modes.
     oneLine: "What you still need that's on the air now — single-click to QSY.",
+  },
+  {
+    id: 'spots',
+    label: 'Spots',
+    kind: 'section',
+    category: 'DX & Awards',
+    core: false, // opt-in raw firehose view (the curated Needed board is the default)
+    dependsOn: [],
+    intents: ['dx', 'contest'],
+    view: 'spots',
+    // global (no workspace): every spot on the air (all modes), filter client-side.
+    oneLine: 'Every cluster/RBN spot on the air — the raw firehose, filter by band/mode.',
   },
   {
     id: 'dxped',

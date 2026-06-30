@@ -801,6 +801,27 @@ export interface NeedAlert {
   evidence?: string | null
 }
 
+/** One raw cluster/RBN spot for the Spots panel (the SpotCollector-style firehose).
+ *  NOT needs-gated — every recent spot; the panel filters client-side. */
+export interface SpotRow {
+  call: string
+  /** DXCC entity, '' if unresolved. */
+  entity: string
+  /** CQ zone, 0 if unknown. */
+  zone: number
+  /** Band label ('20m'), '' if off the band plan. */
+  band: string
+  freqMhz: number
+  /** 'CW' | 'Phone' | 'Digital'. */
+  mode: string
+  spotter: string
+  /** Other spotters of the same DX (multi-endpoint evidence). */
+  corroborators: string[]
+  /** Seconds since received; -1 if unknown. */
+  ageSecs: number
+  comment: string
+}
+
 /** A QRZ.com callsign-lookup result. grid/state are subscriber-only and routinely
  *  null for free QRZ accounts. */
 export interface QrzLookup {

@@ -8228,6 +8228,26 @@ select.settings-input {
   font-size: 0.86rem;
   border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
 }
+/* Spots panel — the raw firehose table (8 cols: age · call · entity · band · freq ·
+   mode · spotter · comment). Reuses the Needed board's row chrome, own column template. */
+.sp-grid .np-row {
+  grid-template-columns: 52px minmax(72px, 1fr) minmax(88px, 1.3fr) 50px 70px 64px minmax(70px, 1fr) minmax(110px, 1.6fr);
+}
+.np-age {
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.sp-freq {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.sp-spotter {
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .np-row.np-header {
   position: sticky;
   top: 0;

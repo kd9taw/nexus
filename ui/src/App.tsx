@@ -67,14 +67,16 @@ import {
   getPropagation,
   getFeedHealth,
   getNeedAlerts,
+  getAllSpots,
   setOperatingMode,
   workSpot,
   setLicenseClass,
   stopQsoRecording,
 } from './api'
 import { setStatus } from './status'
-import type { PropagationSnapshot, FeedHealth, NeedTag, NeedAlert } from './types'
+import type { PropagationSnapshot, FeedHealth, NeedTag, NeedAlert, SpotRow } from './types'
 import { NeededPanel } from './components/NeededPanel'
+import { SpotsPanel } from './components/SpotsPanel'
 import { LogConfirm } from './components/LogConfirm'
 import { FieldDayView } from './components/FieldDayView'
 import { OperateDecodes } from './components/OperateDecodes'
@@ -382,6 +384,24 @@ export default function App() {
         .catch(() => {})
     load()
     const id = setInterval(load, 30_000)
+    return () => {
+      live = false
+      clearInterval(id)
+    }
+  }, [])
+  // Raw spot firehose for the Spots panel (ungated, all modes). Polled faster than needs
+  // since it's a live "what's on the air" view; the backend command just reads the buffer.
+  const [allSpots, setAllSpots] = useState<SpotRow[]>([])
+  useEffect(() => {
+    let live = true
+    const load = () =>
+      getAllSpots()
+        .then((s) => {
+          if (live) setAllSpots(s)
+        })
+        .catch(() => {})
+    load()
+    const id = setInterval(load, 15_000)
     return () => {
       live = false
       clearInterval(id)
@@ -852,6 +872,25 @@ export default function App() {
     [handleWorkNeeded],
   )
 
+  // Work a raw spot from the Spots panel — synthesize a minimal NeedAlert so we reuse
+  // handleWorkNeeded's workSpot → cockpit-open path (QSY to the spot's exact freq + mode).
+  const handleWorkSpot = useCallback(
+    (s: SpotRow) => {
+      handleWorkNeeded({
+        call: s.call,
+        entity: s.entity,
+        band: s.band,
+        zone: s.zone,
+        tags: [],
+        priority: 0,
+        headline: '',
+        mode: s.mode,
+        freqMhz: s.freqMhz,
+      })
+    },
+    [handleWorkNeeded],
+  )
+
   // Stop a QSO recording from anywhere (the global REC badge in the TopBar), so an active
   // recording started in the Phone cockpit can be stopped without navigating back.
   const handleStopRecording = useCallback(() => {
@@ -1175,6 +1214,17 @@ export default function App() {
                 }
               : null
           }
+        />
+      )
+      break
+    case 'spots':
+      workspace = (
+        <SpotsPanel
+          spots={allSpots}
+          bandPlan={bandPlan}
+          selectedCall={activePeer}
+          onSelect={handleSelect}
+          onWork={handleWorkSpot}
         />
       )
       break
