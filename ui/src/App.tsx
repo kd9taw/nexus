@@ -1166,6 +1166,11 @@ export default function App() {
           onSelect={handleSelect}
           onWork={handleWorkNeeded}
           onPopOut={() => void openPanelWindow('needed')}
+          phoneSource={
+            feedHealth
+              ? { status: feedHealth.phoneCluster, host: feedHealth.phoneClusterHost }
+              : null
+          }
         />
       )
       break

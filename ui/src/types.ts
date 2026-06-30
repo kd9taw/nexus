@@ -859,10 +859,17 @@ export interface CredStatus {
   identity: string
 }
 
-/** Liveness of both background live feeds (DX cluster/RBN + PSK Reporter MQTT). */
+/** Liveness of the background live feeds (DX cluster/RBN + PSK Reporter MQTT). */
 export interface FeedHealth {
   cluster: FeedStatus
   pskr: FeedStatus
+  /** The human DX-cluster node alone — the SSB/phone source, separate from `cluster`
+   * (which the RBN CW/digital firehose keeps green on its own). `enabled: false` when
+   * no human node is configured (RBN-only operator). */
+  phoneCluster: FeedStatus
+  /** The configured human DX-cluster host (e.g. "ve7cc.net:23") for the phone-source
+   * label; null when no human node is configured. */
+  phoneClusterHost: string | null
 }
 
 /** Worked All States progress (50 US states; LoTW/paper confirmed). */
@@ -1052,8 +1059,12 @@ export interface Settings {
   mygrid: string
   /** Operator first name — the CW {NAME} macro + logging. */
   opName: string
-  /** DX cluster / RBN telnet node (host:port). */
+  /** LEGACY single DX-cluster node (host:port) — kept for back-compat; `clusterHosts` is
+   * the live source of truth (the backend seeds the list from this on upgrade). */
   clusterHost: string
+  /** DX-cluster nodes (host:port) — the SSB/phone aggregator. We connect to ALL of them
+   * and union their human spots; RBN CW/digital connect automatically. */
+  clusterHosts: string[]
   /** Companion-mode UDP listen address (WSJT-X/JTDX). */
   companionAddr: string
   /** CW sidetone/tone pitch (Hz) — the soundcard keyer tone + the CW scope marker. */

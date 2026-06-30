@@ -163,10 +163,17 @@ pub struct Settings {
     /// CW + digital evidence, PLUS the human DX-cluster node in `cluster_host` for SSB/phone
     /// (which RBN doesn't carry). SpotCollector-style multi-source aggregation.
     pub cluster_enabled: bool,
-    /// An ADDITIONAL human DX-cluster (DXSpider/CC-Cluster) telnet endpoint ("host:port") for
-    /// SSB/phone + human spots — the RBN CW/digital skimmer feeds are connected automatically.
-    /// Empty = RBN only (no phone). Telnet logs in with your callsign.
+    /// LEGACY single human DX-cluster endpoint — kept only to seed `cluster_hosts` on
+    /// upgrade (and for back-compat). `cluster_hosts` is the live source of truth.
     pub cluster_host: String,
+    /// The human DX-cluster node LIST — the SSB/phone aggregator. Each entry is a
+    /// DXSpider/CC-Cluster telnet endpoint ("host:port"); we connect to ALL of them and
+    /// union their human spots (the RBN CW/digital skimmer feeds are wired automatically, so
+    /// RBN endpoints are ignored here). More nodes = wider phone coverage. Empty = RBN only
+    /// (no phone). `#[serde(default)]` (empty) so an OLD config missing this field is detected
+    /// in `load` and seeded from `cluster_host`; the Default impl seeds the community node.
+    #[serde(default)]
+    pub cluster_hosts: Vec<String>,
 
     // --- audio I/O ---
     /// Input (capture) device name. Empty = system default input.
@@ -520,6 +527,10 @@ impl Default for Settings {
             // operators can blank this. (NOTE: dxc.nc7j.com:7373 is NC7J's *skimmer* port,
             // not its human port — don't use it here; the migration in `load` fixes it.)
             cluster_host: "ve7cc.net:23".to_string(),
+            // The aggregator seeds with the same community node; the operator adds more in
+            // Settings ▸ Connections for wider phone coverage. (RBN endpoints don't belong
+            // here — they're auto-wired; `load` strips any that sneak in.)
+            cluster_hosts: vec!["ve7cc.net:23".to_string()],
             audio_in: String::new(),
             audio_out: String::new(),
             tx_level: 0.9,
@@ -599,6 +610,25 @@ impl Settings {
         if s.cluster_host.contains("reversebeacon.net") || s.cluster_host == "dxc.nc7j.com:7373" {
             s.cluster_host = "ve7cc.net:23".to_string();
         }
+        // Migration: `cluster_hosts` (the multi-cluster aggregator) is newer than the single
+        // `cluster_host`. An OLD config has no `clusterHosts` key → the field default leaves it
+        // empty → seed it from the (now-migrated) single host so an upgrading operator keeps
+        // their node. Then sanitize the list: trim, drop blanks + RBN endpoints (auto-wired,
+        // never human/phone), and dedup case-insensitively while preserving order.
+        if s.cluster_hosts.is_empty() && !s.cluster_host.trim().is_empty() {
+            s.cluster_hosts = vec![s.cluster_host.clone()];
+        }
+        let mut seen = std::collections::HashSet::new();
+        s.cluster_hosts = s
+            .cluster_hosts
+            .iter()
+            .map(|h| h.trim().to_string())
+            .filter(|h| {
+                !h.is_empty()
+                    && !h.contains("reversebeacon.net")
+                    && seen.insert(h.to_ascii_lowercase())
+            })
+            .collect();
         s
     }
 
@@ -774,6 +804,47 @@ mod tests {
             back.cluster_host
         );
         assert!(!back.cluster_host.is_empty(), "migrated to a real node, not blank");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn load_seeds_cluster_hosts_from_legacy_single_host() {
+        // An upgrading config has a single cluster_host but an empty cluster_hosts list
+        // (the field is new); load must seed the aggregator from the legacy host so the
+        // operator's node isn't lost.
+        let path = std::env::temp_dir()
+            .join("tempo_settings_hostsmig")
+            .join("settings.json");
+        let mut s = Settings::default();
+        s.cluster_hosts = vec![]; // simulate a pre-aggregator config
+        s.cluster_host = "dxc.example.net:7300".into();
+        s.save(&path).unwrap();
+        let back = Settings::load(&path);
+        assert_eq!(back.cluster_hosts, vec!["dxc.example.net:7300".to_string()]);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn load_sanitizes_cluster_hosts_list() {
+        // The aggregator list must never contain RBN endpoints (auto-wired), blanks, or
+        // dups — load strips them, preserving order and the first occurrence.
+        let path = std::env::temp_dir()
+            .join("tempo_settings_hostssan")
+            .join("settings.json");
+        let mut s = Settings::default();
+        s.cluster_hosts = vec![
+            " ve7cc.net:23 ".into(),                  // trimmed
+            "telnet.reversebeacon.net:7000".into(),   // RBN → dropped
+            "VE7CC.NET:23".into(),                    // case-insensitive dup → dropped
+            "".into(),                                // blank → dropped
+            "dxc.example.net:7300".into(),
+        ];
+        s.save(&path).unwrap();
+        let back = Settings::load(&path);
+        assert_eq!(
+            back.cluster_hosts,
+            vec!["ve7cc.net:23".to_string(), "dxc.example.net:7300".to_string()]
+        );
         let _ = std::fs::remove_file(&path);
     }
 }

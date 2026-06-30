@@ -29,9 +29,10 @@ function agoText(secs: number | null): string {
  * separate "healthy but quiet" (connected — normal on a still band) from "can't
  * reach the server" (connecting/reconnecting) — previously both rendered as an
  * identical, broken-looking "waiting". */
-function FeedPill({ name, status }: { name: string; status: FeedStatus }) {
+function FeedPill({ name, status, detail }: { name: string; status: FeedStatus; detail?: string }) {
   if (!status.enabled) return null
   const ago = agoText(status.lastEventSecs)
+  const suffix = detail ? ` (${detail})` : ''
   const [cls, val, title] =
     status.state === 'live'
       ? ['good', ago ? `live ${ago}` : 'live', `${name}: receiving (last ${ago} ago)`]
@@ -54,7 +55,7 @@ function FeedPill({ name, status }: { name: string; status: FeedStatus }) {
               : // Defensive: an unknown future backend state renders visibly, not as a fake idle.
                 ['weak', status.state, `${name}: ${status.state}`]
   return (
-    <span className={`nb-chip nb-feed ${cls}`} title={title}>
+    <span className={`nb-chip nb-feed ${cls}`} title={`${title}${suffix}`}>
       <Radio size={12} aria-hidden="true" />
       <span className="nb-k">{name}</span>
       <span className="nb-v">{val}</span>
@@ -187,6 +188,13 @@ export function NowBar({ snap, prop, feedHealth, connectEnabled, dxpedEnabled, o
       {feedHealth && (
         <>
           <FeedPill name="Cluster" status={feedHealth.cluster} />
+          {/* The SSB/phone source on its own — RBN keeps the Cluster pill green even when
+              this is down, so "is my phone source up?" needs its own at-a-glance pill. */}
+          <FeedPill
+            name="Phone"
+            status={feedHealth.phoneCluster}
+            detail={feedHealth.phoneClusterHost ?? undefined}
+          />
           <FeedPill name="PSKR" status={feedHealth.pskr} />
         </>
       )}

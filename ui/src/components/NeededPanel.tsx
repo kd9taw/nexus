@@ -4,7 +4,7 @@
 // row to QSY the radio to that band and listen. The same stations light up on the
 // Connect map (shared needByCall), so this is the list half of "list + map".
 import { useCallback, useMemo, useState } from 'react'
-import type { BandChannel, NeedAlert, NeedTag } from '../types'
+import type { BandChannel, FeedStatus, NeedAlert, NeedTag } from '../types'
 import {
   filterAlerts,
   ageLabel,
@@ -112,6 +112,31 @@ interface Props {
   onWork?: (alert: NeedAlert) => void
   /** Pop this board out into its own window (omit when already standalone). */
   onPopOut?: () => void
+  /** Liveness of the human DX-cluster node — the SSB/phone source — plus its host, so the
+   * board can say "Phone source: ve7cc.net:23 · live" right where phone needs appear. This
+   * is the ONLY source of Phone needs (RBN has no phone), so an empty board reads correctly:
+   * "source up, nothing I need is spotted" vs "source down". Omitted in the pop-out window. */
+  phoneSource?: { status: FeedStatus; host: string | null } | null
+}
+
+/** Compact phone-source descriptor for the board header: [css class, short text, tooltip]. */
+function phoneSourceLabel(src: { status: FeedStatus; host: string | null }): [string, string, string] {
+  const host = src.host ?? 'cluster'
+  switch (src.status.state) {
+    case 'live':
+      return ['good', `Phone source: ${host} · live`, `SSB/phone spots are flowing from ${host}.`]
+    case 'connected':
+      return ['good', `Phone source: ${host} · connected`, `Connected to ${host} — no phone spot yet (an empty Phone board just means nothing you need is on SSB right now).`]
+    case 'connecting':
+    case 'waiting':
+      return ['weak', `Phone source: ${host} · connecting…`, `Reaching the SSB cluster node ${host}.`]
+    case 'reconnecting':
+      return ['bad', `Phone source: ${host} · down`, `Lost the connection to ${host} — no SSB/phone needs until it reconnects.`]
+    case 'idle':
+      return ['ok', `Phone source: ${host} · idle`, `Connected to ${host} but quiet — a lull in human SSB spots.`]
+    default:
+      return ['weak', `Phone source: ${host} · ${src.status.state}`, `${host}: ${src.status.state}`]
+  }
 }
 
 export function NeededPanel({
@@ -122,6 +147,7 @@ export function NeededPanel({
   onSelect,
   onWork,
   onPopOut,
+  phoneSource,
 }: Props) {
   const [sort, setSort] = useState<{ key: SortKey; dir: 'asc' | 'desc' }>({
     key: 'priority',
@@ -257,6 +283,27 @@ export function NeededPanel({
           </button>
         )}
       </div>
+
+      {/* Phone-source liveness — Phone needs come ONLY from the human DX-cluster node, so a
+          dead/absent source explains an empty Phone column at a glance (RBN covers CW/digital). */}
+      {phoneSource &&
+        (phoneSource.status.enabled ? (
+          (() => {
+            const [cls, text, title] = phoneSourceLabel(phoneSource)
+            return (
+              <div className={`np-phone-src ${cls}`} title={title}>
+                {text}
+              </div>
+            )
+          })()
+        ) : (
+          <div
+            className="np-phone-src weak"
+            title="No DX-cluster node is configured, so there's no source for SSB/phone needs (RBN only carries CW and digital). Set a cluster host in Settings ▸ Connections."
+          >
+            Phone source: none — add a DX cluster in Settings for SSB needs
+          </div>
+        ))}
 
       {/* Filter bar — visible when toggled open or when any filter is active */}
       {(filtersOpen || hasActiveFilters) && (

@@ -68,13 +68,20 @@ type SharedWxHistory = Arc<Mutex<propagation::SpaceWxHistory>>;
 /// this stop flag exists only so `cluster::run`'s signature is satisfied.
 static CLUSTER_STOP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// One-shot latch: the human-cluster daemon thread is spawned at most once per process,
-/// whether at startup or lazily when a real callsign is first entered in Settings.
-static CLUSTER_STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Per-host once-latch for the human DX-cluster nodes (the SSB/phone aggregator): the set of
+/// node hosts already spawned this process. `set_settings` re-runs the spawn for every save,
+/// so this lets a NEWLY-added node connect live (skipping ones already up) without a restart.
+/// Also the source for the phone-source health label. Cleared on a callsign restart.
+static HUMAN_NODES_STARTED: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+/// One connected-flag per spawned human node, so "phone source up" can mean ANY node is up
+/// (a single shared bool would flicker false whenever one of several nodes reconnected).
+/// `get_feed_health` ORs them; cleared alongside [`HUMAN_NODES_STARTED`] on a restart.
+static PHONE_NODE_CONNS: Mutex<Vec<Arc<std::sync::atomic::AtomicBool>>> = Mutex::new(Vec::new());
 
 /// The RBN skimmer firehoses (connected automatically when cluster spotting is on): CW/RTTY
 /// on 7000, FT8/FT4 digital on 7001. Huge volume + exact frequencies → the CW + digital need
-/// evidence. SSB/phone has no skimmer network, so it comes from the human node (cluster_host).
+/// evidence. SSB/phone has no skimmer network, so it comes from the human nodes (cluster_hosts).
 const RBN_CW_HOST: &str = "telnet.reversebeacon.net:7000";
 const RBN_DIGITAL_HOST: &str = "telnet.reversebeacon.net:7001";
 static RBN_CW_STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -106,7 +113,7 @@ struct SharedRegionPaths(Arc<Mutex<propagation::LiveSpots>>);
 /// Lifetime stop flag for the PSK Reporter MQTT daemon thread (see CLUSTER_STOP).
 static PSKR_STOP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// One-shot latch for the PSK Reporter MQTT daemon thread (see CLUSTER_STARTED).
+/// One-shot latch for the PSK Reporter MQTT daemon thread (see RBN_CW_STARTED).
 static PSKR_STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// One-shot latch for the near-region opening MQTT daemon thread (Phase 2).
@@ -137,6 +144,12 @@ struct FeedHealthState {
     cluster_connected: std::sync::atomic::AtomicBool,
     /// PSK Reporter MQTT session currently up (set on accepted CONNACK, cleared on drop).
     pskr_connected: std::sync::atomic::AtomicBool,
+    /// Last parsed spot from ANY HUMAN DX-cluster node — the SSB/phone source. The RBN
+    /// skimmer firehoses (CW/digital) do NOT stamp this, so it answers "is my phone source
+    /// actually up?" independently of the always-busy RBN feeds (whose traffic otherwise
+    /// keeps `cluster_last` green even when every human node is down). Per-node connected
+    /// state lives in [`PHONE_NODE_CONNS`]; this is the shared aggregate freshness.
+    phone_cluster_last: std::sync::atomic::AtomicI64,
 }
 type SharedHealth = Arc<FeedHealthState>;
 
@@ -178,31 +191,32 @@ fn is_real_call(call: &str) -> bool {
         && c.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '/')
 }
 
-/// Spawn the DX-cluster / RBN daemon thread once per process (the [`CLUSTER_STARTED`]
-/// latch makes repeat calls a no-op, so it is safe to call both at startup and from
-/// `set_settings`). No-op unless `mycall` is a [`is_real_call`]; the caller is
-/// responsible for the `cluster_enabled` gate. Parsed spots flow into `spots`, and
-/// each one stamps `health.cluster_last` for the Now-Bar liveness pill.
-/// Connect ALL enabled spot sources (SpotCollector-style aggregation): RBN CW + RBN digital
-/// skimmer firehoses, plus the operator's human DX-cluster node for SSB/phone. Each spawns
-/// at most once per process. All push into the one shared `spots` buffer the need-matcher
-/// reads.
+/// Connect ALL enabled spot sources (SpotCollector-style aggregation): the RBN CW + RBN
+/// digital skimmer firehoses, plus EVERY human DX-cluster node in `cluster_hosts` — the
+/// SSB/phone aggregator. RBN endpoints are wired once via fixed latches; the human nodes use
+/// a per-host latch ([`HUMAN_NODES_STARTED`]) so a node added in Settings connects on the next
+/// save with no restart, and an RBN endpoint that sneaks into the list is skipped (no
+/// double-connect). No-op per feed unless `mycall` is a [`is_real_call`]; the caller owns the
+/// `cluster_enabled` gate. All push into the one shared `spots` buffer the need-matcher reads.
 fn start_cluster_feeds(
     spots: &SharedSpots,
-    cluster_host: &str,
+    cluster_hosts: &[String],
     mycall: &str,
     health: &SharedHealth,
 ) {
     start_cluster_feed(spots, RBN_CW_HOST, mycall, health, &RBN_CW_STARTED);
     start_cluster_feed(spots, RBN_DIGITAL_HOST, mycall, health, &RBN_DIGITAL_STARTED);
-    // The configurable human node (SSB/phone + human spots). Skip an RBN endpoint here —
-    // RBN is already wired above — so an old RBN cluster_host can't double-connect.
-    let h = cluster_host.trim();
-    if !h.is_empty() && !h.contains("reversebeacon.net") {
-        start_cluster_feed(spots, h, mycall, health, &CLUSTER_STARTED);
+    for host in cluster_hosts {
+        let h = host.trim();
+        if h.is_empty() || h.contains("reversebeacon.net") {
+            continue; // blank, or an RBN endpoint already wired above
+        }
+        start_human_cluster_feed(spots, h, mycall, health);
     }
 }
 
+/// Spawn one RBN skimmer telnet feed (CW or digital). Once-latched via `started`; each parsed
+/// spot stamps the aggregate `cluster_last` and the session toggles `cluster_connected`.
 fn start_cluster_feed(
     spots: &SharedSpots,
     cluster_host: &str,
@@ -214,7 +228,7 @@ fn start_cluster_feed(
         return;
     }
     conn_log(
-        "Cluster",
+        "RBN",
         "info",
         format!("connecting to {} as {}", cluster_host, mycall.trim().to_uppercase()),
     );
@@ -236,6 +250,58 @@ fn start_cluster_feed(
             },
             &CLUSTER_STOP,
             &hp_conn.cluster_connected,
+        );
+    });
+}
+
+/// Spawn ONE human DX-cluster node feed (an SSB/phone source). Per-host once-latch via
+/// [`HUMAN_NODES_STARTED`] (so re-running the aggregator only spawns nodes not already up).
+/// Each parsed spot stamps BOTH the aggregate `cluster_last` AND `phone_cluster_last`, and the
+/// session toggles this node's own connected flag (registered in [`PHONE_NODE_CONNS`]) so the
+/// phone-source pill reflects "any node up" — readable independently of the busy RBN feeds.
+fn start_human_cluster_feed(spots: &SharedSpots, host: &str, mycall: &str, health: &SharedHealth) {
+    if !is_real_call(mycall) {
+        return;
+    }
+    {
+        let mut started = match HUMAN_NODES_STARTED.lock() {
+            Ok(g) => g,
+            Err(_) => return,
+        };
+        if started.iter().any(|h| h.eq_ignore_ascii_case(host)) {
+            return; // this node is already connected this session (case-insensitive)
+        }
+        started.push(host.to_string());
+    }
+    conn_log(
+        "DX Cluster",
+        "info",
+        format!("connecting to {} as {}", host, mycall.trim().to_uppercase()),
+    );
+    let conn = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    if let Ok(mut v) = PHONE_NODE_CONNS.lock() {
+        v.push(conn.clone());
+    }
+    let buf = spots.clone();
+    let hp = health.clone();
+    let host = host.to_string();
+    let call = mycall.trim().to_string();
+    std::thread::spawn(move || {
+        tempo_net::cluster::run(
+            &host,
+            &call,
+            |sp| {
+                let ts = now_unix();
+                hp.cluster_last
+                    .store(ts, std::sync::atomic::Ordering::Relaxed);
+                hp.phone_cluster_last
+                    .store(ts, std::sync::atomic::Ordering::Relaxed);
+                if let Ok(mut b) = buf.lock() {
+                    b.push(sp.clone());
+                }
+            },
+            &CLUSTER_STOP,
+            &conn,
         );
     });
 }
@@ -359,12 +425,19 @@ struct FeedStatus {
     state: String,
 }
 
-/// Liveness of both background live feeds.
+/// Liveness of the background live feeds.
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct FeedHealth {
     cluster: FeedStatus,
     pskr: FeedStatus,
+    /// The HUMAN DX-cluster nodes as a group — the SSB/phone source, reported separately from
+    /// the aggregate `cluster` pill (which the RBN CW/digital firehose keeps green on its own).
+    /// `connected` = ANY node up; `enabled: false` when no human node is configured (RBN-only).
+    phone_cluster: FeedStatus,
+    /// Compact phone-source label: the host for one node, "host +N" for several, `None` for
+    /// none (RBN-only operator).
+    phone_cluster_host: Option<String>,
 }
 
 fn feed_status(started: bool, connected: bool, last: i64, now: i64) -> FeedStatus {
@@ -400,6 +473,16 @@ fn feed_status(started: bool, connected: bool, last: i64, now: i64) -> FeedStatu
     }
 }
 
+/// Compact phone-source label for N connected human nodes: `None` for none, the bare host
+/// for one, and "host +N" for several — enough for the Now-Bar pill / Needed-board line.
+fn summarize_hosts(hosts: &[String]) -> Option<String> {
+    match hosts.len() {
+        0 => None,
+        1 => Some(hosts[0].clone()),
+        n => Some(format!("{} +{}", hosts[0], n - 1)),
+    }
+}
+
 /// Liveness of the background live feeds, for the Now-Bar connector pills. A feed
 /// is "live" if it parsed an event within FEED_FRESH_SECS, "waiting" if started
 /// but silent so far, "idle" if it has gone quiet (a lull on a quiet band, or a
@@ -408,12 +491,22 @@ fn feed_status(started: bool, connected: bool, last: i64, now: i64) -> FeedStatu
 fn get_feed_health(health: State<'_, SharedHealth>) -> FeedHealth {
     use std::sync::atomic::Ordering::Relaxed;
     let now = now_unix();
+    // The human DX-cluster nodes (the SSB/phone aggregator): the spawned host list drives the
+    // started flag + label, and "connected" = ANY node's session up.
+    let human_hosts: Vec<String> = HUMAN_NODES_STARTED
+        .lock()
+        .map(|g| g.clone())
+        .unwrap_or_default();
+    let phone_connected = PHONE_NODE_CONNS
+        .lock()
+        .map(|v| v.iter().any(|b| b.load(Relaxed)))
+        .unwrap_or(false);
     FeedHealth {
         cluster: feed_status(
-            // Any of the cluster sources spawned (RBN CW/digital firehoses + human node).
+            // Any of the cluster sources spawned (RBN CW/digital firehoses + any human node).
             RBN_CW_STARTED.load(Relaxed)
                 || RBN_DIGITAL_STARTED.load(Relaxed)
-                || CLUSTER_STARTED.load(Relaxed),
+                || !human_hosts.is_empty(),
             health.cluster_connected.load(Relaxed),
             health.cluster_last.load(Relaxed),
             now,
@@ -424,6 +517,15 @@ fn get_feed_health(health: State<'_, SharedHealth>) -> FeedHealth {
             health.pskr_last_event.load(Relaxed),
             now,
         ),
+        // The human nodes as a group — their own started/connected/last, so a down SSB
+        // source is visible even while RBN keeps the aggregate `cluster` pill green.
+        phone_cluster: feed_status(
+            !human_hosts.is_empty(),
+            phone_connected,
+            health.phone_cluster_last.load(Relaxed),
+            now,
+        ),
+        phone_cluster_host: summarize_hosts(&human_hosts),
     }
 }
 
@@ -1145,9 +1247,13 @@ fn set_settings(
     cache: State<'_, PropCache>,
     mut settings: Settings,
 ) -> Result<AppSnapshot, String> {
+    // Mirror the legacy single `cluster_host` to the list head (empty when the list is
+    // empty), so clearing the node list to go RBN-only actually sticks — otherwise `load`'s
+    // upgrade seed would re-inject the stale legacy host on the next launch.
+    settings.cluster_host = settings.cluster_hosts.first().cloned().unwrap_or_default();
     // Capture the feed config before `settings` moves into the engine.
     let cluster_enabled = settings.cluster_enabled;
-    let cluster_host = settings.cluster_host.clone();
+    let cluster_hosts = settings.cluster_hosts.clone();
     let mycall = settings.mycall.clone();
     let mygrid = settings.mygrid.clone();
     let opening_regional = settings.opening_regional;
@@ -1223,7 +1329,7 @@ fn set_settings(
     }
 
     if cluster_enabled {
-        start_cluster_feeds(spots.inner(), &cluster_host, &mycall, health.inner());
+        start_cluster_feeds(spots.inner(), &cluster_hosts, &mycall, health.inner());
     }
     start_pskr_feed(live_paths.inner(), &mycall, health.inner());
     if opening_regional {
@@ -1280,22 +1386,32 @@ fn restart_live_feeds(
         health.pskr_last_event.store(0, SeqCst);
         health.cluster_connected.store(false, SeqCst);
         health.pskr_connected.store(false, SeqCst);
+        health.phone_cluster_last.store(0, SeqCst);
         // Re-arm: clear stops + release the once-latches, then start fresh threads
         // from the LATEST persisted settings (NOT spawn-time captures — a second
         // save during the drain must win). An emptied/invalid callsign simply
         // no-ops inside start_* (is_real_call gate) → feeds stay down, correctly.
         CLUSTER_STOP.store(false, SeqCst);
         PSKR_STOP.store(false, SeqCst);
-        CLUSTER_STARTED.store(false, SeqCst);
+        // ALL cluster latches must re-arm — CLUSTER_STOP halts the RBN threads too, so
+        // leaving their latches set would strand RBN (CW/digital) down after a rename.
+        RBN_CW_STARTED.store(false, SeqCst);
+        RBN_DIGITAL_STARTED.store(false, SeqCst);
+        if let Ok(mut v) = HUMAN_NODES_STARTED.lock() {
+            v.clear();
+        }
+        if let Ok(mut v) = PHONE_NODE_CONNS.lock() {
+            v.clear();
+        }
         PSKR_STARTED.store(false, SeqCst);
         PSKR_REGION_STARTED.store(false, SeqCst);
-        let (cluster_enabled, cluster_host, mycall, mygrid, opening_regional) =
+        let (cluster_enabled, cluster_hosts, mycall, mygrid, opening_regional) =
             match engine.lock() {
                 Ok(eng) => {
                     let st = eng.settings();
                     (
                         st.cluster_enabled,
-                        st.cluster_host.clone(),
+                        st.cluster_hosts.clone(),
                         st.mycall.clone(),
                         st.mygrid.clone(),
                         st.opening_regional,
@@ -1304,7 +1420,7 @@ fn restart_live_feeds(
                 Err(_) => return,
             };
         if cluster_enabled {
-            start_cluster_feeds(&spots, &cluster_host, &mycall, &health);
+            start_cluster_feeds(&spots, &cluster_hosts, &mycall, &health);
         }
         start_pskr_feed(&live_paths, &mycall, &health);
         if opening_regional {
@@ -4154,7 +4270,7 @@ pub fn run() {
     let persisted_source = settings.source;
     // Cluster/RBN feed config (captured before `settings` moves into the engine).
     let cluster_enabled = settings.cluster_enabled;
-    let cluster_host = settings.cluster_host.clone();
+    let cluster_hosts = settings.cluster_hosts.clone();
     let cluster_call = settings.mycall.clone();
     let region_grid = settings.mygrid.clone();
     let region_enabled = settings.opening_regional;
@@ -4179,7 +4295,7 @@ pub fn run() {
     ))));
     let health: SharedHealth = Arc::new(FeedHealthState::default());
     if cluster_enabled {
-        start_cluster_feeds(&spots, &cluster_host, &cluster_call, &health);
+        start_cluster_feeds(&spots, &cluster_hosts, &cluster_call, &health);
     }
     start_pskr_feed(&live_paths, &cluster_call, &health);
     if region_enabled {

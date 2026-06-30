@@ -5855,6 +5855,40 @@ select.settings-input {
   flex: 1;
   min-width: 0;
 }
+/* DX-cluster node list editor (the SSB/phone aggregator). */
+.cluster-node-row,
+.cluster-node-add {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  margin-top: var(--space-1);
+}
+.cluster-node-row .settings-input,
+.cluster-node-add .settings-input {
+  flex: 1;
+  min-width: 0;
+}
+.cluster-node-remove,
+.cluster-node-add-blank {
+  flex: 0 0 auto;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2, transparent);
+  color: var(--text-dim);
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+.cluster-node-remove:hover {
+  color: var(--alert-critical);
+  border-color: var(--alert-critical);
+}
+.cluster-node-add-blank:hover {
+  color: var(--text);
+}
+.cluster-node-empty {
+  font-style: italic;
+}
 .settings-refresh {
   flex: 0 0 auto;
   border: 1px solid var(--border);
@@ -8123,6 +8157,19 @@ select.settings-input {
   font-size: 0.78rem;
   color: var(--text-dim);
 }
+/* Phone-source liveness line — Phone needs come ONLY from the human DX-cluster node, so
+ * this explains an empty Phone column at a glance (RBN covers CW/digital). Mirrors the
+ * Now-Bar pill state colors. */
+.np-phone-src {
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 2px var(--space-3) var(--space-1);
+  color: var(--text-dim);
+}
+.np-phone-src.good { color: var(--state-good); }
+.np-phone-src.ok { color: var(--state-ok); }
+.np-phone-src.weak { color: var(--text-faint); }
+.np-phone-src.bad { color: var(--alert-critical); }
 .np-popout {
   margin-left: auto;
   font-size: 0.75rem;

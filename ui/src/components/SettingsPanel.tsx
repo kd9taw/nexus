@@ -322,6 +322,13 @@ export function SettingsPanel({
     setForm((prev) => (prev ? { ...prev, [key]: value } : prev))
   }
 
+  // The DX-cluster node list (SSB/phone aggregator). Functional update so rapid edits
+  // (add/remove/edit a row) never race on a stale `form` capture.
+  const mutateClusterHosts = (fn: (hosts: string[]) => string[]) => {
+    markDirty()
+    setForm((prev) => (prev ? { ...prev, clusterHosts: fn(prev.clusterHosts ?? []) } : prev))
+  }
+
   // Optional numeric fields ('' = null = feature off) — `update` coerces '' to 0,
   // which would silently mean "cap at 0" instead of "no cap".
   const updateNullableNum = (key: FieldKey, raw: string, min: number) => {
@@ -2027,38 +2034,73 @@ export function SettingsPanel({
                 </span>
               </div>
 
-              <label className="settings-field">
-                <span className="settings-label">Phone/SSB cluster node</span>
-                <select
-                  className="settings-input"
-                  value={
-                    CLUSTER_PRESETS.some((p) => p.host === form.clusterHost)
-                      ? form.clusterHost
-                      : 'custom'
-                  }
-                  onChange={(e) => {
-                    if (e.target.value !== 'custom') update('clusterHost', e.target.value)
-                  }}
-                >
-                  {CLUSTER_PRESETS.map((p) => (
-                    <option key={p.host} value={p.host}>
-                      {p.label}
-                    </option>
-                  ))}
-                  <option value="custom">Custom…</option>
-                </select>
-                <input
-                  className="settings-input"
-                  value={form.clusterHost ?? ''}
-                  onChange={(e) => update('clusterHost', e.target.value)}
-                  placeholder="ve7cc.net:23"
-                  spellCheck={false}
-                />
+              <div className="settings-field">
+                <span className="settings-label">Phone/SSB cluster nodes</span>
+                {(form.clusterHosts ?? []).length === 0 ? (
+                  <span className="settings-hint cluster-node-empty">
+                    No nodes — add one below to get SSB/phone needs (RBN only carries CW + digital).
+                  </span>
+                ) : (
+                  (form.clusterHosts ?? []).map((host, i) => (
+                    <div key={i} className="cluster-node-row">
+                      <input
+                        className="settings-input"
+                        value={host}
+                        onChange={(e) =>
+                          mutateClusterHosts((hs) => hs.map((h, j) => (j === i ? e.target.value : h)))
+                        }
+                        placeholder="ve7cc.net:23"
+                        spellCheck={false}
+                      />
+                      <button
+                        type="button"
+                        className="cluster-node-remove"
+                        title="Remove this cluster node"
+                        aria-label={`Remove ${host || 'node'}`}
+                        onClick={() => mutateClusterHosts((hs) => hs.filter((_, j) => j !== i))}
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ))
+                )}
+                <div className="cluster-node-add">
+                  <select
+                    className="settings-input"
+                    value=""
+                    onChange={(e) => {
+                      const host = e.target.value
+                      if (!host) return
+                      mutateClusterHosts((hs) =>
+                        hs.some((h) => h.trim().toLowerCase() === host.toLowerCase())
+                          ? hs
+                          : [...hs, host],
+                      )
+                    }}
+                  >
+                    <option value="">+ Add a known node…</option>
+                    {CLUSTER_PRESETS.map((p) => (
+                      <option key={p.host} value={p.host}>
+                        {p.label}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    className="cluster-node-add-blank"
+                    title="Add a custom node row"
+                    onClick={() => mutateClusterHosts((hs) => [...hs, ''])}
+                  >
+                    + Custom
+                  </button>
+                </div>
                 <span className="settings-hint">
-                  Human DX cluster for SSB/phone spots (RBN CW + digital connect
-                  automatically). Pick a preset or enter host:port. Takes effect on restart.
+                  We connect to ALL listed nodes and union their human SSB/phone spots — more
+                  nodes = wider phone coverage (RBN CW + digital connect automatically; RBN
+                  endpoints are ignored here). An added node connects on the next Save; removing
+                  one takes effect on restart.
                 </span>
-              </label>
+              </div>
 
               <label className="settings-field">
                 <span className="settings-label">Companion UDP address</span>
