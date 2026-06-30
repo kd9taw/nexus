@@ -527,10 +527,12 @@ impl Default for Settings {
             // operators can blank this. (NOTE: dxc.nc7j.com:7373 is NC7J's *skimmer* port,
             // not its human port — don't use it here; the migration in `load` fixes it.)
             cluster_host: "ve7cc.net:23".to_string(),
-            // The aggregator seeds with the same community node; the operator adds more in
-            // Settings ▸ Connections for wider phone coverage. (RBN endpoints don't belong
-            // here — they're auto-wired; `load` strips any that sneak in.)
-            cluster_hosts: vec!["ve7cc.net:23".to_string()],
+            // The aggregator seeds with TWO diverse-port nodes: ve7cc on the standard telnet
+            // port 23, plus wa9pie on 8000 — a firewall-friendly fallback, since some
+            // networks/ISPs block outbound port 23 (which would silently kill phone while RBN
+            // on 7000/7001 keeps working). The operator adds more in Settings ▸ Connections.
+            // (RBN endpoints don't belong here — they're auto-wired; `load` strips any.)
+            cluster_hosts: vec!["ve7cc.net:23".to_string(), "dxc.wa9pie.net:8000".to_string()],
             audio_in: String::new(),
             audio_out: String::new(),
             tx_level: 0.9,

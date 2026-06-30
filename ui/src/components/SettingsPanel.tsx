@@ -168,9 +168,8 @@ const SETTINGS_TABS: { id: SettingsTab; label: string }[] = [
 // separately; the global human-spot mesh means any well-connected node has the same spots.)
 const CLUSTER_PRESETS: { label: string; host: string }[] = [
   { label: 'VE7CC-1 — human SSB/CW, clean (recommended)', host: 've7cc.net:23' },
-  { label: 'WA9PIE-2 — best uptime (HRD node)', host: 'dxc.wa9pie.net:8000' },
-  { label: 'NC7J — AR-Cluster', host: 'dxc.nc7j.com:23' },
-  { label: 'W1NR — DXSpider', host: 'dx.w1nr.net:23' },
+  { label: 'WA9PIE-2 — port 8000 (use if port 23 is blocked)', host: 'dxc.wa9pie.net:8000' },
+  { label: 'W1NR — DXSpider, phone-rich', host: 'dx.w1nr.net:23' },
   { label: 'W3LPL — firehose (skimmer-heavy)', host: 'w3lpl.net:7373' },
 ]
 
