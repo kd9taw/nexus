@@ -6585,14 +6585,10 @@ select.settings-input {
 .decode-needs {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  gap: var(--space-1);
   flex: none;
   margin-left: var(--space-1);
-}
-.decode-need-ic {
-  display: inline-flex;
-  align-items: center;
-  color: var(--need-color, var(--accent));
+  vertical-align: middle;
 }
 .decode-need-more {
   font-size: 10px;

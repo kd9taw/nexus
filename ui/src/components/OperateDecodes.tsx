@@ -370,22 +370,16 @@ export function OperateDecodes({
                       )}
                     </span>
                   )}
-                  {/* Need micro-icons: WHY this station is worth working (new DXCC/zone/
-                      band/mode/grid, DXpedition, worked-but-unconfirmed) — capped, with
-                      a +N overflow. Matches the Needed panel's vocabulary + colours. */}
+                  {/* Need chips: WHY this station is worth working (new DXCC/zone/band/mode/
+                      grid, DXpedition, worked-but-unconfirmed) — the SAME labelled text chips
+                      the Needed panel uses, so the two views read as one. Capped, with +N. */}
                   {needs.cats.length > 0 && (
                     <span className="decode-needs" aria-label="needs">
                       {needs.cats.slice(0, MAX_NEED_ICONS).map((c: NeedCat) => {
                         const v = NEED_VISUALS[c]
-                        const Ic = v.Icon
                         return (
-                          <span
-                            key={c}
-                            className={`decode-need-ic ${v.cls}`}
-                            title={v.title}
-                            aria-label={v.title}
-                          >
-                            <Ic size={12} />
+                          <span key={c} className={`need-chip ${v.cls}`} title={v.title}>
+                            {v.label}
                           </span>
                         )
                       })}
