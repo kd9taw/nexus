@@ -1283,6 +1283,22 @@ export function SettingsPanel({
                 <span className="settings-hint">Port Nexus launches rigctld on.</span>
               </label>
 
+              <label className="settings-field">
+                <span className="settings-label">Rotator (rotctld)</span>
+                <input
+                  className="settings-input"
+                  type="text"
+                  value={form.rotatorHost}
+                  placeholder="host:port — e.g. 127.0.0.1:4533"
+                  onChange={(e) => update('rotatorHost', e.target.value)}
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                <span className="settings-hint">
+                  Run rotctld; then click ↗ on a Needed row to point the antenna. Empty = off.
+                </span>
+              </label>
+
               <div className="settings-field">
                 <span className="settings-label">Split operation</span>
                 <div className="theme-switcher" role="group" aria-label="Split operation">

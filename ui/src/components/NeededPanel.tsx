@@ -111,6 +111,9 @@ interface Props {
    * the log. Omitted in the popped-out window (no cross-window nav) → those rows fall
    * back to a plain band QSY. */
   onWork?: (alert: NeedAlert) => void
+  /** Point the antenna rotator at this need's call (great-circle bearing). Omitted when
+   * no rotator is configured → the ↗ button is hidden. */
+  onPoint?: (call: string) => void
   /** Pop this board out into its own window (omit when already standalone). */
   onPopOut?: () => void
   /** Liveness of the human DX-cluster node — the SSB/phone source — plus its host, so the
@@ -147,6 +150,7 @@ export function NeededPanel({
   onQsy,
   onSelect,
   onWork,
+  onPoint,
   onPopOut,
   phoneSource,
 }: Props) {
@@ -434,7 +438,22 @@ export function NeededPanel({
                     </span>
                   ))}
                 </span>
-                <span className="np-call">{a.call}</span>
+                <span className="np-call">
+                  {a.call}
+                  {onPoint && (
+                    <button
+                      type="button"
+                      className="np-point"
+                      title={`Point the antenna at ${a.call}`}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onPoint(a.call)
+                      }}
+                    >
+                      ↗
+                    </button>
+                  )}
+                </span>
                 <span className="np-entity">{a.entity || '—'}</span>
                 <span className="np-band">{a.band}</span>
                 <span

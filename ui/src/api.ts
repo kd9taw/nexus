@@ -671,6 +671,21 @@ export async function probeCatPorts(): Promise<CatProbeResult> {
   return invoke<CatProbeResult>('probe_cat_ports')
 }
 
+/** Point the antenna rotator at an absolute azimuth (degrees) via rotctld. */
+export async function pointRotator(azDeg: number): Promise<void> {
+  return invoke('point_rotator', { azDeg })
+}
+
+/** Point the rotator at a callsign's DXCC entity; resolves to the bearing it pointed to. */
+export async function pointRotatorAtCall(call: string): Promise<number> {
+  return invoke<number>('point_rotator_at_call', { call })
+}
+
+/** Current rotator azimuth (degrees), or null if rotctld is unset/unreachable. */
+export async function readRotator(): Promise<number | null> {
+  return invoke<number | null>('read_rotator')
+}
+
 /** Set the TX period: true = even/"1st" slots, false = odd/"2nd". */
 export async function setTxCycleAuto(auto: boolean): Promise<AppSnapshot> {
   return invoke<AppSnapshot>('set_tx_cycle_auto', { auto })

@@ -72,6 +72,7 @@ import {
   workSpot,
   setLicenseClass,
   stopQsoRecording,
+  pointRotatorAtCall,
 } from './api'
 import { setStatus } from './status'
 import type { PropagationSnapshot, FeedHealth, NeedTag, NeedAlert, SpotRow } from './types'
@@ -789,6 +790,16 @@ export default function App() {
   // (`workSpot`) so the rig can never end up in the new mode at the old dial (no wrong-mode
   // flash) and the UI never sees a half-applied mode/freq state. Then open the matching
   // cockpit and — for CW/Phone — hand it the callsign to prefill the log. A need with no
+  // Point the antenna rotator at a needed call (great-circle bearing from your grid).
+  const handlePointAntenna = useCallback(async (call: string) => {
+    try {
+      const bearing = await pointRotatorAtCall(call)
+      pushToast(`↗ Pointing antenna to ${Math.round(bearing)}° (${call})`, 'success', 3000)
+    } catch (e) {
+      pushToast(typeof e === 'string' ? e : `Couldn't point the antenna at ${call}`, 'error', 4000)
+    }
+  }, [])
+
   // resolvable frequency at all falls back to a plain band QSY.
   const handleWorkNeeded = useCallback(
     (alert: NeedAlert) => {
@@ -1204,6 +1215,7 @@ export default function App() {
           onQsy={handleQsy}
           onSelect={handleSelect}
           onWork={handleWorkNeeded}
+          onPoint={settings?.rotatorHost?.trim() ? handlePointAntenna : undefined}
           onPopOut={() => void openPanelWindow('needed')}
           phoneSource={
             feedHealth

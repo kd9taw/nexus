@@ -1140,6 +1140,8 @@ export interface Settings {
    * Nexus obeys whatever mode the rig is already in (max compatibility). */
   /** TCP port that rigctld listens on / Tempo launches it with. */
   rigctldPort: number
+  /** Antenna rotator: rotctld daemon `host:port` (empty = no rotator). */
+  rotatorHost: string
   /** Run the rigctld-compatible CAT broker so other apps share the radio. */
   catBroker: boolean
   /** TCP port the CAT broker listens on (Hamlib NET rigctl default 4532). */

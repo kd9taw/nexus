@@ -1689,6 +1689,96 @@ async fn probe_cat_ports(state: State<'_, SharedEngine>) -> Result<CatProbeResul
     }
 }
 
+/// Point the antenna rotator at an absolute azimuth (degrees) via rotctld.
+#[tauri::command]
+async fn point_rotator(state: State<'_, SharedEngine>, az_deg: f64) -> Result<(), String> {
+    #[cfg(feature = "radio")]
+    {
+        let host = state
+            .lock()
+            .map_err(|e| e.to_string())?
+            .settings()
+            .rotator_host
+            .clone();
+        if host.trim().is_empty() {
+            return Err("Set the rotator (rotctld) host:port in Settings first.".to_string());
+        }
+        tauri::async_runtime::spawn_blocking(move || tempo_audio::rotator::point(&host, az_deg))
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(not(feature = "radio"))]
+    {
+        let _ = (state, az_deg);
+        Err("radio support is not built into this binary".to_string())
+    }
+}
+
+/// Point the rotator at a callsign's DXCC entity — the great-circle bearing from your
+/// grid. Returns the bearing pointed to (degrees) for UI feedback.
+#[tauri::command]
+async fn point_rotator_at_call(
+    state: State<'_, SharedEngine>,
+    call: String,
+) -> Result<f64, String> {
+    #[cfg(feature = "radio")]
+    {
+        let (host, mygrid) = {
+            let eng = state.lock().map_err(|e| e.to_string())?;
+            (
+                eng.settings().rotator_host.clone(),
+                eng.settings().mygrid.clone(),
+            )
+        };
+        if host.trim().is_empty() {
+            return Err("Set the rotator (rotctld) host:port in Settings first.".to_string());
+        }
+        let me = propagation::geo::maidenhead_to_latlon(mygrid.trim())
+            .ok_or("Set your grid square in Settings so a bearing can be computed.")?;
+        let info = propagation::dxcc::resolve(&call)
+            .ok_or_else(|| format!("Couldn't locate {call} (unknown callsign)."))?;
+        let bearing = propagation::geo::bearing_deg(me, (info.lat, info.lon));
+        tauri::async_runtime::spawn_blocking(move || tempo_audio::rotator::point(&host, bearing))
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string())?;
+        Ok(bearing)
+    }
+    #[cfg(not(feature = "radio"))]
+    {
+        let _ = (state, call);
+        Err("radio support is not built into this binary".to_string())
+    }
+}
+
+/// Current rotator azimuth (degrees), or `None` if rotctld is unset / unreachable.
+#[tauri::command]
+async fn read_rotator(state: State<'_, SharedEngine>) -> Result<Option<f64>, String> {
+    #[cfg(feature = "radio")]
+    {
+        let host = state
+            .lock()
+            .map_err(|e| e.to_string())?
+            .settings()
+            .rotator_host
+            .clone();
+        if host.trim().is_empty() {
+            return Ok(None);
+        }
+        Ok(
+            tauri::async_runtime::spawn_blocking(move || tempo_audio::rotator::read_azimuth(&host))
+                .await
+                .map_err(|e| e.to_string())?,
+        )
+    }
+    #[cfg(not(feature = "radio"))]
+    {
+        let _ = state;
+        Ok(None)
+    }
+}
+
 /// Enable/disable normal slot transmit ("Monitor"). `false` mutes transmit and
 /// clears anything queued; `true` re-enables it and clears a tripped watchdog.
 #[tauri::command]
@@ -4690,6 +4780,9 @@ pub fn run() {
             get_audio_devices,
             detect_rigs,
             probe_cat_ports,
+            point_rotator,
+            point_rotator_at_call,
+            read_rotator,
             get_rig_models,
             get_band_plan,
             set_license_class,

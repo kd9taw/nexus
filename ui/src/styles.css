@@ -8337,6 +8337,22 @@ select.settings-input {
   font-family: var(--font-mono);
   font-weight: 700;
 }
+/* Point-the-antenna affordance on a Needed row (shown only when a rotator is set). */
+.np-point {
+  margin-left: var(--space-1);
+  padding: 0 3px;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--text-faint);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.np-point:hover {
+  color: var(--accent, #4ea1ff);
+  border-color: var(--accent, #4ea1ff);
+}
 .np-entity,
 .np-why {
   color: var(--text-dim);

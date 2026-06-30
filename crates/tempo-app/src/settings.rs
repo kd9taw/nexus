@@ -139,6 +139,9 @@ pub struct Settings {
     pub cw_pitch_hz: f32,
     /// Local TCP port Tempo uses for rigctld (it spawns rigctld on this port).
     pub rigctld_port: u16,
+    /// Antenna rotator: `rotctld` daemon address `host:port` (the operator runs rotctld).
+    /// Empty = no rotator. Nexus connects to point the antenna (read-only `p` to read).
+    pub rotator_host: String,
     /// Run the rigctld-compatible CAT **broker** so other apps (WSJT-X / N1MM /
     /// loggers) share the radio THROUGH Nexus, on `cat_broker_port`. Off by default.
     pub cat_broker: bool,
@@ -520,6 +523,7 @@ impl Default for Settings {
             cw_keyer: CwKeyerBackend::Cat, // rig keyer via send_morse (zero hardware)
             cw_pitch_hz: 600.0,
             rigctld_port: 4532,
+            rotator_host: String::new(),
             cat_broker: false,
             cat_broker_port: 4532,
             wsjtx_udp: false,
