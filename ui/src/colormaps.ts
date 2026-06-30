@@ -15,12 +15,21 @@ export type ColormapName =
   | 'turbo'
   | 'sdr-green'
   | 'amber-crt'
+  | 'blue'
+  | 'cyan'
+  | 'brown'
+  | 'grayscale'
+  | 'digipan'
+  | 'linrad'
+  | 'negative'
 
 export const DEFAULT_COLORMAP: ColormapName = 'inferno'
 /** Luminance-monotonic sequential maps (safe for magnitude). turbo is NOT. */
 export const SEQUENTIAL: ColormapName[] = ['inferno', 'viridis', 'cividis', 'sdr-green', 'amber-crt']
 
-// Anchor stops (sRGB hex), evenly spaced over t∈[0,1].
+// Anchor stops (sRGB hex), evenly spaced over t∈[0,1]. The named palettes below the
+// perceptual set echo the familiar WSJT-X/fldigi waterfall looks (Blue, Cyan, Brown,
+// Grayscale, Digipan, Linrad, Negative) so operators can pick the one they know.
 const STOPS: Record<ColormapName, string[]> = {
   inferno: ['#000004', '#1b0c41', '#4a0c6b', '#781c6d', '#a52c60', '#cf4446', '#ed6925', '#fb9a06', '#fcffa4'],
   viridis: ['#440154', '#472d7b', '#3b528b', '#2c728e', '#21918c', '#28ae80', '#5ec962', '#addc30', '#fde725'],
@@ -28,6 +37,13 @@ const STOPS: Record<ColormapName, string[]> = {
   turbo: ['#30123b', '#4145ab', '#4675ed', '#39a2fc', '#1bcfd4', '#24eca6', '#61fc6c', '#a4fc3b', '#d1e834', '#f9ba38', '#fb7e21', '#e4460a', '#b11901', '#7a0403'],
   'sdr-green': ['#000000', '#002800', '#005800', '#009000', '#30d030', '#b8ffb8'],
   'amber-crt': ['#000000', '#1a0e00', '#4a2c00', '#8a5a00', '#d09000', '#ffc233', '#fff0c8'],
+  blue: ['#000010', '#001440', '#003078', '#0058b0', '#2090e0', '#80c8ff', '#ffffff'],
+  cyan: ['#000010', '#003028', '#006050', '#00a088', '#30d0c0', '#a0fff0', '#ffffff'],
+  brown: ['#000000', '#1c0e00', '#4a2800', '#7a4810', '#b07028', '#e0a85a', '#ffe0a0'],
+  grayscale: ['#000000', '#333333', '#666666', '#999999', '#cccccc', '#ffffff'],
+  digipan: ['#000020', '#000080', '#0040c0', '#00b0b0', '#30d030', '#e0e000', '#ff6000', '#ffffff'],
+  linrad: ['#000000', '#000060', '#0030b0', '#00b0a0', '#30d030', '#e0e000', '#ff4000', '#ffffff'],
+  negative: ['#ffffff', '#cccccc', '#999999', '#666666', '#333333', '#000000'],
 }
 
 function hexToRgb(hex: string): [number, number, number] {

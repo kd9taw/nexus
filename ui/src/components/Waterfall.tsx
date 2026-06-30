@@ -1,7 +1,18 @@
-import { useEffect, useLayoutEffect, useMemo, useRef } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { getSpectrumRow } from '../api'
 import { sampleLut } from '../colormaps'
-import { agcRange, bakeLut, normalize, themeColormap, MIN_SPAN } from '../waterfall'
+import { agcRange, bakeLut, normalize, resolveColormap, WATERFALL_PALETTES, MIN_SPAN } from '../waterfall'
+
+/** Persist the operator's waterfall palette choice (a display preference, like the
+ * theme) in localStorage; 'auto' rides the theme. */
+const PALETTE_KEY = 'nexus.waterfall.palette'
+function loadPalette(): string {
+  try {
+    return localStorage.getItem(PALETTE_KEY) ?? 'auto'
+  } catch {
+    return 'auto'
+  }
+}
 
 interface Props {
   transmitting: boolean
@@ -40,14 +51,16 @@ function xToFreq(x: number, width: number): number {
 export function Waterfall({ transmitting, rxOffsetHz, txOffsetHz, theme, onTune, active = true }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const rafRef = useRef<number | null>(null)
+  // Operator's chosen palette ('auto' = theme-driven). Display-only → localStorage.
+  const [palette, setPalette] = useState<string>(loadPalette)
   // refs so the animation loop always reads current props without re-subscribing
   const txRef = useRef(transmitting)
   const themeRef = useRef(theme)
   const rxOffRef = useRef(rxOffsetHz)
   const txOffRef = useRef(txOffsetHz)
   const activeRef = useRef(active)
-  // pre-baked colormap LUT (256×RGBA) for the render hot path; rebuilt on theme.
-  const lutRef = useRef<Uint8ClampedArray>(bakeLut(themeColormap(theme)))
+  // pre-baked colormap LUT (256×RGBA) for the render hot path; rebuilt on palette/theme.
+  const lutRef = useRef<Uint8ClampedArray>(bakeLut(resolveColormap(palette, theme)))
   // live legend readout (updated directly, no React re-render at 8 Hz)
   const dbLabelRef = useRef<HTMLSpanElement>(null)
 
@@ -61,12 +74,12 @@ export function Waterfall({ transmitting, rxOffsetHz, txOffsetHz, theme, onTune,
   // so it changes atomically with the legend gradient (a sync useMemo below) on
   // a theme switch — no frame where the legend and the canvas colormap disagree.
   useLayoutEffect(() => {
-    lutRef.current = bakeLut(themeColormap(theme))
-  }, [theme])
+    lutRef.current = bakeLut(resolveColormap(palette, theme))
+  }, [palette, theme])
 
   // Legend gradient (weak→strong, bottom→top) for the active colormap.
   const legendGradient = useMemo(() => {
-    const name = themeColormap(theme)
+    const name = resolveColormap(palette, theme)
     const stops: string[] = []
     const N = 8
     for (let i = 0; i <= N; i++) {
@@ -74,7 +87,7 @@ export function Waterfall({ transmitting, rxOffsetHz, txOffsetHz, theme, onTune,
       stops.push(`rgb(${r},${g},${b}) ${Math.round((i / N) * 100)}%`)
     }
     return `linear-gradient(to top, ${stops.join(', ')})`
-  }, [theme])
+  }, [palette, theme])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -384,6 +397,27 @@ export function Waterfall({ transmitting, rxOffsetHz, txOffsetHz, theme, onTune,
       <div className="panel-header">
         <h2>Waterfall</h2>
         <span className="wf-hint">click = RX · Shift = TX · Ctrl = both</span>
+        <select
+          className="wf-palette"
+          value={palette}
+          aria-label="Waterfall color palette"
+          title="Waterfall color palette"
+          onChange={(e) => {
+            const v = e.target.value
+            setPalette(v)
+            try {
+              localStorage.setItem(PALETTE_KEY, v)
+            } catch {
+              /* storage blocked — palette still applies this session */
+            }
+          }}
+        >
+          {WATERFALL_PALETTES.map((p) => (
+            <option key={p.value} value={p.value}>
+              {p.label}
+            </option>
+          ))}
+        </select>
       </div>
       <div className="wf-stage">
         <canvas

@@ -95,3 +95,29 @@ export function themeColormap(theme: string): ColormapName {
       return 'inferno'
   }
 }
+
+/** Pickable waterfall palettes in menu order — `'auto'` rides the theme; the rest are
+ * explicit (the perceptual set + the familiar WSJT-X/fldigi looks). */
+export const WATERFALL_PALETTES: { value: ColormapName | 'auto'; label: string }[] = [
+  { value: 'auto', label: 'Auto (theme)' },
+  { value: 'inferno', label: 'Inferno' },
+  { value: 'viridis', label: 'Viridis' },
+  { value: 'cividis', label: 'Cividis (CVD-safe)' },
+  { value: 'turbo', label: 'Turbo' },
+  { value: 'sdr-green', label: 'SDR Green' },
+  { value: 'amber-crt', label: 'Amber CRT' },
+  { value: 'blue', label: 'Blue' },
+  { value: 'cyan', label: 'Cyan' },
+  { value: 'brown', label: 'Brown' },
+  { value: 'grayscale', label: 'Grayscale' },
+  { value: 'digipan', label: 'Digipan' },
+  { value: 'linrad', label: 'Linrad' },
+  { value: 'negative', label: 'Negative' },
+]
+
+/** Resolve the waterfall colormap: an explicit palette choice wins; `'auto'` (or an
+ * unknown/stale value) falls back to the theme's default map. */
+export function resolveColormap(palette: string, theme: string): ColormapName {
+  const explicit = WATERFALL_PALETTES.some((p) => p.value === palette && p.value !== 'auto')
+  return explicit ? (palette as ColormapName) : themeColormap(theme)
+}

@@ -6143,6 +6143,17 @@ select.settings-input {
   color: var(--text-faint);
   font-weight: 500;
 }
+/* Waterfall palette picker — pushed to the right edge of the header (WSJT-X-style). */
+.wf-palette {
+  margin-left: auto;
+  font-size: 10px;
+  padding: 1px var(--space-1);
+  background: var(--surface-2, transparent);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
 .wf-stage {
   position: relative;
   flex: 1;
