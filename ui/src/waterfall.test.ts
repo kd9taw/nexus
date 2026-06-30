@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { agcRange, applyGainZero, normalize, bakeLut, themeColormap, resolveColormap } from './waterfall'
+import { agcRange, applyGainZero, normalize, bakeLut, themeColormap, resolveColormap, zoomRange, WF_F_MIN, WF_F_MAX } from './waterfall'
 import { sampleLut } from './colormaps'
 
 describe('agcRange (visual-AGC)', () => {
@@ -88,6 +88,29 @@ describe('applyGainZero (manual contrast)', () => {
   it('never returns a degenerate window (ceil > floor)', () => {
     const r = applyGainZero(0.5, 0.5, 1, 1) // zero span + max gain
     expect(r.ceil).toBeGreaterThan(r.floor)
+  })
+})
+
+describe('zoomRange (waterfall span/zoom)', () => {
+  it('span 0 (or ≥ full) → the full passband', () => {
+    expect(zoomRange(1500, 0)).toEqual({ lo: WF_F_MIN, hi: WF_F_MAX })
+    expect(zoomRange(1500, 9999)).toEqual({ lo: WF_F_MIN, hi: WF_F_MAX })
+  })
+
+  it('centers the window on the center frequency away from the edges', () => {
+    expect(zoomRange(1500, 1000)).toEqual({ lo: 1000, hi: 2000 })
+  })
+
+  it('clamps to the low edge without shrinking the span', () => {
+    const { lo, hi } = zoomRange(300, 1000) // would start at -200
+    expect(lo).toBe(WF_F_MIN)
+    expect(hi - lo).toBe(1000)
+  })
+
+  it('clamps to the high edge without shrinking the span', () => {
+    const { lo, hi } = zoomRange(2800, 1000) // would end past F_MAX
+    expect(hi).toBe(WF_F_MAX)
+    expect(hi - lo).toBe(1000)
   })
 })
 

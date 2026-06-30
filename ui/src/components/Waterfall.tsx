@@ -1,13 +1,24 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { getSpectrumRow } from '../api'
 import { sampleLut } from '../colormaps'
-import { agcRange, applyGainZero, bakeLut, normalize, resolveColormap, WATERFALL_PALETTES, MIN_SPAN } from '../waterfall'
+import {
+  agcRange,
+  applyGainZero,
+  bakeLut,
+  normalize,
+  resolveColormap,
+  WATERFALL_PALETTES,
+  WATERFALL_ZOOMS,
+  zoomRange,
+  MIN_SPAN,
+} from '../waterfall'
 
 /** Persist the operator's waterfall display preferences (palette + manual gain/zero,
  * like the theme) in localStorage; palette 'auto' rides the theme, gain/zero 0 = auto. */
 const PALETTE_KEY = 'nexus.waterfall.palette'
 const GAIN_KEY = 'nexus.waterfall.gain'
 const ZERO_KEY = 'nexus.waterfall.zero'
+const ZOOM_KEY = 'nexus.waterfall.zoom'
 function loadPalette(): string {
   try {
     return localStorage.getItem(PALETTE_KEY) ?? 'auto'
@@ -20,6 +31,15 @@ function loadKnob(key: string): number {
   try {
     const v = parseFloat(localStorage.getItem(key) ?? '')
     return Number.isFinite(v) ? Math.max(-1, Math.min(1, v)) : 0
+  } catch {
+    return 0
+  }
+}
+/** Load the persisted zoom span (Hz); missing/blocked → 0 (full band). */
+function loadZoom(): number {
+  try {
+    const v = parseFloat(localStorage.getItem(ZOOM_KEY) ?? '')
+    return Number.isFinite(v) && v > 0 ? v : 0
   } catch {
     return 0
   }
@@ -46,17 +66,19 @@ const F_MIN = 200
 const F_MAX = 2900
 const BINS = 120
 
-function freqToX(hz: number, width: number): number {
-  const f = Math.max(F_MIN, Math.min(F_MAX, hz))
-  return ((f - F_MIN) / (F_MAX - F_MIN)) * width
+// Display mapping over the current view window [lo, hi] (defaults = full passband), so
+// the waterfall can zoom into a sub-range of the audio band.
+function freqToX(hz: number, width: number, lo = F_MIN, hi = F_MAX): number {
+  const f = Math.max(lo, Math.min(hi, hz))
+  return ((f - lo) / (hi - lo)) * width
 }
 
 function binToFreq(bin: number): number {
   return F_MIN + (bin / (BINS - 1)) * (F_MAX - F_MIN)
 }
 
-function xToFreq(x: number, width: number): number {
-  return F_MIN + (x / width) * (F_MAX - F_MIN)
+function xToFreq(x: number, width: number, lo = F_MIN, hi = F_MAX): number {
+  return lo + (x / width) * (hi - lo)
 }
 
 export function Waterfall({ transmitting, rxOffsetHz, txOffsetHz, theme, onTune, active = true }: Props) {
@@ -67,6 +89,13 @@ export function Waterfall({ transmitting, rxOffsetHz, txOffsetHz, theme, onTune,
   const [palette, setPalette] = useState<string>(loadPalette)
   const [gain, setGain] = useState<number>(() => loadKnob(GAIN_KEY))
   const [zero, setZero] = useState<number>(() => loadKnob(ZERO_KEY))
+  // Span/zoom: a sub-window of the audio band centered (at pick time) on the RX marker.
+  // 0 = full band. The window only moves when the operator picks a zoom level, so the
+  // accumulated waterfall doesn't kink on every RX retune.
+  const [zoomSpan, setZoomSpan] = useState<number>(loadZoom)
+  const [view, setView] = useState<{ lo: number; hi: number }>(() =>
+    zoomRange(rxOffsetHz, loadZoom()),
+  )
   // refs so the animation loop always reads current props without re-subscribing
   const txRef = useRef(transmitting)
   const themeRef = useRef(theme)
@@ -75,6 +104,8 @@ export function Waterfall({ transmitting, rxOffsetHz, txOffsetHz, theme, onTune,
   const activeRef = useRef(active)
   const gainRef = useRef(gain)
   const zeroRef = useRef(zero)
+  const viewLoRef = useRef(view.lo)
+  const viewHiRef = useRef(view.hi)
   // pre-baked colormap LUT (256×RGBA) for the render hot path; rebuilt on palette/theme.
   const lutRef = useRef<Uint8ClampedArray>(bakeLut(resolveColormap(palette, theme)))
   // live legend readout (updated directly, no React re-render at 8 Hz)
@@ -87,6 +118,8 @@ export function Waterfall({ transmitting, rxOffsetHz, txOffsetHz, theme, onTune,
   activeRef.current = active
   gainRef.current = gain
   zeroRef.current = zero
+  viewLoRef.current = view.lo
+  viewHiRef.current = view.hi
 
   // Rebuild the LUT synchronously before paint (useLayoutEffect, not useEffect)
   // so it changes atomically with the legend gradient (a sync useMemo below) on
@@ -302,8 +335,15 @@ export function Waterfall({ transmitting, rxOffsetHz, txOffsetHz, theme, onTune,
       const out = rowBuf
       const lut = lutRef.current
       const nBins = row.length
+      // device-x → view frequency → bin over the FULL band (so a zoomed view spreads a
+      // sub-range of bins across the whole width). Full view → identity (x→bin direct).
+      const vlo = viewLoRef.current
+      const vhi = viewHiRef.current
       for (let x = 0; x < Wd; x++) {
-        const bin = (x / Wd) * (nBins - 1)
+        const f = vlo + (x / Wd) * (vhi - vlo)
+        let bin = ((f - F_MIN) / (F_MAX - F_MIN)) * (nBins - 1)
+        if (bin < 0) bin = 0
+        else if (bin > nBins - 1) bin = nBins - 1
         const b0 = Math.floor(bin)
         const b1 = Math.min(nBins - 1, b0 + 1)
         const frac = bin - b0
@@ -340,9 +380,14 @@ export function Waterfall({ transmitting, rxOffsetHz, txOffsetHz, theme, onTune,
       ctx.fillStyle = axisColor
       ctx.font = '10px system-ui, sans-serif'
       ctx.textBaseline = 'middle'
-      const labelStep = W < 280 ? 1000 : 500 // sparser labels when narrow
-      for (let f = labelStep; f <= F_MAX; f += labelStep) {
-        const x = freqToX(f, W)
+      const vlo = viewLoRef.current
+      const vhi = viewHiRef.current
+      // Sparser labels when narrow; finer when zoomed in (a small window needs ticks).
+      const span = vhi - vlo
+      const labelStep = span <= 800 ? 200 : span <= 1600 ? 500 : W < 280 ? 1000 : 500
+      const first = Math.ceil(vlo / labelStep) * labelStep
+      for (let f = first; f <= vhi; f += labelStep) {
+        const x = freqToX(f, W, vlo, vhi)
         ctx.fillRect(x, wfH, 1, 4)
         ctx.fillText(`${f}`, Math.min(W - 26, x + 2), wfH + AXIS_H / 2)
       }
@@ -352,18 +397,27 @@ export function Waterfall({ transmitting, rxOffsetHz, txOffsetHz, theme, onTune,
       // Rx/Tx markers are drawn.)
 
       // --- TX marker (red) then RX marker (green), drawn last so they're on top ---
-      const txx = freqToX(txOffRef.current, W)
-      ctx.fillStyle = txRef.current ? 'rgba(255,70,70,0.95)' : 'rgba(255,90,90,0.7)'
-      ctx.fillRect(txx - 1, 0, 2, wfH)
-      ctx.fillStyle = '#ff5a5a'
-      ctx.font = '600 10px system-ui, sans-serif'
-      ctx.fillText('TX', Math.min(W - 18, txx + 3), 9)
+      // Markers map through the same view; skip one that's scrolled outside a zoom
+      // window (else freqToX would clamp it misleadingly to the edge).
+      const txOff = txOffRef.current
+      if (txOff >= vlo && txOff <= vhi) {
+        const txx = freqToX(txOff, W, vlo, vhi)
+        ctx.fillStyle = txRef.current ? 'rgba(255,70,70,0.95)' : 'rgba(255,90,90,0.7)'
+        ctx.fillRect(txx - 1, 0, 2, wfH)
+        ctx.fillStyle = '#ff5a5a'
+        ctx.font = '600 10px system-ui, sans-serif'
+        ctx.fillText('TX', Math.min(W - 18, txx + 3), 9)
+      }
 
-      const rxx = freqToX(rxOffRef.current, W)
-      ctx.fillStyle = 'rgba(60,220,140,0.9)'
-      ctx.fillRect(rxx - 1, 0, 2, wfH)
-      ctx.fillStyle = '#3ddc8c'
-      ctx.fillText('RX', Math.min(W - 18, rxx + 3), wfH - 6)
+      const rxOff = rxOffRef.current
+      if (rxOff >= vlo && rxOff <= vhi) {
+        const rxx = freqToX(rxOff, W, vlo, vhi)
+        ctx.fillStyle = 'rgba(60,220,140,0.9)'
+        ctx.fillRect(rxx - 1, 0, 2, wfH)
+        ctx.fillStyle = '#3ddc8c'
+        ctx.font = '600 10px system-ui, sans-serif'
+        ctx.fillText('RX', Math.min(W - 18, rxx + 3), wfH - 6)
+      }
     }
 
     const loop = (now: number) => {
@@ -416,7 +470,7 @@ export function Waterfall({ transmitting, rxOffsetHz, txOffsetHz, theme, onTune,
     if (!onTune) return
     if (e.button !== 0) return // stock has no right-button action
     const rect = canvasRef.current!.getBoundingClientRect()
-    const hz = Math.round(xToFreq(e.clientX - rect.left, rect.width))
+    const hz = Math.round(xToFreq(e.clientX - rect.left, rect.width, view.lo, view.hi))
     const target: 'tx' | 'rx' | 'both' = e.ctrlKey ? 'both' : e.shiftKey ? 'tx' : 'rx'
     e.preventDefault()
     onTune(hz, target)
@@ -445,6 +499,28 @@ export function Waterfall({ transmitting, rxOffsetHz, txOffsetHz, theme, onTune,
           {WATERFALL_PALETTES.map((p) => (
             <option key={p.value} value={p.value}>
               {p.label}
+            </option>
+          ))}
+        </select>
+        <select
+          className="wf-palette"
+          value={zoomSpan}
+          aria-label="Waterfall zoom span"
+          title="Waterfall zoom — narrow the displayed audio range around the RX marker"
+          onChange={(e) => {
+            const span = Number(e.target.value)
+            setZoomSpan(span)
+            setView(zoomRange(rxOffsetHz, span))
+            try {
+              localStorage.setItem(ZOOM_KEY, String(span))
+            } catch {
+              /* storage blocked — still applies this session */
+            }
+          }}
+        >
+          {WATERFALL_ZOOMS.map((z) => (
+            <option key={z.value} value={z.value}>
+              {z.label}
             </option>
           ))}
         </select>

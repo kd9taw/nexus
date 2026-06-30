@@ -118,6 +118,31 @@ export function themeColormap(theme: string): ColormapName {
   }
 }
 
+/** Audio passband shown on the waterfall (matches the engine's 200–2900 Hz band). */
+export const WF_F_MIN = 200
+export const WF_F_MAX = 2900
+
+/** A zoom view window of `spanHz` centered on `centerHz`, clamped inside the full
+ * passband so the window never runs off either edge (the displaced half is taken from
+ * the other side). `spanHz<=0` or ≥ the full span → the full band. */
+export function zoomRange(centerHz: number, spanHz: number): { lo: number; hi: number } {
+  const full = WF_F_MAX - WF_F_MIN
+  if (!(spanHz > 0) || spanHz >= full) return { lo: WF_F_MIN, hi: WF_F_MAX }
+  let lo = centerHz - spanHz / 2
+  if (lo < WF_F_MIN) lo = WF_F_MIN
+  if (lo + spanHz > WF_F_MAX) lo = WF_F_MAX - spanHz
+  return { lo, hi: lo + spanHz }
+}
+
+/** Zoom span options (Hz) for the waterfall picker; 0 = full passband. */
+export const WATERFALL_ZOOMS: { value: number; label: string }[] = [
+  { value: 0, label: 'Full' },
+  { value: 2000, label: '2 kHz' },
+  { value: 1500, label: '1.5 kHz' },
+  { value: 1000, label: '1 kHz' },
+  { value: 600, label: '600 Hz' },
+]
+
 /** Pickable waterfall palettes in menu order — `'auto'` rides the theme; the rest are
  * explicit (the perceptual set + the familiar WSJT-X/fldigi looks). */
 export const WATERFALL_PALETTES: { value: ColormapName | 'auto'; label: string }[] = [
