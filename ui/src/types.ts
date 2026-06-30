@@ -501,6 +501,13 @@ export interface CwDecodeResult {
   wpm: number
 }
 
+/** One signal found by the wideband CW skimmer (audio pitch + text + WPM). */
+export interface SkimHit {
+  pitchHz: number
+  text: string
+  wpm: number
+}
+
 /** Result of "Auto-test ports": the working (port, baud, Hamlib model) the prober
  * auto-selected, or found=false with a detail message. */
 export interface CatProbeResult {

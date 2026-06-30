@@ -1799,6 +1799,31 @@ fn cw_decode(state: State<'_, SharedEngine>) -> Result<CwDecodeResult, String> {
     })
 }
 
+/// One signal found by the wideband CW skimmer (audio pitch + decoded text + WPM).
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SkimHitDto {
+    pitch_hz: u32,
+    text: String,
+    wpm: u32,
+}
+
+/// Wideband CW skim of the recent RX audio — every distinct keyed signal across the CW
+/// passband (the multi-signal sibling of `cw_decode`).
+#[tauri::command]
+fn cw_skim(state: State<'_, SharedEngine>) -> Result<Vec<SkimHitDto>, String> {
+    let eng = state.lock().map_err(|e| e.to_string())?;
+    Ok(eng
+        .cw_skim()
+        .into_iter()
+        .map(|h| SkimHitDto {
+            pitch_hz: h.pitch_hz,
+            text: h.text,
+            wpm: h.wpm,
+        })
+        .collect())
+}
+
 /// Enable/disable normal slot transmit ("Monitor"). `false` mutes transmit and
 /// clears anything queued; `true` re-enables it and clears a tripped watchdog.
 #[tauri::command]
@@ -4825,6 +4850,7 @@ pub fn run() {
             point_rotator_at_call,
             read_rotator,
             cw_decode,
+            cw_skim,
             get_rig_models,
             get_band_plan,
             set_license_class,

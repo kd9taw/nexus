@@ -126,6 +126,58 @@ pub fn decode_cw(samples: &[f32], sr: f32, pitch_hz: f32) -> CwDecode {
     }
 }
 
+/// A CW signal found by the wideband skimmer: its audio pitch (Hz), decoded text, and WPM.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkimHit {
+    pub pitch_hz: u32,
+    pub text: String,
+    pub wpm: u32,
+}
+
+/// Wideband CW skimmer: decode `samples` at every audio pitch from `lo_hz` to `hi_hz` in
+/// `step_hz` steps and return the channels that yielded readable text. A single signal
+/// smears across a few neighbouring channels (the Goertzel has finite bandwidth), so runs
+/// of adjacent channels are merged, keeping the longest (best-centred) decode. This reuses
+/// the single-signal [`decode_cw`] per channel — Tier 2 of CW decode.
+pub fn skim_cw(samples: &[f32], sr: f32, lo_hz: u32, hi_hz: u32, step_hz: u32) -> Vec<SkimHit> {
+    let step = step_hz.max(1) as usize;
+    let channels: Vec<u32> = (lo_hz..=hi_hz).step_by(step).collect();
+    if channels.len() < 3 {
+        return Vec::new();
+    }
+    // 1. Total Goertzel power per channel over the whole buffer — the band's spectrum.
+    let powers: Vec<f32> = channels
+        .iter()
+        .map(|&f| tone_power(samples, sr, f as f32))
+        .collect();
+    // 2. Noise floor = median power; a real carrier peak stands well above it. Decoding
+    //    every channel (not just peaks) is what let one signal's Goertzel sidelobes post
+    //    garbage on far-off channels — so decode ONLY at local-maximum peaks above the floor.
+    let mut sorted = powers.clone();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let floor = sorted[sorted.len() / 2].max(1e-9);
+    let mut hits: Vec<SkimHit> = Vec::new();
+    for i in 0..channels.len() {
+        let p = powers[i];
+        let peak = p > floor * 4.0
+            && powers.get(i.wrapping_sub(1)).is_none_or(|&l| p >= l)
+            && powers.get(i + 1).is_none_or(|&r| p >= r);
+        if !peak {
+            continue;
+        }
+        let d = decode_cw(samples, sr, channels[i] as f32);
+        let glyphs = d.text.chars().filter(|c| !c.is_whitespace()).count();
+        if glyphs >= 3 && (8..=50).contains(&d.wpm) && !hits.iter().any(|h| h.text == d.text) {
+            hits.push(SkimHit {
+                pitch_hz: channels[i],
+                text: d.text,
+                wpm: d.wpm,
+            });
+        }
+    }
+    hits
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -164,6 +216,25 @@ mod tests {
             .map(|i| (2.0 * std::f32::consts::PI * PITCH * i as f32 / SR).sin())
             .collect();
         assert_eq!(decode_cw(&steady, SR, PITCH).text, "");
+    }
+
+    #[test]
+    fn skimmer_finds_a_signal_at_its_pitch() {
+        let mut audio = vec![0.0f32; (SR * 0.1) as usize];
+        audio.extend(morse_samples("CQ TEST", 22, 600.0, SR as u32));
+        let hits = skim_cw(&audio, SR, 300, 1200, 50);
+        assert!(!hits.is_empty(), "found the signal");
+        assert!(hits.iter().any(|h| h.text == "CQ TEST"), "decoded the text: {hits:?}");
+        // Decoding channels cluster near the 600 Hz tone — no spurious far-off hits.
+        assert!(
+            hits.iter().all(|h| (h.pitch_hz as i32 - 600).abs() <= 300),
+            "clustered near 600 Hz: {hits:?}"
+        );
+    }
+
+    #[test]
+    fn skimmer_empty_on_silence() {
+        assert!(skim_cw(&vec![0.0f32; 48_000], SR, 300, 1200, 50).is_empty());
     }
 
     #[test]

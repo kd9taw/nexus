@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
-import type { AppSnapshot, FieldDayStatus } from '../types'
+import type { AppSnapshot, FieldDayStatus, SkimHit } from '../types'
 import { PhoneScope } from './PhoneScope'
 import { BandPicker } from './BandPicker'
 import { LogEntry } from './LogEntry'
-import { sendCw, setCwKeyer, setCwWpm, stopCw, cwDecode } from '../api'
+import { sendCw, setCwKeyer, setCwWpm, stopCw, cwDecode, cwSkim } from '../api'
 import { pushToast, withErrorToast } from '../toast'
 
 interface Props {
@@ -55,14 +55,28 @@ export function CwCockpit({ snap, theme, pitchHz = 600, pendingWork, onConsumeWo
   // Live single-signal CW decode of the receive audio at the marker pitch — poll the
   // engine ~1.4 Hz (the decode reads a multi-second ring, so faster adds no detail).
   const [decoded, setDecoded] = useState<{ text: string; wpm: number }>({ text: '', wpm: 0 })
+  // Wideband skimmer: every CW signal across the band (refreshed a bit slower than the
+  // single decode — a full-band scan is heavier than one channel).
+  const [skim, setSkim] = useState<SkimHit[]>([])
   useEffect(() => {
     let alive = true
-    const tick = () =>
+    let n = 0
+    const tick = () => {
       cwDecode()
         .then((d) => {
           if (alive) setDecoded(d)
         })
         .catch(() => {})
+      // Skim every other tick (~1.4 s) — the full-band scan is the heavier call.
+      if (n % 2 === 0) {
+        cwSkim()
+          .then((s) => {
+            if (alive) setSkim(s)
+          })
+          .catch(() => {})
+      }
+      n += 1
+    }
     tick()
     const id = window.setInterval(tick, 700)
     return () => {
@@ -243,6 +257,21 @@ export function CwCockpit({ snap, theme, pitchHz = 600, pendingWork, onConsumeWo
         </span>
         {decoded.wpm > 0 && <span className="cw-decode-wpm">{decoded.wpm} WPM</span>}
       </div>
+
+      {skim.length > 0 && (
+        <div className="cw-skim" title="Wideband CW skimmer — every signal across the band">
+          <span className="cw-decode-label">SKIM</span>
+          <ul className="cw-skim-list">
+            {skim.map((h) => (
+              <li key={h.pitchHz} className="cw-skim-row">
+                <span className="cw-skim-freq">{h.pitchHz} Hz</span>
+                <span className="cw-skim-text">{h.text}</span>
+                <span className="cw-skim-wpm">{h.wpm}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <div className="cw-macros" role="group" aria-label="CW macros">
         {MACROS.map((m) => (

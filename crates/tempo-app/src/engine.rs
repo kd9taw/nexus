@@ -2621,6 +2621,13 @@ impl Engine {
         tempo_core::cw_decode::decode_cw(&self.cw_audio, ft1::SAMPLE_RATE, self.settings.cw_pitch_hz)
     }
 
+    /// Wideband CW skim of the recent receive audio: every distinct keyed signal across
+    /// the 300–1500 Hz CW passband, each as (pitch, text, WPM). The multi-signal sibling
+    /// of [`Self::cw_decode`].
+    pub fn cw_skim(&self) -> Vec<tempo_core::cw_decode::SkimHit> {
+        tempo_core::cw_decode::skim_cw(&self.cw_audio, ft1::SAMPLE_RATE, 300, 1500, 50)
+    }
+
     /// Set the rig/CAT connection status the UI renders (and the Test-CAT result
     /// reads). `ok`: `None` = VOX/no CAT, `Some(true/false)` = CAT up/down.
     pub fn set_cat_status(&mut self, ok: Option<bool>, detail: String) {

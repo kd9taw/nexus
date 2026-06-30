@@ -13,6 +13,7 @@ import type {
   CatTestResult,
   CatProbeResult,
   CwDecodeResult,
+  SkimHit,
   ClubLogPushResult,
   Activation,
   DetectedRig,
@@ -693,6 +694,11 @@ export async function readRotator(): Promise<number | null> {
 /** Single-signal CW decode of the recent RX audio (live readout: text + estimated WPM). */
 export async function cwDecode(): Promise<CwDecodeResult> {
   return invoke<CwDecodeResult>('cw_decode')
+}
+
+/** Wideband CW skim of the recent RX audio: every distinct keyed signal across the band. */
+export async function cwSkim(): Promise<SkimHit[]> {
+  return invoke<SkimHit[]>('cw_skim')
 }
 
 /** Set the TX period: true = even/"1st" slots, false = odd/"2nd". */

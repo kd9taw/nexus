@@ -4739,6 +4739,49 @@ body.resizing {
   color: var(--text-dim);
   font-variant-numeric: tabular-nums;
 }
+/* Wideband CW skimmer list — every signal on the band (freq · text · wpm). */
+.cw-skim {
+  display: flex;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  margin-bottom: var(--space-2);
+  background: var(--surface-2, rgba(0, 0, 0, 0.2));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.cw-skim-list {
+  flex: 1;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 96px;
+  overflow-y: auto;
+}
+.cw-skim-row {
+  display: flex;
+  gap: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.cw-skim-freq {
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  min-width: 56px;
+}
+.cw-skim-text {
+  flex: 1;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cw-skim-wpm {
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
 .cw-macros {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
