@@ -137,6 +137,10 @@ export function PotaSotaView({ snap, onHunt, onSnap }: Props) {
   // Filter + sort
   const filtered = sortSpots(
     spots.filter((s) => {
+      // Always honor the selected program — guards against stale spots lingering from the
+      // previous program during an in-flight re-fetch (the "I'm on SOTA but still see POTA"
+      // bug), and any mixed array. 'Both' shows everything.
+      if (program !== 'Both' && s.program !== program) return false
       if (bandFilter.length > 0 && !bandFilter.includes(bandFromKhz(s.freqKhz))) return false
       if (modeFilter !== 'All' && spotDisplayMode(s.mode) !== modeFilter) return false
       return true

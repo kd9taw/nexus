@@ -62,6 +62,10 @@ pub struct Inbox {
     /// Recipient named by the last directed frame, if any.
     current_to: Option<String>,
     pub messages: Vec<ChatMessage>,
+    /// ACKs we owe: each directed-to-me message we just fully received, as `(sender,
+    /// chunk-id)`. Recorded on EVERY completion (including a resend we suppress from the
+    /// display), so a lost ACK recovers when the sender resends. Drained by the engine.
+    owed_acks: Vec<(String, char)>,
 }
 
 impl Inbox {
@@ -73,7 +77,14 @@ impl Inbox {
             current_from: None,
             current_to: None,
             messages: Vec::new(),
+            owed_acks: Vec::new(),
         }
+    }
+
+    /// Drain the id-bearing ACKs we owe (directed-to-me messages we received). The engine
+    /// sends one `"<sender> <me> RR73 <id>"` per entry.
+    pub fn take_owed_acks(&mut self) -> Vec<(String, char)> {
+        std::mem::take(&mut self.owed_acks)
     }
 
     /// Process all decodes heard in a slot.
@@ -95,8 +106,17 @@ impl Inbox {
                 && m.sender().map_or(true, looks_like_call)
                 && m.addressee().map_or(true, looks_like_call);
             if !is_standard {
-                if text::parse_chunk(&d.message).is_some() {
+                if let Some((id, ..)) = text::parse_chunk(&d.message) {
                     if let Some(full) = self.reasm.accept(&d.message) {
+                        // A directed-to-me message completed → owe an id-ACK to its sender,
+                        // recorded EVERY time we hear it complete (so the sender's resend
+                        // re-triggers the ACK if the first was lost), independent of the
+                        // display resend-dedup inside push_text.
+                        if self.current_to.as_deref() == Some(self.mycall.as_str()) {
+                            if let Some(from) = self.current_from.clone() {
+                                self.owed_acks.push((from, id));
+                            }
+                        }
                         self.push_text(full, slot);
                     }
                     // else: a partial chunk — buffered, nothing to emit yet.
@@ -249,6 +269,31 @@ mod tests {
             inbox.messages.is_empty(),
             "a DX roger must not produce a phantom chat: {:?}",
             inbox.messages
+        );
+    }
+
+    #[test]
+    fn re_owes_the_ack_on_a_resend_so_a_lost_ack_recovers() {
+        // The ACK obligation is recorded on EVERY directed-to-me completion — including a
+        // resend whose DISPLAY we dedup — so if the first RR73 is lost on air, the next
+        // resend re-owes it and the ACK goes out again (M2 lost-ACK recovery).
+        let mut inbox = Inbox::new("K2DEF");
+        let id_frame = "K2DEF W9XYZ EN37";
+        let frames = text::chunk("HELLO", 'A');
+        inbox.observe(&[dec(id_frame)], 0);
+        for (i, f) in frames.iter().enumerate() {
+            inbox.observe(&[dec(f)], (i as u64) + 1);
+        }
+        assert_eq!(inbox.take_owed_acks().len(), 1, "owe an ACK on first receipt");
+        // Sender resends (our ACK was lost). The display dedups, but we MUST re-owe.
+        inbox.observe(&[dec(id_frame)], 10);
+        for (i, f) in frames.iter().enumerate() {
+            inbox.observe(&[dec(f)], (i as u64) + 11);
+        }
+        assert_eq!(
+            inbox.take_owed_acks().len(),
+            1,
+            "re-owe the ACK on a resend so a lost ACK recovers"
         );
     }
 

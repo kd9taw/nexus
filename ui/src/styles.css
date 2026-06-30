@@ -882,82 +882,145 @@ button.nb-chip:hover {
 /* World-first: the map is a full-bleed surface and the propagation info FLOATS
    over it as a translucent card (HamClock/Geochron model — everything around the
    world), instead of a co-equal side column. */
+/* Wrap-the-globe assignable pane grid (B1): the globe is the center cell; reassignable
+   panes frame it (2 left, 2 right, a 3-up bottom strip). The map keeps a definite size —
+   center column minmax(0,1fr) (never bare 1fr, or the 100%-width canvas runs away) over
+   TWO 1fr rows (definite height for .map-view{height:100%}); the min-*:0 chain stays. */
 .connect {
-  position: relative;
   flex: 1;
   min-height: 0;
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  grid-template-columns: var(--cn-rail, 300px) minmax(0, 1fr) var(--cn-rail, 300px);
+  /* Strip row capped at 30vh (not bare `auto`): a tall pane reassigned into the strip
+     scrolls inside its own body instead of stealing height from the globe's 1fr rows. */
+  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 30vh);
+  grid-template-areas:
+    'left1  center right1'
+    'left2  center right2'
+    'strip  strip  strip';
 }
 .connect-map {
-  position: absolute;
-  inset: 0;
+  grid-area: center;
   display: flex;
+  min-width: 0;
+  min-height: 0;
 }
 .connect-map > .map-view {
   flex: 1;
 }
-.connect-side {
-  position: absolute;
-  top: 3rem; /* clear the map toolbar */
-  left: var(--space-3);
-  bottom: var(--space-3);
-  width: 332px;
-  max-width: 42%;
-  overflow-y: auto;
+.connect-strip {
+  grid-area: strip;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+/* Slot wrapper — reuses the retired .connect-side glass so panes float over the globe. */
+.pane-frame {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
-  padding: var(--space-3);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
   background: color-mix(in srgb, var(--bg) 82%, transparent);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   box-shadow: var(--elev-2);
-  z-index: 4;
-  /* Visible scroll affordance: the translucent blur hid the native scrollbar, so a
-     tall rail read as "clipped, can't scroll". A thin styled bar makes it legible. */
+}
+.pane-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  flex: none;
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--border);
+}
+.pane-title {
+  font-size: var(--fs-micro);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+}
+.pane-pick {
+  font-size: var(--fs-micro);
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 1px var(--space-1);
+}
+.pane-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-2);
   scrollbar-width: thin;
   scrollbar-color: color-mix(in srgb, var(--text-dim) 55%, transparent) transparent;
 }
-.connect-side::-webkit-scrollbar {
+.pane-body::-webkit-scrollbar {
   width: 8px;
 }
-.connect-side::-webkit-scrollbar-thumb {
+.pane-body::-webkit-scrollbar-thumb {
   background: color-mix(in srgb, var(--text-dim) 50%, transparent);
   border-radius: 999px;
 }
-/* Rail-scope the wide grids to the 332px rail (the real horizontal-clip fix — no
-   window-width breakpoint, which mis-fired while the rail stayed narrow): the gauges
-   go 2-col and the band rows keep band+meter+state on the primary line, wrapping the
-   reason and dropping the dir/people columns. */
-.connect-side .swx-strip {
+.pane-basic {
+  margin: 0;
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+}
+/* Flatten the verbatim inner panels so we don't get card-in-card (inner JSX/CSS unchanged). */
+.pane-body > .panel {
+  border: 0;
+  box-shadow: none;
+  background: transparent;
+  padding: 0;
+}
+/* Rescoped from .connect-side — keep the narrow-rail band/gauge fits in a pane body. */
+.pane-body .swx-strip {
   grid-template-columns: repeat(2, 1fr);
 }
-.connect-side .ba-row {
+.pane-body .ba-row {
   grid-template-columns: 40px 1fr 78px;
 }
-.connect-side .ba-dir,
-.connect-side .ba-people {
+.pane-body .ba-dir,
+.pane-body .ba-people {
   display: none;
 }
-.connect-side .ba-reason {
+.pane-body .ba-reason {
   grid-column: 1 / -1;
   font-size: var(--fs-micro);
   color: var(--text-faint);
 }
-/* Cap the unbounded lists so one tall panel can't push the rest below the fold; the
-   rail stays the primary scroller. */
-.connect-side .ba-rows {
-  max-height: 44vh;
+.pane-body .ba-rows {
+  max-height: 100%; /* the pane body is the scroller now; no fixed 44vh cap */
   overflow-y: auto;
 }
-/* Fit-don't-clip: tighten spacing (and step the font down on the smallest class) at
-   narrow EFFECTIVE widths so a dense panel shrinks rather than silently clips. */
-[data-viewport='sm'] .connect-side {
-  --space-scale: 0.9;
+/* Responsive via [data-viewport] (NEVER @media — UI zoom on .app is the documented
+   gotcha). Narrower rails when tight; stack into one column on the smallest class. */
+[data-viewport='sm'] .connect {
+  --cn-rail: 248px;
 }
-[data-viewport='xs'] .connect-side {
-  --space-scale: 0.84;
+[data-viewport='xs'] .connect {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(280px, 46vh) auto auto auto auto auto;
+  grid-template-areas:
+    'center'
+    'left1'
+    'left2'
+    'right1'
+    'right2'
+    'strip';
+}
+[data-viewport='xs'] .connect-strip {
+  grid-template-columns: 1fr;
 }
 .connect-hero-row {
   display: flex;
@@ -976,38 +1039,6 @@ button.nb-chip:hover {
  * message into the 42px freq slot and gave the work button the wide column. */
 .decode-feed .decode-row {
   grid-template-columns: auto 52px 34px 38px minmax(0, 1fr) auto;
-}
-
-/* Compact "Needs heard now" rows in the Connect rail */
-.connect-needs .cn-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-.connect-needs .cn-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: 3px var(--space-1);
-  border-radius: 5px;
-  cursor: pointer;
-  font-size: 0.84rem;
-}
-.connect-needs .cn-row:hover {
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
-}
-.connect-needs .cn-call {
-  font-weight: 700;
-  min-width: 7ch;
-}
-.connect-needs .cn-band {
-  color: var(--text-dim);
-}
-.connect-needs .cn-entity {
-  color: var(--text-dim);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 /* Settings ▸ Connections — credential presence + the rolling event log */
@@ -1322,18 +1353,254 @@ button.nb-chip:hover {
   color: var(--text-faint);
   text-align: right;
 }
-/* Narrow EFFECTIVE width (zoom-aware, NOT a raw-px @media which mis-fires at every UI
-   zoom): the floating card becomes a bottom sheet so it never crowds the map. */
-[data-viewport='xs'] .connect-side {
-  top: auto;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  width: auto;
-  max-width: none;
-  max-height: 48%;
-  border-radius: var(--radius) var(--radius) 0 0;
+
+/* ---- B2 Tier-1 panes ---- */
+/* Best Band → Region recommender table */
+.bbt-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
+.bbt-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 2px var(--space-1);
+  border-radius: 5px;
+  font-size: var(--fs-sm);
+}
+.bbt-row.is-clickable {
+  cursor: pointer;
+}
+.bbt-row.is-clickable:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.bbt-row.is-active {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+.bbt-region {
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bbt-band {
+  font-weight: 700;
+  font-family: var(--font-mono);
+}
+.bbt-state {
+  color: var(--text-dim);
+  font-size: var(--fs-micro);
+}
+.bbt-stns {
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Continent×Band activity matrix */
+.amx {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: var(--fs-micro);
+}
+.amx th,
+.amx td {
+  padding: 2px var(--space-1);
+  text-align: center;
+}
+.amx-region {
+  color: var(--text-dim);
+  font-weight: 600;
+}
+.amx-band {
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  text-align: right;
+}
+.amx-band.is-clickable {
+  cursor: pointer;
+}
+.amx-band.is-clickable:hover {
+  color: var(--text);
+}
+.amx tr.is-active .amx-band {
+  color: var(--accent);
+  font-weight: 700;
+}
+.amx-cell {
+  font-variant-numeric: tabular-nums;
+  border-radius: 3px;
+  min-width: 22px;
+}
+
+/* NCDXF beacon monitor */
+.bcn-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.bcn-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 1px var(--space-1);
+  border-radius: 4px;
+  font-size: var(--fs-sm);
+}
+.bcn-row.is-heard {
+  background: color-mix(in srgb, var(--ok, #2fbf71) 16%, transparent);
+}
+.bcn-band {
+  flex: none;
+  width: 30px;
+  font-family: var(--font-mono);
+  color: var(--text-dim);
+}
+.bcn-call {
+  flex: none;
+  min-width: 52px;
+  font-weight: 700;
+}
+.bcn-qth {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-faint);
+  font-size: var(--fs-micro);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bcn-bar {
+  flex: none;
+  width: 44px;
+  height: 4px;
+  margin-left: auto;
+  background: color-mix(in srgb, var(--text-dim) 24%, transparent);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.bcn-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+.bcn-heard {
+  flex: none;
+  width: 54px;
+  text-align: right;
+  color: var(--text-dim);
+  font-size: var(--fs-micro);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- B3 Tier-2 panes ---- */
+/* SWPC R/S/G annunciator */
+.swsc {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-top: var(--space-1);
+}
+.swsc-scales {
+  display: flex;
+  gap: var(--space-1);
+  align-items: center;
+  flex-wrap: wrap;
+}
+.swsc-chip {
+  font-size: var(--fs-micro);
+  font-weight: 700;
+  font-family: var(--font-mono);
+  padding: 1px 5px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+}
+.swsc-quiet {
+  color: var(--text-dim);
+}
+.swsc-minor {
+  color: #d9a441;
+  border-color: #d9a441;
+}
+.swsc-major {
+  color: #e5534b;
+  border-color: #e5534b;
+}
+.swsc-fc {
+  font-size: var(--fs-micro);
+  color: var(--text-faint);
+}
+.swsc-alert {
+  margin: 0;
+  font-size: var(--fs-micro);
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.swsc-kind {
+  text-transform: uppercase;
+  font-weight: 700;
+  color: var(--text);
+}
+
+/* Measured-MUF (kc2g) list */
+.mmuf-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.mmuf-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  gap: var(--space-2);
+  align-items: center;
+  font-size: var(--fs-sm);
+}
+.mmuf-loc {
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+}
+.mmuf-muf {
+  font-weight: 700;
+  font-family: var(--font-mono);
+}
+.mmuf-fof2 {
+  color: var(--text-faint);
+  font-size: var(--fs-micro);
+}
+.mmuf-age {
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* B3 — greyline pane */
+.gl {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.gl-next {
+  margin: 0;
+  font-size: var(--fs-sm);
+}
+.gl-bands,
+.gl-regions {
+  margin: 0;
+  font-size: var(--fs-micro);
+  color: var(--text-dim);
+}
+
 .map-toolbar {
   display: flex;
   align-items: center;

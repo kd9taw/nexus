@@ -144,6 +144,22 @@ fn is_valid_hashed(s: &str) -> bool {
 /// True if a token reads as a real callsign for parsing a 2-call message — a plain or
 /// compound call, or a valid i3=4 hashed-call token. Guards the 2-token parse forms so
 /// free text (incl. slash shorthand and arbitrary `<...>`) isn't misread as a call pair.
+/// Parse a Tempo id-bearing ACK frame `"<to> <de> RR73 <id>"` (e.g. "W9XYZ K2DEF RR73 A")
+/// into `(to, de, chunk-id)`. The id is the store chunk-id char of the message being
+/// acknowledged, so the sender confirms THAT specific message (not a FIFO guess) and a
+/// resend's ACK is idempotent. Tempo-to-Tempo only — a free-text frame, not a standard
+/// WSJT-X message (so it never collides with a plain `RR73` roger).
+pub fn parse_ack(s: &str) -> Option<(String, String, char)> {
+    let t: Vec<&str> = s.split_whitespace().collect();
+    if t.len() == 4 && t[2] == "RR73" && t[3].chars().count() == 1 {
+        let id = t[3].chars().next()?;
+        if id.is_ascii_uppercase() && looks_like_call(t[0]) && looks_like_call(t[1]) {
+            return Some((t[0].to_string(), t[1].to_string(), id));
+        }
+    }
+    None
+}
+
 pub fn looks_like_call(s: &str) -> bool {
     is_valid_hashed(s) || is_compound(s) || is_callsign(s)
 }

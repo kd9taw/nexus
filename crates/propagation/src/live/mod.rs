@@ -9,11 +9,13 @@ pub mod aurora;
 pub mod clublog;
 pub mod dxped;
 pub mod eqsl;
+pub mod kc2g;
 pub mod lotw;
 pub mod pota;
 pub mod pskreporter;
 pub mod qrz;
 pub mod swpc;
+pub mod swpc_scales;
 
 use std::time::{SystemTime, UNIX_EPOCH};
 

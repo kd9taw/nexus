@@ -40,7 +40,7 @@ const IDLE_WINDOW: u64 = 16;
 const MAX_SEND_ATTEMPTS: u32 = 8;
 
 /// If `msg` is a directed roger (RR73 / RRR) addressed to `mycall`, return the SENDER's
-/// call — it's a delivery ACK for any message we queued to them (Tempo-to-Tempo chat).
+/// call — a delivery ACK for a message we queued to them (Tempo-to-Tempo chat).
 fn ack_sender_for(msg: &str, mycall: &str) -> Option<String> {
     use tempo_core::message::{same_call, Msg};
     let (to, de) = match Msg::parse(msg) {
@@ -74,12 +74,12 @@ pub struct AppState {
     link: LinkState,
     /// Number of inbound messages already drained from the inbox into threads.
     drained: usize,
-    /// Senders of directed messages we just fully received and owe an ACK (a 1-frame
-    /// RR73), each tagged with the slot we incurred it. The engine drains this each poll
-    /// and queues the ACK frames (dropping any past their TTL, so ACKs banked while TX was
-    /// off don't all flush as a stale burst minutes later). Closes the delivery loop so
-    /// the sender stops resending.
-    pending_acks: Vec<(String, u64)>,
+    /// ACKs we owe: each directed-to-me message we fully received, as `(sender, chunk-id,
+    /// incurred-slot)`. The engine drains this each poll and sends one id-bearing
+    /// `"<sender> <me> RR73 <id>"` per entry (dropping any past their TTL so ACKs banked
+    /// while TX was off don't flush as a stale burst). Re-incurred on a heard resend, so a
+    /// lost ACK recovers; the id lets the sender confirm exactly that message.
+    pending_acks: Vec<(String, char, u64)>,
 }
 
 impl AppState {
@@ -242,7 +242,7 @@ impl AppState {
     /// conversation as an outbound [`dto::ChatMessage`]. The store-and-forward
     /// queue releases it on air once the peer is heard present.
     pub fn send_message(&mut self, peer: &str, text: &str) {
-        self.store.queue(peer, text, self.slot);
+        let ack_id = self.store.queue(peer, text, self.slot);
         let msg = ChatMessage {
             from: Some(self.mycall.clone()),
             to: Some(peer.to_string()),
@@ -254,7 +254,8 @@ impl AppState {
             freq_hz: None,
             dt_sec: None,
             tier: Some(self.link.tier),
-            delivered: false, // flips true when the recipient's RR73 ACK arrives
+            delivered: false, // flips true when the recipient's id-bearing ACK arrives
+            ack_id: Some(ack_id), // confirm THIS message by its store chunk-id
         };
         self.conversation_mut(peer).messages.push(msg);
     }
@@ -278,6 +279,7 @@ impl AppState {
             dt_sec: None,
             tier: Some(tier),
             delivered: false, // broadcasts have no per-recipient ACK
+            ack_id: None,
         };
         self.conversation_mut("*").messages.push(msg);
     }
@@ -393,20 +395,28 @@ impl AppState {
         }
 
         self.inbox.observe(decodes, slot);
-        // ACK-in: a directed roger (RR73/RRR) addressed to us confirms a message we
-        // queued to that sender arrived → mark it delivered (stops the resend) and stamp
-        // the conversation for a real "Delivered ✓". Chat (FT1) only; then drop spent
-        // queue entries. (Receiving an ACK does NOT itself trigger another ACK — only
-        // free-text directed messages do, so there's no ACK loop.)
+        // ACK obligations the inbox just incurred: each directed-to-me message we received
+        // (incl. a heard resend) → owe an id-bearing ACK to its sender. Bounded so a long
+        // monitor session can't grow the list. (An incoming ACK is consumed by the inbox as
+        // attribution, never folded as chat, so it can't itself owe an ACK — no loop.)
+        const MAX_PENDING_ACKS: usize = 32;
+        for (from, id) in self.inbox.take_owed_acks() {
+            self.pending_acks.push((from.to_uppercase(), id, self.slot));
+        }
+        if self.pending_acks.len() > MAX_PENDING_ACKS {
+            let drop = self.pending_acks.len() - MAX_PENDING_ACKS;
+            self.pending_acks.drain(0..drop);
+        }
+        // ACK-in: a directed RR73 addressed to us confirms a message we queued to that
+        // sender arrived → mark it delivered (stops its resend) + stamp the conversation
+        // for a real "Delivered ✓"; then drop spent queue entries. Chat (FT1) only.
         if self.link.tier == Tier::Ft1 {
             let mut acked: Vec<String> = decodes
                 .iter()
                 .filter_map(|d| ack_sender_for(&d.message, &self.mycall))
                 .collect();
-            // One RR73 can be decoded more than once in a slot; collapse same-slot
-            // duplicates so a single ACK clears exactly one queued message (FIFO).
             acked.sort();
-            acked.dedup();
+            acked.dedup(); // one RR73 may be decoded twice in a slot
             for from in acked {
                 if self.store.mark_one_delivered(&from) {
                     self.mark_conversation_delivered(&from);
@@ -428,15 +438,14 @@ impl AppState {
         }
     }
 
-    /// Drain the ACKs we owe (senders whose directed messages we fully received). The
-    /// engine queues a 1-frame RR73 to each. Cleared so each is sent once.
-    pub fn take_pending_acks(&mut self) -> Vec<(String, u64)> {
+    /// Drain the id-bearing ACKs we owe. The engine sends one `"<sender> <me> RR73 <id>"`
+    /// per entry. Cleared each poll.
+    pub fn take_pending_acks(&mut self) -> Vec<(String, char, u64)> {
         std::mem::take(&mut self.pending_acks)
     }
 
     /// Stamp the OLDEST still-undelivered outbound message to `peer` as delivered (one
-    /// RR73 ACK confirms one message, FIFO) — drives the real "Delivered ✓". Marking the
-    /// whole thread would falsely confirm later messages the peer may not have received.
+    /// RR73 confirms one message, FIFO) — drives the real "Delivered ✓".
     fn mark_conversation_delivered(&mut self, peer: &str) {
         if let Some(conv) = self.conversations.get_mut(peer) {
             if let Some(m) = conv.messages.iter_mut().find(|m| m.outbound && !m.delivered) {
@@ -463,19 +472,9 @@ impl AppState {
                     .unwrap_or_else(|| "*".to_string()),
                 None => "*".to_string(),
             };
-            // A directed message addressed to US → owe the sender ONE delivery ACK per
-            // distinct message (the inbox resend-dedup already collapses retransmits, so
-            // each genuine message lands here once). Bounded so a long monitor session
-            // can't grow the owed-ACK list without limit.
-            if m.directed_to_me {
-                if let Some(from) = m.from.as_ref() {
-                    const MAX_PENDING_ACKS: usize = 16;
-                    self.pending_acks.push((from.to_uppercase(), self.slot));
-                    if self.pending_acks.len() > MAX_PENDING_ACKS {
-                        self.pending_acks.remove(0);
-                    }
-                }
-            }
+            // NOTE: the ACK obligation is no longer derived here — it's incurred by the
+            // inbox on EVERY directed-to-me completion (incl. resends we dedup from the
+            // display) and drained in `observe`, so a lost ACK recovers.
             let msg = ChatMessage {
                 from: m.from,
                 to: m.to,
@@ -488,6 +487,7 @@ impl AppState {
                 dt_sec: None,
                 tier: Some(self.link.tier),
                 delivered: false,
+                ack_id: None, // inbound — no outbound id to confirm
             };
             self.conversation_mut(&peer).messages.push(msg);
         }
@@ -771,6 +771,7 @@ mod tests {
             dt_sec: None,
             tier: Some(tier),
             delivered: false,
+            ack_id: None,
         };
         let outbound = ChatMessage { outbound: true, ..inbound(Tier::Ft1) };
         app.load_conversations(vec![

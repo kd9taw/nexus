@@ -19,6 +19,57 @@ export interface RegionReport {
   stations: number
   bidirectional: boolean
 }
+
+/** One region's best band right now (inverse of BandReport.bestRegion) — the best-band
+ *  recommender. Operator-anchored. */
+export interface RegionBest {
+  region: string
+  octant: string
+  bearingDeg: number
+  band: string
+  tier: ActivityTier
+  modeled: BandModeled
+  stations: number
+  bidirectional: boolean
+  score: number
+}
+
+/** One (region, band) cell of the operator-anchored activity matrix. */
+export interface RegionBandCell {
+  region: string
+  band: string
+  stations: number
+  hearMe: number
+  iHear: number
+}
+
+/** One ionosonde's live measured ionosphere (prop.kc2g.com). MUF/foF2 null when the
+ *  station didn't report; ageSecs = how stale the reading is. */
+export interface MufStation {
+  lat: number
+  lon: number
+  mufMhz: number | null
+  fof2Mhz: number | null
+  ageSecs: number
+  confidence: number | null
+}
+
+/** NOAA SWPC R/S/G scales (0..5): radio blackout / solar radiation / geomagnetic, now,
+ *  plus tomorrow's forecast G. */
+export interface NoaaScalesView {
+  r: number
+  s: number
+  g: number
+  gTomorrow: number
+}
+
+/** One SWPC space-weather alert/watch/warning. `issued` = Unix seconds. */
+export interface AlertView {
+  productId: string
+  issued: number
+  kind: string
+  message: string
+}
 export interface BandReport {
   band: string
   tier: ActivityTier
@@ -217,6 +268,10 @@ export interface PropagationSnapshot {
   /** Ranked plain-language predictive insights ("MUF building → 6m soon", flare, Kp,
    *  greyline, Es watch). */
   insights?: Insight[]
+  /** Best band PER reachable region — the best-band recommender (operator-anchored). */
+  bestToRegion?: RegionBest[]
+  /** The operator-anchored (region, band) activity matrix. */
+  regionBand?: RegionBandCell[]
 }
 
 /** One located spot for the map (placed by grid, or DXCC centroid if grid-less). */

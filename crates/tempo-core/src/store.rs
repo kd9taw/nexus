@@ -50,8 +50,10 @@ impl StoreForward {
         self.mygrid = mygrid.to_string();
     }
 
-    /// Queue a directed message for later delivery.
-    pub fn queue(&mut self, to: &str, text: &str, slot: u64) {
+    /// Queue a directed message for later delivery. Returns the chunk-id char assigned to
+    /// it — the caller stamps the outbound conversation bubble with it so an id-bearing ACK
+    /// confirms exactly this message.
+    pub fn queue(&mut self, to: &str, text: &str, slot: u64) -> char {
         let id = (b'A' + self.next_id) as char;
         self.next_id = (self.next_id + 1) % 26;
         self.queue.push(Pending {
@@ -63,6 +65,23 @@ impl StoreForward {
             delivered: false,
             id,
         });
+        id
+    }
+
+    /// Mark the message to `to` carrying chunk-id `id` delivered — the id-bearing ACK
+    /// matched it exactly (no FIFO guessing). Idempotent: a re-ACK of an already-delivered
+    /// message is a no-op. Returns whether a still-undelivered match was found.
+    pub fn mark_delivered_id(&mut self, to: &str, id: char) -> bool {
+        if let Some(p) = self
+            .queue
+            .iter_mut()
+            .find(|p| p.to == to && p.id == id && !p.delivered)
+        {
+            p.delivered = true;
+            true
+        } else {
+            false
+        }
     }
 
     /// Number of messages still awaiting delivery.

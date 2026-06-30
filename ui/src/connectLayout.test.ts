@@ -8,19 +8,25 @@ import { fileURLToPath } from 'node:url'
 const css = readFileSync(fileURLToPath(new URL('./styles.css', import.meta.url)), 'utf8')
 
 describe('connect layout invariants', () => {
-  it('bottom-sheet is keyed on [data-viewport=xs], not a zoom-blind raw-px @media', () => {
-    expect(css).toMatch(/\[data-viewport='xs'\]\s*\.connect-side\s*\{/)
-    // The old zoom-unaware bottom-sheet (an @media max-width:900px wrapping .connect-side)
-    // must be gone — that breakpoint mis-fires at every UI zoom.
+  it('the pane grid restacks to one column via [data-viewport=xs], not a zoom-blind @media', () => {
+    expect(css).toMatch(/\[data-viewport='xs'\]\s*\.connect\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/)
+    // No raw-px breakpoint may drive the Connect layout — that mis-fires at every UI zoom.
     expect(css).not.toMatch(/@media\s*\(max-width:\s*900px\)\s*\{\s*\/\*[^}]*bottom sheet/i)
   })
 
-  it('the rail scopes the wide gauge grid to 2 columns (no horizontal clip)', () => {
-    expect(css).toMatch(/\.connect-side\s+\.swx-strip\s*\{[^}]*grid-template-columns:\s*repeat\(2/)
+  it('the globe cell keeps a definite size (center minmax(0,1fr) + min-width:0, never runaway)', () => {
+    // The map canvas is 100%-width; a bare 1fr column would let it grow unbounded. The
+    // center column must be minmax(0,1fr), and .connect-map keeps the min-*:0 chain.
+    expect(css).toMatch(/\.connect\s*\{[^}]*grid-template-columns:[^;]*minmax\(0, 1fr\)/)
+    expect(css).toMatch(/\.connect-map\s*\{[^}]*min-width:\s*0/)
   })
 
-  it('.connect-side declares a visible scrollbar affordance', () => {
-    expect(css).toMatch(/\.connect-side\s*\{[^}]*scrollbar-width:\s*thin/)
+  it('a pane body scopes the wide gauge grid to 2 columns (no horizontal clip)', () => {
+    expect(css).toMatch(/\.pane-body\s+\.swx-strip\s*\{[^}]*grid-template-columns:\s*repeat\(2/)
+  })
+
+  it('a pane body declares a visible scrollbar affordance', () => {
+    expect(css).toMatch(/\.pane-body\s*\{[^}]*scrollbar-width:\s*thin/)
   })
 
   it('the map insight overlay mirrors .map-path (right edge, absolute, z 3–5)', () => {

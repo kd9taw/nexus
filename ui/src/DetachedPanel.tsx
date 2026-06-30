@@ -89,6 +89,16 @@ export function DetachedPanel({ panel }: { panel: string }) {
   // Live snapshot (decodes, stations, radio) — same 300 ms cadence as the main window.
   useEffect(() => subscribeSnapshot(setSnap), [])
 
+  // Refetch the band plan when the tier changes — FT8/FT4 use different dial frequencies
+  // (14.074 vs 14.080), so a detached Operate window's QSY targets must follow the mode.
+  useEffect(() => {
+    let live = true
+    getBandPlan().then((b) => live && setBandPlan(b)).catch(() => {})
+    return () => {
+      live = false
+    }
+  }, [snap?.link.tier])
+
   // Propagation + needs + band plan + settings: this window polls the shared engine.
   useEffect(() => {
     let live = true

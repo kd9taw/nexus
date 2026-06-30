@@ -2173,9 +2173,18 @@ impl Engine {
         if mycall.is_empty() {
             return; // can't form a roger without our own call; drop (won't recur)
         }
-        for (peer, incurred) in owed {
+        // One structured RR73 per peer this poll. A free-text id-tagged ACK can't fit (two
+        // callsigns + id > the 13-char free-text frame), so the ACK stays the structured
+        // RR73 (calls hashed into 77 bits) and the sender matches FIFO. The recovery win is
+        // that we RE-owe on every heard resend (the inbox records owed ACKs on each
+        // completion), so a lost RR73 is re-sent on the sender's next resend.
+        let mut seen = std::collections::HashSet::new();
+        for (peer, _id, incurred) in owed {
             if slot.saturating_sub(incurred) > ACK_TTL_SLOTS {
                 continue; // stale — don't ack a conversation that's long over
+            }
+            if !seen.insert(peer.clone()) {
+                continue;
             }
             let ack = Msg::Rr73 {
                 to: peer,
@@ -2245,6 +2254,24 @@ impl Engine {
         if self.source_kind == SourceKind::Native {
             if let Some(kind) = tier.mode_kind() {
                 self.source = Box::new(NativeSource::from_kind(kind));
+            }
+        }
+        // WSJT-X-style: switching the mode moves the rig to the NEW mode's dial for the
+        // CURRENT band (FT8 14.074 → FT4 14.080; FT1 → the native plan), honoring any
+        // Settings ▸ Frequencies overrides — so you land where the new mode actually calls
+        // instead of being left on the old tier's frequency. In-band QSY (band unchanged),
+        // so the decode context is preserved. Companion mode tracks the upstream rig, so
+        // skip it there. (`band_plan()` is tier-aware off the just-set tier.)
+        if self.source_kind == SourceKind::Native {
+            let band = self.settings.band.clone();
+            if let Some(ch) = self
+                .band_plan()
+                .into_iter()
+                .find(|c| c.band.eq_ignore_ascii_case(&band))
+            {
+                if (ch.dial_mhz - self.settings.dial_mhz).abs() > 0.0005 {
+                    self.set_frequency(ch.dial_mhz, &ch.band, &ch.mode);
+                }
             }
         }
     }
@@ -4537,6 +4564,27 @@ mod tests {
             mine.iter().filter(|m| m.contains("73")).count(),
             1,
             "exactly one clean own-TX row (the bare frame isn't double-recorded): {mine:?}"
+        );
+    }
+
+    #[test]
+    fn switching_tier_re_qsys_to_the_new_mode_dial() {
+        let mut e = Engine::new("KD9TAW", "EN52", 0);
+        e.set_tier(Tier::Ft8);
+        e.set_frequency(14.074, "20m", "USB"); // 20m FT8 watering hole
+        // FT8→FT4 must move the rig to the FT4 20m dial (14.080), like WSJT-X — not stay.
+        e.set_tier(Tier::Ft4);
+        assert!(
+            (e.settings().dial_mhz - 14.080).abs() < 0.0005,
+            "FT4 moved the dial to 14.080, got {}",
+            e.settings().dial_mhz
+        );
+        // …and back.
+        e.set_tier(Tier::Ft8);
+        assert!(
+            (e.settings().dial_mhz - 14.074).abs() < 0.0005,
+            "FT8 moved back to 14.074, got {}",
+            e.settings().dial_mhz
         );
     }
 

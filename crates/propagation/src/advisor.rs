@@ -30,6 +30,44 @@ pub struct RegionReport {
     pub bidirectional: bool,
 }
 
+/// One region's best band right now — the INVERSE of `BandReport.best_region` (keyed on
+/// REGION, naming the strongest band TO it). Operator-anchored: built ONLY from the
+/// operator's own hear_me/i_hear paths, never the far↔far census, so it can't be lit by a
+/// single superstation (the "always 10m" anchoring bug). Drives the best-band recommender.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RegionBest {
+    pub region: String,
+    pub octant: String,
+    pub bearing_deg: f32,
+    /// Best band TO this region now (most anchored stations, tiebroken by band score).
+    pub band: String,
+    pub tier: ActivityTier,
+    pub modeled: String,
+    pub stations: u32,
+    pub bidirectional: bool,
+    pub score: f32,
+}
+
+/// One (region, band) cell of the operator-anchored activity matrix.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RegionBandCell {
+    pub region: String,
+    pub band: String,
+    /// Distinct anchored far stations (hear_me ∪ i_hear) on this band to this region.
+    pub stations: u32,
+    pub hear_me: u32,
+    pub i_hear: u32,
+}
+
+/// The best-band-per-region recommender + the full (region, band) matrix, from one pass.
+#[derive(Debug, Clone, Default)]
+pub struct RegionBandResult {
+    pub best_to_region: Vec<RegionBest>,
+    pub cells: Vec<RegionBandCell>,
+}
+
 /// One band's nowcast for the band ladder.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -336,6 +374,136 @@ impl PropAdvisor {
         })
     }
 
+    /// Best band PER region + the full (region, band) activity matrix, from ONE pass over
+    /// the SAME anchored window `advise` uses. Operator-anchored ONLY (far↔far
+    /// `Side::Neither` excluded → anti-superstation-safe by construction, exactly like
+    /// `band_report`'s `by_region`); `Region::Unknown` and grid-less spots are skipped
+    /// (consistent with `best_region`). `band_reports` supplies each band's tier/modeled/
+    /// score (already computed by `advise`). Call ONLY on the anchored window, NEVER
+    /// worldwide — folding the far↔far census in would reintroduce the "always 10m" bug.
+    pub fn region_band(
+        &self,
+        now: i64,
+        spots: &[PathSpot],
+        band_reports: &[BandReport],
+    ) -> RegionBandResult {
+        let cutoff = now - self.config.window_secs;
+        // (region, band) → (far calls who heard me, far calls I heard).
+        let mut cells: HashMap<(Region, Band), (HashSet<String>, HashSet<String>)> = HashMap::new();
+        // region → accumulated far lat/lon (+ count) for a mean bearing.
+        let mut region_pts: HashMap<Region, (f64, f64, u32)> = HashMap::new();
+        for s in spots {
+            if s.time < cutoff {
+                continue;
+            }
+            let side = s.side(&self.me_call);
+            if side == Side::Neither {
+                continue; // anchored only — never the far↔far census (superstation guard)
+            }
+            let (Some(far), Some(g)) = (s.far_call(&self.me_call), s.far_grid(&self.me_call)) else {
+                continue;
+            };
+            let region = Region::from_grid(g);
+            if region == Region::Unknown {
+                continue;
+            }
+            let far = far.to_uppercase();
+            let entry = cells.entry((region, s.band)).or_default();
+            match side {
+                Side::HeardMe => entry.0.insert(far),
+                Side::IHeard => entry.1.insert(far),
+                Side::Neither => unreachable!(),
+            };
+            if let Some((lat, lon)) = maidenhead_to_latlon(g) {
+                let p = region_pts.entry(region).or_insert((0.0, 0.0, 0));
+                p.0 += lat;
+                p.1 += lon;
+                p.2 += 1;
+            }
+        }
+
+        // Per-band tier/modeled/score from the already-computed reports (keyed by label).
+        let by_label: HashMap<&str, (ActivityTier, &str, f32)> = band_reports
+            .iter()
+            .map(|r| (r.band.as_str(), (r.tier, r.modeled.as_str(), r.score)))
+            .collect();
+
+        // Flatten cells + collect per-region candidate bands.
+        let mut out_cells: Vec<RegionBandCell> = Vec::new();
+        let mut per_region: HashMap<Region, Vec<(Band, u32, bool)>> = HashMap::new();
+        for ((region, band), (hm, ih)) in &cells {
+            let stations = hm.union(ih).count() as u32;
+            let bidirectional = !hm.is_empty() && !ih.is_empty();
+            out_cells.push(RegionBandCell {
+                region: region.label().to_string(),
+                band: band.label().to_string(),
+                stations,
+                hear_me: hm.len() as u32,
+                i_hear: ih.len() as u32,
+            });
+            per_region
+                .entry(*region)
+                .or_default()
+                .push((*band, stations, bidirectional));
+        }
+        // Deterministic cell order (region, then band label) — the matrix UI re-sorts rows.
+        out_cells.sort_by(|a, b| a.region.cmp(&b.region).then_with(|| a.band.cmp(&b.band)));
+
+        // Best band per region: most anchored stations, tiebroken by the band's score.
+        let score_of = |b: &Band| by_label.get(b.label()).map(|x| x.2).unwrap_or(0.0);
+        let mut best: Vec<RegionBest> = Vec::new();
+        for (region, bands) in &per_region {
+            let Some(&(band, stations, bidirectional)) = bands.iter().max_by(|a, b| {
+                a.1.cmp(&b.1)
+                    .then_with(|| score_of(&a.0).partial_cmp(&score_of(&b.0)).unwrap_or(std::cmp::Ordering::Equal))
+                    // Deterministic final tiebreak (HashMap order otherwise): on an exact
+                    // station+score tie prefer the HIGHER band, the better DX bet.
+                    .then_with(|| {
+                        a.0.center_mhz()
+                            .partial_cmp(&b.0.center_mhz())
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    })
+            }) else {
+                continue;
+            };
+            let (tier, modeled, score) = by_label
+                .get(band.label())
+                .copied()
+                .unwrap_or((ActivityTier::Closed, "Closed", 0.0));
+            // Bearing = the region's ALL-band anchored centroid (deliberately band-
+            // independent — a continent's heading doesn't vary by band; cf. best_region's
+            // per-band centroid).
+            let bearing = self
+                .me_latlon
+                .zip(region_pts.get(region).filter(|p| p.2 > 0))
+                .map(|(me, (lat, lon, n))| bearing_deg(me, (lat / *n as f64, lon / *n as f64)) as f32)
+                .unwrap_or(0.0);
+            best.push(RegionBest {
+                region: region.label().to_string(),
+                octant: compass_octant(bearing as f64).to_string(),
+                bearing_deg: bearing,
+                band: band.label().to_string(),
+                tier,
+                modeled: modeled.to_string(),
+                stations,
+                bidirectional,
+                score,
+            });
+        }
+        // Hero order: the region with the most anchored stations (to its best band) first.
+        best.sort_by(|a, b| {
+            b.stations
+                .cmp(&a.stations)
+                .then_with(|| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal))
+                .then_with(|| a.region.cmp(&b.region)) // deterministic on an exact tie
+        });
+
+        RegionBandResult {
+            best_to_region: best,
+            cells: out_cells,
+        }
+    }
+
     fn headline(&self, reports: &[BandReport]) -> String {
         let best = reports
             .iter()
@@ -452,6 +620,49 @@ mod tests {
             b6b.score,
             b6.score
         );
+    }
+
+    #[test]
+    fn region_band_is_operator_anchored_with_best_band_per_region() {
+        let wx = SpaceWx { sfi: 150.0, kp: 2.0, ..Default::default() };
+        let me = "KD9TAW";
+        let spots = vec![
+            // I hear two Asia stations on 15m, one Europe station on 20m (anchored).
+            path("JA1ABC", "PM95", me, "EN52", Band::B15),
+            path("JA2DEF", "PM95", me, "EN52", Band::B15),
+            path("DL1XYZ", "JO31", me, "EN52", Band::B20),
+            // Far↔far (I'm not on the path) on 10m — MUST be excluded (superstation guard).
+            path("XE1DX", "EK09", "K9BIG", "FN20", Band::B10),
+        ];
+        let advisor = PropAdvisor::new(me, "EN52");
+        let advisory = advisor.advise(NOW, &spots, &wx);
+        let rb = advisor.region_band(NOW, &spots, &advisory.bands);
+
+        // The far↔far 10m spot never enters the anchored matrix or recommender.
+        assert!(rb.cells.iter().all(|c| c.band != "10m"), "Neither spot leaked in");
+        assert!(rb.best_to_region.iter().all(|r| r.band != "10m"));
+        // 15m carries 2 distinct anchored stations, 20m carries 1.
+        assert_eq!(rb.cells.iter().find(|c| c.band == "15m").expect("15m cell").stations, 2);
+        assert_eq!(rb.cells.iter().find(|c| c.band == "20m").expect("20m cell").stations, 1);
+        // Hero = the region with the most anchored stations → its best band is 15m (2 stns).
+        let top = rb.best_to_region.first().expect("a recommended region");
+        assert_eq!(top.band, "15m");
+        assert_eq!(top.stations, 2);
+    }
+
+    #[test]
+    fn region_band_excludes_a_pure_far_far_census() {
+        // No operator-anchored path → nothing in the matrix (anti-superstation by design).
+        let wx = SpaceWx { sfi: 150.0, kp: 2.0, ..Default::default() };
+        let spots = vec![
+            path("XE1DX", "EK09", "K9BIG", "FN20", Band::B10),
+            path("JA1ABC", "PM95", "W9EAR", "EN62", Band::B15),
+        ];
+        let advisor = PropAdvisor::new("KD9TAW", "EN52");
+        let advisory = advisor.advise(NOW, &spots, &wx);
+        let rb = advisor.region_band(NOW, &spots, &advisory.bands);
+        assert!(rb.cells.is_empty(), "far↔far census must not enter the anchored matrix");
+        assert!(rb.best_to_region.is_empty());
     }
 
     #[test]

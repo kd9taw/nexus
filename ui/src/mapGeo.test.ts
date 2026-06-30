@@ -6,6 +6,7 @@ import {
   subsolarPoint,
   terminator,
   solarElevationDeg,
+  nextTerminatorMs,
   mufMhz,
 } from './mapGeo'
 import { gridToLatLon, haversineKm } from './grid'
@@ -109,6 +110,25 @@ describe('mapGeo (greyline / terminator)', () => {
     expect(t.caps).toHaveLength(4)
     expect(t.line).toBeTruthy()
     expect(t.subsolar).toEqual(subsolarPoint(Date.UTC(2024, 2, 20, 12, 0, 0)))
+  })
+
+  it('nextTerminatorMs lands on the horizon (elevation ~0) within 24h', () => {
+    const now = Date.UTC(2024, 5, 21, 6, 0, 0)
+    const lat = 41.7
+    const lon = -87.6 // Chicago
+    const n = nextTerminatorMs(lat, lon, now)
+    expect(n.atMs).toBeGreaterThan(now)
+    expect(n.atMs).toBeLessThanOrEqual(now + 25 * 3_600_000)
+    expect(Math.abs(solarElevationDeg(lat, lon, n.atMs))).toBeLessThan(0.5) // on the horizon
+    expect(['rise', 'set']).toContain(n.kind)
+  })
+
+  it('nextTerminatorMs alternates sunrise/sunset', () => {
+    const lat = 41.7
+    const lon = -87.6
+    const first = nextTerminatorMs(lat, lon, Date.UTC(2024, 5, 21, 6, 0, 0))
+    const second = nextTerminatorMs(lat, lon, first.atMs + 60_000)
+    expect(second.kind).not.toBe(first.kind)
   })
 })
 

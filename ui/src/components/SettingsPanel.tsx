@@ -162,6 +162,18 @@ const SETTINGS_TABS: { id: SettingsTab; label: string }[] = [
   { id: 'fieldday', label: 'Field Day' },
 ]
 
+// Public human DX-cluster nodes (SSB/phone + human spots) — the RBN CW + digital skimmer
+// feeds connect automatically, so these are for the phone/human spots RBN doesn't carry.
+// Researched, community-trusted, callsign-only login. (NOT RBN ports — those are wired
+// separately; the global human-spot mesh means any well-connected node has the same spots.)
+const CLUSTER_PRESETS: { label: string; host: string }[] = [
+  { label: 'VE7CC-1 — human SSB/CW, clean (recommended)', host: 've7cc.net:23' },
+  { label: 'WA9PIE-2 — best uptime (HRD node)', host: 'dxc.wa9pie.net:8000' },
+  { label: 'NC7J — AR-Cluster', host: 'dxc.nc7j.com:23' },
+  { label: 'W1NR — DXSpider', host: 'dx.w1nr.net:23' },
+  { label: 'W3LPL — firehose (skimmer-heavy)', host: 'w3lpl.net:7373' },
+]
+
 export function SettingsPanel({
   onSaved,
   radio,
@@ -2016,16 +2028,35 @@ export function SettingsPanel({
               </div>
 
               <label className="settings-field">
-                <span className="settings-label">Cluster host</span>
+                <span className="settings-label">Phone/SSB cluster node</span>
+                <select
+                  className="settings-input"
+                  value={
+                    CLUSTER_PRESETS.some((p) => p.host === form.clusterHost)
+                      ? form.clusterHost
+                      : 'custom'
+                  }
+                  onChange={(e) => {
+                    if (e.target.value !== 'custom') update('clusterHost', e.target.value)
+                  }}
+                >
+                  {CLUSTER_PRESETS.map((p) => (
+                    <option key={p.host} value={p.host}>
+                      {p.label}
+                    </option>
+                  ))}
+                  <option value="custom">Custom…</option>
+                </select>
                 <input
                   className="settings-input"
                   value={form.clusterHost ?? ''}
                   onChange={(e) => update('clusterHost', e.target.value)}
-                  placeholder="telnet.reversebeacon.net:7000"
+                  placeholder="ve7cc.net:23"
                   spellCheck={false}
                 />
                 <span className="settings-hint">
-                  DX cluster / RBN telnet node (host:port). Takes effect on restart.
+                  Human DX cluster for SSB/phone spots (RBN CW + digital connect
+                  automatically). Pick a preset or enter host:port. Takes effect on restart.
                 </span>
               </label>
 

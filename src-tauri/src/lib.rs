@@ -47,6 +47,13 @@ type PropCache = Arc<Mutex<Option<(std::time::Instant, propagation::PropagationS
 /// TTL cache for the OVATION aurora oval (distinct payload type from PropCache, so
 /// a distinct TypeId for `.manage()`).
 type AuroraCache = Arc<Mutex<Option<(std::time::Instant, Vec<propagation::live::aurora::AuroraPoint>)>>>;
+/// TTL cache for the KC2G ionosonde MUF map. Distinct payload type → distinct
+/// TypeId for `.manage()`.
+type Kc2gCache = Arc<Mutex<Option<(std::time::Instant, Vec<propagation::MufStation>)>>>;
+/// TTL cache for the NOAA R/S/G scales + recent SWPC alerts (one fetch pair).
+/// Distinct payload type → distinct TypeId for `.manage()`.
+type ScalesCache =
+    Arc<Mutex<Option<(std::time::Instant, (propagation::NoaaScalesView, Vec<propagation::AlertView>))>>>;
 
 /// Recent DX-cluster / RBN spots, fed by the background cluster thread and read
 /// by `get_need_alerts`.
@@ -829,7 +836,13 @@ async fn get_propagation(
     // near-region, or own decodes); when empty we keep the cached snapshot's
     // own-call advisory (never the global firehose, which `anchored` excludes).
     if !anchored.is_empty() {
-        snap.advisory = propagation::PropAdvisor::new(&mycall, &mygrid).advise(now, &anchored, &wx);
+        let advisor = propagation::PropAdvisor::new(&mycall, &mygrid);
+        snap.advisory = advisor.advise(now, &anchored, &wx);
+        // Best-band-per-region recommender + the (region, band) activity matrix, from the
+        // SAME anchored window (operator-reachable only — never the firehose). One pass.
+        let rb = advisor.region_band(now, &anchored, &snap.advisory.bands);
+        snap.best_to_region = rb.best_to_region;
+        snap.region_band = rb.cells;
     }
     // "Worldwide activity" = the SAME advisor over the GLOBAL firehose window, so the
     // UI can show busy-worldwide beside best-FOR-YOU (workable vs merely-loud). Only
@@ -1006,6 +1019,79 @@ async fn get_aurora(
             // Serve a stale oval rather than nothing; empty if we never had one.
             let g = cache.lock().map_err(|e| e.to_string())?;
             Ok(g.as_ref().map(|(_, p)| p.clone()).unwrap_or_default())
+        }
+    }
+}
+
+/// Real-time KC2G ionosonde MUF/foF2 station fixes for the Connect map's MUF
+/// overlay. Cached `KC2G_TTL_SECS`; serves the last-good set on a fetch failure,
+/// empty if we never had one (never fabricated).
+#[tauri::command]
+async fn get_kc2g_muf(
+    cache: State<'_, Kc2gCache>,
+) -> Result<Vec<propagation::MufStation>, String> {
+    const KC2G_TTL_SECS: u64 = 300;
+    {
+        let g = cache.lock().map_err(|e| e.to_string())?;
+        if let Some((when, v)) = g.as_ref() {
+            if when.elapsed().as_secs() < KC2G_TTL_SECS {
+                return Ok(v.clone());
+            }
+        }
+    }
+    match propagation::live::kc2g::fetch_kc2g_muf() {
+        Ok(v) => {
+            if let Ok(mut g) = cache.lock() {
+                *g = Some((std::time::Instant::now(), v.clone()));
+            }
+            Ok(v)
+        }
+        Err(_) => {
+            // Serve a stale set rather than nothing; empty if we never had one.
+            let g = cache.lock().map_err(|e| e.to_string())?;
+            Ok(g.as_ref().map(|(_, v)| v.clone()).unwrap_or_default())
+        }
+    }
+}
+
+/// Fetch the NOAA R/S/G space-weather scales (today + tomorrow's G) plus the most
+/// recent SWPC alert/watch/warning bulletins, for the space-weather strip.
+/// Returned as a `(scales, alerts)` tuple — the TS side destructures it as a
+/// `[scales, alerts]` array.
+///
+/// Cached `SCALES_TTL_SECS`; the two products degrade together (a partial fetch
+/// serves the last-good pair rather than a half-empty mix), and a cold failure
+/// returns quiet-default scales + no alerts — honest neutral, never fabricated.
+#[tauri::command]
+async fn get_space_wx_scales(
+    cache: State<'_, ScalesCache>,
+) -> Result<(propagation::NoaaScalesView, Vec<propagation::AlertView>), String> {
+    const SCALES_TTL_SECS: u64 = 900;
+    {
+        let g = cache.lock().map_err(|e| e.to_string())?;
+        if let Some((when, pair)) = g.as_ref() {
+            if when.elapsed().as_secs() < SCALES_TTL_SECS {
+                return Ok(pair.clone());
+            }
+        }
+    }
+    match (
+        propagation::live::swpc_scales::fetch_noaa_scales(),
+        propagation::live::swpc_scales::fetch_alerts(),
+    ) {
+        (Ok(scales), Ok(alerts)) => {
+            let pair = (scales, alerts);
+            if let Ok(mut g) = cache.lock() {
+                *g = Some((std::time::Instant::now(), pair.clone()));
+            }
+            Ok(pair)
+        }
+        _ => {
+            // Any feed down → serve last-good if we have it, else quiet defaults.
+            let g = cache.lock().map_err(|e| e.to_string())?;
+            Ok(g.as_ref()
+                .map(|(_, pair)| pair.clone())
+                .unwrap_or_default())
         }
     }
 }
@@ -4253,11 +4339,15 @@ pub fn run() {
 
     let prop_cache: PropCache = Arc::new(Mutex::new(None));
     let aurora_cache: AuroraCache = Arc::new(Mutex::new(None));
+    let kc2g_cache: Kc2gCache = Arc::new(Mutex::new(None));
+    let scales_cache: ScalesCache = Arc::new(Mutex::new(None));
 
     tauri::Builder::default()
         .manage(engine)
         .manage(prop_cache)
         .manage(aurora_cache)
+        .manage(kc2g_cache)
+        .manage(scales_cache)
         .manage(spots)
         .manage(live_paths)
         .manage(SharedOtaSpots::new(Mutex::new(std::collections::HashMap::new())))
@@ -4375,6 +4465,8 @@ pub fn run() {
             get_band_outlook,
             get_getting_out,
             get_aurora,
+            get_kc2g_muf,
+            get_space_wx_scales,
             get_feed_health,
             qsy_set_enabled,
             qsy_configure,

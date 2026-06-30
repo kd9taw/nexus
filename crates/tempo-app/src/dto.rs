@@ -173,10 +173,15 @@ pub struct ChatMessage {
     pub freq_hz: Option<f32>,
     pub dt_sec: Option<f32>,
     pub tier: Option<Tier>,
-    /// For an OUTBOUND directed message: the recipient acknowledged receipt (a 1-frame
+    /// For an OUTBOUND directed message: the recipient acknowledged receipt (an id-bearing
     /// RR73 ACK came back). Drives a REAL "Delivered ✓" instead of the old heuristic.
     #[serde(default)]
     pub delivered: bool,
+    /// For an OUTBOUND directed message: the store chunk-id char assigned to it, so an
+    /// id-bearing ACK confirms exactly this message (no FIFO guessing). `None` for inbound
+    /// + broadcasts.
+    #[serde(default)]
+    pub ack_id: Option<char>,
 }
 
 /// A per-peer thread of chat messages.

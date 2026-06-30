@@ -214,6 +214,39 @@ export function solarElevationDeg(lat: number, lon: number, nowMs: number): numb
   return 90 - Math.acos(Math.max(-1, Math.min(1, c))) / DEG
 }
 
+export interface NextTerminator {
+  atMs: number
+  kind: 'rise' | 'set'
+}
+
+/** The next sunrise OR sunset at (lat, lon) strictly after `nowMs` — found by scanning
+ *  solar elevation forward for a horizon (0°) crossing in coarse 5-min steps, then
+ *  bisecting to the minute. Reuses solarElevationDeg verbatim, so it can never disagree
+ *  with the drawn terminator. Polar day/night (no crossing within ~25 h) returns the
+ *  horizon time with the kind that would END the current state. */
+export function nextTerminatorMs(lat: number, lon: number, nowMs: number): NextTerminator {
+  const STEP = 5 * 60 * 1000
+  const HORIZON = 25 * 60 * 60 * 1000 // > 24 h so a crossing is always found unless polar
+  let t0 = nowMs
+  let e0 = solarElevationDeg(lat, lon, t0)
+  for (let t = nowMs + STEP; t <= nowMs + HORIZON; t += STEP) {
+    const e1 = solarElevationDeg(lat, lon, t)
+    if (Math.sign(e1) !== Math.sign(e0)) {
+      let lo = t0
+      let hi = t
+      while (hi - lo > 60 * 1000) {
+        const mid = (lo + hi) / 2
+        if (Math.sign(solarElevationDeg(lat, lon, mid)) === Math.sign(e0)) lo = mid
+        else hi = mid
+      }
+      return { atMs: Math.round(hi), kind: e0 < 0 ? 'rise' : 'set' }
+    }
+    t0 = t
+    e0 = e1
+  }
+  return { atMs: nowMs + HORIZON, kind: e0 >= 0 ? 'set' : 'rise' }
+}
+
 /** Modelled MUF(3000 km) in MHz at a point, from SFI + solar elevation. */
 export function mufMhz(lat: number, lon: number, nowMs: number, sfi: number): number {
   const elev = solarElevationDeg(lat, lon, nowMs)

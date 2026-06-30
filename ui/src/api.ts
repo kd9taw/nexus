@@ -33,6 +33,7 @@ import type {
   VoiceMessage,
 } from './types'
 import type { PropagationSnapshot, PathPrediction, GettingOut, AuroraPoint } from './types'
+import type { MufStation, NoaaScalesView, AlertView } from './types'
 
 type InvokeFn = <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>
 
@@ -122,6 +123,16 @@ export async function getGettingOut(): Promise<GettingOut> {
 /** The current OVATION aurora oval for the map overlay. */
 export async function getAurora(): Promise<AuroraPoint[]> {
   return invoke<AuroraPoint[]>('get_aurora')
+}
+
+export async function getKc2gMuf(): Promise<MufStation[]> {
+  return invoke<MufStation[]>('get_kc2g_muf')
+}
+
+/** SWPC R/S/G scales + recent alerts (the backend returns a [scales, alerts] tuple). */
+export async function getSpaceWxScales(): Promise<{ scales: NoaaScalesView; alerts: AlertView[] }> {
+  const [scales, alerts] = await invoke<[NoaaScalesView, AlertView[]]>('get_space_wx_scales')
+  return { scales, alerts }
 }
 
 export async function sendMessage(peer: string, text: string): Promise<AppSnapshot> {

@@ -514,9 +514,12 @@ impl Default for Settings {
             pskreporter: true,
             cluster_enabled: true,
             // A public human DX-cluster node for SSB/phone + human spots (the RBN CW +
-            // digital skimmer feeds are wired automatically). Configurable; pick your
-            // favorite node. RBN-only operators can blank this.
-            cluster_host: "dxc.nc7j.com:7373".to_string(),
+            // digital skimmer feeds are wired automatically). VE7CC-1 is the community
+            // default — CC-Cluster, human-spot-rich, and skimmer OFF by default, so it
+            // doesn't double the RBN firehose we already pull. Configurable; RBN-only
+            // operators can blank this. (NOTE: dxc.nc7j.com:7373 is NC7J's *skimmer* port,
+            // not its human port — don't use it here; the migration in `load` fixes it.)
+            cluster_host: "ve7cc.net:23".to_string(),
             audio_in: String::new(),
             audio_out: String::new(),
             tx_level: 0.9,
@@ -589,11 +592,12 @@ impl Settings {
             .chat
             .retain(|m| !matches!(m.trim().to_uppercase().as_str(), "CQ" | "CQ CQ"));
         // Migration: cluster_host used to BE the RBN endpoint (digital-only, port 7001),
-        // which is why CW/Phone needs never appeared. RBN CW+digital are now wired
-        // automatically, so cluster_host is repurposed as the human node for SSB/phone —
-        // reset an existing RBN value to the human default so those needs start flowing.
-        if s.cluster_host.contains("reversebeacon.net") {
-            s.cluster_host = "dxc.nc7j.com:7373".to_string();
+        // which is why CW/Phone needs never appeared; a later build wrongly defaulted it to
+        // NC7J's SKIMMER port (dxc.nc7j.com:7373), which just duplicates the RBN we pull.
+        // RBN CW+digital are now wired automatically, so cluster_host is the HUMAN node for
+        // SSB/phone — reset either bad value to the VE7CC-1 default so phone spots flow.
+        if s.cluster_host.contains("reversebeacon.net") || s.cluster_host == "dxc.nc7j.com:7373" {
+            s.cluster_host = "ve7cc.net:23".to_string();
         }
         s
     }

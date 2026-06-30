@@ -25,6 +25,7 @@ pub mod geo;
 pub mod gettingout;
 pub mod insight;
 pub mod journey;
+pub mod kc2g;
 pub mod likelihood;
 pub mod mapspots;
 pub mod model;
@@ -35,6 +36,7 @@ pub mod predict;
 pub mod pskr_mqtt;
 pub mod space_wx;
 pub mod spot;
+pub mod swpc_scales;
 
 /// Live feed adapters (NOAA SWPC + PSK Reporter). Opt-in via the `live` feature.
 #[cfg(feature = "live")]
@@ -62,6 +64,7 @@ pub use journey::{
     First, JourneyQso, JourneySummary, Ladder, NextMilestone, PersonalBest, Rung, Streak,
     Tier as JourneyTier,
 };
+pub use kc2g::MufStation;
 pub use mapspots::{build_map_spots, MapSpot};
 pub use model::{
     classify_spot_mode, classify_vhf_mode, ActivityTier, Band, Confidence, ModeClass, PathSpot,
@@ -83,3 +86,4 @@ pub use pskr_mqtt::{
 pub use insight::{generate_insights, Insight, InsightKind, InsightLevel};
 pub use space_wx::{ScalarTrend, SpaceWxHistory, SpaceWxSample, TrendDir, WxTrend};
 pub use spot::Spot;
+pub use swpc_scales::{AlertView, NoaaScalesView};

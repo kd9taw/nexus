@@ -108,6 +108,15 @@ pub struct PropagationSnapshot {
     /// command layer overwrites with trend-aware lines.
     #[serde(default)]
     pub insights: Vec<crate::insight::Insight>,
+    /// Best band PER reachable region (the inverse of each band's `best_region`) — the
+    /// best-band recommender. Operator-anchored; filled by the command layer from the
+    /// anchored window, empty in the pure-engine assembly.
+    #[serde(default)]
+    pub best_to_region: Vec<crate::advisor::RegionBest>,
+    /// The operator-anchored (region, band) activity matrix. Same source as
+    /// `best_to_region`; filled by the command layer.
+    #[serde(default)]
+    pub region_band: Vec<crate::advisor::RegionBandCell>,
 }
 
 /// Ties the three pillars to one operator identity.
@@ -164,6 +173,8 @@ impl PropagationEngine {
             worldwide: None,   // command layer fills this from the global firehose
             wx_trend: crate::space_wx::WxTrend::default(), // command layer fills from history
             insights,
+            best_to_region: Vec::new(), // command layer fills from the anchored window
+            region_band: Vec::new(),    // command layer fills from the anchored window
         }
     }
 
