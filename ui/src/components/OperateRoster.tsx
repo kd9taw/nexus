@@ -27,6 +27,7 @@ type SortKey = 'need' | 'call' | 'country' | 'dist' | 'bearing' | 'snr' | 'age'
 const NEED_RANK: Record<NeedTag, number> = {
   NewEntity: 5,
   NewZone: 4,
+  NewGrid: 4,
   NewBand: 3,
   NewMode: 2,
   Confirm: 1,
@@ -39,6 +40,7 @@ const NEED_CHIP: Record<NeedTag, { label: string; cls: string }> = {
   NewZone: { label: 'ZONE', cls: 'zone' },
   NewBand: { label: 'BAND', cls: 'band' },
   NewMode: { label: 'MODE', cls: 'mode' },
+  NewGrid: { label: 'GRID', cls: 'grid' },
   Confirm: { label: 'CFM', cls: 'confirm' },
   Dxped: { label: 'DXP', cls: 'dxped' },
   Pota: { label: 'POTA', cls: 'pota' },

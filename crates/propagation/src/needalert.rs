@@ -27,6 +27,9 @@ pub enum NeedTag {
     NewBand,
     /// The entity worked, but not in this mode class.
     NewMode,
+    /// A 4-character Maidenhead grid never worked — independent of the entity (like a
+    /// zone). Only set when the heard station's grid is known (own decodes / PSK Reporter).
+    NewGrid,
     /// Worked but unconfirmed — a confirmation opportunity (lowest).
     Confirm,
     /// The call is a live POTA activator right now (appended, like Dxped).
@@ -45,6 +48,7 @@ impl NeedTag {
             NeedTag::NewZone => "New zone",
             NeedTag::NewBand => "New band",
             NeedTag::NewMode => "New mode",
+            NeedTag::NewGrid => "New grid",
             NeedTag::Confirm => "Confirm",
             NeedTag::Dxped => "DXpedition",
             NeedTag::Pota => "POTA",
@@ -56,6 +60,7 @@ impl NeedTag {
         match self {
             NeedTag::NewEntity => 100,
             NeedTag::NewZone => 70,
+            NeedTag::NewGrid => 60,
             NeedTag::NewBand => 50,
             NeedTag::NewMode => 30,
             NeedTag::Confirm => 10,
@@ -84,6 +89,9 @@ pub struct Heard {
     /// Human evidence line: WHO heard/spotted this and from where — the board
     /// shows its work so the operator never has to wonder if a row is real.
     pub evidence: Option<String>,
+    /// The heard station's Maidenhead grid, when the source carried one (own decodes,
+    /// PSK Reporter). `None` for cluster/RBN spots (no grid). Drives the NewGrid need.
+    pub grid: Option<String>,
 }
 
 /// A scored need opportunity for a heard station.
@@ -125,7 +133,16 @@ pub fn heard_from_freq(call: &str, freq_mhz: f64, mode: &str) -> Option<Heard> {
         freq_mhz: Some(freq_mhz),
         admitted_at: None, // the caller (cluster path) stamps these
         evidence: None,
+        grid: None, // cluster/RBN spots carry no grid
     })
+}
+
+/// First 4 chars of a Maidenhead grid, uppercased — the "new grid" award granularity
+/// (field + square). Returns `None` if it isn't at least a 4-char locator. Shared with
+/// [`crate::dxped::LogNeeds`] so the worked-grid index and the heard-grid check agree.
+pub(crate) fn grid4(grid: &str) -> Option<String> {
+    let g: String = grid.trim().to_ascii_uppercase().chars().take(4).collect();
+    (g.len() == 4).then_some(g)
 }
 
 /// Score one heard station. Returns `None` for an unresolvable call or a fully
@@ -134,11 +151,15 @@ pub fn score(
     call: &str,
     band: &str,
     mode: &str,
+    grid: Option<&str>,
     needs: &dyn OperatorNeeds,
     worked_zones: &HashSet<u8>,
+    worked_grids: &HashSet<String>,
 ) -> Option<NeedAlert> {
     let info = dxcc::resolve(call)?;
     let mut tags: Vec<NeedTag> = Vec::new();
+    // The heard station's 4-char grid, when the source carried one — for the NewGrid need.
+    let g4 = grid.and_then(grid4);
 
     // DXCC need — ARRL DXCC entities only (WAE/CQ-only entities earn no DXCC tag).
     // Strip an FM suffix ("2m-fm" → "2m") so VHF-FM channels still resolve a Band.
@@ -158,6 +179,13 @@ pub fn score(
     if (1..=40).contains(&info.cq_zone) && !worked_zones.contains(&info.cq_zone) {
         tags.push(NeedTag::NewZone);
     }
+    // Grid need — a never-worked 4-char Maidenhead square, independent of the entity
+    // (like a zone). Only when the source carried a grid (own decodes / PSK Reporter).
+    if let Some(g) = &g4 {
+        if !worked_grids.contains(g) {
+            tags.push(NeedTag::NewGrid);
+        }
+    }
 
     if tags.is_empty() {
         return None;
@@ -176,6 +204,7 @@ pub fn score(
             info.entity,
             band
         ),
+        NeedTag::NewGrid => format!("New grid — {} ({})", g4.as_deref().unwrap_or("?"), info.entity),
         NeedTag::Confirm => format!("Confirm — {}", info.entity),
         // Dxped/Pota/Sota are appended post-scoring (command layer) — never the
         // headline tag; arms exist only for match exhaustiveness.
@@ -206,13 +235,14 @@ pub fn rank(
     spots: &[Heard],
     needs: &dyn OperatorNeeds,
     worked_zones: &HashSet<u8>,
+    worked_grids: &HashSet<String>,
 ) -> Vec<NeedAlert> {
     let mut scored: Vec<NeedAlert> = spots
         .iter()
         .filter_map(|s| {
             // score() owns the award logic + mode class; attach the exact frequency
             // (when this Heard carried one) so click-to-work can QSY to the spot.
-            score(&s.call, &s.band, &s.mode, needs, worked_zones).map(|mut a| {
+            score(&s.call, &s.band, &s.mode, s.grid.as_deref(), needs, worked_zones, worked_grids).map(|mut a| {
                 a.freq_mhz = s.freq_mhz;
                 a.admitted_at = s.admitted_at;
                 a.evidence = s.evidence.clone();
@@ -276,6 +306,8 @@ pub fn heard_near_me(reports: &[PathSpot], me: (f64, f64)) -> Vec<Heard> {
         /// (call, grid, km-from-me) per distinct receiver — the evidence line.
         rx_detail: Vec<(String, String, u32)>,
         latest: i64,
+        /// The DX's own grid (tx_grid), when the report carried one — for the NewGrid need.
+        tx_grid: Option<String>,
     }
     let mut by_key: std::collections::HashMap<(String, String), Ev> =
         std::collections::HashMap::new();
@@ -302,6 +334,7 @@ pub fn heard_near_me(reports: &[PathSpot], me: (f64, f64)) -> Vec<Heard> {
             rx_calls: HashSet::new(),
             rx_detail: Vec::new(),
             latest: 0,
+            tx_grid: p.tx_grid.clone(),
         });
         if e.rx_calls.insert(p.rx_call.to_ascii_uppercase()) {
             e.rx_detail.push((
@@ -313,6 +346,9 @@ pub fn heard_near_me(reports: &[PathSpot], me: (f64, f64)) -> Vec<Heard> {
         e.latest = e.latest.max(p.time);
         if e.mode.is_none() {
             e.mode = p.mode.clone();
+        }
+        if e.tx_grid.is_none() {
+            e.tx_grid = p.tx_grid.clone();
         }
     }
     let mut out = Vec::new();
@@ -349,6 +385,7 @@ pub fn heard_near_me(reports: &[PathSpot], me: (f64, f64)) -> Vec<Heard> {
                 freq_mhz: None, // reception geometry is band-level, not freq-precise
                 admitted_at: (e.latest > 0).then_some(e.latest),
                 evidence: Some(ev),
+                grid: e.tx_grid,
             });
         }
     }
@@ -415,6 +452,7 @@ pub fn workable_by_getting_out(reports: &[PathSpot], my_call: &str) -> Vec<Heard
                         "your signal reaches their area (via {})",
                         p.rx_call
                     )),
+                    grid: p.tx_grid.clone(),
                 });
             }
         }
@@ -466,6 +504,7 @@ mod tests {
             freq_mhz: None,
             admitted_at: None,
             evidence: None,
+            grid: None,
         }
     }
 
@@ -683,7 +722,7 @@ mod tests {
     fn empty_log_makes_any_dx_a_new_one() {
         let needs = LogNeeds::new();
         let z = HashSet::new();
-        let a = score("JA1XYZ", "20m", "FT8", &needs, &z).unwrap();
+        let a = score("JA1XYZ", "20m", "FT8", None, &needs, &z, &HashSet::new()).unwrap();
         assert!(a.tags.contains(&NeedTag::NewEntity));
         // Japan in an unworked zone too → also a new zone, but New-one ranks top.
         assert_eq!(a.tags[0], NeedTag::NewEntity);
@@ -694,8 +733,8 @@ mod tests {
     #[test]
     fn worked_entity_on_a_new_band_is_a_new_band_slot() {
         let mut n = LogNeeds::new();
-        n.add("JA1XYZ", "20m", "FT8", false); // Japan worked on 20m (zone 25 now worked)
-        let a = score("JA1ABC", "40m", "FT8", &n, n.worked_zones()).unwrap();
+        n.add("JA1XYZ", "20m", "FT8", None, false); // Japan worked on 20m (zone 25 now worked)
+        let a = score("JA1ABC", "40m", "FT8", None, &n, n.worked_zones(), n.worked_grids()).unwrap();
         assert_eq!(a.tags, vec![NeedTag::NewBand]); // zone 25 already worked → no NewZone
         assert_eq!(a.priority, 50);
     }
@@ -703,9 +742,9 @@ mod tests {
     #[test]
     fn worked_entity_in_a_new_zone_is_flagged_independently() {
         let mut n = LogNeeds::new();
-        n.add("W1AW", "20m", "FT8", false); // USA via W1 → CQ zone 5
+        n.add("W1AW", "20m", "FT8", None, false); // USA via W1 → CQ zone 5
                                             // W6 (California) is the SAME entity (USA) but CQ zone 3 → a new zone.
-        let a = score("W6XX", "20m", "FT8", &n, n.worked_zones()).unwrap();
+        let a = score("W6XX", "20m", "FT8", None, &n, n.worked_zones(), n.worked_grids()).unwrap();
         assert_eq!(a.entity, "United States");
         assert!(a.tags.contains(&NeedTag::NewZone), "zone 3 not worked");
         assert_eq!(a.tags[0], NeedTag::NewZone, "new zone outranks confirm");
@@ -715,27 +754,27 @@ mod tests {
     #[test]
     fn fully_satisfied_spot_yields_no_alert() {
         let mut n = LogNeeds::new();
-        n.add("W1AW", "20m", "FT8", true); // worked + confirmed, zone 5 worked
-        assert!(score("W1AW", "20m", "FT8", &n, n.worked_zones()).is_none());
+        n.add("W1AW", "20m", "FT8", None, true); // worked + confirmed, zone 5 worked
+        assert!(score("W1AW", "20m", "FT8", None, &n, n.worked_zones(), n.worked_grids()).is_none());
     }
 
     #[test]
     fn unresolvable_call_yields_no_alert() {
         let needs = LogNeeds::new();
-        assert!(score("", "20m", "FT8", &needs, &HashSet::new()).is_none());
+        assert!(score("", "20m", "FT8", None, &needs, &HashSet::new(), &HashSet::new()).is_none());
     }
 
     #[test]
     fn rank_orders_by_priority_and_dedups_by_call_band() {
         let mut n = LogNeeds::new();
-        n.add("JA1XYZ", "20m", "FT8", false); // Japan worked 20m (zone 25)
+        n.add("JA1XYZ", "20m", "FT8", None, false); // Japan worked 20m (zone 25)
         let z = n.worked_zones().clone();
         let spots = vec![
             heard("JA1ABC", "40m"), // new band (50)
             heard("3Y0J", "20m"),   // Bouvet — ATNO (100)
             heard("3Y0J", "20m"),   // duplicate → collapsed
         ];
-        let ranked = rank(&spots, &n, &z);
+        let ranked = rank(&spots, &n, &z, n.worked_grids());
         assert_eq!(ranked.len(), 2, "duplicate (call,band) collapsed");
         assert_eq!(ranked[0].call, "3Y0J"); // highest priority first
         assert!(ranked[0].priority >= ranked[1].priority);
@@ -763,13 +802,14 @@ mod tests {
             freq_mhz: Some(14.025),
             admitted_at: None,
             evidence: None,
+            grid: None,
         }];
-        let ranked = rank(&spots, &needs, &HashSet::new());
+        let ranked = rank(&spots, &needs, &HashSet::new(), &HashSet::new());
         assert_eq!(ranked.len(), 1);
         assert_eq!(ranked[0].mode, "CW");
         assert_eq!(ranked[0].freq_mhz, Some(14.025));
         // A band-level (geometry) need carries the class but no exact frequency.
-        let a = score("JA1XYZ", "20m", "SSB", &needs, &HashSet::new()).unwrap();
+        let a = score("JA1XYZ", "20m", "SSB", None, &needs, &HashSet::new(), &HashSet::new()).unwrap();
         assert_eq!(a.mode, "Phone");
         assert_eq!(a.freq_mhz, None);
     }
@@ -787,6 +827,7 @@ mod tests {
                 freq_mhz: Some(14.025),
                 admitted_at: None,
                 evidence: None,
+                grid: None,
             },
             Heard {
                 call: "3Y0J".into(),
@@ -795,9 +836,10 @@ mod tests {
                 freq_mhz: None,
                 admitted_at: None,
                 evidence: None,
+                grid: None,
             },
         ];
-        let ranked = rank(&spots, &needs, &HashSet::new());
+        let ranked = rank(&spots, &needs, &HashSet::new(), &HashSet::new());
         assert_eq!(ranked.len(), 2, "same call+band, two modes → two rows");
         let modes: Vec<&str> = ranked.iter().map(|a| a.mode.as_str()).collect();
         assert!(modes.contains(&"CW"), "CW opportunity kept: {modes:?}");
@@ -808,16 +850,34 @@ mod tests {
     fn fm_suffixed_band_still_resolves_the_dxcc_tier() {
         // "6m-fm" must strip to "6m" so a new entity on VHF-FM still scores DXCC.
         let needs = LogNeeds::new();
-        let a = score("JA1XYZ", "6m-fm", "FT8", &needs, &HashSet::new()).unwrap();
+        let a = score("JA1XYZ", "6m-fm", "FT8", None, &needs, &HashSet::new(), &HashSet::new()).unwrap();
         assert!(a.tags.contains(&NeedTag::NewEntity), "6m-fm resolves to 6m");
     }
 
     #[test]
     fn a_new_entity_that_is_also_a_new_zone_carries_both_tags() {
         let needs = LogNeeds::new(); // nothing worked
-        let a = score("VK0M", "20m", "FT8", &needs, &HashSet::new()).unwrap();
+        let a = score("VK0M", "20m", "FT8", None, &needs, &HashSet::new(), &HashSet::new()).unwrap();
         assert!(a.tags.contains(&NeedTag::NewEntity));
         assert!(a.tags.contains(&NeedTag::NewZone));
         assert_eq!(a.tags[0], NeedTag::NewEntity); // entity outranks zone
+    }
+
+    #[test]
+    fn unworked_grid_is_a_new_grid_need_independent_of_dxcc() {
+        let mut n = LogNeeds::new();
+        n.add("W1AW", "20m", "FT8", Some("FN31pr"), false); // FN31 now worked (4-char)
+        // Same worked entity/band/mode, but a NEW grid → NewGrid (outranks the Confirm).
+        let a = score("K1ABC", "20m", "FT8", Some("FN42"), &n, n.worked_zones(), n.worked_grids())
+            .unwrap();
+        assert!(a.tags.contains(&NeedTag::NewGrid), "FN42 unworked → new grid: {:?}", a.tags);
+        // A station in the already-worked grid → never a NewGrid (6-char collapses to FN31).
+        if let Some(b) = score("K1XYZ", "20m", "FT8", Some("FN31aa"), &n, n.worked_zones(), n.worked_grids()) {
+            assert!(!b.tags.contains(&NeedTag::NewGrid), "FN31 worked → not new: {:?}", b.tags);
+        }
+        // No grid known (cluster spot) → never a NewGrid.
+        if let Some(c) = score("K2ABC", "20m", "FT8", None, &n, n.worked_zones(), n.worked_grids()) {
+            assert!(!c.tags.contains(&NeedTag::NewGrid));
+        }
     }
 }

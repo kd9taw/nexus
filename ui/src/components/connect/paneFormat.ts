@@ -17,6 +17,7 @@ export const NEED_CHIP: Record<NeedTag, { label: string; cls: string }> = {
   NewZone: { label: 'ZONE', cls: 'zone' },
   NewBand: { label: 'BAND', cls: 'band' },
   NewMode: { label: 'MODE', cls: 'mode' },
+  NewGrid: { label: 'GRID', cls: 'grid' },
   Confirm: { label: 'CONFIRM', cls: 'confirm' },
   Dxped: { label: 'DXPED', cls: 'dxped' },
   Pota: { label: 'POTA', cls: 'pota' },

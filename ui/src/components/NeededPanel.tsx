@@ -23,6 +23,7 @@ const NEED_CHIP: Record<NeedTag, { label: string; cls: string; title: string }> 
   NewZone: { label: 'ZONE', cls: 'zone', title: 'New CQ zone' },
   NewBand: { label: 'BAND', cls: 'band', title: 'New band-slot for this entity' },
   NewMode: { label: 'MODE', cls: 'mode', title: 'New mode for this entity' },
+  NewGrid: { label: 'GRID', cls: 'grid', title: 'New grid square' },
   Confirm: { label: 'CONFIRM', cls: 'confirm', title: 'Worked — needs a confirmation' },
   Dxped: { label: 'DXPED', cls: 'dxped', title: 'Active announced DXpedition — a limited-time window' },
   Pota: { label: 'POTA', cls: 'pota', title: 'Live POTA activator — the row\'s call is on a park right now' },

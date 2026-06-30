@@ -767,6 +767,7 @@ export type NeedTag =
   | 'NewZone'
   | 'NewBand'
   | 'NewMode'
+  | 'NewGrid'
   | 'Confirm'
   | 'Dxped'
   | 'Pota'

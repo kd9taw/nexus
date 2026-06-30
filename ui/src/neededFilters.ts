@@ -32,6 +32,7 @@ const TAG_TO_BUCKET: Partial<Record<NeedTag, NeedTypeFilter>> = {
   NewEntity: 'atno',
   NewBand:   'newBand',
   NewMode:   'newMode',
+  NewGrid:   'newGrid',
   Dxped:     'dxped',
   Pota:      'pota',
   Sota:      'sota',
@@ -49,9 +50,6 @@ export function filterAlerts(alerts: NeedAlert[], filters: NeededFilters): NeedA
   return alerts.filter((a) => {
     // ---- Need-type filter ----
     if (filters.needType !== 'all') {
-      // 'newGrid' has no dedicated NeedTag yet — no alerts match it until the
-      // backend surfaces one; the bucket still exists in the UI for future use.
-      if (filters.needType === 'newGrid') return false
       const bucket = filters.needType
       const matches = a.tags.some((t) => TAG_TO_BUCKET[t] === bucket)
       if (!matches) return false

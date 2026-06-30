@@ -141,6 +141,8 @@ pub struct LogNeeds {
     confirmed_band: HashSet<(String, Band)>,
     /// CQ zones worked (for WAZ "new zone" need-aware spotting).
     worked_zones: HashSet<u8>,
+    /// 4-char Maidenhead grids worked (for the "new grid" need). Call-independent.
+    worked_grids: HashSet<String>,
 }
 
 impl LogNeeds {
@@ -152,7 +154,11 @@ impl LogNeeds {
     /// (cty.dat) so it matches the DXpedition side; unresolved calls are skipped
     /// (rare with the full country file). `band` is an ADIF band label ("20m"),
     /// `mode` an ADIF MODE string.
-    pub fn add(&mut self, call: &str, band: &str, mode: &str, confirmed: bool) {
+    pub fn add(&mut self, call: &str, band: &str, mode: &str, grid: Option<&str>, confirmed: bool) {
+        // A worked grid is independent of call resolution / DXCC — track it first.
+        if let Some(g) = grid.and_then(crate::needalert::grid4) {
+            self.worked_grids.insert(g);
+        }
         let Some(info) = dxcc::resolve(call) else {
             return;
         };
@@ -187,6 +193,11 @@ impl LogNeeds {
     /// CQ zones the operator has worked (for need-aware spotting's "new zone").
     pub fn worked_zones(&self) -> &HashSet<u8> {
         &self.worked_zones
+    }
+
+    /// 4-char Maidenhead grids the operator has worked (for the "new grid" need).
+    pub fn worked_grids(&self) -> &HashSet<String> {
+        &self.worked_grids
     }
 }
 
@@ -581,7 +592,7 @@ mod tests {
             NeedKind::Atno
         );
         // Work Japan on 40m CW, unconfirmed.
-        n.add("JA1ABC", "40m", "CW", false);
+        n.add("JA1ABC", "40m", "CW", None, false);
         // Entity worked, but not on 20m → NewBand.
         assert_eq!(
             n.need("Japan", Band::B20, ModeClass::Digital),
@@ -595,7 +606,7 @@ mod tests {
         // 40m CW worked but unconfirmed → Confirm.
         assert_eq!(n.need("Japan", Band::B40, ModeClass::Cw), NeedKind::Confirm);
         // Confirm it → Satisfied.
-        n.add("JA1ABC", "40m", "CW", true);
+        n.add("JA1ABC", "40m", "CW", None, true);
         assert_eq!(
             n.need("Japan", Band::B40, ModeClass::Cw),
             NeedKind::Satisfied
@@ -620,7 +631,7 @@ mod tests {
             most_wanted_rank: None,
         };
         let mut needs = LogNeeds::new();
-        needs.add("W9ZZZ", "20m", "FT8", true); // United States, 20m, Digital, confirmed
+        needs.add("W9ZZZ", "20m", "FT8", None, true); // United States, 20m, Digital, confirmed
         let wx = SpaceWx::default();
         let advisory = PropAdvisor::new("KD9TAW", "EN52").advise(NOW, &[], &wx);
         let dash = DxpeditionTracker::new("EN52").dashboard(NOW, &[plan], &needs, &advisory, &wx);

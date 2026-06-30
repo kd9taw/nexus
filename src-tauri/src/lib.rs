@@ -737,7 +737,7 @@ async fn get_propagation(
         let mut needs = propagation::LogNeeds::new();
         for q in eng.get_log() {
             // A "needs confirmation" must be award-grade (LoTW/paper), not eQSL.
-            needs.add(&q.call, &q.band, &q.mode, q.award_confirmed);
+            needs.add(&q.call, &q.band, &q.mode, q.grid.as_deref(), q.award_confirmed);
         }
         // The operator's OWN decoded roster on the current band → "I heard X"
         // PathSpots. This feeds the opening detector + advisor from MONITORING
@@ -2608,7 +2608,7 @@ async fn get_need_alerts(
     let eng = state.lock().map_err(|e| e.to_string())?;
     let mut needs = propagation::LogNeeds::new();
     for q in eng.get_log() {
-        needs.add(&q.call, &q.band, &q.mode, q.award_confirmed);
+        needs.add(&q.call, &q.band, &q.mode, q.grid.as_deref(), q.award_confirmed);
     }
     let snap = eng.snapshot();
     drop(eng); // nothing below needs the engine — don't hold the hot lock
@@ -2627,6 +2627,7 @@ async fn get_need_alerts(
             freq_mhz: None, // own decodes are band-level here
             admitted_at: None,
             evidence: Some("decoded by YOUR radio on this band".to_string()),
+            grid: s.grid.clone(), // own decode's Maidenhead grid → drives NewGrid
         })
         .collect();
     // The real value (empirical evidence, not a model): two complementary signals
@@ -2752,11 +2753,12 @@ async fn get_need_alerts(
                         "spotted by {} via cluster/RBN",
                         spotters.join(" + ")
                     )),
+                    grid: None, // cluster/RBN spots carry no grid
                 });
             }
         }
     }
-    let mut alerts = propagation::rank_needs(&heard, &needs, needs.worked_zones());
+    let mut alerts = propagation::rank_needs(&heard, &needs, needs.worked_zones(), needs.worked_grids());
     // Never alert on the operator's own call (their PSKR "heard me" echoes can
     // otherwise surface it as a phantom row).
     let me_up = snap.mycall.to_uppercase();
