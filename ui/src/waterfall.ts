@@ -61,6 +61,28 @@ export function normalize(mag: number, floor: number, ceil: number): number {
 }
 
 /**
+ * Apply the operator's manual contrast knobs to an auto-AGC `{floor, ceil}` window
+ * (WSJT-X "Gain"/"Zero" sliders). `zero`∈[-1,1] shifts the noise-floor baseline
+ * (brightness); `gain`∈[-1,1] narrows (>0, more contrast) or widens (<0, flatter) the
+ * dynamic-range window. Both `0` = pure auto-AGC (identity), so the sliders only ever
+ * adjust the automatic display rather than replacing it.
+ */
+export function applyGainZero(
+  floor: number,
+  ceil: number,
+  gain: number,
+  zero: number,
+): { floor: number; ceil: number } {
+  const span = Math.max(ceil - floor, MIN_SPAN)
+  const f = floor + zero * span * 0.5 // ±½ span floor shift
+  // gain>0 → 0.4×span (punchy); gain<0 → 2×span (flat). gain=0 → unchanged.
+  const widthFactor = gain >= 0 ? 1 - 0.6 * gain : 1 - gain
+  let c = f + span * widthFactor
+  if (!(c > f)) c = f + MIN_SPAN
+  return { floor: f, ceil: c }
+}
+
+/**
  * Pre-bake a colormap to a `size`×RGBA lookup table (default 256) so the render
  * hot path is `lut[round(t*255)*4]` instead of a per-pixel linear-light
  * `sampleLut`. Alpha is fully opaque. Throws (via sampleLut) on an unknown map.

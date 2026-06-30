@@ -6154,6 +6154,21 @@ select.settings-input {
   border-radius: var(--radius-sm);
   cursor: pointer;
 }
+/* Gain/Zero contrast knobs next to the palette (double-click to recenter = auto). */
+.wf-knob {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  color: var(--text-faint);
+  font-weight: 600;
+}
+.wf-knob input[type='range'] {
+  width: 54px;
+  height: 12px;
+  cursor: pointer;
+  accent-color: var(--accent, #4ea1ff);
+}
 .wf-stage {
   position: relative;
   flex: 1;

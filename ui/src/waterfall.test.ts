@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { agcRange, normalize, bakeLut, themeColormap } from './waterfall'
+import { agcRange, applyGainZero, normalize, bakeLut, themeColormap, resolveColormap } from './waterfall'
 import { sampleLut } from './colormaps'
 
 describe('agcRange (visual-AGC)', () => {
@@ -62,6 +62,49 @@ describe('normalize', () => {
     expect(normalize(5, 10, 10)).toBe(0)
     expect(normalize(5, 10, 5)).toBe(0)
     expect(Number.isFinite(normalize(5, 10, 10))).toBe(true)
+  })
+})
+
+describe('applyGainZero (manual contrast)', () => {
+  it('is the identity at gain=zero=0 (pure auto-AGC)', () => {
+    const r = applyGainZero(0.2, 0.8, 0, 0)
+    expect(r.floor).toBeCloseTo(0.2, 6)
+    expect(r.ceil).toBeCloseTo(0.8, 6)
+  })
+
+  it('gain>0 narrows the window (more contrast); gain<0 widens it', () => {
+    const span = 0.6
+    const narrow = applyGainZero(0.2, 0.8, 1, 0)
+    const wide = applyGainZero(0.2, 0.8, -1, 0)
+    expect(narrow.ceil - narrow.floor).toBeLessThan(span)
+    expect(wide.ceil - wide.floor).toBeGreaterThan(span)
+  })
+
+  it('zero>0 raises the floor (dimmer); zero<0 lowers it (more noise shown)', () => {
+    expect(applyGainZero(0.2, 0.8, 0, 1).floor).toBeGreaterThan(0.2)
+    expect(applyGainZero(0.2, 0.8, 0, -1).floor).toBeLessThan(0.2)
+  })
+
+  it('never returns a degenerate window (ceil > floor)', () => {
+    const r = applyGainZero(0.5, 0.5, 1, 1) // zero span + max gain
+    expect(r.ceil).toBeGreaterThan(r.floor)
+  })
+})
+
+describe('resolveColormap (palette picker)', () => {
+  it("'auto' rides the theme", () => {
+    expect(resolveColormap('auto', 'amber')).toBe('amber-crt')
+    expect(resolveColormap('auto', 'light')).toBe('cividis')
+    expect(resolveColormap('auto', 'dark')).toBe('inferno')
+  })
+
+  it('an explicit palette wins over the theme', () => {
+    expect(resolveColormap('digipan', 'amber')).toBe('digipan')
+    expect(resolveColormap('grayscale', 'light')).toBe('grayscale')
+  })
+
+  it('an unknown/stale value falls back to the theme map', () => {
+    expect(resolveColormap('bogus', 'amber')).toBe('amber-crt')
   })
 })
 

@@ -1,16 +1,27 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { getSpectrumRow } from '../api'
 import { sampleLut } from '../colormaps'
-import { agcRange, bakeLut, normalize, resolveColormap, WATERFALL_PALETTES, MIN_SPAN } from '../waterfall'
+import { agcRange, applyGainZero, bakeLut, normalize, resolveColormap, WATERFALL_PALETTES, MIN_SPAN } from '../waterfall'
 
-/** Persist the operator's waterfall palette choice (a display preference, like the
- * theme) in localStorage; 'auto' rides the theme. */
+/** Persist the operator's waterfall display preferences (palette + manual gain/zero,
+ * like the theme) in localStorage; palette 'auto' rides the theme, gain/zero 0 = auto. */
 const PALETTE_KEY = 'nexus.waterfall.palette'
+const GAIN_KEY = 'nexus.waterfall.gain'
+const ZERO_KEY = 'nexus.waterfall.zero'
 function loadPalette(): string {
   try {
     return localStorage.getItem(PALETTE_KEY) ?? 'auto'
   } catch {
     return 'auto'
+  }
+}
+/** Load a persisted [-1,1] slider value (gain/zero); missing/blocked → 0 (= auto). */
+function loadKnob(key: string): number {
+  try {
+    const v = parseFloat(localStorage.getItem(key) ?? '')
+    return Number.isFinite(v) ? Math.max(-1, Math.min(1, v)) : 0
+  } catch {
+    return 0
   }
 }
 
@@ -51,14 +62,19 @@ function xToFreq(x: number, width: number): number {
 export function Waterfall({ transmitting, rxOffsetHz, txOffsetHz, theme, onTune, active = true }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const rafRef = useRef<number | null>(null)
-  // Operator's chosen palette ('auto' = theme-driven). Display-only → localStorage.
+  // Operator's chosen palette ('auto' = theme-driven) + manual contrast (gain/zero,
+  // 0 = pure auto-AGC). Display-only → localStorage.
   const [palette, setPalette] = useState<string>(loadPalette)
+  const [gain, setGain] = useState<number>(() => loadKnob(GAIN_KEY))
+  const [zero, setZero] = useState<number>(() => loadKnob(ZERO_KEY))
   // refs so the animation loop always reads current props without re-subscribing
   const txRef = useRef(transmitting)
   const themeRef = useRef(theme)
   const rxOffRef = useRef(rxOffsetHz)
   const txOffRef = useRef(txOffsetHz)
   const activeRef = useRef(active)
+  const gainRef = useRef(gain)
+  const zeroRef = useRef(zero)
   // pre-baked colormap LUT (256×RGBA) for the render hot path; rebuilt on palette/theme.
   const lutRef = useRef<Uint8ClampedArray>(bakeLut(resolveColormap(palette, theme)))
   // live legend readout (updated directly, no React re-render at 8 Hz)
@@ -69,6 +85,8 @@ export function Waterfall({ transmitting, rxOffsetHz, txOffsetHz, theme, onTune,
   rxOffRef.current = rxOffsetHz
   txOffRef.current = txOffsetHz
   activeRef.current = active
+  gainRef.current = gain
+  zeroRef.current = zero
 
   // Rebuild the LUT synchronously before paint (useLayoutEffect, not useEffect)
   // so it changes atomically with the legend gradient (a sync useMemo below) on
@@ -114,6 +132,10 @@ export function Waterfall({ transmitting, rxOffsetHz, txOffsetHz, theme, onTune,
     // release so a strong signal keying up doesn't black out the noise floor).
     let agcFloor = 0
     let agcCeil = 1
+    // Display window after the operator's manual gain/zero is applied (the values the
+    // row + legend actually render with); identical to agc* when gain=zero=0.
+    let dispFloor = 0
+    let dispCeil = 1
     let agcInit = false
     const AGC_ALPHA = 0.1
 
@@ -239,13 +261,21 @@ export function Waterfall({ transmitting, rxOffsetHz, txOffsetHz, theme, onTune,
         agcFloor += (floor - agcFloor) * AGC_ALPHA
         agcCeil += (ceil - agcCeil) * AGC_ALPHA
       }
+      // Apply the operator's manual gain (contrast) / zero (baseline) on top of the
+      // smoothed auto-AGC. Both 0 → display window == auto window (no change).
+      ;({ floor: dispFloor, ceil: dispCeil } = applyGainZero(
+        agcFloor,
+        agcCeil,
+        gainRef.current,
+        zeroRef.current,
+      ))
       // live legend readout: dynamic range bottom→top, in dB relative to the
       // current strongest signal (top = 0 dBr). A degenerate span (silent/all-
       // zero band) reads ~0 dBr, not a fabricated full-scale range. Honest
       // relative scale — the spectrum row is uncalibrated 0..1 magnitude.
       if (dbLabelRef.current) {
-        const span = agcCeil - agcFloor
-        const ratio = span > MIN_SPAN && agcCeil > 0 ? Math.max(agcFloor / agcCeil, 1e-3) : 1
+        const span = dispCeil - dispFloor
+        const ratio = span > MIN_SPAN && dispCeil > 0 ? Math.max(dispFloor / dispCeil, 1e-3) : 1
         dbLabelRef.current.textContent = String(Math.round(20 * Math.log10(ratio))).replace('-', '−')
       }
 
@@ -278,7 +308,7 @@ export function Waterfall({ transmitting, rxOffsetHz, txOffsetHz, theme, onTune,
         const b1 = Math.min(nBins - 1, b0 + 1)
         const frac = bin - b0
         const v = row[b0] * (1 - frac) + row[b1] * frac
-        const t = normalize(v, agcFloor, agcCeil)
+        const t = normalize(v, dispFloor, dispCeil)
         const li = (t >= 1 ? 255 : Math.round(t * 255)) * 4
         const o = x * 4
         out[o] = lut[li]
@@ -418,6 +448,62 @@ export function Waterfall({ transmitting, rxOffsetHz, txOffsetHz, theme, onTune,
             </option>
           ))}
         </select>
+        <label className="wf-knob" title="Gain — contrast (how punchy strong signals look). Center = auto.">
+          <span>G</span>
+          <input
+            type="range"
+            min={-1}
+            max={1}
+            step={0.05}
+            value={gain}
+            aria-label="Waterfall gain (contrast)"
+            onChange={(e) => {
+              const v = Number(e.target.value)
+              setGain(v)
+              try {
+                localStorage.setItem(GAIN_KEY, String(v))
+              } catch {
+                /* storage blocked — still applies this session */
+              }
+            }}
+            onDoubleClick={() => {
+              setGain(0)
+              try {
+                localStorage.setItem(GAIN_KEY, '0')
+              } catch {
+                /* */
+              }
+            }}
+          />
+        </label>
+        <label className="wf-knob" title="Zero — reference level / brightness baseline. Center = auto.">
+          <span>Z</span>
+          <input
+            type="range"
+            min={-1}
+            max={1}
+            step={0.05}
+            value={zero}
+            aria-label="Waterfall zero (baseline)"
+            onChange={(e) => {
+              const v = Number(e.target.value)
+              setZero(v)
+              try {
+                localStorage.setItem(ZERO_KEY, String(v))
+              } catch {
+                /* storage blocked — still applies this session */
+              }
+            }}
+            onDoubleClick={() => {
+              setZero(0)
+              try {
+                localStorage.setItem(ZERO_KEY, '0')
+              } catch {
+                /* */
+              }
+            }}
+          />
+        </label>
       </div>
       <div className="wf-stage">
         <canvas
