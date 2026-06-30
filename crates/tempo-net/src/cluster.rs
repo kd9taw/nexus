@@ -235,13 +235,19 @@ fn is_login_prompt(s: &str) -> bool {
         || tail.ends_with("callsign:")
 }
 
-/// A bounded buffer of the most-recent spots (deduped by DX callsign, newest
-/// kept) with insertion timestamps for freshness, for the need-scorer to read.
+/// A buffer of recent spots, deduped by (DX callsign, ~frequency) so a station
+/// spotted on CW *and* SSB keeps BOTH opportunities (a single dedup-by-call would
+/// let the high-rate RBN CW firehose overwrite the rarer human SSB entry). Retention
+/// is AGE-based (`max_age`) so sparse sources survive the need-scorer's read window
+/// regardless of how fast the firehose churns; `cap` is only a memory safety ceiling.
 /// Thread-safety is the caller's (wrap in a Mutex).
 #[derive(Debug, Clone)]
 pub struct SpotBuffer {
     spots: VecDeque<(Instant, ClusterSpot)>,
     cap: usize,
+    /// Spots older than this are dropped on push. Set ≥ the consumer's read window
+    /// (`get_need_alerts` reads 900 s) so the read never misses a still-valid spot.
+    max_age: Duration,
 }
 
 impl SpotBuffer {
@@ -249,6 +255,7 @@ impl SpotBuffer {
         Self {
             spots: VecDeque::new(),
             cap: cap.max(1),
+            max_age: Duration::from_secs(1200),
         }
     }
     /// Add a spot stamped now; a prior spot of the same DX call is replaced.
@@ -263,13 +270,16 @@ impl SpotBuffer {
     }
     /// As [`push`](Self::push) with an explicit timestamp (for tests).
     pub fn push_at(&mut self, at: Instant, mut spot: ClusterSpot) {
+        // Dedup key: same call AND ~same frequency (rounded to 1 kHz). CW (band bottom)
+        // and SSB (band top) of one call differ in freq → both kept; true repeats collapse.
+        let fk = spot.freq_khz.round() as i64;
         // Carry the replaced spot's spotter (and ITS corroborators) forward —
         // "who else reported this DX" is the multi-endpoint evidence the VHF
         // gate needs; plain replacement silently reduced every DX to one voice.
         if let Some((_, old)) = self
             .spots
             .iter()
-            .find(|(_, s)| s.dx_call == spot.dx_call)
+            .find(|(_, s)| s.dx_call == spot.dx_call && s.freq_khz.round() as i64 == fk)
         {
             let mut set: Vec<String> = old
                 .corroborators
@@ -287,8 +297,19 @@ impl SpotBuffer {
             spot.corroborators.append(&mut set);
             spot.corroborators.truncate(8);
         }
-        self.spots.retain(|(_, s)| s.dx_call != spot.dx_call);
+        self.spots
+            .retain(|(_, s)| !(s.dx_call == spot.dx_call && s.freq_khz.round() as i64 == fk));
         self.spots.push_back((at, spot));
+        // Age-based retention is PRIMARY: drop spots older than `max_age` so a sparse
+        // source (human SSB) survives the read window even while the RBN firehose floods.
+        while let Some((t, _)) = self.spots.front() {
+            if at.saturating_duration_since(*t) > self.max_age {
+                self.spots.pop_front();
+            } else {
+                break;
+            }
+        }
+        // Count ceiling: a memory safety net only (cap is high; age trimming does the work).
         while self.spots.len() > self.cap {
             self.spots.pop_front();
         }
@@ -316,7 +337,9 @@ impl SpotBuffer {
 
 impl Default for SpotBuffer {
     fn default() -> Self {
-        Self::new(200)
+        // High ceiling so the count-cap never evicts inside the read window even under a
+        // full RBN firehose (~300 calls/min × 20 min ≈ 6k); age trimming bounds memory.
+        Self::new(8000)
     }
 }
 
@@ -594,6 +617,71 @@ mod tests {
         assert_eq!(calls, vec!["NEW".to_string()]);
         // recent() still returns everything (age-agnostic).
         assert_eq!(b.recent().len(), 2);
+    }
+
+    fn mk_spot(dx: &str, freq_khz: f64, comment: &str, spotter: &str) -> ClusterSpot {
+        ClusterSpot {
+            spotter: spotter.into(),
+            dx_call: dx.into(),
+            freq_khz,
+            comment: comment.into(),
+            time_utc: None,
+            received_unix: 0,
+            corroborators: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn ssb_spot_survives_an_rbn_flood_within_the_read_window() {
+        // THE phone bug: the old 200-cap buffer FIFO-evicted a sparse SSB spot within
+        // ~2 min under the RBN firehose, before the 900 s need-scan could read it.
+        let mut b = SpotBuffer::default(); // cap 8000, max_age 1200 s
+        let t0 = Instant::now();
+        b.push_at(t0, mk_spot("EA8DX", 14250.0, "SSB 59", "W1AAA")); // one human SSB spot
+        for i in 0..1000u64 {
+            // 1000 unique RBN CW spots (far more than the old 200 cap) over the next minute
+            b.push_at(
+                t0 + Duration::from_millis(i),
+                mk_spot(&format!("R{i}"), 14025.0, "CW", "RBNX"),
+            );
+        }
+        let recent = b.recent_within(t0 + Duration::from_secs(60), Duration::from_secs(900));
+        assert!(
+            recent.iter().any(|s| s.dx_call == "EA8DX"),
+            "SSB spot must survive the RBN flood within the 900 s read window"
+        );
+    }
+
+    #[test]
+    fn cw_and_ssb_of_same_call_both_retained() {
+        let mut b = SpotBuffer::new(100);
+        let t = Instant::now();
+        b.push_at(t, mk_spot("DL1ABC", 14025.0, "CW 599", "W1AAA")); // CW (band bottom)
+        b.push_at(t + Duration::from_secs(1), mk_spot("DL1ABC", 14250.0, "SSB 59", "W2BBB")); // SSB (top)
+        assert_eq!(
+            b.recent().iter().filter(|s| s.dx_call == "DL1ABC").count(),
+            2,
+            "CW and SSB of the same call are distinct opportunities — both kept"
+        );
+        // A true repeat (same call, ~same freq within 1 kHz) still collapses.
+        b.push_at(t + Duration::from_secs(2), mk_spot("DL1ABC", 14025.4, "CW 599", "W3CCC"));
+        assert_eq!(
+            b.recent().iter().filter(|s| s.dx_call == "DL1ABC").count(),
+            2,
+            "repeat CW (same ~freq) dedups — still 2 distinct entries"
+        );
+    }
+
+    #[test]
+    fn age_trim_drops_spots_older_than_max_age() {
+        let mut b = SpotBuffer::new(8000); // max_age 1200 s
+        let t = Instant::now();
+        b.push_at(t, mk_spot("OLD1", 14025.0, "CW", "W1AAA"));
+        // A push 1300 s later (> max_age) trims the now-stale OLD1 off the front.
+        b.push_at(t + Duration::from_secs(1300), mk_spot("NEW1", 14026.0, "CW", "W2BBB"));
+        let calls: Vec<String> = b.recent().into_iter().map(|s| s.dx_call).collect();
+        assert!(!calls.contains(&"OLD1".to_string()), "spot older than max_age trimmed");
+        assert!(calls.contains(&"NEW1".to_string()));
     }
 
     #[test]
