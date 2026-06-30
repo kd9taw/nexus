@@ -81,7 +81,8 @@ pub use opening::{
 };
 pub use pskr_mqtt::{
     mqtt_topics as pskr_mqtt_topics, parse_mqtt_report as parse_pskr_mqtt,
-    region_topics as pskr_region_topics, LiveSpots, REGION_SPOT_CAP,
+    parse_mqtt_report_payload as parse_pskr_mqtt_payload, region_topics as pskr_region_topics,
+    LiveSpots, REGION_SPOT_CAP,
 };
 pub use insight::{generate_insights, Insight, InsightKind, InsightLevel};
 pub use space_wx::{ScalarTrend, SpaceWxHistory, SpaceWxSample, TrendDir, WxTrend};

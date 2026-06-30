@@ -449,6 +449,7 @@ pub fn band_features(
     let mut all_stations: HashSet<String> = HashSet::new();
     let mut dists: Vec<f64> = Vec::new();
     let mut bearings: Vec<f64> = Vec::new();
+    let mut snrs: Vec<f64> = Vec::new(); // SNRs (dB) from the MQTT payload, when present
     let me_geomag = maidenhead_to_latlon(me_grid).map(|(la, lo)| geomagnetic_lat_deg(la, lo));
     let me_ll = maidenhead_to_latlon(me_grid);
     let mut equator_cross = 0usize;
@@ -460,6 +461,9 @@ pub fn band_features(
         // Regional density census: every distinct station on either end.
         all_stations.insert(s.tx_call.to_ascii_uppercase());
         all_stations.insert(s.rx_call.to_ascii_uppercase());
+        if let Some(snr) = s.snr {
+            snrs.push(snr as f64);
+        }
         // The single grid to fold into the operator-anchored geometry pools:
         // operator spots → the far end (bit-identical to the old far_grid path);
         // a near-region (Neither) spot → its FARTHER end from me (one symmetric
@@ -536,6 +540,18 @@ pub fn band_features(
             bf.skip_hole =
                 far >= cfg.min_far_for_skip && (near as f64) <= cfg.skip_ratio * (far as f64);
         }
+    }
+
+    // SNR distribution (now that the MQTT payload carries `rp`): the median is a band
+    // "how loud" signal and the variance distinguishes a steady opening from a flutter-y
+    // (aurora/scatter) one. Populated as features for confidence/diagnostics; gating the
+    // open/aurora decision on them is a separate tuning pass (kept Phase-2).
+    if !snrs.is_empty() {
+        snrs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        bf.median_snr = Some(percentile(&snrs, 0.5) as f32);
+        let mean = snrs.iter().sum::<f64>() / snrs.len() as f64;
+        let var = snrs.iter().map(|x| (x - mean) * (x - mean)).sum::<f64>() / snrs.len() as f64;
+        bf.snr_var = Some(var as f32);
     }
 
     if !bearings.is_empty() {
@@ -1017,6 +1033,33 @@ mod tests {
             bf.unique_far_rx >= cfg.min_far_rx || bf.unique_far_tx >= cfg.min_far_tx,
             "OR gate side satisfied"
         );
+    }
+
+    #[test]
+    fn band_features_computes_snr_median_and_variance_from_payload() {
+        let cfg = OpeningConfig::default();
+        let snrs = [-20.0f32, -10.0, 0.0]; // sorted median -10; mean -10; pop var 66.67
+        let mut spots = Vec::new();
+        for (i, &snr) in snrs.iter().enumerate() {
+            let mut s = heard_me(&format!("W{i}SN"), "FN42", Band::B20, (i as i64) * 5);
+            s.snr = Some(snr);
+            spots.push(s);
+        }
+        let bs: Vec<&PathSpot> = spots.iter().collect();
+        let bf = band_features(Band::B20, &bs, ME, ME_GRID, NOW, &cfg);
+        assert_eq!(bf.median_snr, Some(-10.0));
+        let var = bf.snr_var.expect("variance present");
+        assert!((var - 66.667).abs() < 0.1, "population variance ~66.67: {var}");
+    }
+
+    #[test]
+    fn band_features_leaves_snr_none_without_payload_snrs() {
+        let cfg = OpeningConfig::default();
+        let spots = vec![heard_me("W0XX", "FN42", Band::B20, 5)]; // snr None (topic-only)
+        let bs: Vec<&PathSpot> = spots.iter().collect();
+        let bf = band_features(Band::B20, &bs, ME, ME_GRID, NOW, &cfg);
+        assert_eq!(bf.median_snr, None);
+        assert_eq!(bf.snr_var, None);
     }
 
     #[test]

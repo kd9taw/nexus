@@ -346,8 +346,9 @@ fn start_pskr_feed(live_paths: &SharedLivePaths, mycall: &str, health: &SharedHe
             PSKR_MQTT_ADDR,
             &format!("nexus-{call}"),
             &topic_refs,
-            |topic, _payload| {
-                if let Some(spot) = propagation::parse_pskr_mqtt(topic, now_unix()) {
+            |topic, payload| {
+                if let Some(spot) = propagation::parse_pskr_mqtt_payload(topic, payload, now_unix())
+                {
                     hp.pskr_last_event
                         .store(now_unix(), std::sync::atomic::Ordering::Relaxed);
                     if let Ok(mut b) = buf.lock() {
@@ -389,9 +390,9 @@ fn start_pskr_region_feed(region_paths: &SharedRegionPaths, mycall: &str, mygrid
             PSKR_MQTT_ADDR,
             &format!("nexus-rgn-{call}"),
             &topic_refs,
-            |topic, _payload| {
+            |topic, payload| {
                 let now = now_unix();
-                let Some(spot) = propagation::parse_pskr_mqtt(topic, now) else {
+                let Some(spot) = propagation::parse_pskr_mqtt_payload(topic, payload, now) else {
                     return;
                 };
                 // Own-call paths belong to live_paths; keep only far↔far so the

@@ -154,6 +154,28 @@ pub fn parse_mqtt_report(topic: &str, now: i64) -> Option<PathSpot> {
     })
 }
 
+/// Parse a v2 report and enrich SNR + exact frequency from the JSON **payload** (the
+/// topic is band-level; `rp` = signal report in dB and `f` = Hz live only in the
+/// payload — verified against the official mqtt.pskreporter.info v2 feed). Falls back
+/// to the topic-derived fields when the payload is missing/unparseable, so a malformed
+/// payload never drops an otherwise-valid spot.
+pub fn parse_mqtt_report_payload(topic: &str, payload: &[u8], now: i64) -> Option<PathSpot> {
+    let mut spot = parse_mqtt_report(topic, now)?;
+    if let Ok(v) = serde_json::from_slice::<serde_json::Value>(payload) {
+        // `rp` (signal report, dB) — integer in practice; accept any JSON number.
+        if let Some(rp) = v.get("rp").and_then(serde_json::Value::as_f64) {
+            spot.snr = Some(rp as f32);
+        }
+        // `f` (Hz) → MHz — the exact spot frequency (lets a consumer land on the spot).
+        if let Some(f_hz) = v.get("f").and_then(serde_json::Value::as_f64) {
+            if f_hz > 0.0 {
+                spot.freq_mhz = Some(f_hz / 1_000_000.0);
+            }
+        }
+    }
+    Some(spot)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -214,6 +236,25 @@ mod tests {
         assert_eq!(s.band, Band::B20); // from the "20m" label segment
         assert_eq!(s.mode.as_deref(), Some("FT8"));
         assert_eq!(s.time, 1_700_000_000);
+    }
+
+    #[test]
+    fn payload_enriches_snr_and_exact_frequency() {
+        let topic = "pskr/filter/v2/20m/FT8/W1AW/JA1XYZ/FN31/PM95/291/339";
+        let payload = br#"{"sq":42,"f":14074123,"md":"FT8","rp":-12,"t":1700000000}"#;
+        let s = parse_mqtt_report_payload(topic, payload, 1_700_000_000).unwrap();
+        assert_eq!(s.snr, Some(-12.0)); // rp → SNR dB
+        assert!((s.freq_mhz.unwrap() - 14.074123).abs() < 1e-6); // f Hz → MHz
+        assert_eq!(s.tx_call, "W1AW"); // topic fields still parsed
+    }
+
+    #[test]
+    fn malformed_payload_falls_back_to_topic_only() {
+        let topic = "pskr/filter/v2/20m/FT8/W1AW/JA1XYZ/FN31/PM95/291/339";
+        let s = parse_mqtt_report_payload(topic, b"not json at all", 1).unwrap();
+        assert_eq!(s.snr, None); // no SNR, but the spot is NOT dropped
+        assert_eq!(s.freq_mhz, None);
+        assert_eq!(s.rx_call, "JA1XYZ");
     }
 
     #[test]
