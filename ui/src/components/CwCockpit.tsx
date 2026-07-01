@@ -300,7 +300,7 @@ export function CwCockpit({ snap, theme, pitchHz = 600, pendingWork, onConsumeWo
             type="button"
             className={`cw-keyer-opt${keyer === 'soundcard' ? ' active' : ''}`}
             onClick={() => changeKeyer('soundcard')}
-            title="Soundcard keyer — a keyed audio tone (rig in USB). Works on any rig."
+            title="Soundcard keyer — a keyed audio tone (rig in USB). Works ONLY if Nexus's audio output is routed to the rig (like FT8) AND PTT works; otherwise it looks like it's sending but nothing goes on the air. WinKeyer is the no-ambiguity option."
           >
             Soundcard
           </button>

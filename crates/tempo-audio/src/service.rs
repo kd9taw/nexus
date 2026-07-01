@@ -714,11 +714,23 @@ impl RadioLoop {
                         }
                         if !buf.is_empty() {
                             let secs = buf.len() as f32 / ft1::SAMPLE_RATE;
-                            let _ = rig.ptt(true);
+                            // Capture PTT: if the rig won't key, the tone still plays locally so
+                            // it LOOKS like it sent while nothing reaches the air — surface that
+                            // instead of the silent false-positive. (Audio-routing problems can't
+                            // be detected here — see the Soundcard control's caveat.)
+                            let ptt_err = rig.ptt(true).is_err();
                             backend.play(&buf);
                             let until = now + secs as f64 * 1000.0 + crate::slot::TX_TAIL_MS;
                             self.tx_until_ms =
                                 Some(self.tx_until_ms.map_or(until, |t| t.max(until)));
+                            if let Ok(mut eng) = engine.lock() {
+                                eng.set_cw_keyer_error(ptt_err.then(|| {
+                                    "Soundcard keyer: the rig didn't accept PTT. Check your PTT \
+                                     method + that Nexus's audio output is routed to the rig \
+                                     (like FT8). If in doubt, use the WinKeyer or CAT keyer."
+                                        .to_string()
+                                }));
+                            }
                         }
                     } else {
                         // CAT keyer: the rig generates CW from text via send_morse. Many
@@ -737,7 +749,8 @@ impl RadioLoop {
                         if let Ok(mut eng) = engine.lock() {
                             eng.set_cw_keyer_error(cw_err.then(|| {
                                 "Your rig didn't accept CAT CW keying (Hamlib send_morse). \
-                                 Switch the keyer to Soundcard."
+                                 Use the WinKeyer keyer, or the Soundcard keyer (which needs \
+                                 Nexus's audio routed to the rig)."
                                     .to_string()
                             }));
                         }
