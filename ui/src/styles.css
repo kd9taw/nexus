@@ -2723,6 +2723,14 @@ body.resizing {
   border-radius: 999px;
   padding: var(--space-1) 6px var(--space-1) var(--space-2);
 }
+/* Native <select> popups render on the OS's (usually light) background, so the app's dim
+   text is nearly unreadable there. Force a dark popup + readable text for EVERY dropdown
+   (band pickers on each mode, settings, sorts). */
+select option,
+select optgroup {
+  background: var(--bg-elev);
+  color: var(--text);
+}
 .freq-channel-wrap,
 .freq-manual-wrap {
   display: flex;
@@ -2734,7 +2742,7 @@ body.resizing {
   font-family: var(--font-sans);
   font-size: 12px;
   font-weight: 600;
-  color: var(--text-dim);
+  color: var(--text);
   background: transparent;
   border: none;
   border-radius: var(--radius-sm);
@@ -4898,6 +4906,19 @@ body.resizing {
   color: var(--text);
   border-color: var(--text-dim);
 }
+/* Decode sensitivity slider in the DECODE header (compact). */
+.cw-sens {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+}
+.cw-sens input[type='range'] {
+  width: 66px;
+  cursor: pointer;
+}
 /* A multi-line, auto-scrolling transcript — decoded Morse persists here (it no longer
    vanishes as the audio window slides); older text scrolls up, newest stays in view. */
 .cw-decode-text {
@@ -5055,8 +5076,15 @@ body.resizing {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  max-height: 96px;
+  /* Fixed height (~9–10 signals) so the skimmer NEVER pops in/out and shoves the log below
+     around — it stays put and scrolls when the band is busy. */
+  height: 158px;
   overflow-y: auto;
+}
+.cw-skim-idle {
+  color: var(--text-faint);
+  font-style: italic;
+  font-size: 12px;
 }
 .cw-skim-row {
   display: flex;
@@ -8630,6 +8658,20 @@ select.settings-input {
   display: flex;
   flex-direction: column;
   background: var(--bg);
+}
+/* Torn-off ConnectView must FILL the window via flex, not a height:100% chain: the
+   .layout.single wrapper is display:block + overflow-y:auto, and %-height against its
+   flex-derived height can resolve to auto in the detached document — collapsing the pane
+   grid vertically so the globe (sized by min(w,h)) draws at zero height while flat maps
+   still fill width. Flex-fill sidesteps the %-resolution quirk. */
+.app.detached > .layout.single {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.app.detached > .layout.single > .connect-shell {
+  flex: 1;
+  height: auto;
 }
 .app.detached .needed-panel {
   flex: 1;
