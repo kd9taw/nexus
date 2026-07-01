@@ -476,7 +476,7 @@ export function Waterfall({ transmitting, rxOffsetHz, txOffsetHz, theme, onTune,
         <span className="wf-hint">click = RX · Shift = TX · Ctrl = both</span>
         <PalettePicker />
         <select
-          className="wf-palette"
+          className="wf-palette wf-zoom"
           value={zoomSpan}
           aria-label="Waterfall zoom span"
           title="Waterfall zoom — narrow the displayed audio range around the RX marker"

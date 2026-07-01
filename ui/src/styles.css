@@ -6381,6 +6381,12 @@ select.settings-input {
   border-radius: var(--radius-sm);
   cursor: pointer;
 }
+/* The palette picker (first control) keeps margin-left:auto to float the whole cluster to
+   the right; the zoom select must NOT — a second auto-margin would split the free space and
+   strand the palette in the middle. So palette sits flush against zoom + the G/Z sliders. */
+.wf-palette.wf-zoom {
+  margin-left: var(--space-1);
+}
 /* Master-palette picker header on the CW/Phone scope panels (the picker reuses .wf-palette,
    whose margin-left:auto floats it to the right; the label sits at the left). */
 .ph-scope-head {
