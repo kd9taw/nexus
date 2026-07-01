@@ -4842,6 +4842,12 @@ body.resizing {
   font-size: 12px;
   color: var(--accent, #4ea1ff);
 }
+.cw-copilot-preview {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
 .cw-copilot-chips {
   display: flex;
   flex-wrap: wrap;

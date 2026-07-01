@@ -3,7 +3,17 @@ import type { AppSnapshot, FieldDayStatus, SkimHit } from '../types'
 import { PhoneScope } from './PhoneScope'
 import { BandPicker } from './BandPicker'
 import { LogEntry } from './LogEntry'
-import { sendCw, setCwKeyer, setCwWpm, stopCw, cwDecode, cwClear, cwSkim, selectPeer } from '../api'
+import {
+  sendCw,
+  setCwKeyer,
+  setCwWpm,
+  stopCw,
+  cwDecode,
+  cwClear,
+  cwSkim,
+  selectPeer,
+  previewCw,
+} from '../api'
 import { pushToast, withErrorToast } from '../toast'
 
 interface Props {
@@ -105,6 +115,24 @@ export function CwCockpit({ snap, theme, pitchHz = 600, pendingWork, onConsumeWo
     name?: string
     ts: number
   } | null>(null)
+  // Reply preview: the exact text each F-key WILL send (macros expanded with the worked
+  // call). Refetched from the backend when the worked station changes — cheap, once per QSO.
+  const [previews, setPreviews] = useState<Record<string, string>>({})
+  useEffect(() => {
+    let alive = true
+    Promise.all(
+      MACROS.map((m) =>
+        previewCw(m.text)
+          .then((p) => [m.key, p] as const)
+          .catch(() => [m.key, m.text] as const),
+      ),
+    ).then((entries) => {
+      if (alive) setPreviews(Object.fromEntries(entries))
+    })
+    return () => {
+      alive = false
+    }
+  }, [guide.workedCall])
   // Wideband skimmer: every CW signal across the band (refreshed a bit slower than the
   // single decode — a full-band scan is heavier than one channel).
   const [skim, setSkim] = useState<SkimHit[]>([])
@@ -357,6 +385,11 @@ export function CwCockpit({ snap, theme, pitchHz = 600, pendingWork, onConsumeWo
           <div className="cw-copilot-guide">
             <span className="cw-copilot-state">{guide.headline}</span>
             {guide.prompt && <span className="cw-copilot-prompt">{guide.prompt}</span>}
+            {guide.recommended && previews[guide.recommended] && (
+              <span className="cw-copilot-preview" title="What that key will transmit">
+                → sends: {previews[guide.recommended]}
+              </span>
+            )}
           </div>
         )}
         <div className="cw-copilot-chips">
@@ -454,7 +487,7 @@ export function CwCockpit({ snap, theme, pitchHz = 600, pendingWork, onConsumeWo
             type="button"
             className={`cw-macro${assistMode === 'guided' && guide.recommended === m.key ? ' recommended' : ''}`}
             onClick={() => send(m.text)}
-            title={m.text}
+            title={previews[m.key] || m.text}
           >
             <span className="cw-macro-key">{m.key}</span>
             <span className="cw-macro-label">{m.label}</span>

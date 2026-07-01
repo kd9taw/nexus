@@ -835,7 +835,10 @@ impl Engine {
     /// it's expanded with the current QSO context (mycall/name/grid + the worked call +
     /// a 599 report) and the radio loop keys it via `rig.send_morse`. See
     /// `tasks/specs/cw-operating.md`.
-    pub fn send_cw(&mut self, text: &str) {
+    /// Expand a CW macro template with the live QSO context (mycall/name/grid + the worked
+    /// call via `!` + a 599 report). Shared by [`Self::send_cw`] and [`Self::preview_cw`] so
+    /// the cockpit's "what F2 will send" preview matches exactly what gets sent.
+    fn expand_cw(&self, text: &str) -> String {
         let hiscall = self
             .app
             .active_peer()
@@ -848,7 +851,16 @@ impl Engine {
             hiscall: &hiscall,
             rst: "599",
         };
-        let expanded = tempo_core::cw::expand(text, &ctx);
+        tempo_core::cw::expand(text, &ctx)
+    }
+
+    /// Expand a CW macro WITHOUT queuing it — the cockpit's reply preview.
+    pub fn preview_cw(&self, text: &str) -> String {
+        self.expand_cw(text)
+    }
+
+    pub fn send_cw(&mut self, text: &str) {
+        let expanded = self.expand_cw(text);
         if !expanded.trim().is_empty() {
             // TX echo: show the operator what actually went out (tokens resolved).
             self.cw_sent.push_back(expanded.clone());

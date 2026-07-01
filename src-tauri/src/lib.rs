@@ -1862,6 +1862,13 @@ fn cw_clear(state: State<'_, SharedEngine>) -> Result<(), String> {
     Ok(())
 }
 
+/// Expand a CW macro to the exact text it will send, WITHOUT sending — the reply preview.
+#[tauri::command]
+fn preview_cw(state: State<'_, SharedEngine>, text: String) -> Result<String, String> {
+    let eng = state.lock().map_err(|e| e.to_string())?;
+    Ok(eng.preview_cw(&text))
+}
+
 /// One signal found by the wideband CW skimmer (audio pitch + decoded text + WPM).
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -4987,6 +4994,7 @@ pub fn run() {
             read_rotator,
             cw_decode,
             cw_clear,
+            preview_cw,
             cw_skim,
             get_rig_models,
             get_band_plan,

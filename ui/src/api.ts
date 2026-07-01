@@ -701,6 +701,11 @@ export async function cwClear(): Promise<void> {
   return invoke('cw_clear')
 }
 
+/** Expand a CW macro to the exact text it will send, without sending (reply preview). */
+export async function previewCw(text: string): Promise<string> {
+  return invoke<string>('preview_cw', { text })
+}
+
 /** Wideband CW skim of the recent RX audio: every distinct keyed signal across the band. */
 export async function cwSkim(): Promise<SkimHit[]> {
   return invoke<SkimHit[]>('cw_skim')
