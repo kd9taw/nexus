@@ -517,7 +517,12 @@ export function CwCockpit({ snap, theme, pitchHz = 600, pendingWork, onConsumeWo
         defaultRst="599"
         pendingWork={pendingWork}
         onConsumeWork={onConsumeWork}
-        cwLive={{ call: guide.workedCall, rst: guide.rst, name: guide.name }}
+        cwLive={{
+          call: guide.workedCall ?? cand.find((c) => c.best)?.call ?? null,
+          rst: guide.rst,
+          name: guide.name,
+          confirmed: guide.workedCall != null,
+        }}
         fieldDay={fieldDay}
         fdMode="CW"
       />

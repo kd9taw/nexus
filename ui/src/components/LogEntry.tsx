@@ -15,10 +15,16 @@ interface Props {
   pendingWork?: { call: string; ts: number } | null
   /** Called once the prefill has been applied, so the parent can clear it. */
   onConsumeWork?: () => void
-  /** CW copilot LIVE fill: the confirmed worked call + the decoder's running read of their
-   * RST/name, updated every poll. LogEntry fills each blank field ONCE per station as the QSO
-   * unfolds (call, then RST, then name) — never clobbering what the operator has typed. */
-  cwLive?: { call: string | null; rst: string | null; name: string | null } | null
+  /** CW copilot LIVE fill: the best-guess worked call (confirmed chip if any, else the top
+   * decoded candidate) + the decoder's running read of their RST/name, updated every poll.
+   * LogEntry pre-fills each field as the QSO unfolds. `confirmed` (a chip click) always wins;
+   * an unconfirmed best-guess never clobbers a call the operator has typed over it. */
+  cwLive?: {
+    call: string | null
+    rst: string | null
+    name: string | null
+    confirmed: boolean
+  } | null
   /**
    * When provided, the component enters FD mode: contacts go to fdLogManual()
    * instead of the general logbook.  The `mode` prop determines the FD mode
@@ -132,16 +138,24 @@ export function LogEntry({
     const up = cwLive.call.toUpperCase()
     const { rst, name } = cwLive
     if (cwFilledFor.current !== up) {
-      setLogCall(up)
-      cwFilledFor.current = up
-      cwRstFilled.current = false
-      cwNameFilled.current = false
+      // A confirmed chip click always lands. An unconfirmed best-guess fills only if the
+      // operator hasn't typed their own call over our previous auto-fill (don't clobber).
+      const overridden =
+        !cwLive.confirmed &&
+        logCallRef.current.trim() !== '' &&
+        logCallRef.current.toUpperCase() !== (cwFilledFor.current ?? '')
+      if (!overridden) {
+        setLogCall(up)
+        cwFilledFor.current = up
+        cwRstFilled.current = false
+        cwNameFilled.current = false
+      }
     }
-    if (!cwRstFilled.current && rst) {
+    if (cwFilledFor.current && !cwRstFilled.current && rst) {
       setLogRst((v) => (v.trim() === '' || v === defaultRst ? rst : v))
       cwRstFilled.current = true
     }
-    if (!cwNameFilled.current && name) {
+    if (cwFilledFor.current && !cwNameFilled.current && name) {
       setLogName((v) => (v.trim() ? v : name))
       cwNameFilled.current = true
     }
