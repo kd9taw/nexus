@@ -68,8 +68,8 @@ pub use model::{
     PropMode, Region, Side, SpaceWx,
 };
 pub use needalert::{
-    heard_from_freq, heard_near_me, near_me_radius_km, rank as rank_needs, skimmer_grid,
-    workable_by_getting_out, Heard, NeedAlert, NeedTag, VHF_MIN_DX_KM,
+    activation_alert, heard_from_freq, heard_near_me, near_me_radius_km, rank as rank_needs,
+    skimmer_grid, workable_by_getting_out, Heard, NeedAlert, NeedTag, VHF_MIN_DX_KM,
 };
 pub use opening::{
     classify as classify_opening, detect as detect_openings_v2, reciprocity, BandFeatures,
