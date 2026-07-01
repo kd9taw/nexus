@@ -34,6 +34,7 @@ pub mod opening;
 pub mod pota;
 pub mod predict;
 pub mod pskr_mqtt;
+pub mod solar_wind;
 pub mod space_wx;
 pub mod spot;
 pub mod swpc_scales;
@@ -85,6 +86,7 @@ pub use pskr_mqtt::{
     parse_mqtt_report_payload as parse_pskr_mqtt_payload, region_topics as pskr_region_topics,
     LiveSpots, REGION_SPOT_CAP,
 };
+pub use solar_wind::SolarWind;
 pub use space_wx::{ScalarTrend, SpaceWxHistory, SpaceWxSample, TrendDir, WxTrend};
 pub use spot::Spot;
 pub use swpc_scales::{AlertView, NoaaScalesView};

@@ -557,6 +557,11 @@ const PROP_TTL_SECS: u64 = 300;
 /// cadence, so a failing fetch on a cold cache can't storm PSK Reporter into 429s.
 static PROP_FETCH_BACKOFF: Mutex<Option<std::time::Instant>> = Mutex::new(None);
 
+/// Last-good real-time solar wind (Bz/speed/…) — refreshed on each fresh SWPC-cadence poll
+/// and reused on cache hits, so the leading-indicator insight survives between refetches.
+/// `None` until the first successful fetch (SolarWind is Copy, so reads are cheap clones).
+static LAST_SOLAR_WIND: Mutex<Option<propagation::SolarWind>> = Mutex::new(None);
+
 /// Where settings are persisted: `%APPDATA%\tempo\settings.json` on Windows,
 /// `$XDG_CONFIG_HOME`/`~/.config/tempo/settings.json` on Unix, else CWD.
 fn settings_path() -> PathBuf {
@@ -1029,7 +1034,18 @@ async fn get_propagation(
                 muf,
             });
         }
+        // Refresh the real-time solar wind on the same (rate-limited) cadence — the LEADING
+        // geomagnetic indicator (Bz/speed lead Kp by hours). Best-effort: a failed fetch
+        // keeps the last-good value for the cache-hit polls in between.
+        if let Ok(sw) = propagation::live::solar_wind::fetch_solar_wind() {
+            if let Ok(mut g) = LAST_SOLAR_WIND.lock() {
+                *g = Some(sw);
+            }
+        }
     }
+    // Attach the last-good solar wind so the UI space-wx pane + the leading-indicator
+    // insight can read it (reused between fresh fetches; None until the first success).
+    snap.space_wx.solar_wind = LAST_SOLAR_WIND.lock().ok().and_then(|g| *g);
     snap.wx_trend = wx_history
         .lock()
         .map(|h| h.trend(now, 3 * 3600))
@@ -1041,6 +1057,7 @@ async fn get_propagation(
         &snap.advisory.bands,
         &snap.openings,
         me_ll,
+        snap.space_wx.solar_wind.as_ref(),
     );
 
     Ok(snap)

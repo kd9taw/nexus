@@ -12,6 +12,7 @@ use crate::engine::OpeningView;
 use crate::geo::solar_elevation_deg;
 use crate::likelihood::is_es_season;
 use crate::model::{r_scale, Band, SpaceWx};
+use crate::solar_wind::SolarWind;
 use crate::space_wx::{TrendDir, WxTrend};
 
 /// How urgently/positively an insight reads (drives color + ordering).
@@ -56,6 +57,8 @@ pub enum InsightKind {
     OpeningMomentum,
     /// Whether the strongest opening is two-way, or a one-way path to stop calling into.
     Reciprocity,
+    /// Real-time solar wind (Bz south / fast stream) — the leading geomagnetic warning.
+    SolarWind,
 }
 
 /// One predictive insight line.
@@ -117,6 +120,7 @@ pub fn generate_insights(
     _bands: &[crate::advisor::BandReport],
     openings: &[OpeningView],
     me: Option<(f64, f64)>,
+    solar_wind: Option<&SolarWind>,
 ) -> Vec<Insight> {
     let mut out: Vec<Insight> = Vec::new();
 
@@ -173,6 +177,43 @@ pub fn generate_insights(
             ),
             band: None,
         });
+    }
+
+    // 2b. Solar wind — the LEADING geomagnetic warning. Kp/A lag real conditions by hours;
+    // a southward IMF (Bz negative) or a fast stream tells the operator polar/high-latitude
+    // paths are about to fade before Kp catches up.
+    if let Some(sw) = solar_wind {
+        if sw.bz_nt <= -5.0 {
+            let strong = sw.bz_nt <= -10.0;
+            out.push(Insight {
+                kind: InsightKind::SolarWind,
+                level: if strong {
+                    InsightLevel::Alert
+                } else {
+                    InsightLevel::Caution
+                },
+                plain: format!(
+                    "Solar wind turned stormy (magnetic field tilted south) — polar paths to EU/Asia will fade over the next 1–2 h{}",
+                    if strong { "; watch for aurora on 6m/2m" } else { "" }
+                ),
+                technical: format!(
+                    "IMF Bz {:.1} nT south, Bt {:.1} nT, wind {:.0} km/s (DSCOVR real-time — leads Kp)",
+                    sw.bz_nt, sw.bt_nt, sw.speed_kms
+                ),
+                band: None,
+            });
+        } else if sw.speed_kms >= 600.0 {
+            out.push(Insight {
+                kind: InsightKind::SolarWind,
+                level: InsightLevel::Caution,
+                plain: "Fast solar-wind stream arriving — high-latitude paths may get unsettled in the next few hours".to_string(),
+                technical: format!(
+                    "solar wind {:.0} km/s, Bz {:.1} nT (DSCOVR real-time — leads Kp)",
+                    sw.speed_kms, sw.bz_nt
+                ),
+                band: None,
+            });
+        }
     }
 
     // 3. MUF trend ("building" / "falling").
@@ -471,7 +512,7 @@ mod tests {
     fn muf_building_names_the_next_band() {
         // MUF at 25 MHz rising → 12m (24.9) at the ceiling, 10m (28.5) may follow.
         let t = rising_muf(25.0, 3.0);
-        let ins = generate_insights(NOW, &wx(150.0, 2.0, 1e-7), Some(&t), &[], &[], None);
+        let ins = generate_insights(NOW, &wx(150.0, 2.0, 1e-7), Some(&t), &[], &[], None, None);
         let muf = ins
             .iter()
             .find(|i| i.kind == InsightKind::MufTrend)
@@ -486,7 +527,7 @@ mod tests {
     fn muf_building_to_6m_is_the_north_star() {
         // MUF ~29 MHz rising → 10m at ceiling, 6m may follow (the magic-band moment).
         let t = rising_muf(29.0, 2.0);
-        let ins = generate_insights(NOW, &wx(190.0, 1.0, 1e-7), Some(&t), &[], &[], None);
+        let ins = generate_insights(NOW, &wx(190.0, 1.0, 1e-7), Some(&t), &[], &[], None, None);
         let muf = ins
             .iter()
             .find(|i| i.kind == InsightKind::MufTrend)
@@ -496,11 +537,11 @@ mod tests {
 
     #[test]
     fn m_and_x_flares_map_to_r_scale() {
-        let m = generate_insights(NOW, &wx(140.0, 2.0, 2e-5), None, &[], &[], None);
+        let m = generate_insights(NOW, &wx(140.0, 2.0, 2e-5), None, &[], &[], None, None);
         let mf = m.iter().find(|i| i.kind == InsightKind::Flare).unwrap();
         assert_eq!(mf.level, InsightLevel::Caution); // R1
         assert!(mf.plain.contains("R1"));
-        let x = generate_insights(NOW, &wx(140.0, 2.0, 2e-4), None, &[], &[], None);
+        let x = generate_insights(NOW, &wx(140.0, 2.0, 2e-4), None, &[], &[], None, None);
         let xf = x.iter().find(|i| i.kind == InsightKind::Flare).unwrap();
         assert_eq!(xf.level, InsightLevel::Alert); // R3
         assert!(xf.plain.contains("R3"));
@@ -508,7 +549,7 @@ mod tests {
 
     #[test]
     fn storm_kp_raises_an_alert() {
-        let ins = generate_insights(NOW, &wx(140.0, 6.0, 1e-7), None, &[], &[], None);
+        let ins = generate_insights(NOW, &wx(140.0, 6.0, 1e-7), None, &[], &[], None, None);
         let g = ins
             .iter()
             .find(|i| i.kind == InsightKind::Geomagnetic)
@@ -520,7 +561,7 @@ mod tests {
     #[test]
     fn es_watch_suppressed_when_6m_already_open() {
         const JUNE: i64 = 1_687_000_000; // Es season
-        let none = generate_insights(JUNE, &wx(120.0, 2.0, 1e-7), None, &[], &[], None);
+        let none = generate_insights(JUNE, &wx(120.0, 2.0, 1e-7), None, &[], &[], None, None);
         assert!(none.iter().any(|i| i.kind == InsightKind::EsWatch));
         let open = OpeningView {
             band: "6m".to_string(),
@@ -538,7 +579,8 @@ mod tests {
             is_new: false,
             note: String::new(),
         };
-        let suppressed = generate_insights(JUNE, &wx(120.0, 2.0, 1e-7), None, &[], &[open], None);
+        let suppressed =
+            generate_insights(JUNE, &wx(120.0, 2.0, 1e-7), None, &[], &[open], None, None);
         assert!(!suppressed.iter().any(|i| i.kind == InsightKind::EsWatch));
     }
 
@@ -546,7 +588,7 @@ mod tests {
     fn ranking_orders_alert_before_info() {
         // An X-flare (Alert) + benign SFI 120 (Info) — the alert must come first, and
         // both plain + technical are always populated.
-        let ins = generate_insights(NOW, &wx(120.0, 2.0, 2e-4), None, &[], &[], None);
+        let ins = generate_insights(NOW, &wx(120.0, 2.0, 2e-4), None, &[], &[], None, None);
         assert!(ins.len() >= 2);
         assert_eq!(ins[0].level, InsightLevel::Alert);
         assert!(ins
@@ -597,7 +639,7 @@ mod tests {
     fn band_headroom_flags_the_next_band_to_open() {
         // Steady MUF 16 MHz → 20m is the ceiling; 17m (~18 MHz) is ~2 MHz off = on the edge.
         let t = steady_muf(16.0);
-        let ins = generate_insights(NOW, &wx(120.0, 2.0, 1e-7), Some(&t), &[], &[], None);
+        let ins = generate_insights(NOW, &wx(120.0, 2.0, 1e-7), Some(&t), &[], &[], None, None);
         let h = ins
             .iter()
             .find(|i| i.kind == InsightKind::BandHeadroom)
@@ -610,7 +652,7 @@ mod tests {
     #[test]
     fn fresh_opening_emits_go_now_momentum() {
         let o = opening("10m", 5, 2, 30, true);
-        let ins = generate_insights(NOW, &wx(150.0, 2.0, 1e-7), None, &[], &[o], None);
+        let ins = generate_insights(NOW, &wx(150.0, 2.0, 1e-7), None, &[], &[o], None, None);
         let m = ins
             .iter()
             .find(|i| i.kind == InsightKind::OpeningMomentum)
@@ -624,7 +666,7 @@ mod tests {
     #[test]
     fn established_one_way_opening_warns() {
         let o = opening("20m", 6, 0, 1800, false);
-        let ins = generate_insights(NOW, &wx(150.0, 2.0, 1e-7), None, &[], &[o], None);
+        let ins = generate_insights(NOW, &wx(150.0, 2.0, 1e-7), None, &[], &[o], None, None);
         let r = ins
             .iter()
             .find(|i| i.kind == InsightKind::Reciprocity)
@@ -633,5 +675,40 @@ mod tests {
         assert!(r.plain.contains("one-way"));
         // An established (not fresh) opening isn't a "go now" momentum line.
         assert!(!ins.iter().any(|i| i.kind == InsightKind::OpeningMomentum));
+    }
+
+    #[test]
+    fn southward_bz_warns_polar_paths_and_calm_wind_is_quiet() {
+        let sw = crate::solar_wind::SolarWind {
+            bz_nt: -12.0,
+            bt_nt: 14.0,
+            speed_kms: 650.0,
+            density: 6.0,
+        };
+        let ins = generate_insights(NOW, &wx(150.0, 2.0, 1e-7), None, &[], &[], None, Some(&sw));
+        let s = ins
+            .iter()
+            .find(|i| i.kind == InsightKind::SolarWind)
+            .expect("solar-wind warning on a strongly southward Bz");
+        assert_eq!(s.level, InsightLevel::Alert); // Bz <= -10 nT
+        assert!(s.plain.contains("stormy") && !s.technical.is_empty());
+
+        // Northward Bz + slow wind = quiet → no solar-wind line.
+        let calm = crate::solar_wind::SolarWind {
+            bz_nt: 2.0,
+            bt_nt: 5.0,
+            speed_kms: 380.0,
+            density: 4.0,
+        };
+        let none = generate_insights(
+            NOW,
+            &wx(150.0, 2.0, 1e-7),
+            None,
+            &[],
+            &[],
+            None,
+            Some(&calm),
+        );
+        assert!(!none.iter().any(|i| i.kind == InsightKind::SolarWind));
     }
 }

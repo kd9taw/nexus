@@ -68,6 +68,10 @@ pub struct SpaceWxView {
     /// recover the true flare magnitude (R-scale) instead of collapsing it to a bool.
     #[serde(default)]
     pub xray_long: f32,
+    /// Real-time solar wind (Bz/speed/…) — the LEADING geomagnetic indicator. Filled by
+    /// the live command layer (the engine has no network); `None` when unavailable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub solar_wind: Option<crate::solar_wind::SolarWind>,
 }
 
 /// The whole propagation nowcast the UI section renders.
@@ -150,8 +154,15 @@ impl PropagationEngine {
         // Threshold-only insights here (no trend history at the engine layer); the
         // command layer overwrites with trend-aware lines from the sample buffer.
         let me_latlon = crate::geo::maidenhead_to_latlon(&self.me_grid);
-        let insights =
-            crate::insight::generate_insights(now, wx, None, &advisory.bands, &openings, me_latlon);
+        let insights = crate::insight::generate_insights(
+            now,
+            wx,
+            None,
+            &advisory.bands,
+            &openings,
+            me_latlon,
+            None, // solar wind is a live-only feed; the command layer adds it
+        );
         PropagationSnapshot {
             advisory,
             openings,
@@ -163,6 +174,7 @@ impl PropagationEngine {
                 xray_class: format!("{}-class", wx.xray_class()),
                 flare: wx.flare_in_progress(),
                 xray_long: wx.xray_long,
+                solar_wind: None, // command layer fills this from the live feed
             },
             // Default provenance; live/cached callers override `source`.
             source: "live".to_string(),

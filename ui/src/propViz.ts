@@ -90,6 +90,13 @@ export function kpImpact(kp: number): Impact {
   if (kp >= 4) return { sev: 'warn', text: 'unsettled — high-lat paths soft' }
   return { sev: 'quiet', text: 'quiet field — stable paths' }
 }
+/** IMF Bz (nT) — the leading geomagnetic signal (leads Kp by hours). Southward (negative)
+ * couples solar-wind energy in: <=-10 strongly geoeffective, -10..-5 unsettled, else benign. */
+export function bzImpact(bz: number): Impact {
+  if (bz <= -10) return { sev: 'warn', text: 'field hard south — storm likely, polar paths fading' }
+  if (bz <= -5) return { sev: 'warn', text: 'field south — high-lat paths softening soon' }
+  return { sev: 'quiet', text: 'field neutral/north — stable' }
+}
 /** A-index (24 h average of geomagnetic activity — the day's character, where Kp is
  * the last 3 h). NOAA scale: <8 quiet · 8–15 unsettled · 16–29 active · 30+ storm. */
 export function aImpact(a: number): Impact {

@@ -4,7 +4,7 @@
 // each acronym carries a hover/tap plain-English definition so a newcomer is
 // never staring at a cryptic "SFI 142 / Kp 4"; Expert mode assumes fluency.
 import type { SpaceWxView } from '../../types'
-import { sfiImpact, kpImpact, aImpact, xrayImpact, type Impact } from '../../propViz'
+import { sfiImpact, kpImpact, aImpact, xrayImpact, bzImpact, type Impact } from '../../propViz'
 import { Tooltip, TooltipProvider } from '../ui/Tooltip'
 
 const SEV_VAR: Record<Impact['sev'], string> = {
@@ -70,6 +70,14 @@ export function SpaceWxGauges({ wx, gloss }: { wx: SpaceWxView; gloss?: boolean 
         impact={xrayImpact(wx.xrayClass)}
         gloss={gloss}
       />
+      {wx.solarWind && (
+        <Gauge
+          label="Bz"
+          value={`${wx.solarWind.bzNt.toFixed(1)}`}
+          impact={bzImpact(wx.solarWind.bzNt)}
+          gloss={gloss}
+        />
+      )}
     </section>
   )
   // The tooltip primitive needs a provider in scope; only mount it when glossing.

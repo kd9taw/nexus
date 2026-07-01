@@ -124,6 +124,7 @@ export type InsightKind =
   | 'bandHeadroom'
   | 'openingMomentum'
   | 'reciprocity'
+  | 'solarWind'
 
 /** One plain-language predictive insight line (dual-audience: plain + technical). */
 export interface Insight {
@@ -249,12 +250,26 @@ export interface DxpedDashboard {
   active: string[]
   upcoming: CalendarEntry[]
 }
+/** Real-time solar wind (DSCOVR) — the leading geomagnetic indicator (leads Kp/A). */
+export interface SolarWind {
+  /** Bz (GSM), nT. Negative = southward = geoeffective. */
+  bzNt: number
+  /** Total field magnitude Bt, nT. */
+  btNt: number
+  /** Bulk speed, km/s. */
+  speedKms: number
+  /** Proton density, p/cm³. */
+  density: number
+}
+
 export interface SpaceWxView {
   sfi: number
   kp: number
   aIndex: number
   xrayClass: string
   flare: boolean
+  /** Real-time solar wind; absent when the DSCOVR feed is unavailable. */
+  solarWind?: SolarWind | null
 }
 export interface PropagationSnapshot {
   advisory: PropAdvisory

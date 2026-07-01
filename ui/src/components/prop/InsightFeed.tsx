@@ -14,6 +14,7 @@ import {
   Gauge,
   Rocket,
   ArrowLeftRight,
+  Wind,
   type LucideIcon,
 } from 'lucide-react'
 import type { Insight, InsightKind } from '../../types'
@@ -29,6 +30,7 @@ const KIND_ICON: Record<InsightKind, LucideIcon> = {
   bandHeadroom: Gauge,
   openingMomentum: Rocket,
   reciprocity: ArrowLeftRight,
+  solarWind: Wind,
 }
 
 export function InsightFeed({
