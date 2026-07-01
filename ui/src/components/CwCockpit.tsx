@@ -110,13 +110,6 @@ export function CwCockpit({ snap, theme, pitchHz = 600, pendingWork, onConsumeWo
   })
   // True once the operator sets WPM by hand → stop auto-matching to the decoded speed.
   const wpmTouched = useRef(false)
-  // One-shot log prefill (call/RST/name) fired when the operator confirms a worked station.
-  const [cwPrefill, setCwPrefill] = useState<{
-    call: string
-    rst?: string
-    name?: string
-    ts: number
-  } | null>(null)
   // Reply preview: the exact text each F-key WILL send (macros expanded with the worked
   // call). Refetched from the backend when the worked station changes — cheap, once per QSO.
   const [previews, setPreviews] = useState<Record<string, string>>({})
@@ -231,7 +224,8 @@ export function CwCockpit({ snap, theme, pitchHz = 600, pendingWork, onConsumeWo
       .then((s) => s && onSnap?.(s))
       .catch(() => {})
     if (!wpmTouched.current && decoded.wpm >= WPM_MIN) changeWpm(decoded.wpm)
-    setCwPrefill({ call, rst: guide.rst ?? undefined, name: guide.name ?? undefined, ts: Date.now() })
+    // The log fills continuously from the confirmed worked station (see cwLive on LogEntry) —
+    // call now, then RST + name as they're decoded through the QSO.
   }
 
   // Keyboard: F1–F8 fire macros; Esc aborts; PgUp/PgDn nudge speed (±2, Shift ±4).
@@ -523,7 +517,7 @@ export function CwCockpit({ snap, theme, pitchHz = 600, pendingWork, onConsumeWo
         defaultRst="599"
         pendingWork={pendingWork}
         onConsumeWork={onConsumeWork}
-        cwPrefill={cwPrefill}
+        cwLive={{ call: guide.workedCall, rst: guide.rst, name: guide.name }}
         fieldDay={fieldDay}
         fdMode="CW"
       />

@@ -15,9 +15,10 @@ interface Props {
   pendingWork?: { call: string; ts: number } | null
   /** Called once the prefill has been applied, so the parent can clear it. */
   onConsumeWork?: () => void
-  /** CW copilot prefill: the confirmed worked call + the decoder's read of their RST/name.
-   * `ts` refires the fill; RST/name fill only BLANK fields so they never clobber typing. */
-  cwPrefill?: { call: string; rst?: string; name?: string; ts: number } | null
+  /** CW copilot LIVE fill: the confirmed worked call + the decoder's running read of their
+   * RST/name, updated every poll. LogEntry fills each blank field ONCE per station as the QSO
+   * unfolds (call, then RST, then name) — never clobbering what the operator has typed. */
+  cwLive?: { call: string | null; rst: string | null; name: string | null } | null
   /**
    * When provided, the component enters FD mode: contacts go to fdLogManual()
    * instead of the general logbook.  The `mode` prop determines the FD mode
@@ -53,7 +54,7 @@ export function LogEntry({
   defaultRst,
   pendingWork,
   onConsumeWork,
-  cwPrefill,
+  cwLive,
   fieldDay,
   fdMode,
 }: Props) {
@@ -119,16 +120,33 @@ export function LogEntry({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingWork?.ts])
 
-  // CW copilot prefill: on confirming a decoded station, land the call + the decoder's read
-  // of their RST/name. RST/name fill only blank/default fields so they never clobber typing.
+  // CW copilot LIVE fill: as the QSO is decoded, fill blank log fields for the CONFIRMED
+  // worked station — the call the moment it's set, then RST + name once each as they arrive.
+  // Blanks-only + once-per-field-per-station, so it fills through the QSO without ever
+  // clobbering what the operator typed.
+  const cwFilledFor = useRef<string | null>(null)
+  const cwRstFilled = useRef(false)
+  const cwNameFilled = useRef(false)
   useEffect(() => {
-    if (!cwPrefill) return
-    const { call, rst, name } = cwPrefill
-    setLogCall(call.toUpperCase())
-    if (rst) setLogRst((v) => (v.trim() === '' || v === defaultRst ? rst : v))
-    if (name) setLogName((v) => (v.trim() ? v : name))
+    if (!cwLive?.call) return
+    const up = cwLive.call.toUpperCase()
+    const { rst, name } = cwLive
+    if (cwFilledFor.current !== up) {
+      setLogCall(up)
+      cwFilledFor.current = up
+      cwRstFilled.current = false
+      cwNameFilled.current = false
+    }
+    if (!cwRstFilled.current && rst) {
+      setLogRst((v) => (v.trim() === '' || v === defaultRst ? rst : v))
+      cwRstFilled.current = true
+    }
+    if (!cwNameFilled.current && name) {
+      setLogName((v) => (v.trim() ? v : name))
+      cwNameFilled.current = true
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cwPrefill?.ts])
+  }, [cwLive?.call, cwLive?.rst, cwLive?.name])
 
   const hist = useMemo(
     () => callHistory(allLog, logCall, snap.radio.band),
