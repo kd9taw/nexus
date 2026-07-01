@@ -2063,7 +2063,14 @@ fn get_licensed_band_plan(
     };
     let mut out = Vec::new();
     for (band, group) in BANDS {
-        if let Some(dial) = tempo_app::privileges::segment_start(class, band, mode) {
+        if let Some(seg) = tempo_app::privileges::segment_start(class, band, mode) {
+            // In CW, park in the CW ACTIVITY window (14.030, not the dead 14.000 edge) —
+            // clamped to the licensed segment start so it never drops below privileges.
+            let dial = if matches!(mode, OperatingMode::Cw) {
+                tempo_app::bandplan::cw_activity_mhz(band).map_or(seg, |a| a.max(seg))
+            } else {
+                seg
+            };
             // Sideband stored: USB/LSB by band for phone; digital-safe USB otherwise (the
             // rig-mode policy forces CW in the CW section regardless of this field).
             let sideband = if matches!(mode, OperatingMode::Phone) && dial < 10.0 {

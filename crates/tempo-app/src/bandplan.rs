@@ -130,6 +130,29 @@ pub fn band_plan_for(tier: crate::dto::Tier) -> Vec<BandChannel> {
     }
 }
 
+/// Where CW ACTIVITY concentrates on each band (the general-CW / QRP / SKCC watering holes),
+/// so the CW cockpit parks the operator IN the action instead of on the dead band edge (the
+/// 20 m CW segment starts at 14.000, but nobody works there — activity is ~14.030+). The
+/// caller clamps this to the licensed CW-segment start, so it never drops below privileges.
+pub fn cw_activity_mhz(band: &str) -> Option<f64> {
+    Some(match band {
+        "160m" => 1.810,
+        "80m" => 3.550,
+        "40m" => 7.030,
+        "30m" => 10.110,
+        "20m" => 14.030,
+        "17m" => 18.080,
+        "15m" => 21.030,
+        "12m" => 24.900,
+        "10m" => 28.030,
+        "6m" => 50.090, // 6 m CW calling frequency
+        "2m" => 144.050,
+        "1.25m" => 222.050,
+        "70cm" => 432.050,
+        _ => return None,
+    })
+}
+
 /// The Tempo channel whose dial matches `dial_mhz` (within 500 Hz), if any — used
 /// by the UI to highlight the active band channel.
 pub fn channel_for_dial(dial_mhz: f64) -> Option<BandChannel> {
@@ -166,6 +189,26 @@ pub fn band_for_dial(dial_mhz: f64) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cw_activity_is_inside_the_band_and_off_the_edge() {
+        // 20 m CW activity sits above the dead 14.000 edge and inside the CW segment.
+        let f = cw_activity_mhz("20m").unwrap();
+        assert!(
+            f > 14.0 && f < 14.15,
+            "20m CW activity {f} should be in the CW segment"
+        );
+        // Every HF band the picker offers has a CW activity centre.
+        for b in [
+            "160m", "80m", "40m", "30m", "20m", "17m", "15m", "12m", "10m", "6m",
+        ] {
+            assert!(
+                cw_activity_mhz(b).is_some(),
+                "{b} needs a CW activity frequency"
+            );
+        }
+        assert!(cw_activity_mhz("bogus").is_none());
+    }
 
     #[test]
     fn plan_is_nonempty_and_well_formed() {
