@@ -175,7 +175,7 @@ interface Layer {
 const DEFAULT_LAYERS: Record<LayerKey, Layer> = {
   daynight: { label: 'Day / night (greyline)', visible: true, opacity: 1 },
   relief: { label: 'Relief (World view)', visible: true, opacity: 1 },
-  muf: { label: 'MUF (live + model)', visible: true, opacity: 0.85 },
+  muf: { label: 'MUF (live + model)', visible: true, opacity: 0.6 },
   aurora: { label: 'Aurora oval', visible: false, opacity: 0.85 },
   coast: { label: 'Coastlines', visible: true, opacity: 0.85 },
   grid: { label: 'Grid (20°×10°)', visible: true, opacity: 0.5 },
@@ -662,11 +662,16 @@ export function MapView({
     // Gated to the Expert layer panel + off by default; the on-map legend maps color→band.
     if (layers.muf.visible) {
       const sfi = prop?.spaceWx.sfi ?? 120
+      ctx.globalAlpha = layers.muf.opacity * 0.4
       for (const cell of mufGrid) {
         const muf = blendedMuf(cell.center.lat, cell.center.lon, nowMs, sfi, mufStations)
-        const t = Math.max(0, Math.min(1, (muf - 7) / (35 - 7)))
+        // Only shade where a HIGH band (≥ 20 m / 14 MHz) is open. Below that it's the
+        // near-permanent low-band floor — shading it just washes the whole globe pink and
+        // makes the opacity feel on/off. Map the useful 14→30 MHz window across the ramp so
+        // the day-side gradient reads (7→35 compressed everything into inferno's pink middle).
+        if (muf < 14) continue
+        const t = Math.max(0, Math.min(1, (muf - 14) / (30 - 14)))
         const [r, g, b] = sampleLut('inferno', t)
-        ctx.globalAlpha = layers.muf.opacity * 0.34
         ctx.beginPath()
         path(cell.poly)
         ctx.fillStyle = `rgb(${r}, ${g}, ${b})`
@@ -1225,13 +1230,12 @@ function MufLegend() {
   }).join(', ')
   return (
     <div className="muf-legend" aria-hidden="true">
-      <span className="muf-legend-title">MUF — top band open</span>
+      <span className="muf-legend-title">MUF — highest band open</span>
       <span className="muf-legend-bar" style={{ background: `linear-gradient(90deg, ${stops})` }} />
       <span className="muf-legend-ticks">
-        <span>40m</span>
         <span>20m</span>
         <span>15m</span>
-        <span>10m</span>
+        <span>10m+</span>
       </span>
     </div>
   )
