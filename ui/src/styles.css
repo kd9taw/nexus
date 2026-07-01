@@ -1288,10 +1288,15 @@ button.nb-chip:hover {
 }
 .connect-path-list li {
   display: grid;
-  grid-template-columns: 3.2em 5.5em 1fr;
+  grid-template-columns: 3.2em 5.5em auto 1fr;
   align-items: baseline;
   gap: var(--space-2);
   font-size: var(--fs-micro);
+}
+/* Live "open now · ~2h left" / "opens in ~3h (1400Z)" timing, right-aligned per band. */
+.connect-path-list .cp-eta {
+  text-align: right;
+  color: var(--text-faint);
 }
 .connect-path-list .cp-band {
   font-weight: 600;

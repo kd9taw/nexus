@@ -14,6 +14,7 @@ import {
   trendArrow,
   mufCeilingBand,
   dualStateLabel,
+  bandTiming,
 } from './propViz'
 import type { Insight } from './types'
 
@@ -113,5 +114,21 @@ describe('propViz nerve-center helpers', () => {
     expect(dualStateLabel('Closed', 'Quiet')).toEqual({ word: 'Closed', sub: '' })
     // Missing modeled falls back sensibly (non-closed tier → Open).
     expect(dualStateLabel(undefined, 'Quiet').word).toBe('Open')
+  })
+})
+
+describe('bandTiming', () => {
+  const noon = Date.UTC(2024, 0, 1, 12, 0) // 12:00Z
+  const arr = (set: Record<number, number>) => Array.from({ length: 24 }, (_, h) => set[h] ?? 0)
+
+  it('reports open-now with hours remaining', () => {
+    expect(bandTiming(arr({ 12: 0.8, 13: 0.5 }), noon)).toBe('open now · ~2h left')
+  })
+  it('counts down to the next open hour', () => {
+    expect(bandTiming(arr({ 15: 0.6 }), noon)).toBe('opens in ~3h (1500Z)')
+  })
+  it('is empty when the band never clears Fair, or hourly is missing', () => {
+    expect(bandTiming(arr({ 12: 0.2 }), noon)).toBe('')
+    expect(bandTiming([0.9], noon)).toBe('')
   })
 })

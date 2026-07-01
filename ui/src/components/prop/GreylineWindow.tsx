@@ -3,7 +3,7 @@
 // greyline-favored now, and which DX entities are currently sitting on their own greyline
 // (low-band long-path candidates). Re-renders on the snapshot poll, so the countdown is live.
 import { nextTerminatorMs, solarElevationDeg } from '../../mapGeo'
-import { gridToLatLon } from '../../grid'
+import { gridToLatLon, bearingDeg } from '../../grid'
 import type { PaneContext } from '../connect/paneContext'
 
 function fmtZ(ms: number): string {
@@ -19,11 +19,12 @@ export function GreylineWindow({ ctx }: { ctx: PaneContext }) {
   const mins = Math.max(0, Math.round((next.atMs - now) / 60000))
   const when = mins >= 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : `${mins}m`
   // DX entities currently on their greyline (|solar elevation| < 6°), from the anchored
-  // spots, deduped by entity — the low-band long-path candidates.
-  const onGrey = new Set<string>()
+  // spots, deduped by entity — the low-band long-path candidates. Keep the first spot's
+  // location so we can tell the operator which way to point the beam.
+  const onGrey = new Map<string, { lat: number; lon: number }>()
   for (const s of ctx.prop?.spots ?? []) {
     if (!s.entity || onGrey.has(s.entity)) continue
-    if (Math.abs(solarElevationDeg(s.lat, s.lon, now)) < 6) onGrey.add(s.entity)
+    if (Math.abs(solarElevationDeg(s.lat, s.lon, now)) < 6) onGrey.set(s.entity, { lat: s.lat, lon: s.lon })
   }
   const greyBands = (ctx.bandOutlook?.bands ?? []).filter((b) => b.grayline).map((b) => b.band)
   return (
@@ -34,7 +35,13 @@ export function GreylineWindow({ ctx }: { ctx: PaneContext }) {
       </p>
       {greyBands.length > 0 && <p className="gl-bands">◐ greyline favors {greyBands.join(', ')}</p>}
       {onGrey.size > 0 && (
-        <p className="gl-regions">On the greyline now: {[...onGrey].slice(0, 6).join(', ')}</p>
+        <p className="gl-regions">
+          On the greyline now (point your beam):{' '}
+          {[...onGrey.entries()]
+            .slice(0, 6)
+            .map(([entity, p]) => `${entity} ${bearingDeg(ll, p)}°`)
+            .join(' · ')}
+        </p>
       )}
       {onGrey.size === 0 && greyBands.length === 0 && (
         <p className="cp-none">No greyline DX paths lit right now.</p>

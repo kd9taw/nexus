@@ -8,6 +8,7 @@
 import type { ReactNode } from 'react'
 import { type PaneId, PANE_IDS } from '../../features/connectConfig'
 import type { PaneContext } from './paneContext'
+import { bandTiming } from '../../propViz'
 import { SpaceWxGauges } from '../prop/SpaceWxGauges'
 import { BandAdvisor } from '../prop/BandAdvisor'
 import { OpeningStrip } from '../prop/OpeningStrip'
@@ -162,6 +163,7 @@ function renderPath(c: PaneContext): ReactNode {
                   )}
                   {b.window}
                 </span>
+                <span className="cp-eta">{bandTiming(b.hourly, Date.now())}</span>
               </li>
             ))}
           </ul>
@@ -206,6 +208,7 @@ function renderOutlook(c: PaneContext): ReactNode {
                   )}
                   {b.window}
                 </span>
+                <span className="cp-eta">{bandTiming(b.hourly, Date.now())}</span>
               </li>
             ))}
           </ul>

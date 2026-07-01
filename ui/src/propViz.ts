@@ -90,6 +90,36 @@ export function kpImpact(kp: number): Impact {
   if (kp >= 4) return { sev: 'warn', text: 'unsettled — high-lat paths soft' }
   return { sev: 'quiet', text: 'quiet field — stable paths' }
 }
+/** The model's "usable" (≥ Fair) cutoff — mirrors likelihood.rs Workability::from_score.
+ * A per-UTC-hour likelihood at/above this reads as an open hour. */
+export const OPEN_THRESHOLD = 0.3
+
+/** Live timing for one outlook band: is it open THIS hour (and for how much longer), or when
+ * does it next open? `hourly` is 24 per-UTC-hour likelihoods. '' when unknown/never-open.
+ * The outlook shows peak workability + best window; this answers "…but is it open NOW?". */
+export function bandTiming(hourly: number[], nowMs: number): string {
+  if (!hourly || hourly.length < 24) return ''
+  const d = new Date(nowMs)
+  const nowH = d.getUTCHours()
+  const nowMin = d.getUTCMinutes()
+  const open = (h: number) => (hourly[((h % 24) + 24) % 24] ?? 0) >= OPEN_THRESHOLD
+  if (open(nowH)) {
+    let left = 0
+    while (left < 24 && open(nowH + left)) left++
+    const remMin = left * 60 - nowMin
+    return remMin >= 90 ? `open now · ~${Math.round(remMin / 60)}h left` : `open now · ~${remMin}m left`
+  }
+  for (let ahead = 1; ahead <= 24; ahead++) {
+    if (open(nowH + ahead)) {
+      const mins = ahead * 60 - nowMin
+      const when = mins < 60 ? `${mins}m` : `${Math.floor(mins / 60)}h${mins % 60 ? ` ${mins % 60}m` : ''}`
+      const z = `${String((nowH + ahead) % 24).padStart(2, '0')}00Z`
+      return `opens in ~${when} (${z})`
+    }
+  }
+  return ''
+}
+
 /** IMF Bz (nT) — the leading geomagnetic signal (leads Kp by hours). Southward (negative)
  * couples solar-wind energy in: <=-10 strongly geoeffective, -10..-5 unsettled, else benign. */
 export function bzImpact(bz: number): Impact {
