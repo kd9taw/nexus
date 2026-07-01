@@ -88,6 +88,21 @@ const INTENT_PRESETS: Record<
   vhf: { kind: 'globe', colorBy: 'snr', layers: { dxped: false, rings: true, heat: true } },
 }
 
+/** The operator's chosen projection is persisted (like the Connect intent) so a torn-off
+ * window — and the next launch — restore the SAME globe/beam/world they were using, instead
+ * of snapping back to the intent preset. Without this the globe never carries over to a
+ * detached window (the mount-time intent effect resets it, and pota's preset is the flat
+ * world map). */
+const PROJECTION_KEY = 'nexus.connect.projection'
+function loadProjection(): Projection | null {
+  try {
+    const v = localStorage.getItem(PROJECTION_KEY)
+    return v === 'globe' || v === 'aeqd' || v === 'world' ? v : null
+  } catch {
+    return null
+  }
+}
+
 /** Need tier → a dot color (matches the decode/roster palette). `null` = no
  * specific need (fall back to worked/SNR coloring). */
 function needColor(tag: NeedTag | undefined): string | null {
@@ -214,7 +229,11 @@ export function MapView({
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
-  const [kind, setKind] = useState<Projection>('globe')
+  // Restore the operator's persisted projection (so a detached window shows the same
+  // globe/beam/world); fall back to the intent preset, then the globe.
+  const [kind, setKind] = useState<Projection>(
+    () => loadProjection() ?? (intent ? INTENT_PRESETS[intent].kind : 'globe'),
+  )
   const [colorBy, setColorBy] = useState<'need' | 'snr'>('need')
   const [pathMode, setPathMode] = useState<'sp' | 'lp'>('sp')
   const [layers, setLayers] = useState(DEFAULT_LAYERS)
@@ -276,10 +295,16 @@ export function MapView({
   // Apply the Connect intent preset (soft) whenever it changes — sets projection,
   // default color-by, and which optional layers are on. The user can still tweak
   // any control afterwards; switching intent re-applies.
+  const intentFirstRun = useRef(true)
   useEffect(() => {
     if (!intent) return
     const p = INTENT_PRESETS[intent]
-    setKind(p.kind)
+    // On the FIRST mount, honor the persisted projection (kind is seeded from it above) so a
+    // detached window keeps the operator's globe/beam/world. The preset only re-sets the
+    // projection when the operator actively SWITCHES intent afterward. colorBy/layers always
+    // follow the intent — they're derived identically in every window, so they carry over.
+    if (!intentFirstRun.current) setKind(p.kind)
+    intentFirstRun.current = false
     setColorBy(p.colorBy)
     setLayers((L) => {
       const next = { ...L }
@@ -289,6 +314,16 @@ export function MapView({
       return next
     })
   }, [intent])
+
+  // Persist the projection whenever it changes (operator's Globe/Beam/World pick, or a
+  // preset applied on intent switch) so the next window/launch restores it.
+  useEffect(() => {
+    try {
+      localStorage.setItem(PROJECTION_KEY, kind)
+    } catch {
+      /* storage blocked — projection still applies this session */
+    }
+  }, [kind])
 
   const me = useMemo(() => gridToLatLon(myGrid), [myGrid])
   // Wheel-zoom — a NON-passive native listener so we can preventDefault (React's
