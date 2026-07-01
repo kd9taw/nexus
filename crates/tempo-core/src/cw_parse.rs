@@ -211,8 +211,8 @@ fn infer_state(
         return CwGuidance {
             state: "73".into(),
             headline: format!("{call} is signing 73"),
-            prompt: format!("Send 73 (F3) to close, then log {call}."),
-            recommended: Some("F3".into()),
+            prompt: format!("Send 73 (F4) to close, then log {call}."),
+            recommended: Some("F4".into()),
         };
     }
     // They sent us a report → acknowledge + finish.
@@ -221,8 +221,8 @@ fn infer_state(
         return CwGuidance {
             state: "report".into(),
             headline: format!("{call} sent you {rst}"),
-            prompt: format!("Press 73 (F3) to confirm and finish with {call}."),
-            recommended: Some("F3".into()),
+            prompt: format!("Press 73 (F4) to confirm and finish with {call}."),
+            recommended: Some("F4".into()),
         };
     }
     // They came back to your call (answered your CQ, or replied to you).
@@ -230,8 +230,8 @@ fn infer_state(
         return CwGuidance {
             state: "answered".into(),
             headline: format!("{call} answered you"),
-            prompt: format!("Press Answer (F2) to send {call} your report + name."),
-            recommended: Some("F2".into()),
+            prompt: format!("Press Reply (F3) to send {call} your report + name."),
+            recommended: Some("F3".into()),
         };
     }
     // They're calling CQ (heard CQ, not addressed to you) → answer them.
@@ -239,7 +239,7 @@ fn infer_state(
         return CwGuidance {
             state: "cq".into(),
             headline: format!("{call} is calling CQ"),
-            prompt: format!("Press Answer (F2) to call {call}."),
+            prompt: format!("Press Call (F2) to answer {call}."),
             recommended: Some("F2".into()),
         };
     }
@@ -247,7 +247,7 @@ fn infer_state(
     CwGuidance {
         state: "cq".into(),
         headline: format!("Heard {call}"),
-        prompt: format!("Press Answer (F2) to call {call}, or wait for more."),
+        prompt: format!("Press Call (F2) to answer {call}, or wait for more."),
         recommended: Some("F2".into()),
     }
 }
@@ -313,16 +313,16 @@ mod tests {
             real,
         );
         assert_eq!(a.guidance.state, "report");
-        assert_eq!(a.guidance.recommended.as_deref(), Some("F3"));
+        assert_eq!(a.guidance.recommended.as_deref(), Some("F4")); // 73
     }
 
     #[test]
-    fn they_answered_me_recommends_answer() {
+    fn they_answered_me_recommends_reply() {
         // We called CQ; they came back to our call, no report yet.
         let sent = vec!["CQ CQ DE KD9TAW KD9TAW K".to_string()];
         let a = analyze("KD9TAW DE W1ABC", &sent, "KD9TAW", Some("W1ABC"), real);
         assert_eq!(a.guidance.state, "answered");
-        assert_eq!(a.guidance.recommended.as_deref(), Some("F2"));
+        assert_eq!(a.guidance.recommended.as_deref(), Some("F3")); // Reply
     }
 
     #[test]

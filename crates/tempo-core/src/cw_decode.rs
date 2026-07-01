@@ -184,6 +184,7 @@ pub fn skim_cw(samples: &[f32], sr: f32, lo_hz: u32, hi_hz: u32, step_hz: u32) -
 
 const CW_TRANSCRIPT_CAP: usize = 4000; // keep the tail; drop older text
 const CW_SPIKE_FRAC: f32 = 0.4; // reject marks shorter than 0.4·dit as impulse noise
+const CW_MARK_SNR: f32 = 4.0; // a real element's peak must clear the noise floor by this ×
 
 /// Streaming, stateful CW decoder — the persistent-transcript sibling of [`decode_cw`].
 ///
@@ -205,6 +206,7 @@ pub struct CwStreamDecoder {
     carry: Vec<f32>, // audio not yet a full hop
     noise: f32,      // slow-tracking noise-floor follower (AGC)
     peak: f32,       // fast-attack, slow-decay signal-peak follower (AGC)
+    mark_peak: f32,  // peak power within the current key-down (per-mark SNR gate)
     lo_thresh: f32,  // Schmitt lower rail (leave mark below this)
     hi_thresh: f32,  // Schmitt upper rail (enter mark at/above this)
     present: bool,   // a keyed signal is present (else don't decode noise)
@@ -234,6 +236,7 @@ impl CwStreamDecoder {
             carry: Vec::new(),
             noise: 1e-9,
             peak: 0.0,
+            mark_peak: 0.0,
             lo_thresh: 0.0,
             hi_thresh: f32::INFINITY,
             present: false,
@@ -324,6 +327,7 @@ impl CwStreamDecoder {
     fn step(&mut self, p: f32) {
         if self.key_down {
             self.run += 1;
+            self.mark_peak = self.mark_peak.max(p);
             if p < self.lo_thresh {
                 self.on_mark_end();
                 self.key_down = false;
@@ -334,6 +338,7 @@ impl CwStreamDecoder {
             // ticks below, so just begin the mark.
             self.key_down = true;
             self.run = 1;
+            self.mark_peak = p;
         } else {
             self.space_run += 1;
             self.on_gap_tick();
@@ -342,9 +347,12 @@ impl CwStreamDecoder {
 
     fn on_mark_end(&mut self) {
         let spike_min = (CW_SPIKE_FRAC * self.dit_avg).max(1.0);
-        if (self.run as f32) < spike_min {
-            // Sub-dit blip: impulse noise, not a keyed element. Roll its hops into the
-            // surrounding gap so a spike in a space doesn't reset the character timing.
+        // Reject a mark that is too SHORT (impulse) OR too WEAK (its peak barely clears the
+        // noise floor). The weak case kills the "E E E…" storm the decoder otherwise emits
+        // from band noise between signals — a real keyed element sits well above the floor.
+        if (self.run as f32) < spike_min || self.mark_peak < self.noise * CW_MARK_SNR {
+            // Not a keyed element — roll its hops into the surrounding gap so it doesn't
+            // reset the character timing.
             self.space_run += self.run;
             return;
         }
@@ -527,6 +535,38 @@ mod tests {
             .collect();
         d2.push(&steady);
         assert_eq!(d2.transcript(), "");
+    }
+
+    #[test]
+    fn stream_suppresses_near_noise_marks() {
+        // A gappy, LOW-contrast tone whose "on" segments sit only ~3× the floor in power —
+        // the kind of thing band noise makes the threshold chase. Without the per-mark SNR
+        // gate this decodes into an "E E E…" storm; with it (needs ≥4× the floor) the marks
+        // are rejected, so the transcript stays essentially empty. Clean full-amplitude
+        // signals (the other tests) are unaffected.
+        let mut d = CwStreamDecoder::new(SR, PITCH);
+        let dit = (SR * 0.06) as usize; // ~20 wpm element
+        let tone = |amp: f32, len: usize| -> Vec<f32> {
+            (0..len)
+                .map(|i| amp * (2.0 * std::f32::consts::PI * PITCH * i as f32 / SR).sin())
+                .collect()
+        };
+        let mut buf: Vec<f32> = Vec::new();
+        for _ in 0..40 {
+            buf.extend(tone(0.09, dit)); // "on" ≈ 3.2× the "off" power — below the 4× gate
+            buf.extend(tone(0.05, dit)); // "off" = the noise floor
+        }
+        d.push(&buf);
+        let junk = d
+            .transcript()
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .count();
+        assert!(
+            junk <= 6,
+            "near-noise produced a storm: {:?}",
+            d.transcript()
+        );
     }
 
     #[test]

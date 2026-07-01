@@ -32,17 +32,19 @@ interface Props {
   fieldDay?: FieldDayStatus | null
 }
 
-/** Default CASUAL/ragchew macro set (no contest serial/exchange), per
- * `tasks/specs/cw-operating.md`. The engine expands the tokens ({MYCALL}/{NAME}/
- * {RST}/! = worked call) with the live QSO context, so we just send the template. */
+/** Default CASUAL/ragchew macro set (no contest serial/exchange). Standard CW QSO flow:
+ * F1 CQ → F2 Call (answer a CQ with just your call, so they copy it — no report yet) →
+ * F3 Reply (send your report + name, once they've come back to you) → F4 73. Overs end
+ * `KN` ("go ahead, you only"). The engine expands the tokens ({MYCALL}/{NAME}/{RST}/! =
+ * worked call) with the live QSO context, so we just send the template. */
 const MACROS: { key: string; label: string; text: string }[] = [
   { key: 'F1', label: 'CQ', text: 'CQ CQ DE {MYCALL} {MYCALL} K' },
-  { key: 'F2', label: 'Answer', text: '! DE {MYCALL} UR {RST} {RST} NAME {NAME} {NAME} HW? !' },
-  { key: 'F3', label: '73', text: '! 73 ES TU DE {MYCALL} SK' },
-  { key: 'F4', label: 'My Call', text: '{MYCALL}' },
-  { key: 'F5', label: 'His Call', text: '! ' },
-  { key: 'F6', label: 'AGN', text: 'AGN AGN' },
-  { key: 'F7', label: 'RR FB', text: 'RR FB' },
+  { key: 'F2', label: 'Call', text: '! DE {MYCALL} {MYCALL} K' },
+  { key: 'F3', label: 'Reply', text: '! DE {MYCALL} UR {RST} {RST} NAME {NAME} {NAME} HW? KN' },
+  { key: 'F4', label: '73', text: '! DE {MYCALL} TU 73 SK' },
+  { key: 'F5', label: 'My Call', text: '{MYCALL}' },
+  { key: 'F6', label: 'His Call', text: '! ' },
+  { key: 'F7', label: 'AGN', text: 'AGN AGN' },
   { key: 'F8', label: '?', text: '? ' },
 ]
 
