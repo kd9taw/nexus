@@ -309,9 +309,9 @@ export function NeededPanel({
         ) : (
           <div
             className="np-phone-src weak"
-            title="No DX-cluster node is configured, so there's no source for SSB/phone needs (RBN only carries CW and digital). Set a cluster host in Settings ▸ Connections."
+            title="Phone/SSB needs come only from a human DX-cluster node. This shows when the DX Cluster feed is disabled OR no human host is set — turn on “DX Cluster / RBN spots” and add a host (e.g. ve7cc.net:23) in Settings ▸ Connections. RBN carries only CW + digital, never SSB."
           >
-            Phone source: none — add a DX cluster in Settings for SSB needs
+            Phone source off — turn on “DX Cluster / RBN spots” in Settings
           </div>
         ))}
 

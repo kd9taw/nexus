@@ -647,8 +647,28 @@ impl Settings {
         // NC7J's SKIMMER port (dxc.nc7j.com:7373), which just duplicates the RBN we pull.
         // RBN CW+digital are now wired automatically, so cluster_host is the HUMAN node for
         // SSB/phone — reset either bad value to the VE7CC-1 default so phone spots flow.
-        if s.cluster_host.contains("reversebeacon.net") || s.cluster_host == "dxc.nc7j.com:7373" {
+        let legacy_rbn_host =
+            s.cluster_host.contains("reversebeacon.net") || s.cluster_host == "dxc.nc7j.com:7373";
+        if legacy_rbn_host {
             s.cluster_host = "ve7cc.net:23".to_string();
+            // That signature IS a pre-multi-cluster config: "cluster" pointed at an RBN/skimmer
+            // port, never a human node, so the operator never had a phone source — and the
+            // subsystem commonly persisted DISABLED from an older default, so even after fixing
+            // the host no spots flow (which defeats this migration's whole purpose). Enable it,
+            // and seed BOTH default human nodes (ve7cc + the wa9pie:8000 fallback for networks
+            // that block telnet port 23) UNLESS the operator already has a real (non-RBN) node
+            // configured — then just enable and keep theirs.
+            s.cluster_enabled = true;
+            let has_human_host = s
+                .cluster_hosts
+                .iter()
+                .any(|h| !h.trim().is_empty() && !h.contains("reversebeacon.net"));
+            if !has_human_host {
+                s.cluster_hosts = vec![
+                    "ve7cc.net:23".to_string(),
+                    "dxc.wa9pie.net:8000".to_string(),
+                ];
+            }
         }
         // Migration: `cluster_hosts` (the multi-cluster aggregator) is newer than the single
         // `cluster_host`. An OLD config has no `clusterHosts` key → the field default leaves it
@@ -981,6 +1001,62 @@ mod tests {
                 "ve7cc.net:23".to_string(),
                 "dxc.example.net:7300".to_string()
             ]
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn load_recovers_a_disabled_legacy_rbn_config() {
+        // The exact stale state that silently killed phone spots: a pre-multi-cluster config
+        // whose single `cluster_host` is an RBN port, an empty `cluster_hosts` list, and the
+        // whole subsystem left DISABLED. Load must rewrite the host to a human node, RE-ENABLE
+        // the cluster, and seed both default human nodes (incl. the port-23 fallback) so phone
+        // flows — otherwise fixing the host alone leaves the operator with no spots at all.
+        let path = std::env::temp_dir()
+            .join("tempo_settings_legacyrbn")
+            .join("settings.json");
+        let mut s = Settings::default();
+        s.cluster_enabled = false;
+        s.cluster_host = "telnet.reversebeacon.net:7001".into();
+        s.cluster_hosts = vec![]; // pre-aggregator config: no human node
+        s.save(&path).unwrap();
+        let back = Settings::load(&path);
+        assert!(back.cluster_enabled, "re-enabled the disabled cluster");
+        assert!(
+            !back.cluster_host.contains("reversebeacon.net"),
+            "RBN host rewritten to a human node, got {:?}",
+            back.cluster_host
+        );
+        assert!(
+            back.cluster_hosts.iter().any(|h| h.contains("ve7cc")),
+            "seeded the human node so phone flows: {:?}",
+            back.cluster_hosts
+        );
+        assert!(
+            back.cluster_hosts.iter().any(|h| h.contains("wa9pie")),
+            "seeded the port-23-blocked fallback too: {:?}",
+            back.cluster_hosts
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn load_leaves_a_deliberately_disabled_modern_config_alone() {
+        // Guard the migration's scope: a MODERN config (human host, no RBN signature) that the
+        // operator deliberately disabled must stay disabled — the re-enable is only for the
+        // legacy RBN-host signature, never a blanket override of the operator's choice.
+        let path = std::env::temp_dir()
+            .join("tempo_settings_moderndisabled")
+            .join("settings.json");
+        let mut s = Settings::default();
+        s.cluster_enabled = false;
+        s.cluster_host = "ve7cc.net:23".into();
+        s.cluster_hosts = vec!["ve7cc.net:23".into()];
+        s.save(&path).unwrap();
+        let back = Settings::load(&path);
+        assert!(
+            !back.cluster_enabled,
+            "a deliberately-disabled modern config stays disabled"
         );
         let _ = std::fs::remove_file(&path);
     }
