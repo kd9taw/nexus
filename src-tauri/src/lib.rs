@@ -1799,6 +1799,14 @@ fn cw_decode(state: State<'_, SharedEngine>) -> Result<CwDecodeResult, String> {
     })
 }
 
+/// Clear the streaming CW decoder's accumulated transcript (the cockpit's Clear button).
+#[tauri::command]
+fn cw_clear(state: State<'_, SharedEngine>) -> Result<(), String> {
+    let mut eng = state.lock().map_err(|e| e.to_string())?;
+    eng.cw_clear();
+    Ok(())
+}
+
 /// One signal found by the wideband CW skimmer (audio pitch + decoded text + WPM).
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -4923,6 +4931,7 @@ pub fn run() {
             point_rotator_at_call,
             read_rotator,
             cw_decode,
+            cw_clear,
             cw_skim,
             get_rig_models,
             get_band_plan,

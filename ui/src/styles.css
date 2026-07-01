@@ -4716,13 +4716,18 @@ body.resizing {
 /* Live CW decode strip — a monospace readout of the signal under the marker. */
 .cw-decode {
   display: flex;
-  align-items: baseline;
-  gap: var(--space-2);
+  flex-direction: column;
+  gap: var(--space-1);
   padding: var(--space-1) var(--space-2);
   margin-bottom: var(--space-2);
   background: var(--surface-2, rgba(0, 0, 0, 0.2));
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
+}
+.cw-decode-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
 }
 .cw-decode-label {
   font-size: 10px;
@@ -4730,14 +4735,31 @@ body.resizing {
   letter-spacing: 0.08em;
   color: var(--text-faint);
 }
+.cw-decode-clear {
+  margin-left: auto;
+  font-size: 10px;
+  padding: 1px 6px;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.cw-decode-clear:hover {
+  color: var(--text);
+  border-color: var(--text-dim);
+}
+/* A multi-line, auto-scrolling transcript — decoded Morse persists here (it no longer
+   vanishes as the audio window slides); older text scrolls up, newest stays in view. */
 .cw-decode-text {
-  flex: 1;
   font-family: var(--font-mono);
   font-size: 14px;
+  line-height: 1.5;
   color: var(--text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  height: 6.5em;
+  overflow-y: auto;
 }
 .cw-decode-idle {
   color: var(--text-faint);

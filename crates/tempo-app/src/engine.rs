@@ -278,9 +278,13 @@ pub struct Engine {
     /// radio loop (independent of the decoder) so the waterfall reflects LIVE
     /// sound-card input — not just the once-per-slot decoded frame.
     spectrum_audio: Vec<f32>,
-    /// A longer rolling RX-audio ring (several seconds) for the single-signal CW decoder
-    /// — the 4096-sample waterfall window is far too short for Morse.
+    /// A longer rolling RX-audio ring (several seconds) — the batch per-channel decode
+    /// behind the wideband CW skimmer (the 4096-sample waterfall window is too short).
     cw_audio: Vec<f32>,
+    /// Streaming single-signal CW decoder at the operator's pitch. Fed incrementally so it
+    /// accumulates a PERSISTENT transcript (the batch decoder re-read the ring each poll,
+    /// so its text churned and the last characters vanished within seconds).
+    cw_stream: tempo_core::cw_decode::CwStreamDecoder,
     /// The per-QSO WAV ring — the last ~60 s of RX audio, written to a file on log when
     /// `settings.save_qso_wav` is on (an automatic archive of each contact).
     qso_audio: Vec<f32>,
@@ -460,6 +464,7 @@ impl Engine {
             qso_record_path: None,
             spectrum_audio: Vec::new(),
             cw_audio: Vec::new(),
+            cw_stream: tempo_core::cw_decode::CwStreamDecoder::new(ft1::SAMPLE_RATE, 600.0),
             qso_audio: Vec::new(),
             cat_status: (None, String::new()),
             cat_reprobe: false,
@@ -2632,6 +2637,10 @@ impl Engine {
             let drop = self.cw_audio.len() - CW_WINDOW;
             self.cw_audio.drain(0..drop);
         }
+        // Feed the streaming CW decoder (retune first, cheaply, if the operator moved the
+        // marker pitch) — it keeps a persistent transcript across polls + window slides.
+        self.cw_stream.retune(self.settings.cw_pitch_hz);
+        self.cw_stream.push(samples);
         // And the per-QSO WAV ring — the last ~60 s of RX, captured on log when enabled.
         self.qso_audio.extend_from_slice(samples);
         if self.qso_audio.len() > QSO_WAV_WINDOW {
@@ -2652,11 +2661,15 @@ impl Engine {
     /// Decode CW from the recent receive audio at the operator's pitch — a live readout
     /// of the signal under the marker. Empty unless there's a clear keyed signal.
     pub fn cw_decode(&self) -> tempo_core::cw_decode::CwDecode {
-        tempo_core::cw_decode::decode_cw(
-            &self.cw_audio,
-            ft1::SAMPLE_RATE,
-            self.settings.cw_pitch_hz,
-        )
+        tempo_core::cw_decode::CwDecode {
+            text: self.cw_stream.transcript().to_string(),
+            wpm: self.cw_stream.wpm(),
+        }
+    }
+
+    /// Clear the streaming CW decoder's accumulated transcript (the cockpit's Clear button).
+    pub fn cw_clear(&mut self) {
+        self.cw_stream.clear();
     }
 
     /// Wideband CW skim of the recent receive audio: every distinct keyed signal across

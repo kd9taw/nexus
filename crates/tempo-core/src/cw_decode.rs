@@ -182,6 +182,217 @@ pub fn skim_cw(samples: &[f32], sr: f32, lo_hz: u32, hi_hz: u32, step_hz: u32) -
     hits
 }
 
+const CW_TRANSCRIPT_CAP: usize = 4000; // keep the tail; drop older text
+const CW_SPIKE_FRAC: f32 = 0.4; // reject marks shorter than 0.4·dit as impulse noise
+
+/// Streaming, stateful CW decoder — the persistent-transcript sibling of [`decode_cw`].
+///
+/// Feed it receive audio incrementally (as it arrives) and it ACCUMULATES decoded text
+/// that doesn't vanish when old audio scrolls off: the batch [`decode_cw`] re-reads a
+/// sliding window every call, so its output churns and the last characters disappear
+/// within seconds. This one emits each character once, into a growing transcript.
+///
+/// Pipeline per ~4 ms envelope hop, hardened toward what fldigi/CW-Skimmer do:
+/// Goertzel power at the pitch → **fast-attack peak / slow noise-floor AGC** (flags a
+/// signal on its first hop; adapts to fading) →
+/// **Schmitt-trigger** key state (two thresholds → no chatter near the noise floor) →
+/// mark/space runs with **sub-dit spike rejection** → **adaptive dit unit** tracked from
+/// a rolling mark history (follows the sender's speed) → dit/dah + gap → Morse → char.
+pub struct CwStreamDecoder {
+    sr: f32,
+    pitch: f32,
+    hop: usize,
+    carry: Vec<f32>, // audio not yet a full hop
+    noise: f32,      // slow-tracking noise-floor follower (AGC)
+    peak: f32,       // fast-attack, slow-decay signal-peak follower (AGC)
+    lo_thresh: f32,  // Schmitt lower rail (leave mark below this)
+    hi_thresh: f32,  // Schmitt upper rail (enter mark at/above this)
+    present: bool,   // a keyed signal is present (else don't decode noise)
+    key_down: bool,
+    run: usize,         // current key-run length (hops), mark or space per `key_down`
+    space_run: usize,   // accumulated gap hops (carries THROUGH sub-dit spikes)
+    dit_avg: f32,       // adaptive dit length (hops)
+    dah_avg: f32,       // adaptive dah length (hops); the pair classify each mark
+    saw_mark: bool,     // any real mark seen yet (gates WPM before sync)
+    sym: String,        // in-progress Morse symbol (".-")
+    flushed_char: bool, // this gap already flushed its pending character
+    flushed_word: bool, // this gap already emitted a word space
+    transcript: String,
+}
+
+impl CwStreamDecoder {
+    /// A decoder for audio sampled at `sr` Hz, listening at `pitch_hz`.
+    pub fn new(sr: f32, pitch_hz: f32) -> Self {
+        let hop = (sr * 0.004).max(1.0) as usize;
+        // Seed the dit unit at ~20 wpm so the first character classifies sensibly before
+        // the speed tracker has any marks to learn from; it converges within a few elements.
+        let default_dit = ((1.2 / 20.0) * sr / hop.max(1) as f32).max(1.0);
+        Self {
+            sr,
+            pitch: pitch_hz,
+            hop,
+            carry: Vec::new(),
+            noise: 1e-9,
+            peak: 0.0,
+            lo_thresh: 0.0,
+            hi_thresh: f32::INFINITY,
+            present: false,
+            key_down: false,
+            run: 0,
+            space_run: 0,
+            dit_avg: default_dit,
+            dah_avg: 3.0 * default_dit,
+            saw_mark: false,
+            sym: String::new(),
+            flushed_char: false,
+            flushed_word: false,
+            transcript: String::new(),
+        }
+    }
+
+    /// Retune to a new marker pitch. No-op if unchanged; otherwise resets all state +
+    /// transcript (the old text belonged to a different signal).
+    pub fn retune(&mut self, pitch_hz: f32) {
+        if (pitch_hz - self.pitch).abs() > 1.0 {
+            *self = Self::new(self.sr, pitch_hz);
+        }
+    }
+
+    /// The accumulated decoded text.
+    pub fn transcript(&self) -> &str {
+        &self.transcript
+    }
+
+    /// Estimated sending speed (WPM) from the current dit unit; 0 before any marks.
+    pub fn wpm(&self) -> u32 {
+        if !self.saw_mark {
+            return 0;
+        }
+        let dit_secs = self.dit_avg * self.hop as f32 / self.sr;
+        if dit_secs > 0.0 {
+            (1.2 / dit_secs).round().clamp(0.0, 99.0) as u32
+        } else {
+            0
+        }
+    }
+
+    /// Clear the accumulated text (keeps the learned speed/threshold so decoding of an
+    /// in-progress signal continues cleanly).
+    pub fn clear(&mut self) {
+        self.transcript.clear();
+        self.sym.clear();
+        self.flushed_char = false;
+        self.flushed_word = false;
+    }
+
+    /// Feed newly-arrived audio; decoded characters are appended to the transcript.
+    pub fn push(&mut self, samples: &[f32]) {
+        if self.sr <= 0.0 || self.hop == 0 {
+            return;
+        }
+        self.carry.extend_from_slice(samples);
+        let mut i = 0;
+        while i + self.hop <= self.carry.len() {
+            let p = tone_power(&self.carry[i..i + self.hop], self.sr, self.pitch);
+            i += self.hop;
+            // Threshold from the CURRENT followers (before updating them) so a signal onset
+            // is judged against the PRIOR noise floor and detected on its first hop — no
+            // warmup dead-zone (a percentile window can't flag a signal until it fills a
+            // fifth of the window, which truncated the first character into a dit).
+            let span = (self.peak - self.noise).max(0.0);
+            self.present = self.peak >= self.noise * 3.0 && span > 1e-9;
+            self.hi_thresh = self.noise + 0.60 * span; // Schmitt upper rail
+            self.lo_thresh = self.noise + 0.40 * span; // Schmitt lower rail (hysteresis band)
+            self.step(p);
+            // Update the AGC: the peak attacks instantly and decays slowly (holds through
+            // inter-character gaps); the noise floor drops instantly to a quieter hop and
+            // creeps up slowly (so a long key-down barely lifts it).
+            self.peak = if p > self.peak {
+                p
+            } else {
+                self.peak * 0.999 + p * 0.001
+            };
+            self.noise = if p < self.noise {
+                p
+            } else {
+                self.noise * 0.9995 + p * 0.0005
+            };
+        }
+        self.carry.drain(0..i);
+    }
+
+    fn step(&mut self, p: f32) {
+        if self.key_down {
+            self.run += 1;
+            if p < self.lo_thresh {
+                self.on_mark_end();
+                self.key_down = false;
+                self.run = 0;
+            }
+        } else if self.present && p >= self.hi_thresh {
+            // A real mark starts. Any pending character was already flushed by the gap
+            // ticks below, so just begin the mark.
+            self.key_down = true;
+            self.run = 1;
+        } else {
+            self.space_run += 1;
+            self.on_gap_tick();
+        }
+    }
+
+    fn on_mark_end(&mut self) {
+        let spike_min = (CW_SPIKE_FRAC * self.dit_avg).max(1.0);
+        if (self.run as f32) < spike_min {
+            // Sub-dit blip: impulse noise, not a keyed element. Roll its hops into the
+            // surrounding gap so a spike in a space doesn't reset the character timing.
+            self.space_run += self.run;
+            return;
+        }
+        self.saw_mark = true;
+        let run = self.run as f32;
+        // Classify by the midpoint between the tracked dit and dah lengths, then nudge the
+        // matching average toward this mark -- a standard adaptive-Morse speed tracker. It
+        // follows the sender's speed and, unlike a min-cluster estimate, never lets one
+        // early mark redefine the unit as itself (which read every leading dah as a dit).
+        if run < (self.dit_avg + self.dah_avg) * 0.5 {
+            self.sym.push('.');
+            self.dit_avg += 0.25 * (run - self.dit_avg);
+        } else {
+            self.sym.push('-');
+            self.dah_avg += 0.25 * (run - self.dah_avg);
+        }
+        // A real element begins a fresh gap.
+        self.space_run = 0;
+        self.flushed_char = false;
+        self.flushed_word = false;
+    }
+
+    fn on_gap_tick(&mut self) {
+        let g = self.space_run as f32;
+        // Inter-character gap (≈3 dit): the symbol is complete → decode + emit it.
+        if !self.flushed_char && !self.sym.is_empty() && g >= 2.0 * self.dit_avg {
+            if let Some(c) = morse_to_char(&self.sym) {
+                self.push_char(c);
+            }
+            self.sym.clear();
+            self.flushed_char = true;
+        }
+        // Word gap (≈7 dit): one space between words.
+        if !self.flushed_word && self.flushed_char && g >= 5.0 * self.dit_avg {
+            self.push_char(' ');
+            self.flushed_word = true;
+        }
+    }
+
+    fn push_char(&mut self, c: char) {
+        self.transcript.push(c);
+        if self.transcript.len() > CW_TRANSCRIPT_CAP {
+            let drop = self.transcript.len() - CW_TRANSCRIPT_CAP;
+            self.transcript.drain(0..drop);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -253,5 +464,81 @@ mod tests {
         assert_eq!(morse_to_char("-.-."), Some('C'));
         assert_eq!(morse_to_char("....."), Some('5'));
         assert_eq!(morse_to_char(".-.-"), None); // not a glyph
+    }
+
+    /// Morse audio with lead + `trail_secs` trailing silence (the trailing gap must be
+    /// ≥ ~3 dit for the streaming decoder to flush the final character).
+    fn morse_audio(text: &str, wpm: u32, trail_secs: f32) -> Vec<f32> {
+        let mut a = vec![0.0f32; (SR * 0.1) as usize];
+        a.extend(morse_samples(text, wpm, PITCH, SR as u32));
+        a.extend(vec![0.0f32; (SR * trail_secs) as usize]);
+        a
+    }
+
+    #[test]
+    fn stream_decodes_a_callsign_and_estimates_wpm() {
+        let mut d = CwStreamDecoder::new(SR, PITCH);
+        d.push(&morse_audio("CQ TEST DE W1ABC", 20, 0.6));
+        assert_eq!(d.transcript().trim(), "CQ TEST DE W1ABC");
+        assert!((d.wpm() as i32 - 20).abs() <= 3, "≈20 wpm, got {}", d.wpm());
+    }
+
+    #[test]
+    fn stream_accumulates_across_small_chunks() {
+        // Fed in tiny slices (as real audio arrives) the transcript must match a single
+        // push — proving the incremental state machine carries across chunk boundaries.
+        let audio = morse_audio("PARIS DE K1ABC", 25, 0.6);
+        let mut d = CwStreamDecoder::new(SR, PITCH);
+        for chunk in audio.chunks(1000) {
+            d.push(chunk);
+        }
+        assert_eq!(d.transcript().trim(), "PARIS DE K1ABC");
+    }
+
+    #[test]
+    fn stream_keeps_earlier_text_when_more_arrives() {
+        // The whole point of the rewrite: earlier text does NOT vanish when new audio
+        // scrolls the window — the transcript grows.
+        let mut d = CwStreamDecoder::new(SR, PITCH);
+        d.push(&morse_audio("K", 20, 0.6));
+        assert_eq!(d.transcript().trim(), "K");
+        d.push(&morse_audio("W1ABC", 20, 0.6));
+        assert!(
+            d.transcript().contains('K'),
+            "kept the earlier K: {:?}",
+            d.transcript()
+        );
+        assert!(
+            d.transcript().contains("W1ABC"),
+            "added the new call: {:?}",
+            d.transcript()
+        );
+    }
+
+    #[test]
+    fn stream_stays_silent_on_noise_and_unkeyed_carrier() {
+        let mut d = CwStreamDecoder::new(SR, PITCH);
+        d.push(&vec![0.0f32; SR as usize]); // 1 s silence
+        assert_eq!(d.transcript(), "");
+        // A steady, un-keyed carrier has no on/off ratio → nothing to decode.
+        let mut d2 = CwStreamDecoder::new(SR, PITCH);
+        let steady: Vec<f32> = (0..SR as usize)
+            .map(|i| (2.0 * std::f32::consts::PI * PITCH * i as f32 / SR).sin())
+            .collect();
+        d2.push(&steady);
+        assert_eq!(d2.transcript(), "");
+    }
+
+    #[test]
+    fn stream_clear_and_retune_reset_text() {
+        let mut d = CwStreamDecoder::new(SR, PITCH);
+        d.push(&morse_audio("K", 20, 0.6));
+        assert!(!d.transcript().is_empty());
+        d.clear();
+        assert_eq!(d.transcript(), "");
+        d.push(&morse_audio("E", 20, 0.6)); // "E" = "."
+        assert_eq!(d.transcript().trim(), "E");
+        d.retune(PITCH + 200.0); // new pitch → full reset
+        assert_eq!(d.transcript(), "");
     }
 }

@@ -3,7 +3,7 @@ import type { AppSnapshot, FieldDayStatus, SkimHit } from '../types'
 import { PhoneScope } from './PhoneScope'
 import { BandPicker } from './BandPicker'
 import { LogEntry } from './LogEntry'
-import { sendCw, setCwKeyer, setCwWpm, stopCw, cwDecode, cwSkim } from '../api'
+import { sendCw, setCwKeyer, setCwWpm, stopCw, cwDecode, cwClear, cwSkim } from '../api'
 import { pushToast, withErrorToast } from '../toast'
 
 interface Props {
@@ -55,6 +55,12 @@ export function CwCockpit({ snap, theme, pitchHz = 600, pendingWork, onConsumeWo
   // Live single-signal CW decode of the receive audio at the marker pitch — poll the
   // engine ~1.4 Hz (the decode reads a multi-second ring, so faster adds no detail).
   const [decoded, setDecoded] = useState<{ text: string; wpm: number }>({ text: '', wpm: 0 })
+  const decodeRef = useRef<HTMLDivElement>(null)
+  // Keep the newest decoded text in view as the transcript grows.
+  useEffect(() => {
+    const el = decodeRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [decoded.text])
   // Wideband skimmer: every CW signal across the band (refreshed a bit slower than the
   // single decode — a full-band scan is heavier than one channel).
   const [skim, setSkim] = useState<SkimHit[]>([])
@@ -246,16 +252,27 @@ export function CwCockpit({ snap, theme, pitchHz = 600, pendingWork, onConsumeWo
         />
       </section>
 
-      <div className="cw-decode" title="Live CW decode of the receive audio at your pitch">
-        <span className="cw-decode-label">DECODE</span>
-        <span className="cw-decode-text">
-          {decoded.text ? (
-            decoded.text.slice(-72) // newest chars (the ~6 s ring can hold more than fits)
-          ) : (
-            <span className="cw-decode-idle">listening…</span>
-          )}
-        </span>
-        {decoded.wpm > 0 && <span className="cw-decode-wpm">{decoded.wpm} WPM</span>}
+      <div
+        className="cw-decode"
+        title="Live CW decode at your pitch — a running transcript that persists as text scrolls by"
+      >
+        <div className="cw-decode-head">
+          <span className="cw-decode-label">DECODE</span>
+          {decoded.wpm > 0 && <span className="cw-decode-wpm">{decoded.wpm} WPM</span>}
+          <button
+            className="cw-decode-clear"
+            onClick={() => {
+              void cwClear()
+              setDecoded({ text: '', wpm: 0 })
+            }}
+            title="Clear the decoded transcript"
+          >
+            Clear
+          </button>
+        </div>
+        <div className="cw-decode-text" ref={decodeRef}>
+          {decoded.text ? decoded.text : <span className="cw-decode-idle">listening…</span>}
+        </div>
       </div>
 
       {skim.length > 0 && (
