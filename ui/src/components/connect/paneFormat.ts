@@ -8,6 +8,7 @@ import { isEsSeason } from '../../features/es'
 import { nextTerminatorMs } from '../../mapGeo'
 import { gridToLatLon, haversineKm } from '../../grid'
 import { dualStateLabel, kpImpact, sortInsights } from '../../propViz'
+import { buildChaseTargets, chaseSummaryLine } from '../../features/chase'
 import type { NeedTag, PropagationSnapshot } from '../../types'
 import type { PaneContext } from './paneContext'
 
@@ -57,6 +58,11 @@ export function advisoryLine(c: PaneContext): string {
   // remedy isn't always "set your callsign", so keep it neutral + always accurate.
   if (c.prop.source === 'offline') return 'No live propagation data right now.'
   return c.prop.advisory.headline // headline IS the plain verdict
+}
+
+/** Chase — how many needed stations are being heard, and how many are workable right now. */
+export function chaseLine(c: PaneContext): string {
+  return chaseSummaryLine(buildChaseTargets(c.needAlerts, c.bandOutlook, Date.now()))
 }
 
 export function bandAdvisorLine(c: PaneContext): string {

@@ -13,7 +13,7 @@ export type SlotId = (typeof SLOT_IDS)[number]
  *  (pickable — DEFAULT_SLOTS keeps the approved core layout). B3 appends here too. */
 export const PANE_IDS = [
   'advisory', 'bandAdvisor', 'selection', 'outlook', 'openings', 'spacewx', 'getout',
-  'bestband', 'activity', 'beacons', 'insights',
+  'bestband', 'activity', 'beacons', 'insights', 'chase',
   'greyline', 'bandHours', 'esNowcast', 'measuredMuf',
 ] as const
 export type PaneId = (typeof PANE_IDS)[number]

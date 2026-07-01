@@ -16,6 +16,7 @@ import { BestBandTable } from '../prop/BestBandTable'
 import { ActivityMatrix } from '../prop/ActivityMatrix'
 import { BeaconMonitor } from '../prop/BeaconMonitor'
 import { InsightFeed } from '../prop/InsightFeed'
+import { ChasePane } from '../prop/ChasePane'
 import { GreylineWindow } from '../prop/GreylineWindow'
 import { ScalesAnnunciator } from '../prop/ScalesAnnunciator'
 import { MeasuredMuf } from '../prop/MeasuredMuf'
@@ -33,6 +34,7 @@ import {
   activityLine,
   beaconsLine,
   insightsLine,
+  chaseLine,
   greylineLine,
   bandHoursLine,
   esNowcastLine,
@@ -381,6 +383,15 @@ export const PANES: PaneDef[] = [
         <InsightFeed insights={ins} expert={c.expert} onBandClick={c.toggleFocusBand} />
       ) : null
     },
+  },
+  {
+    id: 'chase',
+    title: 'Chase',
+    category: 'b2',
+    basic: chaseLine,
+    // "Work THIS now": needed stations fused with band openness + window. Returns null
+    // when nothing's needed-and-heard → PaneFrame falls back to the (identical) Basic line.
+    expert: (c) => <ChasePane ctx={c} />,
   },
   // ---- B3 Tier-2 no-network panes (pickable; reuse existing snapshot data) ----
   {

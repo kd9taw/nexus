@@ -1316,6 +1316,86 @@ button.nb-chip:hover {
   font-size: var(--fs-micro);
   color: var(--text-dim);
 }
+/* Chase pane (Phase B) — needed stations fused with band openness; left accent = openness. */
+.chase-pane {
+  overflow-y: auto;
+  min-height: 0;
+}
+.chase-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.chase-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.chase-row.is-open {
+  border-left-color: var(--band-open);
+}
+.chase-row.is-marginal {
+  border-left-color: var(--band-marginal);
+}
+.chase-main {
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+}
+.chase-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+.chase-call {
+  font-family: var(--font-mono);
+}
+.chase-entity {
+  color: var(--text-dim);
+  font-size: var(--fs-micro);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chase-age {
+  margin-left: auto;
+  color: var(--text-faint);
+  font-size: var(--fs-micro);
+}
+.chase-open {
+  font-size: var(--fs-micro);
+  color: var(--text-dim);
+}
+.chase-open.o-open {
+  color: var(--band-open);
+  font-weight: 600;
+}
+.chase-evi {
+  font-size: var(--fs-micro);
+  color: var(--text-faint);
+}
+.chase-work {
+  flex-shrink: 0;
+  font-size: var(--fs-micro);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  background: transparent;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.chase-work:hover {
+  border-color: var(--accent);
+}
+
 /* "Am I getting out?" — observed who-hears-me panel. */
 .connect-getout h3 {
   margin: 0 0 var(--space-2);
