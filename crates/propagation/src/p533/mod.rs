@@ -16,3 +16,6 @@
 //! - `muf` / `fieldstrength` / `noise` / `reliability` — the P.533 chain.
 
 pub mod coeffs;
+pub mod geometry;
+pub mod ionosphere;
+pub mod magfield;
