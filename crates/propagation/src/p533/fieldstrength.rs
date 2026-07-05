@@ -386,7 +386,7 @@ mod tests {
     #[test]
     fn caracas_iso_short_long_and_interpolation_match() {
         let (tx, rx) = (loc(10.48, -66.9), loc(52.4862, -1.8904));
-        let mut path = run(tx, rx, 1, -10.0);
+        let path = run(tx, rx, 1, -10.0);
         assert!(
             (path.es - -49.900).abs() < 0.2,
             "short Es {:.3} vs -49.900",

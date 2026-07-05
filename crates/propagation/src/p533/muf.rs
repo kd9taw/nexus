@@ -49,6 +49,8 @@ pub struct Mode {
     pub ew: f64,
     /// Mode counted into the path field strength (reference `MC`).
     pub mc: bool,
+    /// Available signal power (dBW) for the mode (reference `Prw`).
+    pub prw: f64,
 }
 
 /// The path state the MUF chain fills (a lean `struct PathData`).
