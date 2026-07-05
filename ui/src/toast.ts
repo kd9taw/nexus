@@ -10,6 +10,9 @@ export interface Toast {
   id: number
   kind: ToastKind
   message: string
+  /** Loud/attention styling (filled background + pulse) for the things worth chasing —
+   * "someone is calling you", a new DXCC. Routine toasts (QSY, errors) leave it off. */
+  prominent?: boolean
 }
 
 type Listener = (toasts: Toast[]) => void
@@ -32,9 +35,14 @@ export function subscribeToasts(fn: Listener): () => void {
   }
 }
 
-export function pushToast(message: string, kind: ToastKind = 'error', ttlMs = DEFAULT_TTL_MS): number {
+export function pushToast(
+  message: string,
+  kind: ToastKind = 'error',
+  ttlMs = DEFAULT_TTL_MS,
+  prominent = false,
+): number {
   const id = nextId++
-  toasts = [...toasts, { id, kind, message }]
+  toasts = [...toasts, { id, kind, message, prominent }]
   emit()
   if (ttlMs > 0) {
     window.setTimeout(() => dismissToast(id), ttlMs)

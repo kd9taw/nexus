@@ -260,6 +260,58 @@
 .ui-toast-close:hover {
   color: var(--text);
 }
+/* Slide + fade in so a new toast catches the eye (Radix sets data-state). */
+@keyframes ui-toast-in {
+  from {
+    opacity: 0;
+    transform: translateX(16px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.ui-toast[data-state='open'] {
+  animation: ui-toast-in 180ms ease-out;
+}
+/* Prominent alerts (someone calling YOU / a new DXCC): filled color, larger text, and a few
+   attention pulses so the audio beep has an obvious visual anchor instead of a tiny toast that
+   vanishes in the corner. `--toast-glow` colors the pulse per alert kind. */
+.ui-toast.prominent {
+  --toast-glow: var(--accent);
+  border-width: 2px;
+  border-left-width: 4px;
+  font-size: var(--fs-body);
+  font-weight: 600;
+  padding: var(--space-3) var(--space-4);
+  animation:
+    ui-toast-in 180ms ease-out,
+    ui-toast-pulse 1.1s ease-in-out 180ms 3;
+}
+.ui-toast.prominent.kind-success {
+  --toast-glow: var(--status-confirmed);
+  background: color-mix(in srgb, var(--status-confirmed) 22%, var(--bg-elev-2));
+  border-color: var(--status-confirmed);
+}
+.ui-toast.prominent.kind-info {
+  --toast-glow: var(--alert-info);
+  background: color-mix(in srgb, var(--alert-info) 22%, var(--bg-elev-2));
+  border-color: var(--alert-info);
+}
+.ui-toast.prominent.kind-error {
+  --toast-glow: var(--alert-critical);
+  background: color-mix(in srgb, var(--alert-critical) 22%, var(--bg-elev-2));
+  border-color: var(--alert-critical);
+}
+@keyframes ui-toast-pulse {
+  0%,
+  100% {
+    box-shadow: var(--elev-3), 0 0 0 2px color-mix(in srgb, var(--toast-glow) 20%, transparent);
+  }
+  50% {
+    box-shadow: var(--elev-3), 0 0 0 7px color-mix(in srgb, var(--toast-glow) 45%, transparent);
+  }
+}
 
 .ui-dialog-overlay {
   position: fixed;

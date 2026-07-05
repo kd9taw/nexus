@@ -101,17 +101,20 @@ export function processDecodes(decodes: DecodeRow[], settings: Settings): void {
     if (kind === 'newdxcc') {
       // Aggressive: double tone + a prominent, long-lived toast.
       doubleBeep(BEEP_HZ.newdxcc)
-      pushToast(`🎯 NEW DXCC: ${who}${where}`, 'success', 9000)
+      pushToast(`🎯 NEW DXCC: ${who}${where}`, 'success', 15000, true)
       continue
     }
     beep(BEEP_HZ[kind])
-    const text =
-      kind === 'mycall'
-        ? `${who} is calling you`
-        : kind === 'newgrid'
-          ? `New grid: ${who}${where}`
-          : `CQ from ${who}${where}`
-    pushToast(text, kind === 'mycall' ? 'success' : 'info', 3500)
+    // Someone calling YOU is the most time-critical alert — make it loud and let it linger
+    // (the beep was firing but the toast vanished before you could find it). A new grid is
+    // prominent too; an opt-in CQ stays a quieter, shorter info toast.
+    if (kind === 'mycall') {
+      pushToast(`📢 ${who} is calling you`, 'success', 20000, true)
+    } else if (kind === 'newgrid') {
+      pushToast(`New grid: ${who}${where}`, 'success', 12000, true)
+    } else {
+      pushToast(`CQ from ${who}${where}`, 'info', 6000)
+    }
   }
 
   // Keep the dedup set bounded over a long session (Field Day / contests) WITHOUT

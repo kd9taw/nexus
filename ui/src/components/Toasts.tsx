@@ -20,7 +20,7 @@ export function Toasts() {
       {toasts.map((t) => (
         <RToast.Root
           key={t.id}
-          className={`ui-toast ${KIND_CLASS[t.kind]}`}
+          className={`ui-toast ${KIND_CLASS[t.kind]}${t.prominent ? ' prominent' : ''}`}
           open
           onOpenChange={(o) => {
             if (!o) dismissToast(t.id)
