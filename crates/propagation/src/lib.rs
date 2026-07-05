@@ -35,6 +35,7 @@ pub mod p533;
 pub mod pota;
 pub mod predict;
 pub mod pskr_mqtt;
+pub mod solar_cycle;
 pub mod solar_wind;
 pub mod space_wx;
 pub mod spot;
@@ -79,8 +80,8 @@ pub use opening::{
 };
 pub use pota::{parse_pota_spots, parse_sota_spots, OtaSpot};
 pub use predict::{
-    band_outlook_ring, modeled_now, representative_muf, HeuristicEngine, ModeledNow,
-    PathPrediction, PathPredictor,
+    band_outlook_ring, make_predictor, modeled_now, representative_muf, HeuristicEngine,
+    ModeledNow, PathPrediction, PathPredictor,
 };
 pub use pskr_mqtt::{
     mqtt_topics as pskr_mqtt_topics, parse_mqtt_report as parse_pskr_mqtt,

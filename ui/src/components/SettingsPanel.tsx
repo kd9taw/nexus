@@ -2456,6 +2456,22 @@ export function SettingsPanel({
                   around you" before you've worked anyone. Takes effect on restart.
                 </span>
               </div>
+
+              <label className="settings-field">
+                <span className="settings-label">Prediction engine</span>
+                <select
+                  value={form.propEngine || 'heuristic'}
+                  onChange={(e) => update('propEngine', e.target.value)}
+                >
+                  <option value="heuristic">Modelled (fast heuristic)</option>
+                  <option value="p533">ITU-R P.533 (full physics)</option>
+                </select>
+                <span className="settings-hint">
+                  Drives the per-station path outlook + 24h band×hour grid. P.533 is the real
+                  circuit-reliability method (validated against the ITU reference; ~0.1 s per
+                  prediction, uses your station power). Live spots always win over any model.
+                </span>
+              </label>
             </div>
           </fieldset>
           )}

@@ -52,7 +52,24 @@ fn bilinear(ll: f64, lr: f64, ul: f64, ur: f64, r: f64, c: f64) -> f64 {
 /// One map node's (foF2, M3kF2) for both SSN planes, via the validated
 /// expansion. `j` (lng) and `k` (lat) are grid indices; the grid's hour slot
 /// is UT hour `slot+1` (Increment-1 finding).
+///
+/// Memoized: a full engine prediction touches the same 1.5° cells thousands of
+/// times (control points + ray penetration points across 24 slots), and a node
+/// is a pure function of (month, slot, j, k) — the cache turns the map
+/// expansion from the dominant cost into a one-time cost per touched cell.
 fn node(month0: usize, hour_slot: i32, j: i32, k: i32) -> [(f64, f64); 2] {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    type Key = (u8, i8, i16, i16);
+    static CACHE: OnceLock<Mutex<HashMap<Key, [(f64, f64); 2]>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let key: Key = (month0 as u8, hour_slot as i8, j as i16, k as i16);
+    if let Ok(guard) = cache.lock() {
+        if let Some(v) = guard.get(&key) {
+            return *v;
+        }
+    }
+
     let lat = (k as f64) * 1.5 - 90.0;
     let lng = (j as f64) * 1.5 - 180.0;
     let (lat, lng) = (lat.to_radians(), lng.to_radians());
@@ -63,7 +80,16 @@ fn node(month0: usize, hour_slot: i32, j: i32, k: i32) -> [(f64, f64); 2] {
             ionosphere::m3000f2(lat, lng, month0, ut, ssn),
         )
     };
-    [f(0.0), f(100.0)]
+    let v = [f(0.0), f(100.0)];
+    if let Ok(mut guard) = cache.lock() {
+        // Safety valve: the theoretical key space is bounded, but keep the map
+        // from growing without limit across months/hours (~40 B/entry).
+        if guard.len() > 400_000 {
+            guard.clear();
+        }
+        guard.insert(key, v);
+    }
+    v
 }
 
 /// Port of `IonosphericParameters()`: foF2 and M(3000)F2 at `loc` by the

@@ -137,7 +137,7 @@ function renderPath(c: PaneContext): ReactNode {
       <h3>
         Path to {c.selectedCall}
         {p.engine && (
-          <span className="cp-engine">{p.engine === 'heuristic' ? 'modelled' : p.engine}</span>
+          <span className="cp-engine">{p.engine === 'heuristic' ? 'modelled' : p.engine === 'p533' ? 'P.533' : p.engine}</span>
         )}
       </h3>
       {p.mufNow > 0 && (

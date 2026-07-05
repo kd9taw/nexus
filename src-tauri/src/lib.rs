@@ -562,6 +562,12 @@ static PROP_FETCH_BACKOFF: Mutex<Option<std::time::Instant>> = Mutex::new(None);
 /// `None` until the first successful fetch (SolarWind is Copy, so reads are cheap clones).
 static LAST_SOLAR_WIND: Mutex<Option<propagation::SolarWind>> = Mutex::new(None);
 
+/// Last-good 12-month smoothed sunspot number (R12) from SWPC's predicted
+/// solar cycle — the p533 engine's proper solar input (daily SFI is the wrong
+/// quantity for monthly-median CCIR maps; without this the engine falls back
+/// to a Covington inversion of SFI). Refreshed on the space-wx fetch cadence.
+static LAST_SSN: Mutex<Option<f32>> = Mutex::new(None);
+
 /// Where settings are persisted: `%APPDATA%\tempo\settings.json` on Windows,
 /// `$XDG_CONFIG_HOME`/`~/.config/tempo/settings.json` on Unix, else CWD.
 fn settings_path() -> PathBuf {
@@ -893,6 +899,7 @@ async fn get_propagation(
     let cfg = propagation::OpeningConfig::default();
     let wx = propagation::SpaceWx {
         sfi: snap.space_wx.sfi,
+        ssn: None, // opening detector/heuristic don't read R12
         kp: snap.space_wx.kp,
         a_index: snap.space_wx.a_index,
         // Use the lossless flux (not the flare bool), so the flare insight reports the
@@ -1043,6 +1050,14 @@ async fn get_propagation(
                 *g = Some(sw);
             }
         }
+        // The month's predicted smoothed SSN (R12) for the p533 engine — same
+        // best-effort contract: keep the last-good value between successes.
+        let (yy, mm) = propagation::solar_cycle::year_month(now);
+        if let Ok(ssn) = propagation::live::solar_cycle::fetch_predicted_ssn(yy, mm) {
+            if let Ok(mut g) = LAST_SSN.lock() {
+                *g = Some(ssn);
+            }
+        }
     }
     // Attach the last-good solar wind so the UI space-wx pane + the leading-indicator
     // insight can read it (reused between fresh fetches; None until the first success).
@@ -1075,9 +1090,10 @@ async fn get_path_outlook(
     state: State<'_, SharedEngine>,
     cache: State<'_, PropCache>,
 ) -> Result<propagation::PathPrediction, String> {
-    let mygrid = {
+    let (mygrid, prop_engine, station_power_w) = {
         let eng = state.lock().map_err(|e| e.to_string())?;
-        eng.settings().mygrid.clone()
+        let st = eng.settings();
+        (st.mygrid.clone(), st.prop_engine.clone(), st.station_power_w)
     };
     let me = propagation::geo::maidenhead_to_latlon(&mygrid);
     let Some(dx) = propagation::geo::maidenhead_to_latlon(grid.trim()) else {
@@ -1096,6 +1112,7 @@ async fn get_path_outlook(
             .as_ref()
             .map(|(_, s)| propagation::SpaceWx {
                 sfi: s.space_wx.sfi,
+                ssn: LAST_SSN.lock().ok().and_then(|g| *g),
                 kp: s.space_wx.kp,
                 a_index: s.space_wx.a_index,
                 xray_long: if s.space_wx.flare { 1e-5 } else { 1e-7 },
@@ -1103,8 +1120,13 @@ async fn get_path_outlook(
             .unwrap_or_default()
     };
     use propagation::PathPredictor as _; // bring the trait's `predict` into scope
-    let eng = propagation::HeuristicEngine::new(me);
-    Ok(eng.predict(dx, now_unix(), &wx))
+    // The configured engine: "p533" (native ITU-R P.533, ~100 ms/prediction) or
+    // the heuristic fallback. p533 is compute-heavy → keep it off the async core.
+    let eng = propagation::make_predictor(&prop_engine, me, station_power_w);
+    let t = now_unix();
+    tauri::async_runtime::spawn_blocking(move || eng.predict(dx, t, &wx))
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// The no-selection "Band outlook (modelled)": modeled per-band workability + MUF to
@@ -1134,6 +1156,7 @@ async fn get_band_outlook(
             .as_ref()
             .map(|(_, s)| propagation::SpaceWx {
                 sfi: s.space_wx.sfi,
+                ssn: None, // ring outlook stays on the heuristic — no R12 needed
                 kp: s.space_wx.kp,
                 a_index: s.space_wx.a_index,
                 xray_long: if s.space_wx.flare { 1e-5 } else { 1e-7 },

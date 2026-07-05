@@ -96,6 +96,27 @@ impl PathPredictor for HeuristicEngine {
     }
 }
 
+/// Build the configured path-prediction engine by name. `"p533"` returns the
+/// validated ITU-R P.533/P.372 engine (its TX power taken from the station
+/// power setting when present); any other name — including the default
+/// `"heuristic"` — returns the always-available physics-lite fallback, so a
+/// stale or unknown setting can never break predictions.
+pub fn make_predictor(
+    name: &str,
+    me_latlon: Option<(f64, f64)>,
+    station_power_w: Option<f64>,
+) -> Box<dyn PathPredictor> {
+    match name {
+        "p533" => {
+            let cfg = station_power_w
+                .map(crate::p533::engine::P533Config::with_power_watts)
+                .unwrap_or_default();
+            Box::new(crate::p533::engine::P533Engine::with_config(me_latlon, cfg))
+        }
+        _ => Box::new(HeuristicEngine::new(me_latlon)),
+    }
+}
+
 /// Instantaneous, model-only band openness "right now" (NOT a 24 h peak): for each HF
 /// band, the BEST [`PathModel::score`] to any of `n_dirs` azimuths at `dist_km` — i.e.
 /// "is this band open to DX in SOME direction now", derivable with ZERO observed spots.

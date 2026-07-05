@@ -488,6 +488,7 @@ mod tests {
     fn wx(sfi: f32, kp: f32, xray: f32) -> SpaceWx {
         SpaceWx {
             sfi,
+            ssn: None,
             kp,
             a_index: 8.0,
             xray_long: xray,

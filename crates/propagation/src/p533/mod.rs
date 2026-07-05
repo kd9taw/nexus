@@ -18,6 +18,7 @@
 pub mod absorption;
 pub mod coeffs;
 pub mod cp;
+pub mod engine;
 pub mod fieldstrength;
 pub mod fieldstrength_long;
 pub mod geometry;

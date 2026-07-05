@@ -139,7 +139,7 @@ pub fn time_of_day_sin_cos(now_unix: i64) -> (f32, f32) {
 // the solar zenith that drives MUF (F2 ionization) and D-layer absorption.
 
 /// Hinnant's civil-from-days: days since the Unix epoch → (year, month, day).
-fn civil_from_days(z0: i64) -> (i64, u32, u32) {
+pub(crate) fn civil_from_days(z0: i64) -> (i64, u32, u32) {
     let z = z0 + 719_468;
     let era = (if z >= 0 { z } else { z - 146_096 }) / 146_097;
     let doe = z - era * 146_097; // [0, 146096]
@@ -152,7 +152,7 @@ fn civil_from_days(z0: i64) -> (i64, u32, u32) {
     (if m <= 2 { y + 1 } else { y }, m, d)
 }
 
-fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
+pub(crate) fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
     let y = if m <= 2 { y - 1 } else { y };
     let era = (if y >= 0 { y } else { y - 399 }) / 400;
     let yoe = y - era * 400;

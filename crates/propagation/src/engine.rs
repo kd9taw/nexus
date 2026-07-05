@@ -405,6 +405,7 @@ mod tests {
 
         let wx = SpaceWx {
             sfi: 155.0, // high flux — the long-haul 20 m EU run classifies as F2
+            ssn: None,
             kp: 3.0,
             a_index: 9.0,
             xray_long: 3e-7,

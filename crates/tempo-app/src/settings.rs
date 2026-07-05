@@ -213,6 +213,11 @@ pub struct Settings {
     /// + QRP feats. `None` until the operator sets it (those feats stay gated).
     #[serde(default)]
     pub station_power_w: Option<f64>,
+    /// Path-prediction engine: "heuristic" (physics-lite, the default) or
+    /// "p533" (the native ITU-R P.533 engine). Unknown values fall back to
+    /// the heuristic in the factory, so old configs can never break.
+    #[serde(default = "default_prop_engine")]
+    pub prop_engine: String,
     /// Opt-in: track a gentle weekly "on the air" streak in the Journey view.
     /// Off by default (the achievement layer is opt-in, never coercive).
     #[serde(default)]
@@ -455,6 +460,10 @@ fn default_tune_timeout() -> u32 {
     12
 }
 
+fn default_prop_engine() -> String {
+    "heuristic".to_string()
+}
+
 fn default_fd_power() -> u32 {
     2
 }
@@ -591,6 +600,7 @@ impl Default for Settings {
             audio_out: String::new(),
             tx_level: 0.9,
             station_power_w: None,
+            prop_engine: default_prop_engine(),
             journey_streak_enabled: false,
             tx_watchdog_min: 6,
             tx_even: true,

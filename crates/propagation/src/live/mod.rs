@@ -14,6 +14,7 @@ pub mod lotw;
 pub mod pota;
 pub mod pskreporter;
 pub mod qrz;
+pub mod solar_cycle;
 pub mod solar_wind;
 pub mod swpc;
 pub mod swpc_scales;

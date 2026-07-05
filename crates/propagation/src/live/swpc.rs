@@ -39,6 +39,7 @@ pub fn fetch_space_wx() -> Result<SpaceWx, String> {
     let xray = fetch_xray(&c).unwrap_or(1e-7);
     Ok(SpaceWx {
         sfi,
+        ssn: None, // R12 rides the separate solar-cycle feed (LAST_SSN)
         kp,
         a_index: kp_to_ap(kp),
         xray_long: xray,

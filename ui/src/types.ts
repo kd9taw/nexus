@@ -1367,6 +1367,9 @@ export interface Settings {
   /** Watch near-region spots (not just your own paths) so opening detection can
    *  flag "a band is open around you" before you've worked anyone. */
   openingRegional: boolean
+  /** Path-prediction engine: 'heuristic' (physics-lite default) or 'p533'
+   * (native ITU-R P.533 — real circuit-reliability physics). */
+  propEngine: string
   /** Editable quick-reply macros, per context. */
   macros: {
     chat: string[]

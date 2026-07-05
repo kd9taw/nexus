@@ -177,6 +177,27 @@ const DIGITAL_HOLES: &[f64] = &[
     144.150, 144.170, 144.174, // 2m MSK144 / FT4 / FT8
 ];
 
+/// The band's primary digital (FT8) watering-hole dial (MHz) — the frequency a
+/// digital-first prediction engine models the band at. VHF returns the FT8
+/// call frequency for completeness (the P.533 engine excludes VHF anyway).
+pub fn band_digital_mhz(band: Band) -> f64 {
+    match band {
+        Band::B160 => 1.840,
+        Band::B80 => 3.573,
+        Band::B60 => 5.357,
+        Band::B40 => 7.074,
+        Band::B30 => 10.136,
+        Band::B20 => 14.074,
+        Band::B17 => 18.100,
+        Band::B15 => 21.074,
+        Band::B12 => 24.915,
+        Band::B10 => 28.074,
+        Band::B6 => 50.313,
+        Band::B4 => 70.154,
+        Band::B2 => 144.174,
+    }
+}
+
 fn is_digital_hole(freq_mhz: f64) -> bool {
     DIGITAL_HOLES
         .iter()
@@ -369,6 +390,11 @@ impl PathSpot {
 pub struct SpaceWx {
     /// Solar flux index (10.7 cm).
     pub sfi: f32,
+    /// 12-month smoothed sunspot number (R12) from the solar-cycle feed, when
+    /// available. `None` → consumers derive it from SFI (Covington inversion).
+    /// Serde-default so persisted/cached snapshots stay compatible.
+    #[serde(default)]
+    pub ssn: Option<f32>,
     /// Planetary K-index (0–9).
     pub kp: f32,
     /// Planetary A-index.
@@ -382,6 +408,7 @@ impl Default for SpaceWx {
         // Benign mid-cycle defaults.
         Self {
             sfi: 120.0,
+            ssn: None,
             kp: 2.0,
             a_index: 8.0,
             xray_long: 1e-7,

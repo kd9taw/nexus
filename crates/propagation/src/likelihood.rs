@@ -406,12 +406,12 @@ pub fn is_es_season(unix: i64) -> bool {
     decl > 15.0 // sun well north → boreal summer Es peak
 }
 
-fn hhmm(unix: i64) -> String {
+pub(crate) fn hhmm(unix: i64) -> String {
     let s = unix.rem_euclid(86_400);
     format!("{:02}{:02}", s / 3600, (s % 3600) / 60)
 }
 
-fn hhmm_z(unix: i64) -> String {
+pub(crate) fn hhmm_z(unix: i64) -> String {
     format!("{}Z", hhmm(unix))
 }
 
