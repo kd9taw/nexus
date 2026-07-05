@@ -55,9 +55,13 @@ describe('workTarget', () => {
     expect(t).toEqual({ call: 'EA5DX', view: 'phone', freqMhz: 14.25, band: '20m' })
   })
 
-  it('no exact freq → falls back to the band default channel', () => {
+  it('CW need with no exact freq → the band CW activity freq, NOT the FT8 dial', () => {
+    // Regression: a freq-less CW/Phone need used to fall back to the tier dial (14.074 = FT8),
+    // which sent CW/phone click-to-work to an FT8 frequency. Now it lands in the CW window.
     const t = workTarget(alert('JA1XYZ', 'CW', '20m', null), BAND_PLAN)
-    expect(t?.freqMhz).toBe(14.074)
+    expect(t?.freqMhz).toBe(14.03)
+    const p = workTarget(alert('EA5', 'Phone', '20m', null), BAND_PLAN)
+    expect(p?.freqMhz).toBe(14.25)
   })
 
   it('a Digital need QSYs to the exact spot freq and opens the digital cockpit (N1MM-style)', () => {

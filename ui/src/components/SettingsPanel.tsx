@@ -804,6 +804,9 @@ export function SettingsPanel({
       <div className="panel-header">
         <h2>Settings</h2>
         <span className="settings-sub">operator, rig &amp; network</span>
+        <span className="settings-build" title="This install's build stamp — confirm a fresh install actually took">
+          build {__BUILD_ID__}
+        </span>
       </div>
 
       <form className="settings-form" onSubmit={handleSubmit}>

@@ -6125,6 +6125,13 @@ select optgroup {
   font-size: 11px;
   color: var(--text-faint);
 }
+/* Build stamp (commit + build time) — confirm a fresh install actually took. */
+.settings-build {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+}
 .settings-form {
   flex: 1;
   min-height: 0;

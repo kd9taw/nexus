@@ -174,11 +174,13 @@ pub fn classify_spot_mode(freq_mhz: f64, comment: &str) -> ModeClass {
             Some(ModeClass::Digital) => ModeClass::Digital,
             _ => ModeClass::Cw,
         },
-        // Data band (FT8/FT4/RTTY watering holes) → Digital; a named VOICE tag (DX SSB below
-        // the US phone edge) upgrades it to Phone. A "CW" tag is IGNORED — that is exactly
-        // the mis-spot/skimmer artifact that routed 21.074 FT8 spots into the CW cockpit.
+        // Data band (FT8/FT4/RTTY watering holes) → Digital. On the LOW bands (160/80/40m,
+        // < 10 MHz) DX voice legitimately sits in this window (below the high US phone edge),
+        // so a named VOICE tag upgrades to Phone there. Above 40m the data window is FT8/RTTY
+        // ONLY — no voice, so an FT8 hole (21.074) stays Digital no matter the comment. A "CW"
+        // tag is always ignored here (the mis-spot/skimmer artifact that routed FT8 → CW).
         Some(ModeClass::Digital) => match cm {
-            Some(ModeClass::Phone) => ModeClass::Phone,
+            Some(ModeClass::Phone) if freq_mhz < 10.0 => ModeClass::Phone,
             _ => ModeClass::Digital,
         },
         // Voice band → Phone (a CW/digital tag in the phone segment is a mis-spot).
@@ -554,8 +556,10 @@ mod tests {
             ModeClass::Digital
         );
         assert_eq!(classify_spot_mode(14.074, "CW"), ModeClass::Digital); // 20m FT8
-                                                                          // A comment that contradicts the band section is a mis-spot: a CW tag on a phone
-                                                                          // frequency stays Phone; a voice tag in the CW section stays CW.
+                                                                          // A spurious VOICE tag on a HIGH-band FT8 hole also stays Digital (no upgrade > 40m).
+        assert_eq!(classify_spot_mode(21.074, "SSB 59"), ModeClass::Digital);
+        // A comment that contradicts the band section is a mis-spot: a CW tag on a phone
+        // frequency stays Phone; a voice tag in the CW section stays CW.
         assert_eq!(classify_spot_mode(14.250, "CW UP"), ModeClass::Phone);
         assert_eq!(classify_spot_mode(14.025, "SSB 59"), ModeClass::Cw);
         // The comment REFINES within the band's family: a named digital mode upgrades a

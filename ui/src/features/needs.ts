@@ -50,10 +50,34 @@ export function modeClassOf(mode: string | null | undefined): 'CW' | 'Phone' | '
  * changes the band, mode, AND frequency to exactly the spot's. Uses the spot's exact
  * frequency when the cluster/RBN carried one, else the band's default channel. Returns null
  * only when no frequency can be resolved at all (a band-level need with no band-plan entry). */
+/** CW / Phone ACTIVITY frequencies per band (MHz) — where the mode lives. Used ONLY when a
+ * CW/Phone need carries no exact spot frequency, so click-to-work QSYs to the right part of
+ * the band instead of the tier's DIGITAL dial (which parked CW/phone clicks on 14.074 / 21.074
+ * etc.). CW mirrors bandplan::cw_activity_mhz; Digital falls through to the tier's FT8 dial. */
+const CW_ACTIVITY_MHZ: Record<string, number> = {
+  '160m': 1.81, '80m': 3.55, '40m': 7.03, '30m': 10.11, '20m': 14.03,
+  '17m': 18.08, '15m': 21.03, '12m': 24.9, '10m': 28.03, '6m': 50.09,
+}
+const PHONE_ACTIVITY_MHZ: Record<string, number> = {
+  '160m': 1.9, '80m': 3.8, '40m': 7.2, '20m': 14.25,
+  '17m': 18.14, '15m': 21.3, '12m': 24.96, '10m': 28.4, '6m': 50.15,
+}
+function modeDefaultMhz(band: string, mode: string): number | null {
+  if (mode === 'CW') return CW_ACTIVITY_MHZ[band] ?? null
+  if (mode === 'Phone') return PHONE_ACTIVITY_MHZ[band] ?? null
+  return null // Digital → the tier's FT8 dial is correct
+}
+
 export function workTarget(alert: NeedAlert, bandPlan: BandChannel[]): WorkTarget | null {
   const view: 'cw' | 'phone' | 'operate' =
     alert.mode === 'CW' ? 'cw' : alert.mode === 'Phone' ? 'phone' : 'operate'
-  const freqMhz = alert.freqMhz ?? bandPlan.find((c) => c.band === alert.band)?.dialMhz ?? null
+  // Prefer the spot's exact frequency; for a freq-less CW/Phone need, the band's CW/phone
+  // ACTIVITY freq — NOT the tier's digital dial (that's what sent CW/phone clicks to FT8).
+  const freqMhz =
+    alert.freqMhz ??
+    modeDefaultMhz(alert.band, alert.mode) ??
+    bandPlan.find((c) => c.band === alert.band)?.dialMhz ??
+    null
   if (freqMhz == null) return null
   return { call: alert.call, view, freqMhz, band: alert.band }
 }
