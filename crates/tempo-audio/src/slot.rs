@@ -21,6 +21,9 @@ pub struct SlotAction {
     pub tx_until_ms: Option<f64>,
     /// True when we decoded a receive frame into the engine this slot.
     pub did_rx: bool,
+    /// The decoded period's samples (moved out, no extra copy) — the loop saves
+    /// them as a WAV when settings.save_wav asks. None when nothing was decoded.
+    pub rx_frame: Option<Vec<f32>>,
     /// True when we transmitted this slot — the next boundary uses this as
     /// `prev_was_tx` so it knows the capture ring then holds our own carrier.
     pub tx_this_slot: bool,
@@ -110,8 +113,11 @@ pub fn run_slot(
     //    eviction, which capture jitter / a loop stall could leave a carrier
     //    fragment in to contaminate the next decode's sync region).
     let own_carrier = prev_was_tx || currently_tx;
+    let mut rx_frame = None;
     let did_rx = if !own_carrier && !rx.is_empty() {
-        eng.ingest(&rx.frame(), slot);
+        let frame = rx.frame();
+        eng.ingest(&frame, slot);
+        rx_frame = Some(frame);
         true
     } else {
         if own_carrier {
@@ -136,6 +142,7 @@ pub fn run_slot(
         SlotAction {
             tx_until_ms: Some(now_ms + secs as f64 * 1000.0 + TX_TAIL_MS),
             did_rx,
+            rx_frame,
             tx_this_slot: true,
             fake_it_restore: split.fake_it_restore,
             rig_split_engaged: split.rig_split_engaged,
@@ -146,6 +153,7 @@ pub fn run_slot(
         SlotAction {
             tx_until_ms: None,
             did_rx,
+            rx_frame,
             tx_this_slot: false,
             fake_it_restore: None,
             rig_split_engaged: false,

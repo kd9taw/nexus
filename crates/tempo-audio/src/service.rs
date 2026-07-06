@@ -1226,6 +1226,42 @@ impl RadioLoop {
             // Remember whether THIS slot was a transmit slot so the next boundary
             // knows not to decode our own carrier (and to decode it otherwise).
             self.prev_slot_was_tx = action.tx_this_slot;
+            // Save the received period as a WAV when asked (WSJT-X's Save menu:
+            // "all" = every RX period, "decodes" = only periods that produced
+            // one). Best-effort — a full disk must never stall the radio loop.
+            if let Some(frame) = &action.rx_frame {
+                let mode = eng.settings().save_wav.clone();
+                let want = match mode.as_str() {
+                    "all" => true,
+                    // The WHOLE period's decode set (early pass + boundary
+                    // stragglers) — wire_decodes() alone is only the boundary
+                    // batch, which is empty when the early pass caught
+                    // everything (review catch: that skipped exactly the
+                    // cleanest, strongest-signal periods).
+                    "decodes" => !eng.current_period_decodes().is_empty(),
+                    _ => false,
+                };
+                if want {
+                    if let Some(dir) = eng.periods_dir() {
+                        let secs = (now / 1000.0) as i64;
+                        let (y, mo, d) = civil_from_days(secs.div_euclid(86_400));
+                        let (h, m, sec) = (
+                            secs.rem_euclid(86_400) / 3600,
+                            secs.rem_euclid(3600) / 60,
+                            secs.rem_euclid(60),
+                        );
+                        // WSJT-X-style stamp + the band for at-a-glance sorting.
+                        let name = format!(
+                            "{y:04}{mo:02}{d:02}_{h:02}{m:02}{sec:02}_{}.wav",
+                            eng.settings().band
+                        );
+                        let path = std::path::Path::new(&dir).join(name);
+                        if let Err(e) = crate::voice::write_wav_12k(&path, frame) {
+                            eng.set_audio_error(Some(format!("period WAV save failed: {e}")));
+                        }
+                    }
+                }
+            }
             // The boundary owns the slot now — drain any still-pending immediate-TX
             // request (it either just fired via the slot core's parity path, or its
             // moment passed; leaving it set would key mid-slot LATER, off-cycle).
@@ -1480,6 +1516,21 @@ fn tier_mode(tier: Tier) -> &'static str {
 /// produced — boundary OR early pass) to the WSJT-X UDP server and the PSK
 /// Reporter spot queue. Shared so early decodes reach cooperating loggers and
 /// PSKR at the same moment they reach our own UI.
+/// Hinnant's civil-from-days (UTC): days since the epoch → (year, month, day).
+/// For the period-WAV filename stamp only.
+fn civil_from_days(z0: i64) -> (i64, u32, u32) {
+    let z = z0 + 719_468;
+    let era = (if z >= 0 { z } else { z - 146_096 }) / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = (if mp < 10 { mp + 3 } else { mp - 9 }) as u32;
+    (if m <= 2 { y + 1 } else { y }, m, d)
+}
+
 fn emit_rx_decodes(
     sinks: &Sinks,
     eng: &Engine,

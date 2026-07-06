@@ -222,6 +222,11 @@ pub struct Settings {
     /// the heuristic in the factory, so old configs can never break.
     #[serde(default = "default_prop_engine")]
     pub prop_engine: String,
+    /// Save each received period's audio as a WAV: "none" (default) | "all"
+    /// (every RX period — ~2 GB/day, debugging/archival) | "decodes" (only
+    /// periods that produced at least one decode). WSJT-X's Save menu.
+    #[serde(default = "default_save_wav")]
+    pub save_wav: String,
     /// LoTW-user highlight window (days): a decoded call marks as a LoTW
     /// uploader only if ARRL's activity list shows an upload within this many
     /// days (WSJT-X default: 365).
@@ -476,6 +481,10 @@ fn default_tune_timeout() -> u32 {
     12
 }
 
+fn default_save_wav() -> String {
+    "none".to_string()
+}
+
 fn default_lotw_max_age_days() -> u32 {
     365
 }
@@ -626,6 +635,7 @@ impl Default for Settings {
             tx_level: 0.9,
             station_power_w: None,
             prop_engine: default_prop_engine(),
+            save_wav: default_save_wav(),
             lotw_max_age_days: default_lotw_max_age_days(),
             ant_tx_gain_dbi: 0.0,
             ant_rx_gain_dbi: 0.0,

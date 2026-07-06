@@ -5789,6 +5789,8 @@ pub fn run() {
                 .is_some_and(|t| now_unix() - t <= max_secs)
         });
         eng.set_log_path(logbook_path());
+        // Saved RX-period WAVs (settings.save_wav) land beside the QSO recordings.
+        eng.set_periods_dir(&recordings_dir().join("periods").to_string_lossy());
         // Restore persisted Tempo conversation threads so chat history (and the `*`
         // band feed) survives an app restart. Best-effort: a missing/corrupt file
         // just yields an empty roster of threads.

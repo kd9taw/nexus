@@ -1490,6 +1490,8 @@ export interface Settings {
   /** Path-prediction engine: 'heuristic' (physics-lite default) or 'p533'
    * (native ITU-R P.533 — real circuit-reliability physics). */
   propEngine: string
+  /** Save each RX period as a WAV: 'none' | 'all' | 'decodes' (WSJT-X Save menu). */
+  saveWav?: string
   /** LoTW-user highlight window (days; default 365) — calls with an ARRL
    * activity-list upload within this window get the LoTW mark. */
   lotwMaxAgeDays?: number

@@ -2500,6 +2500,22 @@ export function SettingsPanel({
                 </span>
               </label>
 
+              <label className="settings-field">
+                <span className="settings-label">Save received audio (.wav per period)</span>
+                <select
+                  value={form.saveWav || 'none'}
+                  onChange={(e) => update('saveWav', e.target.value)}
+                >
+                  <option value="none">None (default)</option>
+                  <option value="decodes">Save periods with decodes</option>
+                  <option value="all">Save all periods</option>
+                </select>
+                <span className="settings-hint">
+                  WAVs land in recordings/periods (12 kHz mono, ~360 KB each). "All" writes
+                  ~2 GB/day of continuous monitoring — use for decoder debugging, not always-on.
+                </span>
+              </label>
+
               <div className="settings-field">
                 <span className="settings-label">Antenna gain (dBi) — TX / RX</span>
                 <div className="settings-inline-pair">

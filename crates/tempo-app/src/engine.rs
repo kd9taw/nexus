@@ -308,6 +308,8 @@ pub struct Engine {
     qso_recording: bool,
     /// Target WAV path for the in-progress QSO recording (set by `start_qso_recording`).
     qso_record_path: Option<String>,
+    /// Directory for saved RX-period WAVs (settings.save_wav) — set by the shell.
+    periods_dir: Option<String>,
     /// Rolling window of the most recent captured audio, fed continuously by the
     /// radio loop (independent of the decoder) so the waterfall reflects LIVE
     /// sound-card input — not just the once-per-slot decoded frame.
@@ -506,6 +508,7 @@ impl Engine {
             record_buf: Vec::new(),
             qso_recording: false,
             qso_record_path: None,
+            periods_dir: None,
             spectrum_audio: Vec::new(),
             cw_audio: Vec::new(),
             cw_stream: tempo_core::cw_decode::CwStreamDecoder::new(ft1::SAMPLE_RATE, 600.0),
@@ -1191,6 +1194,15 @@ impl Engine {
     /// The target WAV path for the in-progress QSO recording (for the radio loop's sink).
     pub fn qso_record_path(&self) -> Option<String> {
         self.qso_record_path.clone()
+    }
+
+    /// Where saved RX-period WAVs go (the shell passes `<recordings>/periods`).
+    pub fn set_periods_dir(&mut self, dir: &str) {
+        self.periods_dir = Some(dir.to_string());
+    }
+
+    pub fn periods_dir(&self) -> Option<String> {
+        self.periods_dir.clone()
     }
 
     // ----- coordinated QSY ("move together") ------------------------------
