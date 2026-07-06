@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import type { AppSnapshot, FieldDayStatus } from '../types'
 import { PhoneScope } from './PhoneScope'
 import { PalettePicker } from './PalettePicker'
@@ -33,9 +33,31 @@ interface Props {
  * audio bridge + voice keyer land in P3-b/c). Entering forces USB/LSB by band (the
  * rig-mode keystone, wired in App). See `tasks/specs/phone-operating.md`.
  */
+/** Bandscope span presets — slices of the captured audio passband. */
+const SPANS = [
+  { label: 'Full', lo: 200, hi: 2900, title: 'Whole audio passband (200–2900 Hz)' },
+  { label: 'Voice', lo: 300, hi: 2700, title: 'Voice energy (300–2700 Hz)' },
+  { label: 'Low', lo: 200, hi: 1500, title: 'Lower half — zoomed (200–1500 Hz)' },
+  { label: 'High', lo: 1500, hi: 2900, title: 'Upper half — zoomed (1500–2900 Hz)' },
+] as const
+
 export function PhoneCockpit({ snap, theme, pendingWork, onConsumeWork, onSnap, fieldDay, phoneMode }: Props) {
   const [power, setPower] = useState(100) // % — only pushed to the rig once touched
+  // Mirror the RIG's real level (CAT read-back / last commanded) so the slider
+  // never lies at a guessed 100% — but never fight an in-flight drag.
+  const dragging = useRef(false)
+  useEffect(() => {
+    const rb = snap.radio.rfPower
+    if (rb != null && !dragging.current) {
+      const pct = Math.round(rb * 100)
+      setPower((p) => (Math.abs(p - pct) >= 2 ? pct : p))
+    }
+  }, [snap.radio.rfPower])
   const [keyed, setKeyed] = useState(false)
+  // Bandscope span (audio-window zoom within the captured passband — this is
+  // soundcard audio, not RF IQ, so "span" means which slice of the passband
+  // fills the scope).
+  const [span, setSpan] = useState<(typeof SPANS)[number]>(SPANS[0])
   const [lock, setLock] = useState(false) // hands-free PTT (toggle instead of hold)
   const [recBusy, setRecBusy] = useState(false) // in-flight guard for the record toggle
 
@@ -141,6 +163,12 @@ export function PhoneCockpit({ snap, theme, pendingWork, onConsumeWork, onSnap, 
             max={100}
             value={power}
             onChange={(e) => changePower(Number(e.target.value))}
+            onPointerDown={() => {
+              dragging.current = true
+            }}
+            onPointerUp={() => {
+              dragging.current = false
+            }}
             aria-label="RF power"
           />
           <span className="ph-power-val">{power}%</span>
@@ -173,7 +201,28 @@ export function PhoneCockpit({ snap, theme, pendingWork, onConsumeWork, onSnap, 
           <span className="ph-scope-head-label">Colors</span>
           <PalettePicker />
         </div>
-        <PhoneScope transmitting={snap.radio.transmitting} theme={theme} />
+        <div className="ph-scope-wrap">
+          <div className="ph-span" role="group" aria-label="Bandscope span">
+            {SPANS.map((sp) => (
+              <button
+                key={sp.label}
+                type="button"
+                className={`theme-chip${span.label === sp.label ? ' active' : ''}`}
+                aria-pressed={span.label === sp.label}
+                title={sp.title}
+                onClick={() => setSpan(sp)}
+              >
+                {sp.label}
+              </button>
+            ))}
+          </div>
+          <PhoneScope
+            transmitting={snap.radio.transmitting}
+            theme={theme}
+            viewLoHz={span.lo}
+            viewHiHz={span.hi}
+          />
+        </div>
       </section>
 
       <div className="ph-ptt-row">

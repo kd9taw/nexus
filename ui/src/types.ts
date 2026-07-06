@@ -61,6 +61,9 @@ export interface NoaaScalesView {
   s: number
   g: number
   gTomorrow: number
+  /** Stamped only on a real fetch — null/absent = never loaded (an all-zero
+   * default must not render as a genuinely quiet sun). */
+  asOf?: number | null
 }
 
 /** One SWPC space-weather alert/watch/warning. `issued` = Unix seconds. */
@@ -490,6 +493,9 @@ export interface RadioStatus {
   nextSlotMs: number
   timeSyncOk: boolean
   /** Incoming audio level, 0–1 (drives the RX meter; ~1.0 = clipping). */
+  /** RF output power 0.0–1.0: rig read-back when CAT reports it, else the last
+   * commanded value; absent until either exists. */
+  rfPower?: number | null
   rxLevel: number
   /** Whether transmit is enabled (Monitor on). Off = muted/listening only. */
   txEnabled: boolean
@@ -600,8 +606,10 @@ export interface CatProbeResult {
 }
 
 export interface Spectrum {
-  // one waterfall row, 0..1 magnitudes, ~120 bins
   row: number[]
+  /** The audio window the row spans (Hz) — data-driven, never hardcode 200/2900. */
+  loHz?: number
+  hiHz?: number
 }
 
 /** A single decoded signal in the most-recent RX slot (WSJT-X style row). */
@@ -1261,6 +1269,9 @@ export interface Settings {
   catBroker: boolean
   /** TCP port the CAT broker listens on (Hamlib NET rigctl default 4532). */
   catBrokerPort: number
+  /** Let a broker client (WSJT-X/N1MM) key PTT when Nexus is idle. OFF by
+   * default — Nexus owns TX unless the operator opts in. */
+  catBrokerPtt?: boolean
   // --- audio ---
   /** Input (RX) audio device name. "" = system default. */
   audioIn: string

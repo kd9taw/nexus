@@ -14,6 +14,11 @@ interface Props {
   connectEnabled: boolean
   dxpedEnabled: boolean
   onNavigate: (v: View) => void
+  /** Profile-driven chip emphasis (profiles.nowBarEmphasis — previously defined
+   * but never wired): the emphasized chip leads the bar and gets the accent.
+   * 'qso'/'openings' → Band first, 'rate' → Out first, 'needs'/'activation' →
+   * Need first. Omitted = default order. */
+  emphasis?: 'qso' | 'needs' | 'rate' | 'openings' | 'activation'
 }
 
 /** Compact relative age, e.g. "12s" / "4m" / "2h". */
@@ -109,7 +114,7 @@ const BAND_WORD: Record<string, [string, string]> = {
   Closed: ['closed', 'bad'],
 }
 
-export function NowBar({ snap, prop, feedHealth, connectEnabled, dxpedEnabled, onNavigate }: Props) {
+export function NowBar({ snap, prop, feedHealth, connectEnabled, dxpedEnabled, onNavigate, emphasis }: Props) {
   const band = snap.radio.band
   const report = prop?.advisory.bands.find((b) => b.band === band) ?? null
   // Skip NotOpen cards: the chip must never advertise an unworkable slot as the
@@ -125,11 +130,19 @@ export function NowBar({ snap, prop, feedHealth, connectEnabled, dxpedEnabled, o
   const outText = !report ? '—' : hearMe > 0 ? `${hearMe} hear you` : 'no spots of you yet'
   const outCls = !report ? 'weak' : hearMe > 0 ? 'good' : 'weak'
 
-  return (
-    <div className="now-bar" role="status" aria-label="Now: band, getting out, and top need">
-      <span className="nb-label">NOW</span>
+  // Emphasized chip leads (see Props.emphasis).
+  const lead: 'band' | 'out' | 'need' =
+    emphasis === 'needs' || emphasis === 'activation'
+      ? 'need'
+      : emphasis === 'rate'
+        ? 'out'
+        : 'band'
+  const order: Array<'band' | 'out' | 'need'> = [lead, ...(['band', 'out', 'need'] as const).filter((k) => k !== lead)]
 
+  const chips: Record<'band' | 'out' | 'need', ReactNode> = {
+    band: (
       <NbChip
+        key="band"
         cls={bandCls}
         onClick={connectEnabled ? () => onNavigate('connect') : undefined}
         title={report?.reason ?? (connectEnabled ? 'Open Connect — the map + nowcast' : 'Band activity')}
@@ -140,8 +153,10 @@ export function NowBar({ snap, prop, feedHealth, connectEnabled, dxpedEnabled, o
           {band} {bandWord}
         </span>
       </NbChip>
-
+    ),
+    out: (
       <NbChip
+        key="out"
         cls={outCls}
         title={
           report
@@ -153,8 +168,10 @@ export function NowBar({ snap, prop, feedHealth, connectEnabled, dxpedEnabled, o
         <span className="nb-k">Out</span>
         <span className="nb-v">{outText}</span>
       </NbChip>
-
+    ),
+    need: (
       <NbChip
+        key="need"
         cls={`nb-need ${need ? 'good' : 'weak'}`}
         onClick={dxpedEnabled ? () => onNavigate('dxped') : undefined}
         title={
@@ -169,6 +186,13 @@ export function NowBar({ snap, prop, feedHealth, connectEnabled, dxpedEnabled, o
           {need ? `${need.entity} ${need.band} · ${need.likelihood}` : 'nothing workable now'}
         </span>
       </NbChip>
+    ),
+  }
+
+  return (
+    <div className="now-bar" role="status" aria-label="Now: band, getting out, and top need">
+      <span className="nb-label">NOW</span>
+      {order.map((k) => chips[k])}
 
       {prop && (
         <span

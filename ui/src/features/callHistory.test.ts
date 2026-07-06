@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { callHistory } from './callHistory'
+import { callHistory, isNewEntity } from './callHistory'
 import type { LoggedQso } from '../types'
 
 function qso(call: string, band: string, mode: string, whenUnix: number, confirmed = false): LoggedQso {
@@ -52,5 +52,27 @@ describe('callHistory', () => {
     expect(h.confirmedCount).toBe(2) // the 40m CW + 20m SSB are confirmed
     expect(h.bands).toEqual(['40m', '20m'])
     expect(h.modes).toEqual(['CW', 'FT8', 'SSB'])
+  })
+})
+
+describe('isNewEntity', () => {
+  const log = [{ country: 'Japan' }, { country: null }, {}]
+
+  it('country absent from the log → new entity', () => {
+    expect(isNewEntity(log, 'Fiji')).toBe(true)
+    expect(isNewEntity([], 'Fiji')).toBe(true)
+  })
+
+  it('already-logged country matches case-insensitively → not new', () => {
+    expect(isNewEntity(log, 'Japan')).toBe(false)
+    expect(isNewEntity(log, 'JAPAN')).toBe(false)
+    expect(isNewEntity(log, ' japan ')).toBe(false)
+  })
+
+  it('empty/null/whitespace country → never claims new', () => {
+    expect(isNewEntity(log, '')).toBe(false)
+    expect(isNewEntity(log, '   ')).toBe(false)
+    expect(isNewEntity(log, null)).toBe(false)
+    expect(isNewEntity(log, undefined)).toBe(false)
   })
 })

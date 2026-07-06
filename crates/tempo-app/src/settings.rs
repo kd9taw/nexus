@@ -64,6 +64,10 @@ pub struct Settings {
     /// The operator's name (e.g. "Seth") — the `{NAME}` token in CW/voice macros and
     /// a casual ragchew staple. Empty until set.
     pub op_name: String,
+    /// Allow a foreign app on the CAT broker (WSJT-X/N1MM) to key PTT when Nexus
+    /// is idle. OFF by default — Nexus owns TX unless the operator opts in.
+    #[serde(default)]
+    pub cat_broker_ptt: bool,
     pub band: String,
     pub dial_mhz: f64,
     pub sideband: String,
@@ -535,6 +539,7 @@ impl Default for Settings {
             mycall: String::new(),
             mygrid: String::new(),
             op_name: String::new(),
+            cat_broker_ptt: false,
             band: "20m".to_string(),
             dial_mhz: 14.074, // FT8 20m — the default mode/band
             sideband: "USB".to_string(),

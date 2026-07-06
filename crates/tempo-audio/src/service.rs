@@ -601,6 +601,15 @@ impl RadioLoop {
                         }
                     }
                 }
+                // RF-power read-back: mirror the knob so the UI slider shows the
+                // RIG's real level, not a guessed 100%. Kept separate from the
+                // commanded value in the engine (observe never fights a pending
+                // set_rf_power — see Engine::observe_rig_power).
+                if let Ok(frac) = rig.read_level("RFPOWER") {
+                    if let Ok(mut eng) = engine.lock() {
+                        eng.observe_rig_power(frac);
+                    }
+                }
             }
 
             // Apply a pending SPLIT request (after the dial/mode retune so the TX

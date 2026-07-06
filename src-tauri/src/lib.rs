@@ -1460,7 +1460,10 @@ async fn get_space_wx_scales(
         propagation::live::swpc_scales::fetch_noaa_scales(),
         propagation::live::swpc_scales::fetch_alerts(),
     ) {
-        (Ok(scales), Ok(alerts)) => {
+        (Ok(mut scales), Ok(alerts)) => {
+            // Provenance stamp: only a REAL fetch carries as_of — the cold-cache
+            // default below stays None so the UI can't render "offline" as calm.
+            scales.as_of = Some(now_unix());
             let pair = (scales, alerts);
             if let Ok(mut g) = cache.lock() {
                 *g = Some((std::time::Instant::now(), pair.clone()));
@@ -4868,9 +4871,10 @@ fn qsy_stop(state: State<'_, SharedEngine>) -> Result<AppSnapshot, String> {
 }
 
 /// Bridges the CAT broker (rigctld server) to Nexus's live engine: other apps read
-/// the dial/mode/PTT and can retune Nexus. v1 is CAT-sharing (freq/mode) for loggers
-/// + panadapters; it does NOT key the rig on a foreign app's behalf — Nexus owns TX
-/// timing (external-PTT / TX arbitration is a flagged v2 item).
+/// the dial/mode/PTT and can retune Nexus. CAT-sharing (freq/mode) is always on;
+/// foreign PTT is ARBITRATED (Engine::broker_ptt): allowed only behind the
+/// cat_broker_ptt opt-in, with TX enabled/legal and Nexus idle — Nexus's own key
+/// always wins, and un-key is always honored.
 #[cfg(feature = "radio")]
 struct EngineRig(SharedEngine);
 
@@ -4938,8 +4942,14 @@ impl tempo_audio::rigctld_server::RigBackend for EngineRig {
         e.set_frequency(mhz, &band, sb);
         true
     }
-    fn set_ptt(&self, _on: bool) -> bool {
-        false // v1: Nexus owns TX; it won't key the rig for a foreign app (v2: arbitration).
+    fn set_ptt(&self, on: bool) -> bool {
+        // v2 arbitration: a foreign app may key ONLY when the operator opted in
+        // (Settings cat_broker_ptt), TX is enabled/legal, and Nexus is idle —
+        // the engine owns the decision (Engine::broker_ptt). Un-key always lands.
+        self.0
+            .lock()
+            .map(|mut e| e.broker_ptt(on))
+            .unwrap_or(false)
     }
 }
 

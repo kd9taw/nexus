@@ -313,6 +313,20 @@ impl Rig {
     /// error when rigctld is unreachable (connection refused) or the rig itself
     /// doesn't answer (bad baud / serial port / CAT disabled → no numeric reply).
     /// Only valid with a CAT control channel.
+    /// Read a rig LEVEL (e.g. "RFPOWER" → 0.0–1.0) via rigctld `l NAME`.
+    /// CAT-only; errors on FakeIt/none like `read_freq`.
+    pub fn read_level(&mut self, name: &str) -> std::io::Result<f32> {
+        if self.control.is_none() {
+            return Err(std::io::Error::other("not a CAT rig"));
+        }
+        let reply = self.command(&format!("l {name}\n"))?;
+        reply
+            .lines()
+            .find_map(|l| l.trim().parse::<f32>().ok())
+            .filter(|v| v.is_finite() && (0.0..=1.0).contains(v))
+            .ok_or_else(|| std::io::Error::other("no level in reply"))
+    }
+
     pub fn read_freq(&mut self) -> std::io::Result<u64> {
         if self.control.is_none() {
             return Err(std::io::Error::other("not a CAT rig"));

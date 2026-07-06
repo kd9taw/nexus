@@ -2208,6 +2208,20 @@ button.nb-chip:hover {
   font-weight: 600;
   color: var(--text-dim);
 }
+/* Phone bandscope span chips row above the scope. */
+.ph-scope-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  flex: 1;
+  min-height: 0;
+}
+.ph-span {
+  display: flex;
+  gap: var(--space-1);
+  align-items: center;
+}
+
 /* Roam controls on the Tempo launchpad (no-peer view) — side by side. */
 .empty-conv-roam {
   display: flex;
@@ -5435,6 +5449,14 @@ select optgroup {
 }
 .le-prior.new {
   color: var(--text-faint);
+}
+/* Stronger than plain "new": QRZ-resolved country is absent from the whole log —
+   an ATNO candidate, so it wears the app-wide new-entity magenta. */
+.le-prior.new-entity {
+  color: var(--need-entity);
+  border-color: color-mix(in srgb, var(--need-entity) 70%, transparent);
+  background: color-mix(in srgb, var(--need-entity) 12%, transparent);
+  font-weight: 700;
 }
 .le-prior-text {
   flex: 1;

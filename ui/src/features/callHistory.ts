@@ -33,6 +33,17 @@ const EMPTY: CallHistory = {
   modes: [],
 }
 
+/** True only when the entity is KNOWN (non-empty `country`) and no log row's country
+ * matches it case-insensitively — never claims "new DXCC" for a blank/unresolved country. */
+export function isNewEntity(
+  log: { country?: string | null }[],
+  country: string | null | undefined,
+): boolean {
+  const c = (country ?? '').trim().toUpperCase()
+  if (!c) return false
+  return !log.some((q) => (q.country ?? '').trim().toUpperCase() === c)
+}
+
 /** Summarize a call's prior contacts from the full log. Case-insensitive on the call;
  * `band` is the current operating band for the dupe check (pass '' to skip it). */
 export function callHistory(log: LoggedQso[], call: string, band: string): CallHistory {

@@ -157,6 +157,12 @@ pub struct Engine {
     /// [`Engine::set_dxcc_resolver`]. `None` in headless tests (gems stay off).
     #[allow(clippy::type_complexity)]
     grid_rarity_resolve: Option<Box<dyn Fn(&str) -> Option<u8> + Send + Sync>>,
+    /// Per-area tier memory: the structured tier (FT8/FT4) last used in the DX
+    /// area and the chat tier (FT1/DX1) last used in MSG — so switching areas
+    /// round-trips without losing the operator's pick (the "FT4 lost through
+    /// msg" bug). None until an area has been left once.
+    last_dx_tier: Option<Tier>,
+    last_msg_tier: Option<Tier>,
     /// Work-a-spot navigation hint: bumped by [`Engine::work_spot_split`]; the
     /// UI (any window) navigates to `work_view`'s cockpit when the tick changes.
     work_tick: u64,
@@ -273,6 +279,12 @@ pub struct Engine {
     /// Desired RF output power as a 0.0–1.0 fraction; `None` = leave the rig's power
     /// alone. The radio loop applies it via `rig.set_power` when it changes.
     rf_power: Option<f32>,
+    /// RF power as READ BACK from the rig (the knob's truth) — kept separate from
+    /// the commanded `rf_power` so a 750 ms poll can never clobber a just-issued
+    /// set that the radio loop hasn't applied yet.
+    rig_rf_power: Option<f32>,
+    /// A foreign CAT-broker client is holding PTT (arbitrated in `broker_ptt`).
+    broker_ptt: bool,
     /// Phone voice-keyer: pending 12 kHz mono samples to transmit. The radio loop drains
     /// this (gated on `tx_enabled`), keys PTT, plays it, and drops PTT when it's out — the
     /// same path the soundcard CW keyer uses. Set by `send_voice`.
@@ -444,6 +456,8 @@ impl Engine {
             log_path: None,
             dxcc_resolve: None,
             grid_rarity_resolve: None,
+            last_dx_tier: None,
+            last_msg_tier: None,
             work_tick: 0,
             work_view: None,
             worked_entities: HashSet::new(),
@@ -477,6 +491,8 @@ impl Engine {
             cw_abort: false,
             manual_ptt: false,
             rf_power: None,
+            rig_rf_power: None,
+            broker_ptt: false,
             voice_tx: None,
             voice_abort: false,
             recording: false,
@@ -1000,7 +1016,33 @@ impl Engine {
     /// masks on read, so a key that became out-of-privilege (knob turned to a locked
     /// segment while holding PTT) drops the next loop pass.
     pub fn manual_ptt(&self) -> bool {
-        self.manual_ptt && self.tx_enabled && self.tx_allowed()
+        (self.manual_ptt || self.broker_ptt) && self.tx_enabled && self.tx_allowed()
+    }
+
+    /// PTT arbitration for a FOREIGN app on the CAT broker (WSJT-X/N1MM sharing
+    /// the rig). Allowed ONLY when the operator opted in (settings.cat_broker_ptt),
+    /// TX is enabled/legal, and Nexus itself is idle (no manual phone PTT held) —
+    /// Nexus's own key always wins; a refused request returns false so the broker
+    /// answers the client honestly. Un-key is always honored (safety).
+    pub fn broker_ptt(&mut self, on: bool) -> bool {
+        if !on {
+            self.broker_ptt = false;
+            return true; // un-key always succeeds
+        }
+        if !self.settings.cat_broker_ptt
+            || !self.tx_enabled
+            || !self.tx_allowed()
+            || self.manual_ptt
+        {
+            return false;
+        }
+        self.broker_ptt = true;
+        true
+    }
+
+    /// Whether a broker client currently holds PTT (for tests/inspection).
+    pub fn broker_ptt_active(&self) -> bool {
+        self.broker_ptt
     }
 
     /// Set desired RF output power (0.0–1.0). The radio loop applies it via the rig.
@@ -1011,6 +1053,14 @@ impl Engine {
     /// Desired RF power, if the operator has set one (for the radio loop).
     pub fn rf_power(&self) -> Option<f32> {
         self.rf_power
+    }
+
+    /// Adopt the rig's reported RF power (radio-loop poll). Observed-only —
+    /// never touches the commanded `rf_power`, so a user drag in flight wins.
+    pub fn observe_rig_power(&mut self, frac: f32) {
+        if frac.is_finite() {
+            self.rig_rf_power = Some(frac.clamp(0.0, 1.0));
+        }
     }
 
     // ----- Phone voice keyer — play recorded WAVs + record, via the radio loop -----
@@ -1974,19 +2024,24 @@ impl Engine {
     pub fn set_area(&mut self, area: &str) {
         match area {
             "msg" => {
-                // MSG = FT1/DX1 free-text paradigm. Default FT1; keep DX1 if there.
+                // MSG = FT1/DX1 free-text paradigm. Remember which structured
+                // tier we're leaving so a dx(FT4) → msg → dx round-trip returns
+                // to FT4 (it used to default back to FT8 — the tier was lost).
                 if !matches!(self.app.tier(), Tier::Ft1 | Tier::Dx1) {
-                    self.set_tier(Tier::Ft1);
+                    self.last_dx_tier = Some(self.app.tier());
+                    self.set_tier(self.last_msg_tier.unwrap_or(Tier::Ft1));
                 }
                 if !matches!(self.mode, Mode::Chat) {
                     let _ = self.set_mode("chat");
                 }
             }
             _ => {
-                // DX = FT8/FT4 structured. Default FT8; keep FT4 if there. Only pull
-                // out of Chat — leave a running QSO alone.
+                // DX = FT8/FT4 structured. Restore the remembered DX tier (FT4
+                // survives a trip through msg); default FT8. Only pull out of
+                // Chat — leave a running QSO alone.
                 if !matches!(self.app.tier(), Tier::Ft8 | Tier::Ft4) {
-                    self.set_tier(Tier::Ft8);
+                    self.last_msg_tier = Some(self.app.tier());
+                    self.set_tier(self.last_dx_tier.unwrap_or(Tier::Ft8));
                 }
                 if matches!(self.mode, Mode::Chat) {
                     let _ = self.set_mode("qso-monitor");
@@ -2615,6 +2670,9 @@ impl Engine {
     }
 
     pub fn set_tx_enabled(&mut self, on: bool) {
+        if !on {
+            self.broker_ptt = false; // a TX kill switch drops a foreign key too
+        }
         // ANY operator arm cancels a deferred after-73 disable from the PREVIOUS
         // contact — every arm path funnels here (Enable-Tx button, Call CQ,
         // double-click, Tx-slot click, UDP Reply). Without this the stale
@@ -3163,6 +3221,8 @@ impl Engine {
         s.radio.tx_offset_hz = self.tx_offset_hz;
         s.radio.rx_offset_hz = self.rx_offset_hz;
         s.radio.tx_level = self.settings.tx_level;
+        // Rig read-back wins (the knob's truth); else the last commanded value.
+        s.radio.rf_power = self.rig_rf_power.or(self.rf_power);
         s.radio.hold_tx_freq = self.hold_tx_freq;
         s.radio.clock_offset_ms = self.clock_offset_ms;
         s.radio.source = self.source_kind;
@@ -4220,11 +4280,17 @@ impl Engine {
         // zeros. An all-zeros 120-bin row is non-empty, so the waterfall would
         // "scroll" a flat colormap-floor band that reads as a broken/blank display;
         // an empty row lets the UI cleanly skip the tick until real audio arrives.
+        const LO_HZ: f32 = 200.0;
+        const HI_HZ: f32 = 2900.0;
         let row = match src {
-            Some(f) => spectrum::power_spectrum(f, ft1::SAMPLE_RATE, 200.0, 2900.0, SPECTRUM_BINS),
+            Some(f) => spectrum::power_spectrum(f, ft1::SAMPLE_RATE, LO_HZ, HI_HZ, SPECTRUM_BINS),
             None => Vec::new(),
         };
-        Spectrum { row }
+        Spectrum {
+            row,
+            lo_hz: LO_HZ,
+            hi_hz: HI_HZ,
+        }
     }
 }
 
@@ -5482,6 +5548,30 @@ mod tests {
     }
 
     #[test]
+    fn broker_ptt_is_arbitrated() {
+        let mut e = Engine::new("W9XYZ", "EN37", 0);
+        e.set_tx_enabled(true);
+        // Default OFF: a foreign app may never key without the opt-in.
+        assert!(!e.broker_ptt(true));
+        assert!(!e.manual_ptt());
+        // Opted in + idle → allowed; the radio loop sees the key via manual_ptt().
+        e.settings.cat_broker_ptt = true; // same-module test access
+        assert!(e.broker_ptt(true));
+        assert!(e.manual_ptt());
+        // Un-key always lands.
+        assert!(e.broker_ptt(false));
+        assert!(!e.manual_ptt());
+        // Nexus's own manual PTT wins — a broker key while held is refused.
+        e.set_ptt(true);
+        assert!(!e.broker_ptt(true), "operator PTT beats a foreign key");
+        e.set_ptt(false);
+        // The TX kill switch drops a held broker key.
+        assert!(e.broker_ptt(true));
+        e.set_tx_enabled(false);
+        assert!(!e.broker_ptt_active(), "Monitor-off drops the foreign key");
+    }
+
+    #[test]
     fn working_a_spot_stamps_the_navigation_hint() {
         // The hint rides the snapshot so a pop-out window's Needed click can
         // land the MAIN window in the right cockpit.
@@ -6208,6 +6298,32 @@ mod tests {
                 .count(),
             0,
             "halt_tx clears own-TX rows"
+        );
+    }
+
+    #[test]
+    fn area_round_trip_remembers_each_areas_tier() {
+        // THE tier-lost bug: dx(FT4) -> msg -> dx used to default back to FT8.
+        let mut e = Engine::new("W9XYZ", "EN37", 0);
+        e.set_area("dx");
+        e.set_tier(Tier::Ft4);
+        e.set_area("msg");
+        assert_eq!(e.tier(), Tier::Ft1);
+        e.set_area("dx");
+        assert_eq!(
+            e.tier(),
+            Tier::Ft4,
+            "FT4 survives the round-trip through msg"
+        );
+        // And the msg side remembers DX1 the same way.
+        e.set_area("msg");
+        e.set_tier(Tier::Dx1);
+        e.set_area("dx");
+        e.set_area("msg");
+        assert_eq!(
+            e.tier(),
+            Tier::Dx1,
+            "DX1 survives the round-trip through dx"
         );
     }
 

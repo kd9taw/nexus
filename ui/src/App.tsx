@@ -94,7 +94,7 @@ import { Toasts } from './components/Toasts'
 import { OnboardingBanner } from './components/OnboardingBanner'
 import { RevealNudge } from './components/RevealNudge'
 import { SetupWizard } from './components/SetupWizard'
-import type { ProfileId } from './features/profiles'
+import { PROFILES, type ProfileId } from './features/profiles'
 
 const ONBOARD_KEY = 'tempo-onboarded'
 // First-run setup wizard: shown once on a fresh install, re-openable from Settings.
@@ -1570,6 +1570,9 @@ export default function App() {
         connectEnabled={features.isOn('connect')}
         dxpedEnabled={features.isOn('dxped')}
         onNavigate={handleView}
+        // Profile-declared chip emphasis (dangling since the profiles landed).
+        // A hand-blended feature set is tagged 'custom' (no profile) → default order.
+        emphasis={features.profile === 'custom' ? undefined : PROFILES[features.profile].nowBarEmphasis}
       />
 
       <div className="shell">

@@ -128,12 +128,17 @@ export function PhoneScope({
       }
       const row = spec.row
       if (!row || row.length === 0) return
+      // Data-driven capture extent (DTO); fall back to the legacy constants for
+      // older backends that don't report it.
+      const rowLo = spec.loHz ?? 200
+      const rowHi = spec.hiHz ?? 2900
+      const span = Math.max(1, rowHi - rowLo)
 
       // AGC over the VISIBLE window only — a loud signal outside the view (e.g.
       // the FT8 cluster above a narrow CW window) must not compress what's shown.
       const nb = row.length
-      const vLo = Math.max(0, Math.floor(((Math.max(200, viewLoHz) - 200) / 2700) * (nb - 1)))
-      const vHi = Math.min(nb, Math.ceil(((Math.min(2900, viewHiHz) - 200) / 2700) * (nb - 1)) + 1)
+      const vLo = Math.max(0, Math.floor(((Math.max(rowLo, viewLoHz) - rowLo) / span) * (nb - 1)))
+      const vHi = Math.min(nb, Math.ceil(((Math.min(rowHi, viewHiHz) - rowLo) / span) * (nb - 1)) + 1)
       const visible = vHi - vLo >= 8 ? row.slice(vLo, vHi) : row
       const { floor, ceil } = agcRange(visible)
       if (!agcInit) {
@@ -171,14 +176,12 @@ export function PhoneScope({
       const nBins = row.length
       let peak = 0
       // normalized magnitude per device column (shared by waterfall + trace), reused buffer
-      // The captured row spans ROW_LO..ROW_HI; project only the view window.
-      const ROW_LO = 200
-      const ROW_HI = 2900
-      const lo = Math.max(ROW_LO, viewLoHz)
-      const hi = Math.min(ROW_HI, Math.max(viewHiHz, lo + 50))
+      // The captured row spans rowLo..rowHi (from the DTO); project the view window.
+      const lo = Math.max(rowLo, viewLoHz)
+      const hi = Math.min(rowHi, Math.max(viewHiHz, lo + 50))
       for (let x = 0; x < Wd; x++) {
         const hz = lo + (x / Wd) * (hi - lo)
-        const bin = ((hz - ROW_LO) / (ROW_HI - ROW_LO)) * (nBins - 1)
+        const bin = ((hz - rowLo) / span) * (nBins - 1)
         const b0 = Math.floor(bin)
         const b1 = Math.min(nBins - 1, b0 + 1)
         const frac = bin - b0

@@ -169,6 +169,12 @@ pub struct BandFeatures {
     pub anomaly_z: f32,
     /// Δ rate vs the previous bin (spots/min) — positive = rising onset.
     pub onset_slope: f32,
+    /// Short-window rate (spots/min) counting ONLY getting-out (`HeardMe`) + far↔far
+    /// (`Neither`) evidence — the cross-band-share DENOMINATOR input. Excludes the
+    /// operator's own `IHeard` receive-firehose (every station their radio decodes on
+    /// the band they're parked on), so a busy own-band QSO session can't dilute a
+    /// genuine single-band opening's share. See [`detect`].
+    pub share_rate_short: f32,
     /// This band's short-window share of total cross-band activity (localization;
     /// a uniform all-band surge — contest — drives every band's share down).
     pub cross_band_share: f32,
@@ -204,6 +210,7 @@ impl BandFeatures {
             rate_base: 0.0,
             anomaly_z: 0.0,
             onset_slope: 0.0,
+            share_rate_short: 0.0,
             cross_band_share: 0.0,
             median_snr: None,
             snr_var: None,
@@ -236,9 +243,13 @@ impl BandFeatures {
         // Regional gate (Phase 2, opt-in): a band-wide surge near the operator.
         // Multi-condition so neither a single loud station (needs two-way pairs)
         // nor a uniform contest/Es lifting every band (needs band-specificity)
-        // can fabricate an opening. Left band-agnostic: the cross-band-share
-        // dilution by HF own-call traffic is a DENOMINATOR fix (engine.rs), not a
-        // threshold relax — relaxing it here would defeat contest rejection.
+        // can fabricate an opening. Band-agnostic: the cross-band-share denominator
+        // is now computed over getting-out + far↔far evidence only (see `detect` /
+        // `share_rate_short`), so the operator's own IHeard receive-firehose on a
+        // busy band no longer dilutes a genuine single-band opening's share. That is
+        // a DENOMINATOR fix, not a threshold relax — a uniform contest surge still
+        // drives every band's share below `min_regional_cross_band_share`, so contest
+        // rejection is preserved and this gate is left as-is.
         let regional_gate = cfg.regional_scope
             && self.unique_stations >= cfg.min_regional_stations
             && self.unique_near_rx >= cfg.min_regional_near_rx
@@ -456,6 +467,12 @@ pub fn band_features(
     let mut auroral = 0usize;
     let mut geo_far = 0usize; // far ends with a usable grid (denominator for fracs)
     let times: Vec<i64> = band_spots.iter().map(|s| s.time).collect();
+    // Cross-band-share denominator input: count only getting-out (HeardMe) + far↔far
+    // (Neither) spots in the SAME short window `rate_short` uses. Excluding the
+    // operator's IHeard receive-firehose keeps a busy own-band QSO session from
+    // inflating the cross-band denominator (see `detect`).
+    let short_cutoff = now - cfg.short_w;
+    let mut share_short_count = 0usize;
 
     for s in band_spots {
         // Regional density census: every distinct station on either end.
@@ -464,12 +481,16 @@ pub fn band_features(
         if let Some(snr) = s.snr {
             snrs.push(snr as f64);
         }
+        let side = s.side(me_call);
+        if s.time > short_cutoff && s.time <= now && side != Side::IHeard {
+            share_short_count += 1;
+        }
         // The single grid to fold into the operator-anchored geometry pools:
         // operator spots → the far end (bit-identical to the old far_grid path);
         // a near-region (Neither) spot → its FARTHER end from me (one symmetric
         // sample, NOT both — folding both would inject a spurious short leg and
         // suppress the very skip-hole it should drive).
-        let geo_grid: Option<&str> = match s.side(me_call) {
+        let geo_grid: Option<&str> = match side {
             Side::HeardMe => {
                 if let Some(c) = s.far_call(me_call) {
                     far_rx.insert(c.to_ascii_uppercase());
@@ -583,6 +604,9 @@ pub fn band_features(
     bf.rate_base = rate_base;
     bf.anomaly_z = z;
     bf.onset_slope = slope;
+    // Same per-minute unit as `rate_short` (short_w-sized bin), but over the
+    // getting-out + far↔far spots only — the un-inflated cross-band denominator.
+    bf.share_rate_short = share_short_count as f32 / (cfg.short_w.max(1) as f32 / 60.0);
     bf
 }
 
@@ -740,10 +764,17 @@ pub fn detect(
             band_features(b, bs, me_call, me_grid, now, cfg)
         })
         .collect();
-    let total_short: f32 = feats.iter().map(|f| f.rate_short).sum();
+    // Cross-band localization share. Denominator = Σ `share_rate_short`
+    // (getting-out + far↔far evidence), NOT Σ `rate_short`: on the operator-centric
+    // feed the operator's own IHeard receive-firehose on a busy band (e.g. a 20 m FT8
+    // run) would otherwise inflate the denominator and dilute a genuine single-band
+    // (6 m Es) opening below the regional cross-band gate. It stays a RELATIVE share,
+    // so a uniform multi-band contest surge still drives every band's share down —
+    // contest rejection is preserved (no threshold relaxed). See `share_rate_short`.
+    let total_share: f32 = feats.iter().map(|f| f.share_rate_short).sum();
     for f in &mut feats {
-        f.cross_band_share = if total_short > 0.0 {
-            f.rate_short / total_short
+        f.cross_band_share = if total_share > 0.0 {
+            f.share_rate_short / total_share
         } else {
             0.0
         };
@@ -1397,6 +1428,115 @@ mod tests {
         assert!(six.features.reciprocal_pairs >= 5, "two-way paths counted");
         let two = sigs.iter().find(|s| s.band == Band::B2).unwrap();
         assert!(!two.raw_open, "quiet 2m not open");
+    }
+
+    #[test]
+    fn cross_band_share_denominator_excludes_own_band_ihear_firehose() {
+        // The DENOMINATOR-dilution bug: a genuine single-band 6 m opening (the
+        // operator getting out to many far stations) is drowned in the cross-band
+        // share because a busy 20 m FT8 run floods the operator-centric feed with
+        // own-call IHeard decodes. The fix computes the share over getting-out
+        // (HeardMe) + far↔far evidence only, so the 6 m opening keeps a healthy
+        // share while the OLD (all-sides) denominator would dilute it below the 0.3
+        // regional gate.
+        let cfg = OpeningConfig::default();
+        let mut spots = Vec::new();
+        // 6 m: a real getting-out burst — 10 distinct far stations hear ME
+        // (HeardMe), all in the most-recent short window, empty 6 m baseline.
+        for i in 0..10 {
+            spots.push(heard_me(
+                &format!("W{i}SIX"),
+                "FN42",
+                Band::B6,
+                (i as i64) * 20,
+            ));
+        }
+        // 20 m: a busy own-band QSO run — the operator DECODES 40 stations (the
+        // IHeard receive-firehose, own-call traffic) and is heard back by only a few.
+        for i in 0..40 {
+            spots.push(i_heard(
+                &format!("D{i}TW"),
+                "JN58",
+                Band::B20,
+                (i as i64) * 10,
+            ));
+        }
+        for i in 0..4 {
+            spots.push(heard_me(
+                &format!("D{i}HM"),
+                "JN58",
+                Band::B20,
+                (i as i64) * 10,
+            ));
+        }
+        let calm = SpaceWx {
+            sfi: 100.0,
+            kp: 1.0,
+            ..Default::default()
+        };
+        let sigs = detect(
+            &spots,
+            ME,
+            ME_GRID,
+            NOW,
+            &calm,
+            &cfg,
+            &[Band::B20, Band::B6],
+        );
+        let six_sig = sigs.iter().find(|s| s.band == Band::B6).unwrap();
+        let six = &six_sig.features;
+        let twenty = &sigs.iter().find(|s| s.band == Band::B20).unwrap().features;
+
+        // OLD denominator (Σ rate_short over ALL sides) would dilute 6 m below the gate.
+        let old_share = six.rate_short / (six.rate_short + twenty.rate_short);
+        assert!(
+            old_share < 0.3,
+            "old all-sides share dilutes the 6 m opening: {old_share}"
+        );
+        // NEW denominator (getting-out + far↔far only): 6 m keeps a healthy share.
+        assert!(
+            six.cross_band_share >= 0.3,
+            "6 m share survives the own-band firehose post-fix: {}",
+            six.cross_band_share
+        );
+        assert!(six_sig.raw_open, "the genuine 6 m opening is still flagged");
+    }
+
+    #[test]
+    fn cross_band_share_still_diluted_by_a_uniform_multi_band_surge() {
+        // Contest / uniform-Es lift: equal getting-out on every band. The new
+        // (getting-out) denominator is still a RELATIVE share, so no single band
+        // clears the 0.3 regional cross-band gate — contest rejection is preserved.
+        let cfg = OpeningConfig::default();
+        let bands = [
+            Band::B20,
+            Band::B15,
+            Band::B12,
+            Band::B10,
+            Band::B6,
+            Band::B4,
+            Band::B2,
+        ];
+        let mut spots = Vec::new();
+        for &b in &bands {
+            for i in 0..8 {
+                spots.push(heard_me(&format!("W{i}X"), "FN42", b, (i as i64) * 20));
+            }
+        }
+        let calm = SpaceWx {
+            sfi: 100.0,
+            kp: 1.0,
+            ..Default::default()
+        };
+        let sigs = detect(&spots, ME, ME_GRID, NOW, &calm, &cfg, &bands);
+        for s in &sigs {
+            assert!(
+                s.features.cross_band_share < 0.3,
+                "{:?} share must stay diluted under a uniform surge: {}",
+                s.band,
+                s.features.cross_band_share
+            );
+        }
     }
 
     /// The regression that the prior single-window-slope gate would fail: a

@@ -195,6 +195,7 @@ impl AppState {
                 // Optimistic until the engine has seen decodes to judge from
                 // (the engine recomputes this from recent DT each snapshot).
                 time_sync_ok: true,
+                rf_power: None, // engine fills from command/read-back
                 rx_level: 0.0,
                 tx_level: 0.9,
                 tx_enabled: true,

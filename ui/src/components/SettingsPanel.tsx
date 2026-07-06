@@ -1400,6 +1400,24 @@ export function SettingsPanel({
               </div>
 
               {form.catBroker && (
+                <div className="settings-field">
+                  <span className="settings-label">Broker PTT</span>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={form.catBrokerPtt ?? false}
+                    className={`toggle${form.catBrokerPtt ? ' on' : ''}`}
+                    onClick={() => updateBool('catBrokerPtt', !form.catBrokerPtt)}
+                  >
+                    <span className="knob" />
+                  </button>
+                  <span className="settings-hint">
+                    Let the connected app key transmit when Nexus is idle. Off = other apps
+                    control the rig but never key it (Nexus owns TX).
+                  </span>
+                </div>
+              )}
+              {form.catBroker && (
                 <label className="settings-field">
                   <span className="settings-label">CAT broker port</span>
                   <input

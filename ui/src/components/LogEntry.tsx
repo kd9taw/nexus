@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { AppSnapshot, FieldDayStatus, LoggedQso } from '../types'
 import { fdLogManual, getLog, logQso, qrzLookup } from '../api'
-import { callHistory } from '../features/callHistory'
+import { callHistory, isNewEntity } from '../features/callHistory'
 import { pushToast, withErrorToast } from '../toast'
 
 interface Props {
@@ -167,6 +167,10 @@ export function LogEntry({
     [allLog, logCall, snap.radio.band],
   )
 
+  // New-DXCC check rides on the QRZ lookup having populated `logCountry` (no client-side
+  // cty.dat) — an unresolved country falls back to the plain "not in your log" line.
+  const newEntity = useMemo(() => isNewEntity(allLog, logCountry), [allLog, logCountry])
+
   // QRZ callbook autofill — fills ONLY blank fields, never clobbers operator input. The
   // explicit button toasts; the on-blur auto-lookup is silent on failure so an operator
   // without QRZ configured isn't nagged on every Tab.
@@ -327,6 +331,10 @@ export function LogEntry({
               {hist.bands.length ? ` · ${hist.bands.join('/')}` : ''}
               {hist.confirmedCount ? ` · ${hist.confirmedCount} confirmed` : ''}
             </span>
+          </div>
+        ) : newEntity ? (
+          <div className="le-prior new-entity">
+            <span className="le-prior-text">New DXCC — {logCountry.trim()}!</span>
           </div>
         ) : (
           <div className="le-prior new">

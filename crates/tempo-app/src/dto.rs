@@ -263,6 +263,10 @@ pub struct RadioStatus {
     pub slot: u64,
     pub next_slot_ms: u64,
     pub time_sync_ok: bool,
+    /// RF output power fraction (0.0–1.0): the rig's read-back when CAT reports
+    /// it, else the last commanded value; `None` until either exists.
+    #[serde(default)]
+    pub rf_power: Option<f32>,
     /// RX input audio level (0.0–1.0), a decaying peak meter for the UI.
     #[serde(default)]
     pub rx_level: f32,
@@ -375,6 +379,11 @@ fn default_offset() -> f32 {
 #[serde(rename_all = "camelCase")]
 pub struct Spectrum {
     pub row: Vec<f32>,
+    /// The audio window the row spans (Hz) — so the UI never hardcodes it.
+    #[serde(default)]
+    pub lo_hz: f32,
+    #[serde(default)]
+    pub hi_hz: f32,
 }
 
 /// The operating mode of the live engine.

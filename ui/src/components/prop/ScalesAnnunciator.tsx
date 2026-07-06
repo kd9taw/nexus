@@ -19,7 +19,10 @@ export function ScalesAnnunciator({
   scales: NoaaScalesView | null
   alerts: AlertView[]
 }) {
-  if (!scales) return <p className="pane-basic">No live space-weather scales right now.</p>
+  // asOf is stamped only on a REAL fetch — an all-zero default from a cold/
+  // offline feed must read as "no data", never as a genuinely quiet sun.
+  if (!scales || !scales.asOf)
+    return <p className="pane-basic">No live space-weather scales right now.</p>
   const top = alerts[0]
   return (
     <div className="swsc">

@@ -25,6 +25,11 @@ pub struct NoaaScalesView {
     pub s: u8,
     pub g: u8,
     pub g_tomorrow: u8,
+    /// When these scales were actually FETCHED (unix). `None` on the cold-cache
+    /// default — so the UI can tell "measured quiet (R0 S0 G0)" from "never
+    /// loaded" instead of rendering an offline feed as calm chips.
+    #[serde(default)]
+    pub as_of: Option<i64>,
 }
 
 /// One issued SWPC bulletin, distilled for a notifications strip.
@@ -48,6 +53,7 @@ pub fn parse_noaa_scales(v: &Value) -> NoaaScalesView {
         s: scale_at(v, "0", "S"),
         g: scale_at(v, "0", "G"),
         g_tomorrow: scale_at(v, "1", "G"),
+        as_of: None, // the COMMAND stamps this on a real fetch, never the parser
     }
 }
 
