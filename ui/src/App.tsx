@@ -75,6 +75,7 @@ import {
   setLicenseClass,
   stopQsoRecording,
   pointRotatorAtCall,
+  qsySetEnabled as apiQsySetEnabled,
 } from './api'
 import { processFlare, effectiveXray } from './flareAlert'
 import { processDxpedAlerts } from './features/dxpedChase'
@@ -174,6 +175,8 @@ export default function App() {
     view: 'cw' | 'phone'
     ts: number
   } | null>(null)
+  // Roam settings panel (inside the Tempo cockpit) open/closed.
+  const [roamOpen, setRoamOpen] = useState(false)
   const [view, setView] = useState<View>(() => {
     const h = typeof window !== 'undefined' ? window.location.hash.slice(1) : ''
     const sectionIds = sectionFeatures().map((f) => f.id) as string[]
@@ -325,6 +328,8 @@ export default function App() {
   const dxpedWindowsRef = useRef<Map<string, DxpedWindow> | null>(null)
   const qsoPartnerRef = useRef<string | null>(null)
   const workDxpedRef = useRef<((c: WorkableCard) => void) | null>(null)
+  // Latest link tier (FT1/DX1/FT8/FT4) — the rail's Digital button preserves it.
+  const tierRef = useRef<Tier>('FT8')
   useEffect(() => {
     let live = true
     const OPENING_ALERT_COOLDOWN_MS = 10 * 60_000
@@ -689,6 +694,8 @@ export default function App() {
     const dxcall = snap.fieldDay?.dxcall ?? snap.qso?.dxcall ?? null
     // Keep the chase-alert suppression in sync (the prop poller reads the ref).
     qsoPartnerRef.current = dxcall
+    // Latest tier for the rail's Digital button (preserve FT4 across nav).
+    tierRef.current = snap.link.tier
     processDecodes(
       snap.recentDecodes,
       settings,
@@ -1079,16 +1086,18 @@ export default function App() {
   }, [])
 
   // Pick a Digital sub-mode from the rail. Tempo → the FT1/DX1 free-text cockpit
-  // (reuse the workspace bind). FT8/FT4 → the weak-signal cockpit on that tier: bind
-  // the dx workspace (tier + QSO mode) THEN set the exact tier, sequentially, so
-  // set_area's default-FT8 can't race past a requested FT4.
+  // (reuse the workspace bind). Digital → the weak-signal cockpit, PRESERVING the
+  // last FT8/FT4 tier (the top bar's pills own that choice now — the rail button
+  // must not yank an FT4 operator back to FT8): bind the dx workspace (tier + QSO
+  // mode) THEN re-assert the tier, sequentially, so set_area's default-FT8 can't
+  // race past it.
   const handleDigitalMode = useCallback(
     (m: DigitalMode) => {
       if (m === 'tempo') {
         handleWorkspace('msg')
         return
       }
-      const wantTier: Tier = m === 'ft8' ? 'FT8' : 'FT4'
+      const wantTier: Tier = tierRef.current === 'FT4' ? 'FT4' : 'FT8'
       setArea('dx')
       try {
         localStorage.setItem('nexus.workspace', 'dx')
@@ -1398,21 +1407,6 @@ export default function App() {
         </main>
       )
       break
-    case 'roam':
-      workspace = (
-        <main className="layout single">
-          <RoamPanel
-            qsy={snap.qsy ?? null}
-            channels={settings?.qsySet ?? []}
-            cadence={settings?.qsyCadence ?? 6}
-            bandPlan={bandPlan}
-            activePeer={activePeer}
-            onSnap={setSnap}
-            onReloadSettings={reloadSettings}
-          />
-        </main>
-      )
-      break
     case 'settings':
       workspace = (
         <main className="layout single">
@@ -1471,22 +1465,60 @@ export default function App() {
       break
     case 'chat':
     default:
-      workspace = threePane(
-        <Conversation
-          conversation={activeConversation}
-          peer={activePeer}
-          radio={snap.radio}
-          mode={snap.mode}
-          fieldDay={snap.fieldDay}
-          macros={macros}
-          onSend={handleSend}
-          onBroadcast={handleBroadcast}
-          onCallCq={handleCallCq}
-          beaconOn={snap.radio.beacon ?? false}
-          onToggleBeacon={handleToggleBeacon}
-          mycall={snap.mycall}
-          mygrid={snap.mygrid}
-        />,
+      workspace = (
+        <>
+          {threePane(
+            <Conversation
+              conversation={activeConversation}
+              peer={activePeer}
+              radio={snap.radio}
+              mode={snap.mode}
+              fieldDay={snap.fieldDay}
+              macros={macros}
+              onSend={handleSend}
+              onBroadcast={handleBroadcast}
+              onCallCq={handleCallCq}
+              beaconOn={snap.radio.beacon ?? false}
+              onToggleBeacon={handleToggleBeacon}
+              mycall={snap.mycall}
+              mygrid={snap.mygrid}
+              // Roam (coordinated QSY) lives INSIDE Tempo now: the chip toggles
+              // it, the gear opens the full panel (was its own rail section).
+              roamEnabled={snap.qsy?.enabled ?? false}
+              roamStatus={snap.qsy?.enabled ? (snap.qsy.paused ? 'paused' : (snap.qsy.current ?? 'on')) : undefined}
+              onToggleRoam={() =>
+                void withErrorToast(
+                  () => apiQsySetEnabled(!(snap.qsy?.enabled ?? false)),
+                  'Could not toggle Roam',
+                ).then((s) => s && setSnap(s))
+              }
+              onRoamSettings={() => setRoamOpen(true)}
+            />,
+          )}
+          {roamOpen && (
+            <div className="roam-modal" role="dialog" aria-label="Roam settings">
+              <div className="roam-modal-body">
+                <button
+                  type="button"
+                  className="roam-modal-close"
+                  onClick={() => setRoamOpen(false)}
+                  aria-label="Close Roam settings"
+                >
+                  ✕
+                </button>
+                <RoamPanel
+                  qsy={snap.qsy ?? null}
+                  channels={settings?.qsySet ?? []}
+                  cadence={settings?.qsyCadence ?? 6}
+                  bandPlan={bandPlan}
+                  activePeer={activePeer}
+                  onSnap={setSnap}
+                  onReloadSettings={reloadSettings}
+                />
+              </div>
+            </div>
+          )}
+        </>
       )
       break
   }

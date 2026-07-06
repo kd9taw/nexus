@@ -2208,6 +2208,44 @@ button.nb-chip:hover {
   font-weight: 600;
   color: var(--text-dim);
 }
+/* Roam settings modal — the full coordinated-QSY panel, summoned from the
+   Tempo header's gear (Roam is a Tempo feature, no longer a rail section). */
+.roam-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--bg) 60%, transparent);
+  backdrop-filter: blur(3px);
+}
+.roam-modal-body {
+  position: relative;
+  width: min(720px, 92vw);
+  max-height: 86vh;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 8px);
+  box-shadow: 0 12px 40px rgb(0 0 0 / 0.45);
+  background: var(--bg-elev);
+}
+.roam-modal-close {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+  z-index: 1;
+  padding: 2px var(--space-2);
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.roam-modal-close:hover {
+  color: var(--text);
+}
+
 /* Layers-panel flare preview button — quiet inline affordance. */
 .flare-preview {
   margin: 2px 0 var(--space-1);

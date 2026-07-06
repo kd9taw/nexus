@@ -24,7 +24,6 @@ const EXPECTED_SECTIONS: FeatureId[] = [
   'logbook',
   'settings',
   'chat',
-  'roam',
   'fieldDay',
   'pota',
   'dxped',

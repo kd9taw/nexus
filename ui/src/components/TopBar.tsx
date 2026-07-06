@@ -237,21 +237,21 @@ export function TopBar({
         </button>
         <button
           type="button"
-          className={`tier-btn${tier === 'FT8' ? ' active' : ''}`}
-          aria-pressed={tier === 'FT8'}
-          onClick={() => onTierChange('FT8')}
-          title="Standard WSJT-X FT8 (15 s)"
-        >
-          <small>FT8</small>
-        </button>
-        <button
-          type="button"
           className={`tier-btn${tier === 'FT4' ? ' active' : ''}`}
           aria-pressed={tier === 'FT4'}
           onClick={() => onTierChange('FT4')}
           title="Standard WSJT-X FT4 (7.5 s)"
         >
           <small>FT4</small>
+        </button>
+        <button
+          type="button"
+          className={`tier-btn${tier === 'FT8' ? ' active' : ''}`}
+          aria-pressed={tier === 'FT8'}
+          onClick={() => onTierChange('FT8')}
+          title="Standard WSJT-X FT8 (15 s)"
+        >
+          <small>FT8</small>
         </button>
       </div>
 

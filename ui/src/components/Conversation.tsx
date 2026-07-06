@@ -28,6 +28,14 @@ interface Props {
   onToggleBeacon: () => void
   mycall: string
   mygrid: string
+  /** Roam (coordinated QSY) — a Tempo feature, living here now (was its own rail
+   * section): the chip toggles it, the gear opens the full settings panel. All
+   * optional so other Conversation hosts (detached windows) render unchanged. */
+  roamEnabled?: boolean
+  /** Short state for the chip while enabled ("20m", "paused"). */
+  roamStatus?: string
+  onToggleRoam?: () => void
+  onRoamSettings?: () => void
 }
 
 /**
@@ -74,6 +82,10 @@ export function Conversation({
   onToggleBeacon,
   mycall,
   mygrid,
+  roamEnabled = false,
+  roamStatus,
+  onToggleRoam,
+  onRoamSettings,
 }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -142,6 +154,28 @@ export function Conversation({
         >
           {beaconOn ? '💓 Heartbeat' : '🤍 Heartbeat'}
         </button>
+        {onToggleRoam && (
+          <button
+            type="button"
+            className={`heartbeat-chip roam-toggle${roamEnabled ? ' on' : ''}`}
+            onClick={onToggleRoam}
+            aria-pressed={roamEnabled}
+            title="Roam — coordinated QSY: you and your partner move channels together, announced in the clear (never private). Click to enable/disable."
+          >
+            ⇄ Roam{roamEnabled ? ` · ${roamStatus ?? 'on'}` : ''}
+          </button>
+        )}
+        {onRoamSettings && (
+          <button
+            type="button"
+            className="heartbeat-chip roam-gear"
+            onClick={onRoamSettings}
+            title="Roam settings — channel set, hop cadence, move/pause/stop"
+            aria-label="Roam settings"
+          >
+            ⚙
+          </button>
+        )}
       </div>
 
       <div className="message-scroll" ref={scrollRef}>

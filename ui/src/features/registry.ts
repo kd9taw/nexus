@@ -20,7 +20,6 @@ export type View =
   | 'spots'
   | 'chat'
   | 'fieldDay'
-  | 'roam'
   | 'logbook'
   | 'awards'
   | 'pota'
@@ -161,19 +160,6 @@ export const FEATURES: FeatureDef[] = [
     view: 'chat',
     workspace: 'msg',
     oneLine: 'Free-form QSO text (FT1/DX1).',
-  },
-  {
-    id: 'roam',
-    label: 'Roam',
-    kind: 'section',
-    category: 'Operate',
-    core: false,
-    dependsOn: [],
-    // Coordinated-QSY section — niche; Everything or manual opt-in.
-    intents: [],
-    view: 'roam',
-    workspace: 'msg',
-    oneLine: 'Coordinated QSY — move together off QRM (announced in the clear).',
   },
   {
     id: 'fieldDay',

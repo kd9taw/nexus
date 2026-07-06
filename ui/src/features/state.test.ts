@@ -101,8 +101,9 @@ describe('feature state transitions', () => {
     expect(s.profile).toBe('starter')
     expect(s.enabled.awards).toBe(false)
     expect(s.enabled.chat).toBe(true)
-    // 'band' (Broadcasts) removed in Batch B — no longer in the registry
-    expect(s.enabled.roam).toBe(false) // niche QSY section — not in the starter bundle
+    // 'band' (Broadcasts) and 'roam' (now inside the Tempo cockpit) are no
+    // longer registry sections at all.
+    expect('roam' in s.enabled).toBe(false)
   })
 
   it('normalizeState repairs garbage to the default', () => {

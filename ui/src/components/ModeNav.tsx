@@ -9,7 +9,6 @@ import {
   MessageSquare,
   Tent,
   Trees,
-  ArrowLeftRight,
   BookOpen,
   Trophy,
   Zap,
@@ -32,13 +31,13 @@ interface Props {
   onSelect: (view: View) => void
   /** Live radio tier (FT1/DX1/FT8/FT4) — picks which Digital sub-item is active. */
   tier: Tier
-  /** Choose a Digital sub-mode: 'ft8'/'ft4' open the weak-signal cockpit on that
-   * tier; 'tempo' opens the FT1/DX1 free-text calling cockpit. */
+  /** Choose a Digital sub-mode: 'digital' opens the weak-signal cockpit on its
+   * last FT8/FT4 tier; 'tempo' opens the FT1/DX1 free-text calling cockpit. */
   onDigitalMode: (m: DigitalMode) => void
 }
 
-/** The three modes grouped under "Digital" in the rail. */
-export type DigitalMode = 'ft8' | 'ft4' | 'tempo'
+/** The two cockpits grouped under "Digital" in the rail. */
+export type DigitalMode = 'digital' | 'tempo'
 
 interface DigitalSub {
   mode: DigitalMode
@@ -49,33 +48,24 @@ interface DigitalSub {
   active: (view: View, tier: Tier) => boolean
 }
 
-// FT8, FT4 and Tempo (FT1/DX1) are all digital tiers — group them under one
-// "Digital" heading. FT8/FT4 share the weak-signal `operate` cockpit (distinguished
-// by tier); Tempo is the `chat` cockpit. The active highlight is view-first,
-// tier-second so a global view (e.g. Map) leaves none of them lit.
+// One "Digital" button for the weak-signal cockpit (the FT8/FT4 pick lives in
+// the top bar's tier pills — Fast · Robust · FT4 · FT8 — separate FT8/FT4 rail
+// icons were redundant, operator request) and Tempo for the FT1/DX1 free-text
+// cockpit. The active highlight is view-first so a global view (e.g. Map)
+// leaves none of them lit.
 const DIGITAL_SUBS: DigitalSub[] = [
   {
-    mode: 'ft8',
-    label: 'FT8',
+    mode: 'digital',
+    label: 'Digital',
     icon: Radio,
-    title: 'FT8 — standard WSJT-X weak-signal (15 s)',
-    // FT8 is the fallback: on the operate cockpit with any tier that isn't FT4 (incl.
-    // a transient FT1/DX1 before the async tier-set lands), FT8 stays lit — so the
-    // operate view always shows exactly one Digital sub active, never a dark group.
-    active: (v, t) => v === 'operate' && t !== 'FT4',
-  },
-  {
-    mode: 'ft4',
-    label: 'FT4',
-    icon: Radio,
-    title: 'FT4 — faster WSJT-X weak-signal (7.5 s)',
-    active: (v, t) => v === 'operate' && t === 'FT4',
+    title: 'Digital weak-signal cockpit — FT8 / FT4 (pick the tier in the top bar)',
+    active: (v) => v === 'operate',
   },
   {
     mode: 'tempo',
     label: 'Tempo',
     icon: MessageSquare,
-    title: 'Tempo — two-way free-text calling (FT1 / DX1)',
+    title: 'Tempo — two-way free-text calling (FT1 / DX1), with Roam (coordinated QSY) inside',
     active: (v) => v === 'chat',
   },
 ]
@@ -117,14 +107,8 @@ const ITEMS: Item[] = [
   { id: 'pota', label: 'POTA/SOTA', icon: Trees, title: 'POTA / SOTA — parks & summits: who\'s on now (hunt) + tag your activation' },
 ]
 
-// Roam rides WITH the Digital/Tempo cluster (it's Tempo's coordinated-QSY
-// companion), not down in the global list.
-const ROAM: Item = {
-  id: 'roam',
-  label: 'Roam',
-  icon: ArrowLeftRight,
-  title: 'Coordinated QSY — move together off QRM (announced in the clear; a Tempo feature)',
-}
+// Roam is no longer a rail section — it lives INSIDE the Tempo cockpit
+// (header chip + settings panel), per operator request.
 
 const MODE_LABEL: Record<OpMode, string> = {
   chat: 'CHAT',
@@ -160,8 +144,8 @@ export function ModeNav({ view, mode, enabled, onSelect, tier, onDigitalMode }: 
     <TooltipProvider>
       <nav className="mode-nav" aria-label="Operating mode">
         <div className="mode-nav-top">
-          {/* Operating group: Phone · Digital(FT8/FT4/Tempo) · CW. The duplicate
-              top FT8/FT4|Tempo pill row is gone — this is the single source. */}
+          {/* Operating group: Phone · Digital(Digital/Tempo) · CW. The FT8/FT4
+              pick lives in the top bar's tier pills, not here. */}
           {enabled.phone !== false && navBtn(PHONE)}
           <div className="mode-nav-group" role="group" aria-label="Digital modes">
             <span className="mode-nav-group-label">Digital</span>
@@ -186,7 +170,6 @@ export function ModeNav({ view, mode, enabled, onSelect, tier, onDigitalMode }: 
               )
             })}
           </div>
-          {enabled.roam !== false && navBtn(ROAM)}
           {enabled.cw !== false && navBtn(CW)}
           {/* Global situational/logging surfaces + opt-in extras. */}
           {items.map((it) => navBtn(it))}

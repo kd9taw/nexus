@@ -29,8 +29,9 @@ describe('profiles', () => {
     // 'band' (Broadcasts) was deleted in Batch B — no longer in the registry.
     expect(en.chat).toBe(true)
     expect(en.gamification).toBe(true)
-    // hidden for a newcomer — DX/contest console + the niche QSY section
-    expect(en.roam).toBe(false)
+    // hidden for a newcomer — the DX/contest console surfaces. (Roam is no
+    // longer a section — it lives inside the Tempo cockpit.)
+    expect('roam' in en).toBe(false)
     expect(en.awards).toBe(false)
     expect(en.dxped).toBe(false)
     expect(en.fieldDay).toBe(false)
