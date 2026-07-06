@@ -406,6 +406,14 @@ export function OperateDecodes({
                     </span>
                   )}
                   <RarityGem rarity={d.gridRarity} />
+                  {d.lotwUser && (
+                    <span
+                      className="lotw-mark"
+                      title={`Uploads to LoTW — a QSO with ${d.from ?? 'this station'} should confirm (ARRL activity list)`}
+                    >
+                      L
+                    </span>
+                  )}
                   {d.country && <span className="decode-country">{d.country}</span>}
                 </span>
                 {d.from && (

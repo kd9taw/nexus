@@ -61,6 +61,9 @@ struct OwnTx {
 }
 
 /// Drives transmit/receive against the modem and updates [`AppState`].
+/// Callsign → "actively uploads to LoTW" (clippy type_complexity extraction).
+type LotwResolver = Box<dyn Fn(&str) -> bool + Send + Sync>;
+
 pub struct Engine {
     pub app: AppState,
     settings: Settings,
@@ -157,6 +160,9 @@ pub struct Engine {
     /// [`Engine::set_dxcc_resolver`]. `None` in headless tests (gems stay off).
     #[allow(clippy::type_complexity)]
     grid_rarity_resolve: Option<Box<dyn Fn(&str) -> Option<u8> + Send + Sync>>,
+    /// Injected "is this call an active LoTW uploader" check (the shell owns the
+    /// ARRL user-activity file + recency window). Presentational only.
+    lotw_resolve: Option<LotwResolver>,
     /// Per-area tier memory: the structured tier (FT8/FT4) last used in the DX
     /// area and the chat tier (FT1/DX1) last used in MSG — so switching areas
     /// round-trips without losing the operator's pick (the "FT4 lost through
@@ -456,6 +462,7 @@ impl Engine {
             log_path: None,
             dxcc_resolve: None,
             grid_rarity_resolve: None,
+            lotw_resolve: None,
             last_dx_tier: None,
             last_msg_tier: None,
             work_tick: 0,
@@ -1369,6 +1376,22 @@ impl Engine {
         }
         let f = self.grid_rarity_resolve.as_ref()?;
         f(g).map(crate::dto::GridRarity::from_tier)
+    }
+
+    /// Inject the callsign → active-LoTW-uploader check (the shell backs it with
+    /// ARRL's lotw-user-activity.csv + the operator's recency window). Purely
+    /// presentational — decodes/roster gain their LoTW marks from the next snapshot.
+    pub fn set_lotw_resolver(&mut self, resolve: impl Fn(&str) -> bool + Send + Sync + 'static) {
+        self.lotw_resolve = Some(Box::new(resolve));
+    }
+
+    /// Whether a heard call uploads to LoTW (via the injected resolver); `false`
+    /// when unwired — the honest default is no highlight, never a guess.
+    fn lotw_user(&self, call: Option<&str>) -> bool {
+        let (Some(c), Some(f)) = (call, self.lotw_resolve.as_ref()) else {
+            return false;
+        };
+        !c.trim().is_empty() && f(c.trim())
     }
 
     /// Resolve a DXCC country for any logged record that lacks one (e.g. a log
@@ -3205,6 +3228,7 @@ impl Engine {
                 st.country = resolve(&st.call);
             }
             st.grid_rarity = self.rarity_of(st.grid.as_deref());
+            st.lotw_user = self.lotw_user(Some(st.call.as_str()));
         }
         // Reflect transmit-enable / tuning / watchdog and the DT-derived
         // time-sync health into the radio status the UI renders.
@@ -3340,6 +3364,7 @@ impl Engine {
                     .map(|e| !self.worked_entities.contains(e))
                     .unwrap_or(false);
                 DecodeRow {
+                    lotw_user: self.lotw_user(from.as_deref()),
                     from,
                     snr: d.snr,
                     dt_sec: d.dt,
@@ -3389,6 +3414,7 @@ impl Engine {
                 new_grid: false,
                 grid: None,
                 grid_rarity: None,
+                lotw_user: false, // own-TX rows never mark
                 rv: -1,
                 mine: true,
                 tx_at: Some(tx.when_unix),

@@ -498,6 +498,8 @@ export interface Station {
   tier?: Tier | null
   /** Geography-based rarity of the station's grid. */
   gridRarity?: GridRarity | null
+  /** Uploads to LoTW within the recency window (see DecodeRow.lotwUser). */
+  lotwUser?: boolean
 }
 
 export interface ChatMessage {
@@ -679,6 +681,9 @@ export interface DecodeRow {
   grid?: string | null
   /** Geography-based rarity of that grid (rare ones alert loudly). */
   gridRarity?: GridRarity | null
+  /** The sender uploads to LoTW within your recency window (Settings) — the
+   * "this contact will confirm" mark. False until the ARRL list is fetched. */
+  lotwUser?: boolean
   /** True if this row is OUR OWN transmitted message (yellow, one per cycle). */
   mine?: boolean
   /** For `mine` rows: Unix-second the message was transmitted — the stable
@@ -1482,6 +1487,9 @@ export interface Settings {
   /** Path-prediction engine: 'heuristic' (physics-lite default) or 'p533'
    * (native ITU-R P.533 — real circuit-reliability physics). */
   propEngine: string
+  /** LoTW-user highlight window (days; default 365) — calls with an ARRL
+   * activity-list upload within this window get the LoTW mark. */
+  lotwMaxAgeDays?: number
   /** Antenna gains (dBi) for the P.533 link budget — 0 = isotropic/wire.
    * Honest v1: plain dB adders, no pattern modelling; heuristic ignores them. */
   antTxGainDbi?: number

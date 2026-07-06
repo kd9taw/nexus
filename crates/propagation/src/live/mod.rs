@@ -11,6 +11,7 @@ pub mod dxped;
 pub mod eqsl;
 pub mod kc2g;
 pub mod lotw;
+pub mod lotw_users;
 pub mod pota;
 pub mod protons;
 pub mod pskreporter;

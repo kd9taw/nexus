@@ -68,6 +68,10 @@ pub struct Station {
     /// no rarity resolver is wired (headless tests).
     #[serde(default)]
     pub grid_rarity: Option<GridRarity>,
+    /// The station uploads to LoTW (within the operator's recency window) —
+    /// false when the user-activity file hasn't been fetched (honest default).
+    #[serde(default)]
+    pub lotw_user: bool,
 }
 
 /// A single decoded signal from the most recent RX slot, for the live decode
@@ -125,6 +129,11 @@ pub struct DecodeRow {
     /// while plain new-grids stay quiet. `None` when grid-less or unwired.
     #[serde(default)]
     pub grid_rarity: Option<GridRarity>,
+    /// The sender uploads to LoTW (within the operator's recency window) —
+    /// the award-chaser's "this contact will confirm" mark. False when the
+    /// user-activity file hasn't been fetched (honest default: no highlight).
+    #[serde(default)]
+    pub lotw_user: bool,
     /// True if this row is OUR OWN transmitted message (not a received decode) —
     /// the UI shows it highlighted (yellow) and one row per cycle, so the operator
     /// sees each of their calls. `snr`/`dt_sec` are 0 and `rv` is -1 for these.

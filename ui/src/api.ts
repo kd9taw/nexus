@@ -147,6 +147,22 @@ export async function getSatellites(): Promise<import('./types').SatView | null>
   return invoke<import('./types').SatView | null>('get_satellites')
 }
 
+export interface LotwUsersStatus {
+  count: number
+  fetchedAt: number
+}
+
+/** How many LoTW-user calls are loaded + when the ARRL list was last fetched. */
+export async function getLotwUsersStatus(): Promise<LotwUsersStatus> {
+  return invoke<LotwUsersStatus>('get_lotw_users_status')
+}
+
+/** Fetch/refresh ARRL's LoTW user-activity list (manual, WSJT-X-style; the
+ * file changes weekly and an unchanged file costs a 304, not 6 MB). */
+export async function fetchLotwUsers(): Promise<LotwUsersStatus> {
+  return invoke<LotwUsersStatus>('fetch_lotw_users')
+}
+
 /** The 60 s X-ray fast lane — the freshest GOES long-band flux, so a flare's
  * onset reaches the map + alert in ~1 min instead of the 5-min prop cadence. */
 export async function getXrayNow(): Promise<import('./types').XrayNow> {

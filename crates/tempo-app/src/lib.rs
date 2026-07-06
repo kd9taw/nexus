@@ -533,6 +533,7 @@ impl AppState {
             snr: h.snr,
             last_heard_slot: h.last_heard_slot,
             heard_count: h.heard_count,
+            lotw_user: false, // stamped by the engine snapshot loop (resolver lives there)
             presence,
             // Set by the engine from the logbook (worked-before); default false here.
             worked: false,

@@ -195,6 +195,11 @@ export function OperateRoster({
                       B4
                     </span>
                   )}
+                  {s.lotwUser && (
+                    <span className="lotw-mark" title="Uploads to LoTW — this contact should confirm">
+                      L
+                    </span>
+                  )}
                 </span>
                 <span className="or-country">{s.country ?? '—'}</span>
                 <span className="or-gridc">

@@ -28,6 +28,7 @@ import {
 import { pushToast, withErrorToast } from '../toast'
 import { loadProfiles, saveProfile, deleteProfile, type Profile } from '../profiles'
 import { getConnectionLog, getCredentialsStatus } from '../api'
+import { fetchLotwUsers, getLotwUsersStatus, type LotwUsersStatus } from '../api'
 import type { ConnEvent, CredStatus } from '../types'
 import { FrequencyControl } from './FrequencyControl'
 import { LevelMeter } from './LevelMeter'
@@ -212,6 +213,14 @@ export function SettingsPanel({
   // Connections visibility: stored-credential status + the rolling event log —
   // the answer to "I hit save and couldn't tell anything happened".
   const [creds, setCreds] = useState<CredStatus[]>([])
+  // ARRL LoTW user-activity list (the decode/roster LoTW marks).
+  const [lotwUsers, setLotwUsers] = useState<LotwUsersStatus | null>(null)
+  const [lotwFetching, setLotwFetching] = useState(false)
+  useEffect(() => {
+    getLotwUsersStatus()
+      .then(setLotwUsers)
+      .catch(() => {})
+  }, [])
   // "Saved" must not linger forever (it read as a stale artifact) — fade it out.
   // QRZ connection test: a real STATUS round-trip (validates the Logbook API
   // key without inserting anything). idle | testing | the result line.
@@ -2525,6 +2534,65 @@ export function SettingsPanel({
           {/* ---- Confirmations (LoTW / eQSL / QRZ / ClubLog accounts) ---- */}
           {tab === 'confirmations' && (
           <>
+          <fieldset className="settings-section">
+            <legend>LoTW users list</legend>
+            <div className="settings-field">
+              <div className="lotw-users-row">
+                <button
+                  type="button"
+                  className="settings-test-btn"
+                  disabled={lotwFetching}
+                  onClick={() => {
+                    setLotwFetching(true)
+                    fetchLotwUsers()
+                      .then((st) => {
+                        setLotwUsers(st)
+                        pushToast(
+                          `LoTW list loaded — ${st.count.toLocaleString()} calls`,
+                          'success',
+                          5000,
+                        )
+                      })
+                      .catch((e) =>
+                        pushToast(
+                          `LoTW list fetch failed: ${e instanceof Error ? e.message : e}`,
+                          'error',
+                        ),
+                      )
+                      .finally(() => setLotwFetching(false))
+                  }}
+                >
+                  {lotwFetching ? 'Fetching…' : 'Fetch now'}
+                </button>
+                <span className="settings-hint">
+                  {lotwUsers && lotwUsers.count > 0
+                    ? `${lotwUsers.count.toLocaleString()} calls · fetched ${new Date(lotwUsers.fetchedAt * 1000).toISOString().slice(0, 10)}`
+                    : 'Not fetched yet — decode lists gain an L mark on calls that upload to LoTW.'}
+                </span>
+              </div>
+              <label className="settings-label" htmlFor="lotw-max-age" style={{ marginTop: 8 }}>
+                Count as a LoTW user if uploaded within (days)
+              </label>
+              <input
+                id="lotw-max-age"
+                className="settings-input"
+                type="number"
+                min="30"
+                max="3650"
+                step="1"
+                style={{ width: '7em' }}
+                value={form.lotwMaxAgeDays ?? 365}
+                onChange={(e) => {
+                  const n = Number(e.target.value)
+                  if (!Number.isNaN(n)) updateNum('lotwMaxAgeDays', n)
+                }}
+              />
+              <span className="settings-hint">
+                ARRL's activity list updates weekly — refetching more often just returns
+                "unchanged". Manual fetch by design (WSJT-X convention).
+              </span>
+            </div>
+          </fieldset>
           <fieldset className="settings-section">
             <legend>Connections</legend>
             <div className="conn-status-grid">

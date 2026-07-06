@@ -222,6 +222,11 @@ pub struct Settings {
     /// the heuristic in the factory, so old configs can never break.
     #[serde(default = "default_prop_engine")]
     pub prop_engine: String,
+    /// LoTW-user highlight window (days): a decoded call marks as a LoTW
+    /// uploader only if ARRL's activity list shows an upload within this many
+    /// days (WSJT-X default: 365).
+    #[serde(default = "default_lotw_max_age_days")]
+    pub lotw_max_age_days: u32,
     /// Antenna gains (dBi) for the P.533 engine's link budget — TX and RX.
     /// 0 = isotropic (the honest default for a wire). Plain dB adders to the
     /// modelled signal; the heuristic engine ignores them.
@@ -471,6 +476,10 @@ fn default_tune_timeout() -> u32 {
     12
 }
 
+fn default_lotw_max_age_days() -> u32 {
+    365
+}
+
 fn default_prop_engine() -> String {
     "heuristic".to_string()
 }
@@ -617,6 +626,7 @@ impl Default for Settings {
             tx_level: 0.9,
             station_power_w: None,
             prop_engine: default_prop_engine(),
+            lotw_max_age_days: default_lotw_max_age_days(),
             ant_tx_gain_dbi: 0.0,
             ant_rx_gain_dbi: 0.0,
             journey_streak_enabled: false,

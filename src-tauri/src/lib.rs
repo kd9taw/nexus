@@ -1663,6 +1663,126 @@ fn get_declination(state: State<'_, SharedEngine>) -> Result<Option<f64>, String
     Ok(propagation::wmm::declination_for_grid(&mygrid, now_unix()))
 }
 
+/// ARRL LoTW user-activity data: call → last-upload unix. Feeds the injected
+/// engine resolver (decode/roster LoTW marks). Empty until the operator fetches
+/// (or a persisted copy loads at startup) — the honest default is no highlight.
+static LOTW_ACTIVITY: std::sync::LazyLock<std::sync::RwLock<std::collections::HashMap<String, i64>>> =
+    std::sync::LazyLock::new(Default::default);
+/// The operator's recency window (days), synced from settings; the resolver reads it.
+static LOTW_MAX_AGE_DAYS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(365);
+/// Unix time of the last successful fetch/refresh check (0 = never).
+static LOTW_FETCHED_AT: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+
+fn lotw_users_path() -> PathBuf {
+    settings_path()
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("lotw_users.csv")
+}
+
+fn lotw_users_meta_path() -> PathBuf {
+    settings_path()
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("lotw_users.meta.json")
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Default, Clone)]
+struct LotwUsersMeta {
+    etag: Option<String>,
+    last_modified: Option<String>,
+    fetched_at: i64,
+}
+
+/// The Settings row's status: how many calls are loaded + when last fetched.
+#[derive(serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct LotwUsersStatus {
+    count: usize,
+    fetched_at: i64,
+}
+
+fn lotw_status() -> LotwUsersStatus {
+    LotwUsersStatus {
+        count: LOTW_ACTIVITY.read().map(|m| m.len()).unwrap_or(0),
+        fetched_at: LOTW_FETCHED_AT.load(std::sync::atomic::Ordering::Relaxed),
+    }
+}
+
+#[tauri::command]
+fn get_lotw_users_status() -> LotwUsersStatus {
+    lotw_status()
+}
+
+/// Fetch/refresh ARRL's LoTW user-activity list (the Settings "Fetch now"
+/// button — manual by design, mirroring WSJT-X; the file changes weekly).
+/// Conditional GET: an unchanged file costs a 304, not 6 MB. On success the
+/// CSV + validators persist beside settings so restarts load instantly.
+#[tauri::command]
+async fn fetch_lotw_users() -> Result<LotwUsersStatus, String> {
+    use propagation::live::lotw_users::{fetch_user_activity, parse_user_activity, LotwUsersFetch};
+    let meta: LotwUsersMeta = std::fs::read_to_string(lotw_users_meta_path())
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+    // Only send validators when we actually HOLD the data — otherwise a
+    // surviving meta.json with a deleted/corrupt CSV earns a 304 that can
+    // never repopulate the empty list (review catch).
+    let have_data = LOTW_ACTIVITY.read().map(|m| !m.is_empty()).unwrap_or(false);
+    let (etag, last_modified) = if have_data {
+        (meta.etag.clone(), meta.last_modified.clone())
+    } else {
+        (None, None)
+    };
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        fetch_user_activity(etag.as_deref(), last_modified.as_deref())
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    let now = now_unix();
+    match result {
+        LotwUsersFetch::NotModified => {
+            LOTW_FETCHED_AT.store(now, std::sync::atomic::Ordering::Relaxed);
+            let _ = std::fs::write(
+                lotw_users_meta_path(),
+                serde_json::to_string(&LotwUsersMeta {
+                    fetched_at: now,
+                    ..meta
+                })
+                .unwrap_or_default(),
+            );
+            Ok(lotw_status())
+        }
+        LotwUsersFetch::Fresh {
+            csv,
+            etag,
+            last_modified,
+        } => {
+            let map = parse_user_activity(&csv);
+            if map.is_empty() {
+                return Err("LoTW list downloaded but parsed to zero calls".to_string());
+            }
+            let _ = std::fs::write(lotw_users_path(), &csv);
+            let _ = std::fs::write(
+                lotw_users_meta_path(),
+                serde_json::to_string(&LotwUsersMeta {
+                    etag,
+                    last_modified,
+                    fetched_at: now,
+                })
+                .unwrap_or_default(),
+            );
+            if let Ok(mut g) = LOTW_ACTIVITY.write() {
+                *g = map;
+            }
+            LOTW_FETCHED_AT.store(now, std::sync::atomic::Ordering::Relaxed);
+            Ok(lotw_status())
+        }
+    }
+}
+
 /// Where fetched TLEs persist (beside settings.json): day-scale orbital elements,
 /// so surviving a restart matters more than freshness-to-the-minute.
 fn tles_path() -> PathBuf {
@@ -2055,6 +2175,11 @@ fn set_settings(
     // empty), so clearing the node list to go RBN-only actually sticks — otherwise `load`'s
     // upgrade seed would re-inject the stale legacy host on the next launch.
     settings.cluster_host = settings.cluster_hosts.first().cloned().unwrap_or_default();
+    // The LoTW-mark resolver reads its recency window from this atomic.
+    LOTW_MAX_AGE_DAYS.store(
+        settings.lotw_max_age_days,
+        std::sync::atomic::Ordering::Relaxed,
+    );
     // Capture the feed config before `settings` moves into the engine.
     let cluster_enabled = settings.cluster_enabled;
     let cluster_hosts = settings.cluster_hosts.clone();
@@ -5631,6 +5756,34 @@ pub fn run() {
             }
         }
         eng.set_grid_rarity_resolver(propagation::gridrarity::effective_tier_u8);
+        // LoTW-user marks: restore the persisted ARRL activity list (if the
+        // operator ever fetched it) and wire the recency-windowed resolver.
+        if let Ok(csv) = std::fs::read_to_string(lotw_users_path()) {
+            let map = propagation::live::lotw_users::parse_user_activity(&csv);
+            if !map.is_empty() {
+                if let Ok(meta) = std::fs::read_to_string(lotw_users_meta_path()) {
+                    if let Ok(m) = serde_json::from_str::<LotwUsersMeta>(&meta) {
+                        LOTW_FETCHED_AT.store(m.fetched_at, std::sync::atomic::Ordering::Relaxed);
+                    }
+                }
+                if let Ok(mut g) = LOTW_ACTIVITY.write() {
+                    *g = map;
+                }
+            }
+        }
+        LOTW_MAX_AGE_DAYS.store(
+            eng.settings().lotw_max_age_days,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        eng.set_lotw_resolver(|call| {
+            let max_secs =
+                LOTW_MAX_AGE_DAYS.load(std::sync::atomic::Ordering::Relaxed) as i64 * 86_400;
+            LOTW_ACTIVITY
+                .read()
+                .ok()
+                .and_then(|m| m.get(&call.to_uppercase()).copied())
+                .is_some_and(|t| now_unix() - t <= max_secs)
+        });
         eng.set_log_path(logbook_path());
         // Restore persisted Tempo conversation threads so chat history (and the `*`
         // band feed) survives an app restart. Best-effort: a missing/corrupt file
@@ -5913,6 +6066,8 @@ pub fn run() {
             get_pca,
             get_declination,
             get_satellites,
+            get_lotw_users_status,
+            fetch_lotw_users,
             get_kc2g_muf,
             get_space_wx_scales,
             get_xray_now,
