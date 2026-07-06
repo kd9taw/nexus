@@ -18,6 +18,31 @@ pub enum Presence {
     Stale,
 }
 
+/// Geography-based rarity of a Maidenhead grid square. Mirrors
+/// `propagation::gridrarity::GridRarity` (identical serde strings) — tempo-app
+/// has no propagation dependency, so the tier arrives through the injected
+/// resolver closure as 0–3 and is mapped here (like the DXCC resolver pattern).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum GridRarity {
+    Common,
+    Uncommon,
+    Rare,
+    UltraRare,
+}
+
+impl GridRarity {
+    /// Map the injected resolver's raw 0–3 tier.
+    pub fn from_tier(t: u8) -> Self {
+        match t {
+            3 => GridRarity::UltraRare,
+            2 => GridRarity::Rare,
+            1 => GridRarity::Uncommon,
+            _ => GridRarity::Common,
+        }
+    }
+}
+
 /// A station in the roster / presence list.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -39,6 +64,10 @@ pub struct Station {
     /// shows all.
     #[serde(default)]
     pub tier: Option<Tier>,
+    /// Geography-based rarity of the station's grid. `None` when grid-less or
+    /// no rarity resolver is wired (headless tests).
+    #[serde(default)]
+    pub grid_rarity: Option<GridRarity>,
 }
 
 /// A single decoded signal from the most recent RX slot, for the live decode
@@ -89,6 +118,13 @@ pub struct DecodeRow {
     /// True if the decode carries a Maidenhead grid never worked before.
     #[serde(default)]
     pub new_grid: bool,
+    /// The grid the decode carried (CQ/grid messages), for alert copy + rarity.
+    #[serde(default)]
+    pub grid: Option<String>,
+    /// Geography-based rarity of that grid — lets the rare ones alert loudly
+    /// while plain new-grids stay quiet. `None` when grid-less or unwired.
+    #[serde(default)]
+    pub grid_rarity: Option<GridRarity>,
     /// True if this row is OUR OWN transmitted message (not a received decode) —
     /// the UI shows it highlighted (yellow) and one row per cycle, so the operator
     /// sees each of their calls. `snr`/`dt_sec` are 0 and `rv` is -1 for these.

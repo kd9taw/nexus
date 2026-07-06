@@ -1,5 +1,6 @@
 import type { NeedTag, Station } from '../types'
 import { bearingLabel, distanceLabel } from '../grid'
+import { RarityGem } from './RarityGem'
 
 interface Props {
   station: Station
@@ -78,6 +79,7 @@ export function StationCard({
             {station.country && <span className="station-country">{station.country}</span>}
             {station.country && ' · '}
             {station.grid ?? '—'}
+            <RarityGem rarity={station.gridRarity} />
             {dist && <span className="station-dist"> · {dist}</span>}
             {bearing && <span className="station-bearing"> · {bearing}</span>}
             <span className="station-heard"> · {lastHeardLabel(station.lastHeardSlot, currentSlot)}</span>

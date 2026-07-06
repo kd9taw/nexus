@@ -149,6 +149,14 @@ function loadProjection(): Projection | null {
   }
 }
 
+/** Grid-rarity → the dashed halo color (matches the .rarity-gem palette), or
+ * null for tiers too common to decorate. */
+function rarityRing(r: import('../types').GridRarity | null | undefined): string | null {
+  if (r === 'ultraRare') return '#c084fc' // violet — water-only grid
+  if (r === 'rare') return '#f5a524' // amber — islet/sliver grid
+  return null
+}
+
 /** Need tier → a dot color (matches the decode/roster palette). `null` = no
  * specific need (fall back to worked/SNR coloring). */
 function needColor(tag: NeedTag | undefined): string | null {
@@ -872,6 +880,18 @@ export function MapView({
           ctx.lineWidth = 1
           ctx.stroke()
         }
+        // Rarity ring: a station transmitting FROM a rare/water grid is a
+        // hunting moment — the dashed halo makes it pop out of the firehose.
+        const rar = rarityRing(sp.gridRarity)
+        if (rar) {
+          ctx.beginPath()
+          ctx.setLineDash([2, 2])
+          ctx.arc(p[0], p[1], 5.5, 0, Math.PI * 2)
+          ctx.strokeStyle = rar
+          ctx.lineWidth = 1.2
+          ctx.stroke()
+          ctx.setLineDash([])
+        }
       }
       ctx.globalAlpha = 1
     }
@@ -952,6 +972,18 @@ export function MapView({
           // callsign label
           ctx.fillStyle = isSel ? cssVar('--accent') : fill
           ctx.fillText(s.call, xy[0] + r + 4, xy[1])
+        }
+        // Rarity ring — a second dashed halo (outside the need ring) for a
+        // station in a rare/water-only grid, whatever the color-by mode.
+        const rar = rarityRing(s.gridRarity)
+        if (rar) {
+          ctx.beginPath()
+          ctx.setLineDash([2, 2])
+          ctx.arc(xy[0], xy[1], r + (ringed ? 5 : 2.5), 0, Math.PI * 2)
+          ctx.strokeStyle = rar
+          ctx.lineWidth = 1.2
+          ctx.stroke()
+          ctx.setLineDash([])
         }
       }
       ctx.globalAlpha = 1

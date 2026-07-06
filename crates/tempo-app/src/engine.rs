@@ -152,6 +152,11 @@ pub struct Engine {
     /// (new-DXCC highlighting simply stays off). See [`Engine::set_dxcc_resolver`].
     #[allow(clippy::type_complexity)]
     dxcc_resolve: Option<Box<dyn Fn(&str) -> Option<String> + Send + Sync>>,
+    /// Grid → rarity tier (0–3) resolver, injected by the command layer (which
+    /// owns the geography table in the propagation crate) — same pattern as
+    /// [`Engine::set_dxcc_resolver`]. `None` in headless tests (gems stay off).
+    #[allow(clippy::type_complexity)]
+    grid_rarity_resolve: Option<Box<dyn Fn(&str) -> Option<u8> + Send + Sync>>,
     /// DXCC entities already worked (from the logbook) — for new-entity decode
     /// highlighting. Rebuilt on log load + each log mutation.
     worked_entities: HashSet<String>,
@@ -433,6 +438,7 @@ impl Engine {
             logbook: Logbook::new(),
             log_path: None,
             dxcc_resolve: None,
+            grid_rarity_resolve: None,
             worked_entities: HashSet::new(),
             worked_grids: HashSet::new(),
             worked_parks: HashSet::new(),
@@ -1279,6 +1285,27 @@ impl Engine {
         self.dxcc_resolve = Some(Box::new(resolve));
         self.backfill_country();
         self.refresh_worked_index();
+    }
+
+    /// Inject the grid → rarity-tier (0–3) resolver (the command layer passes a
+    /// `propagation::gridrarity::tier_u8`-backed closure). Purely presentational
+    /// — decodes/roster gain their rarity gems from the next snapshot.
+    pub fn set_grid_rarity_resolver(
+        &mut self,
+        resolve: impl Fn(&str) -> Option<u8> + Send + Sync + 'static,
+    ) {
+        self.grid_rarity_resolve = Some(Box::new(resolve));
+    }
+
+    /// Rarity of a heard grid via the injected resolver; `None` when unwired,
+    /// grid-less, or invalid.
+    fn rarity_of(&self, grid: Option<&str>) -> Option<crate::dto::GridRarity> {
+        let g = grid?.trim();
+        if g.is_empty() {
+            return None;
+        }
+        let f = self.grid_rarity_resolve.as_ref()?;
+        f(g).map(crate::dto::GridRarity::from_tier)
     }
 
     /// Resolve a DXCC country for any logged record that lacks one (e.g. a log
@@ -3095,6 +3122,7 @@ impl Engine {
             if let Some(resolve) = &self.dxcc_resolve {
                 st.country = resolve(&st.call);
             }
+            st.grid_rarity = self.rarity_of(st.grid.as_deref());
         }
         // Reflect transmit-enable / tuning / watchdog and the DT-derived
         // time-sync health into the radio status the UI renders.
@@ -3239,6 +3267,8 @@ impl Engine {
                     country: entity,
                     new_dxcc,
                     new_grid,
+                    grid: grid.filter(|g| !g.is_empty()).map(str::to_string),
+                    grid_rarity: self.rarity_of(grid),
                     // WSJT-X decode markers: trailing 'a' = AP-assisted decode,
                     // '?' = low-confidence (qual below the stock 0.17 line).
                     ap: d.nap > 0,
@@ -3273,6 +3303,8 @@ impl Engine {
                 country: None,
                 new_dxcc: false,
                 new_grid: false,
+                grid: None,
+                grid_rarity: None,
                 rv: -1,
                 mine: true,
                 tx_at: Some(tx.when_unix),
@@ -5432,6 +5464,42 @@ mod tests {
         // Parity derives from the ANSWERED decode's slot (5 → odd ingest → their
         // audio slot 4/even → we TX on odd), not from the unrelated slot-9 decode.
         assert!(!e.tx_even(), "TX parity opposite the CALLER's period");
+    }
+
+    #[test]
+    fn grid_rarity_resolver_stamps_decodes_and_roster() {
+        let mut e = Engine::new("W9XYZ", "EN37", 0);
+        // Fake resolver: water-world — every grid is ultra-rare (tier 3).
+        e.set_grid_rarity_resolver(|_g| Some(3));
+        e.ingest_decodes_for_test(&[dec_snr("CQ K1ABC FN42", -5)], 1);
+        let s = e.snapshot();
+        let row = s
+            .recent_decodes
+            .iter()
+            .find(|d| d.from.as_deref() == Some("K1ABC"))
+            .expect("decode row");
+        assert_eq!(row.grid.as_deref(), Some("FN42"));
+        assert_eq!(row.grid_rarity, Some(crate::dto::GridRarity::UltraRare));
+        let st = s
+            .stations
+            .iter()
+            .find(|s| s.call == "K1ABC")
+            .expect("roster");
+        assert_eq!(st.grid_rarity, Some(crate::dto::GridRarity::UltraRare));
+    }
+
+    #[test]
+    fn no_rarity_resolver_means_no_gems() {
+        let mut e = Engine::new("W9XYZ", "EN37", 0);
+        e.ingest_decodes_for_test(&[dec_snr("CQ K1ABC FN42", -5)], 1);
+        let s = e.snapshot();
+        let row = s
+            .recent_decodes
+            .iter()
+            .find(|d| d.from.as_deref() == Some("K1ABC"))
+            .unwrap();
+        assert_eq!(row.grid_rarity, None);
+        assert_eq!(row.grid.as_deref(), Some("FN42"), "grid still carried");
     }
 
     #[test]

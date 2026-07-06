@@ -118,15 +118,23 @@ export function processDecodes(
     else if (settings.alertCq && d.isCq) kind = 'cq'
     if (!kind) continue
 
+    // Rarity escalation: a NEEDED rare/water-only grid is a hunting moment and
+    // earns the loudness plain new-grids gave up (the "too chatty" fix).
+    const rareGrid =
+      kind === 'newgrid' && (d.gridRarity === 'rare' || d.gridRarity === 'ultraRare')
+
     // Dedup scope per kind: a new DXCC alerts once per ENTITY (not again as the
     // same station's message evolves through the QSO), a new grid once per
-    // station; mycall/cq dedup on the exact decode (they may legitimately repeat
-    // as the exchange advances).
+    // station — except a RARE grid, which dedups once per GRID (a second rover
+    // in the same water grid isn't a second event); mycall/cq dedup on the
+    // exact decode (they may legitimately repeat as the exchange advances).
     const key =
       kind === 'newdxcc'
         ? `dxcc:${d.country ?? d.from ?? '?'}`
         : kind === 'newgrid'
-          ? `grid:${d.from ?? '?'}`
+          ? rareGrid && d.grid
+            ? `rgrid:${d.grid.toUpperCase()}`
+            : `grid:${d.from ?? '?'}`
           : `${kind}:${decodeKey(d)}`
     if (alertedDecodes.has(key)) continue
     alertedDecodes.add(key)
@@ -160,10 +168,22 @@ export function processDecodes(
         actionLabel: 'Answer',
       })
     } else if (kind === 'newgrid') {
-      pushToast(`New grid: ${who}${where}`, 'info', 6000, {
-        action: workAction,
-        actionLabel: 'Work',
-      })
+      if (rareGrid) {
+        // The gem earns its keep: rare = islet/sliver, ultra = water-only
+        // (rover/maritime/DXpedition) — aggressive like a new one.
+        const tier = d.gridRarity === 'ultraRare' ? 'ULTRA-RARE' : 'RARE'
+        doubleBeep(BEEP_HZ.newgrid)
+        pushToast(`💎 ${tier} grid${d.grid ? ` ${d.grid}` : ''}: ${who}${where}`, 'success', 15000, {
+          prominent: true,
+          action: workAction,
+          actionLabel: 'Work',
+        })
+      } else {
+        pushToast(`New grid: ${who}${where}`, 'info', 6000, {
+          action: workAction,
+          actionLabel: 'Work',
+        })
+      }
     } else {
       pushToast(`CQ from ${who}${where}`, 'info', 6000, {
         action: workAction,

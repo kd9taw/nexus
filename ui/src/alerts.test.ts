@@ -86,7 +86,7 @@ describe('processDecodes QSO-aware quieting', () => {
   })
 
   it('new-grid alerts are quiet: info toast, short, not prominent', () => {
-    processDecodes([decode({ from: 'K7XYZ', newGrid: true })], settings, undefined, {
+    processDecodes([decode({ from: 'K7XYZ', newGrid: true, gridRarity: 'common' })], settings, undefined, {
       state: 'Listening',
       dxcall: null,
     })
@@ -96,5 +96,37 @@ describe('processDecodes QSO-aware quieting', () => {
     expect(kind).toBe('info')
     expect(ttl).toBe(6000)
     expect((opts as { prominent?: boolean } | undefined)?.prominent).toBeUndefined()
+  })
+
+  it('a RARE needed grid earns the loud prominent alert', () => {
+    processDecodes(
+      [decode({ from: 'K7XYZ/MM', newGrid: true, grid: 'RR73', gridRarity: 'ultraRare' })],
+      settings,
+      undefined,
+      { state: 'Listening', dxcall: null },
+    )
+    expect(toasts).toHaveBeenCalledTimes(1)
+    const [msg, kind, , opts] = toasts.mock.calls[0]
+    expect(msg).toContain('ULTRA-RARE grid RR73')
+    expect(kind).toBe('success')
+    expect(opts).toMatchObject({ prominent: true, actionLabel: 'Work' })
+  })
+
+  it('rare-grid alerts dedup per GRID, not per station', () => {
+    const ctx = { state: 'Listening', dxcall: null }
+    processDecodes(
+      [decode({ from: 'K7AAA', newGrid: true, grid: 'JJ00', gridRarity: 'ultraRare' })],
+      settings,
+      undefined,
+      ctx,
+    )
+    // A second rover in the SAME water grid isn't a second event.
+    processDecodes(
+      [decode({ from: 'W1BBB', newGrid: true, grid: 'JJ00', gridRarity: 'ultraRare' })],
+      settings,
+      undefined,
+      ctx,
+    )
+    expect(toasts).toHaveBeenCalledTimes(1)
   })
 })

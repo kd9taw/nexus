@@ -7,6 +7,7 @@ import { STATUS, type StatusMeta } from './statusMeta'
 import type {
   ActivityTier,
   BandModeled,
+  GridRarity,
   Insight,
   InsightLevel,
   NeedKind,
@@ -55,6 +56,33 @@ const NEED_ROLE: Record<NeedKind, keyof typeof STATUS> = {
 /** Need tier → its color token + glyph + label (from the one statusMeta source). */
 export function needMeta(need: NeedKind): StatusMeta {
   return STATUS[NEED_ROLE[need]]
+}
+
+/** A rarity gem's rendering, or null for tiers too common to decorate
+ * (common/uncommon stay chipless — the board must not become confetti).
+ * Tooltips are the explainability rule: rarity must never feel arbitrary. */
+export function rarityMeta(
+  r: GridRarity | null | undefined,
+): { glyph: string; label: string; cls: string; title: string } | null {
+  switch (r) {
+    case 'rare':
+      return {
+        glyph: '◆',
+        label: 'RARE',
+        cls: 'rare',
+        title: 'Rare grid — almost no land (small island or coastal sliver)',
+      }
+    case 'ultraRare':
+      return {
+        glyph: '◆◆',
+        label: 'ULTRA',
+        cls: 'ultra',
+        title:
+          'Ultra-rare grid — open water: only rovers, maritime mobiles, or DXpeditions can activate it',
+      }
+    default:
+      return null
+  }
 }
 
 /** Likelihood score (0..1) → an `rgb(...)` fill from the perceptual inferno LUT. */

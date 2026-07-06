@@ -13,6 +13,7 @@ import {
 } from '../decodeHistory'
 import { gridFromMessage, isIgnored } from '../txMessages'
 import { StateBlock } from './StateBlock'
+import { RarityGem } from './RarityGem'
 
 /** JTAlert UDP highlight entry — bg/fg may be null/missing. */
 export interface HighlightEntry {
@@ -404,6 +405,7 @@ export function OperateDecodes({
                       HARQ·RV{d.rv}
                     </span>
                   )}
+                  <RarityGem rarity={d.gridRarity} />
                   {d.country && <span className="decode-country">{d.country}</span>}
                 </span>
                 {d.from && (

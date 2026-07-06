@@ -3420,6 +3420,22 @@ select optgroup {
   padding: 1px 6px;
 }
 
+/* Grid-rarity gem — ◆ rare (amber) / ◆◆ ultra-rare water-only (violet), beside
+   calls/grids in the decode feed, rosters, and Needed board. Deliberately NOT
+   the need palette: rarity is a property of the grid, not of your log. */
+.rarity-gem {
+  margin-left: var(--space-1);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  vertical-align: middle;
+}
+.rarity-gem.rare {
+  color: #f5a524; /* amber — islet / coastal sliver */
+}
+.rarity-gem.ultra {
+  color: #c084fc; /* violet — open water: rover/maritime/DXpedition-only */
+}
+
 /* Award-need badge on a roster card — what's worth working about this station.
    Tiers descend NEW(entity) > ZONE > BAND > MODE > CFM. */
 /* Shared "needed" palette — one bold color language across the roster, decode

@@ -538,6 +538,8 @@ impl AppState {
             // Resolved by the engine from the DXCC resolver; None at this layer.
             country: None,
             tier: h.mode.map(Tier::from_mode_kind),
+            // Stamped by the engine from the grid-rarity resolver; None here.
+            grid_rarity: None,
         }
     }
 

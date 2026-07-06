@@ -15,6 +15,7 @@ import {
   mufCeilingBand,
   dualStateLabel,
   bandTiming,
+  rarityMeta,
 } from './propViz'
 import type { Insight } from './types'
 
@@ -130,5 +131,20 @@ describe('bandTiming', () => {
   it('is empty when the band never clears Fair, or hourly is missing', () => {
     expect(bandTiming(arr({ 12: 0.2 }), noon)).toBe('')
     expect(bandTiming([0.9], noon)).toBe('')
+  })
+})
+
+describe('rarityMeta', () => {
+  it('decorates only rare and ultra-rare tiers', () => {
+    expect(rarityMeta('common')).toBeNull()
+    expect(rarityMeta('uncommon')).toBeNull()
+    expect(rarityMeta(null)).toBeNull()
+    expect(rarityMeta(undefined)).toBeNull()
+    expect(rarityMeta('rare')).toMatchObject({ glyph: '◆', cls: 'rare' })
+    expect(rarityMeta('ultraRare')).toMatchObject({ glyph: '◆◆', cls: 'ultra' })
+  })
+  it('every gem explains itself (tooltip present)', () => {
+    expect(rarityMeta('rare')!.title).toMatch(/island|land/)
+    expect(rarityMeta('ultraRare')!.title).toMatch(/open water|rover/i)
   })
 })

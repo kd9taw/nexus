@@ -23,6 +23,7 @@ pub mod dxped;
 pub mod engine;
 pub mod geo;
 pub mod gettingout;
+pub mod gridrarity;
 pub mod insight;
 pub mod journey;
 pub mod kc2g;
@@ -57,6 +58,7 @@ pub use engine::{
     SpaceWxView, OPENING_BANDS,
 };
 pub use gettingout::{getting_out, GettingOut, HeardMe};
+pub use gridrarity::{grid_rarity, GridRarity};
 pub use insight::{generate_insights, Insight, InsightKind, InsightLevel};
 pub use journey::{
     compute as compute_journey, Cell as JourneyCell, Collection as JourneyCollection, Feat, First,

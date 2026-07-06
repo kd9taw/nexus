@@ -19,6 +19,7 @@ import {
 } from '../neededFilters'
 import { pointRotator, readRotator } from '../api'
 import { pushToast } from '../toast'
+import { RarityGem } from './RarityGem'
 
 const NEED_CHIP: Record<NeedTag, { label: string; cls: string; title: string }> = {
   NewEntity: { label: 'NEW ONE', cls: 'entity', title: 'All-time-new DXCC entity (ATNO)' },
@@ -516,6 +517,7 @@ export function NeededPanel({
                 </span>
                 <span className="np-call">
                   {a.call}
+                  <RarityGem rarity={a.gridRarity} />
                   {onPoint && (
                     <button
                       type="button"

@@ -87,6 +87,11 @@ implementation. Files + full provenance note:
 itself (`crates/propagation/src/p533/`) is an original Rust implementation of
 the published Recommendation methods; no ITU code is included.
 
+### Natural Earth geography (grid-rarity table)
+`crates/propagation/data/grid_rarity.bin` (8.1 KB) is derived from the
+Natural Earth 1:10m land polygons (via the `world-atlas` package), which are
+**public domain**. Regenerate with `scripts/gen-grid-rarity.mjs`.
+
 ---
 
 ## Linked native libraries

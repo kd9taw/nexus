@@ -5064,6 +5064,8 @@ pub fn run() {
         eng.set_dxcc_resolver(|call| {
             propagation::dxcc::resolve(call).map(|i| i.entity.to_string())
         });
+        // Grid-rarity gems (geography table lives in the propagation crate).
+        eng.set_grid_rarity_resolver(propagation::gridrarity::tier_u8);
         eng.set_log_path(logbook_path());
         // Restore persisted Tempo conversation threads so chat history (and the `*`
         // band feed) survives an app restart. Best-effort: a missing/corrupt file

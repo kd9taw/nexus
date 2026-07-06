@@ -90,6 +90,11 @@ export interface BandReport {
 /** Coarse modeled band openness (collapses the engine's 5-bucket workability). */
 export type BandModeled = 'Open' | 'Marginal' | 'Closed'
 
+/** Geography-based rarity of a Maidenhead grid square (Natural Earth-derived):
+ * ultraRare = open water (rover/maritime/DXpedition-only), rare = islet/sliver,
+ * uncommon = mostly water or polar wilderness. */
+export type GridRarity = 'common' | 'uncommon' | 'rare' | 'ultraRare'
+
 /** Direction of a space-weather quantity's recent change. */
 export type TrendDir = 'rising' | 'steady' | 'falling'
 
@@ -341,6 +346,8 @@ export interface MapSpot {
   mode?: string | null
   /** DXCC entity name (cty.dat) — the selected-spot card's "who/where". */
   entity?: string | null
+  /** Rarity of the station's grid — only for spots placed by a real grid. */
+  gridRarity?: GridRarity | null
   /** CQ zone from the same resolution. */
   cqZone?: number | null
 }
@@ -439,6 +446,8 @@ export interface Station {
   /** Tier/protocol last heard on — 'FT1' = Tempo, 'FT8'/'FT4' = digital ops. The Tempo
    * roster shows only Tempo (FT1) stations; Operate shows all. */
   tier?: Tier | null
+  /** Geography-based rarity of the station's grid. */
+  gridRarity?: GridRarity | null
 }
 
 export interface ChatMessage {
@@ -611,6 +620,10 @@ export interface DecodeRow {
   newDxcc?: boolean
   /** Decode carries a Maidenhead grid never worked before. */
   newGrid?: boolean
+  /** The grid the decode carried (CQ/grid messages) — for alert copy + rarity. */
+  grid?: string | null
+  /** Geography-based rarity of that grid (rare ones alert loudly). */
+  gridRarity?: GridRarity | null
   /** True if this row is OUR OWN transmitted message (yellow, one per cycle). */
   mine?: boolean
   /** For `mine` rows: Unix-second the message was transmitted — the stable
@@ -895,6 +908,9 @@ export interface NeedAlert {
   admittedAt?: number | null
   /** The board shows its work: "heard by K9LC (EN52, 26 km) + N9CO (62 km)". */
   evidence?: string | null
+  /** Geography-based rarity of the heard grid (when the source carried one) —
+   * drives the gem + a NewGrid priority boost. */
+  gridRarity?: GridRarity | null
 }
 
 /** One raw cluster/RBN spot for the Spots panel (the SpotCollector-style firehose).

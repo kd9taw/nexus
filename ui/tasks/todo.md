@@ -31,3 +31,20 @@
 - Logbook is a distinct ADIF view (📖) separate from the Field Log (📋); manual Log QSO form posts logQso.
 - Mock rolls a fresh decode each RX slot (~45%) incl. new/CQ/directed rows so the feed + alerts are alive.
 - Build: CSS 32.7 -> 36.6 kB; JS 206.2 -> 222.2 kB (68.5 kB gz).
+
+## Grid rarity (approved 2026-07-05, geography-based)
+- [x] scripts/gen-grid-rarity.mjs — scanline rasterizer over Natural Earth
+      land-10m (first spherical-PIP attempt was hours; scanline is 0.3s);
+      Null Island debug polygon filtered; islet prepass; 7/7 anchors PASS
+      (RR73 really is an all-water Arctic grid). Table: 8.1KB, 63% ultraRare.
+- [x] propagation gridrarity.rs (include_bytes + bit math) + NeedAlert.grid_rarity
+      + NewGrid priority boost (+15 rare / +30 ultra) + MapSpot.grid_rarity
+      (None for centroid spots) + NOTICE Natural Earth entry + 7 tests
+- [x] tempo-app: dto GridRarity enum + DecodeRow.grid/grid_rarity +
+      Station.grid_rarity; engine set_grid_rarity_resolver (injection, mirrors
+      dxcc) + stamps; src-tauri wiring; 2 engine tests
+- [x] UI: rarityMeta + RarityGem (◆ amber / ◆◆ violet, explainable tooltips) in
+      decode feed/roster/StationCard/Needed board; MapView dashed rarity rings
+      (stations + spots); alerts.ts 💎 escalation (rare needed grid = loud,
+      dedup per GRID) + tests. 350 cargo + 342 UI tests green.
+- [ ] review workflow → commit → cross-build → installer deploy

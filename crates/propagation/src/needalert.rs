@@ -119,6 +119,10 @@ pub struct NeedAlert {
     pub admitted_at: Option<i64>,
     /// "heard by K9LC (EN52, 26 km) + N9CO (62 km)" / "spotted by K9IMM via RBN".
     pub evidence: Option<String>,
+    /// Geography-based rarity of the heard station's grid, when the source
+    /// carried one — drives the board's gem + a NewGrid priority boost.
+    #[serde(default)]
+    pub grid_rarity: Option<crate::gridrarity::GridRarity>,
 }
 
 /// Build a [`Heard`] from a spot frequency (MHz) — maps the frequency to a band
@@ -191,7 +195,20 @@ pub fn score(
         return None;
     }
     tags.sort_by_key(|t| std::cmp::Reverse(t.tier()));
-    let priority = tags[0].tier();
+    // Rarity spice: a NEEDED rare grid outranks plain grid/band needs — an
+    // ultra-rare (water-only, rover/maritime) needed grid lands between
+    // NewZone (70) and NewEntity (100). Rarity alone never creates an alert.
+    let rarity = g4.as_deref().and_then(crate::gridrarity::grid_rarity);
+    let rarity_boost = if tags.contains(&NeedTag::NewGrid) {
+        match rarity {
+            Some(crate::gridrarity::GridRarity::UltraRare) => 30,
+            Some(crate::gridrarity::GridRarity::Rare) => 15,
+            _ => 0,
+        }
+    } else {
+        0
+    };
+    let priority = tags[0].tier() + rarity_boost;
     let headline = match tags[0] {
         NeedTag::NewEntity => format!("New one — {}", info.entity),
         NeedTag::NewZone => format!("New CQ zone {} — {}", info.cq_zone, info.entity),
@@ -230,6 +247,7 @@ pub fn score(
         // frequency from the Heard (score is frequency-agnostic award logic).
         mode: ModeClass::from_adif(mode).label().to_string(),
         freq_mhz: None,
+        grid_rarity: rarity,
     })
 }
 
@@ -349,6 +367,10 @@ pub fn activation_alert(
         freq_mhz: None,
         admitted_at: None,
         evidence: None,
+        grid_rarity: spot
+            .grid
+            .as_deref()
+            .and_then(crate::gridrarity::grid_rarity),
     });
     if !alert.tags.contains(&program_tag) {
         alert.tags.push(program_tag);
@@ -1058,6 +1080,65 @@ mod tests {
         assert!(a.tags.contains(&NeedTag::NewEntity));
         assert!(a.tags.contains(&NeedTag::NewZone));
         assert_eq!(a.tags[0], NeedTag::NewEntity); // entity outranks zone
+    }
+
+    #[test]
+    fn rare_needed_grid_boosts_priority_and_stamps_rarity() {
+        let n = LogNeeds::new(); // empty log — everything is needed
+                                 // RR73 (yes, really): an all-water Arctic grid → UltraRare. A needed
+                                 // ultra-rare grid must outrank a plain grid need but not a new entity.
+        let a = score(
+            "R7AB/MM",
+            "20m",
+            "FT8",
+            Some("RR73"),
+            &n,
+            n.worked_zones(),
+            n.worked_grids(),
+        )
+        .unwrap();
+        assert_eq!(
+            a.grid_rarity,
+            Some(crate::gridrarity::GridRarity::UltraRare)
+        );
+        assert!(a.tags.contains(&NeedTag::NewGrid));
+        // Empty log → NewEntity leads (tier 100) and the +30 rides on top.
+        assert_eq!(a.priority, 130, "{a:?}");
+        // A common grid stamps rarity but earns no boost.
+        let b = score(
+            "K1ABC",
+            "20m",
+            "FT8",
+            Some("FN42"),
+            &n,
+            n.worked_zones(),
+            n.worked_grids(),
+        )
+        .unwrap();
+        assert_eq!(b.grid_rarity, Some(crate::gridrarity::GridRarity::Common));
+        assert_eq!(b.priority, 100, "{b:?}");
+    }
+
+    #[test]
+    fn rarity_alone_never_creates_an_alert() {
+        let mut n = LogNeeds::new();
+        // Work + confirm everything about this station, INCLUDING its rare grid.
+        n.add("R7AB", "20m", "FT8", Some("RR73"), true);
+        let a = score(
+            "R7AB",
+            "20m",
+            "FT8",
+            Some("RR73"),
+            &n,
+            n.worked_zones(),
+            n.worked_grids(),
+        );
+        // Zone 16/17 + entity fully satisfied? The entity/zone may still tag —
+        // assert only the rarity rule: NO NewGrid tag and NO boost when worked.
+        if let Some(a) = a {
+            assert!(!a.tags.contains(&NeedTag::NewGrid), "{:?}", a.tags);
+            assert_eq!(a.priority, a.tags[0].tier(), "no rarity boost: {a:?}");
+        }
     }
 
     #[test]

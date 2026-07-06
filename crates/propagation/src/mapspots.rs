@@ -36,6 +36,10 @@ pub struct MapSpot {
     pub entity: Option<String>,
     /// CQ zone from the same resolution (WAZ context on the selected-spot card).
     pub cq_zone: Option<u8>,
+    /// Geography-based rarity of the station's grid — only when placed by a REAL
+    /// grid (a centroid-placed spot's grid would be the entity's, not theirs).
+    #[serde(default)]
+    pub grid_rarity: Option<crate::gridrarity::GridRarity>,
 }
 
 /// Build the deduped, located, capped map-spot set from a spot window.
@@ -80,6 +84,11 @@ pub fn build_map_spots(now: i64, me_call: &str, spots: &[PathSpot], cap: usize) 
             mode: s.mode.clone(),
             entity: info.as_ref().map(|i| i.entity.to_string()),
             cq_zone: info.as_ref().map(|i| i.cq_zone),
+            grid_rarity: if approx {
+                None // centroid placement — the grid would be the entity's
+            } else {
+                subject_grid.and_then(crate::gridrarity::grid_rarity)
+            },
         };
         best.entry(call)
             .and_modify(|e| {

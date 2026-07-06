@@ -7,6 +7,7 @@ import { useMemo, useState } from 'react'
 import type { NeedTag, Station } from '../types'
 import { gridToLatLon, haversineKm, bearingDeg, distanceLabel, bearingLabel } from '../grid'
 import { isIgnored } from '../txMessages'
+import { RarityGem } from './RarityGem'
 
 interface Props {
   stations: Station[]
@@ -197,7 +198,10 @@ export function OperateRoster({
                   )}
                 </span>
                 <span className="or-country">{s.country ?? '—'}</span>
-                <span className="or-gridc">{s.grid ?? '—'}</span>
+                <span className="or-gridc">
+                  {s.grid ?? '—'}
+                  <RarityGem rarity={s.gridRarity} />
+                </span>
                 <span className="or-dist">{distanceLabel(myGrid, s.grid) ?? '—'}</span>
                 <span className="or-brg">{bearingLabel(myGrid, s.grid) ?? '—'}</span>
                 <span className={`or-snr snr-${snrClass(s.snr)}`}>
