@@ -863,16 +863,33 @@ export function MapView({
     const dimBand = (band: string) =>
       focusBand && focusHasMatch ? (band === focusBand ? 1 : 0.15) : 1
     if (layers.liveSpots.visible) {
+      ctx.font = '10px system-ui'
+      ctx.textAlign = 'left'
+      ctx.textBaseline = 'middle'
       for (const { sp, xy: p } of placedSpots) {
         const ageMin = sp.ageSecs / 60
         const fade = ageMin < 10 ? 1 : ageMin < 30 ? 0.6 : 0.35
         // Band focus: the focused band stays bright; everything else recedes.
         const focusF = dimBand(sp.band)
-        ctx.globalAlpha = layers.liveSpots.opacity * fade * (sp.approx ? 0.7 : 1) * focusF
+        const isSel = sp.call === selectedCall
+        ctx.globalAlpha = isSel
+          ? layers.liveSpots.opacity
+          : layers.liveSpots.opacity * fade * (sp.approx ? 0.7 : 1) * focusF
         ctx.beginPath()
         ctx.arc(p[0], p[1], sp.heardMe ? 3 : 2.2, 0, Math.PI * 2)
         ctx.fillStyle = sp.heardMe ? GETTING_OUT : bandColor(sp.band)
         ctx.fill()
+        // A CLICKED spot must visibly respond (operator report: clicks looked
+        // dead) — accent ring + callsign label, same language as station dots.
+        if (isSel) {
+          ctx.beginPath()
+          ctx.arc(p[0], p[1], 6, 0, Math.PI * 2)
+          ctx.strokeStyle = cssVar('--accent')
+          ctx.lineWidth = 2
+          ctx.stroke()
+          ctx.fillStyle = cssVar('--accent')
+          ctx.fillText(sp.call, p[0] + 9, p[1])
+        }
         if (sp.heardMe) {
           ctx.beginPath()
           ctx.arc(p[0], p[1], 4.5, 0, Math.PI * 2)
@@ -1224,7 +1241,8 @@ export function MapView({
       let best: MapHit | null = null
       for (const { sp, xy } of placedSpots) {
         const d = Math.hypot(xy[0] - mx, xy[1] - my)
-        if (d < 7 && (!best || d < best.d)) best = { kind: 'spot', d, sp }
+        // 9 px target on a ~2 px dot — small dots were genuinely hard to hit.
+        if (d < 9 && (!best || d < best.d)) best = { kind: 'spot', d, sp }
       }
       if (best) return best
     }

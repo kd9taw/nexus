@@ -157,6 +157,11 @@ pub struct Engine {
     /// [`Engine::set_dxcc_resolver`]. `None` in headless tests (gems stay off).
     #[allow(clippy::type_complexity)]
     grid_rarity_resolve: Option<Box<dyn Fn(&str) -> Option<u8> + Send + Sync>>,
+    /// Work-a-spot navigation hint: bumped by [`Engine::work_spot_split`]; the
+    /// UI (any window) navigates to `work_view`'s cockpit when the tick changes.
+    work_tick: u64,
+    /// The mode of the last worked spot ("digital" | "phone" | "cw").
+    work_view: Option<String>,
     /// DXCC entities already worked (from the logbook) — for new-entity decode
     /// highlighting. Rebuilt on log load + each log mutation.
     worked_entities: HashSet<String>,
@@ -439,6 +444,8 @@ impl Engine {
             log_path: None,
             dxcc_resolve: None,
             grid_rarity_resolve: None,
+            work_tick: 0,
+            work_view: None,
             worked_entities: HashSet::new(),
             worked_grids: HashSet::new(),
             worked_parks: HashSet::new(),
@@ -801,6 +808,12 @@ impl Engine {
             self.split_tx_mhz = Some(freq_mhz + up / 1000.0);
             self.split_dirty = true;
         }
+        // Navigation hint: working a spot should land the operator IN the matching
+        // cockpit, whichever window the click came from (a pop-out board can't
+        // navigate the main window directly — the snapshot carries the request,
+        // like clearTick/uploadTick).
+        self.work_tick += 1;
+        self.work_view = Some(mode.to_string());
     }
 
     /// Consume the one-shot split request: `Some(Some(tx))` = set split TX dial,
@@ -3323,6 +3336,8 @@ impl Engine {
             })
             .collect();
         s.clear_tick = self.clear_tick;
+        s.work_tick = self.work_tick;
+        s.work_view = self.work_view.clone();
         s.hunt = self
             .hunt_target() // TTL-filtered: an expired pend never shows a chip
             .map(|(program, reference, call)| crate::dto::HuntDto {
@@ -5464,6 +5479,18 @@ mod tests {
         // Parity derives from the ANSWERED decode's slot (5 → odd ingest → their
         // audio slot 4/even → we TX on odd), not from the unrelated slot-9 decode.
         assert!(!e.tx_even(), "TX parity opposite the CALLER's period");
+    }
+
+    #[test]
+    fn working_a_spot_stamps_the_navigation_hint() {
+        // The hint rides the snapshot so a pop-out window's Needed click can
+        // land the MAIN window in the right cockpit.
+        let mut e = Engine::new("W9XYZ", "EN37", 0);
+        let t0 = e.snapshot().work_tick;
+        e.work_spot_split("cw", 14.030, "20m", None);
+        let s = e.snapshot();
+        assert_eq!(s.work_tick, t0 + 1);
+        assert_eq!(s.work_view.as_deref(), Some("cw"));
     }
 
     #[test]

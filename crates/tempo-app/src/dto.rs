@@ -1078,6 +1078,14 @@ pub struct AppSnapshot {
     /// decode panes. Empty unless a cooperating app sent HighlightCallsign.
     #[serde(default)]
     pub highlights: Vec<HighlightEntry>,
+    /// Bumped each time a spot is worked (work_spot) — the UI navigates to
+    /// `work_view`'s cockpit on change, so a click in a pop-out window still
+    /// lands the MAIN window in the right section (clearTick pattern).
+    #[serde(default)]
+    pub work_tick: u64,
+    /// The last worked spot's mode: "digital" | "phone" | "cw".
+    #[serde(default)]
+    pub work_view: Option<String>,
     /// Bumped by an inbound UDP Clear — the UI erases its panes on change.
     #[serde(default)]
     pub clear_tick: u32,

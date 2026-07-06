@@ -312,6 +312,7 @@ export default function App() {
     }
   }, [snap?.uploadTick, snap?.uploadNote, snap?.uploadOk])
 
+
   // Per-(band,mode) last-alert time so a band coming alive toasts once, not every
   // poll (defence in depth — the backend tracker already flags `isNew` once).
   const openingAlertRef = useRef<Map<string, number>>(new Map())
@@ -475,6 +476,32 @@ export default function App() {
   // exactly as before the feature.
   const cwEnabled = features.isOn('cw')
   const phoneEnabled = features.isOn('phone')
+  // Work-a-spot navigation: whenever a spot is worked — from THIS window's
+  // boards or a pop-out (which can't navigate the main window itself) — follow
+  // to the matching cockpit (the operator's report: "if I click a contact, it
+  // should bring me into the right section"). Baselined on the first snapshot
+  // so a webview reload never replays the engine's last work action.
+  const workNavRef = useRef<number | null>(null)
+  useEffect(() => {
+    const tick = snap?.workTick ?? 0
+    if (workNavRef.current === null) {
+      workNavRef.current = tick
+      return
+    }
+    if (tick === workNavRef.current) return
+    workNavRef.current = tick
+    const v = snap?.workView
+    const target: View = v === 'cw' ? 'cw' : v === 'phone' ? 'phone' : 'operate'
+    // Never navigate into a feature-disabled (hidden) cockpit — same gate as
+    // handleWorkNeeded; the rig already switched, the view just stays put.
+    if ((target === 'cw' && !cwEnabled) || (target === 'phone' && !phoneEnabled)) return
+    // Sync the rig-mode guard BEFORE navigating (same as handleWorkNeeded) —
+    // otherwise the [view] effect sees a mode change and re-homes the dial to
+    // the segment start, yanking the rig OFF the exact spot frequency the
+    // workSpot click just tuned (review-caught on the pop-out path).
+    lastOpModeRef.current = target === 'operate' ? 'digital' : target
+    setView(target)
+  }, [snap?.workTick, snap?.workView, cwEnabled, phoneEnabled])
   const visibleAlerts = useMemo(
     () => visibleNeeds(needAlerts, { cw: cwEnabled, phone: phoneEnabled }),
     [needAlerts, cwEnabled, phoneEnabled],

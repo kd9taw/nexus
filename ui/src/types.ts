@@ -1437,6 +1437,11 @@ export interface AppSnapshot {
   highlights?: { call: string; bg?: string | null; fg?: string | null }[]
   /** Bumped by an inbound UDP Clear — panes erase on change. */
   clearTick?: number
+  /** Bumped each time a spot is worked — App navigates to `workView`'s cockpit
+   * on change (lets a pop-out window's click land the main window there). */
+  workTick?: number
+  /** The last worked spot's mode: 'digital' | 'phone' | 'cw'. */
+  workView?: string | null
   /** Pending one-click POTA/SOTA hunt (next QSO with this call auto-tags). */
   hunt?: { program: string; reference: string; call: string } | null
   /** Coordinated-QSY status — present only while the opt-in feature is enabled. */

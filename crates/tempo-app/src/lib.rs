@@ -569,6 +569,9 @@ impl AppState {
             conversations,
             active_peer: self.active_peer.clone(),
             qso: None,
+            // Work-a-spot navigation hint — owned by the engine (fills in snapshot()).
+            work_tick: 0,
+            work_view: None,
             field_day: None,
             // Filled by the engine from its last decodes; empty at the AppState layer.
             recent_decodes: Vec::new(),

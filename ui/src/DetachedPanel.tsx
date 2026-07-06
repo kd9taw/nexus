@@ -49,7 +49,7 @@ import { ConnectView } from './components/ConnectView'
 import { DxpeditionsView } from './components/DxpeditionsView'
 import { OperateCockpit } from './components/OperateCockpit'
 import { StationList } from './components/StationList'
-import { visibleNeeds, modeClassOf } from './features/needs'
+import { visibleNeeds, modeClassOf, workTarget } from './features/needs'
 import { readEnabledModes } from './useFeatures'
 import { useTheme } from './useTheme'
 import { useScale } from './useScale'
@@ -196,6 +196,19 @@ export function DetachedPanel({ panel }: { panel: string }) {
           selectedCall={selected}
           onQsy={(a) => qsyBand(a.band, a.freqMhz ?? undefined)}
           onSelect={onSelect}
+          // Full work path from the pop-out too: the atomic workSpot switches the
+          // rig's MODE + exact frequency (a bare QSY left CW clicks in DATA-U),
+          // and its snapshot nav-hint (workTick) makes the MAIN window follow to
+          // the matching cockpit — this window can't navigate it directly.
+          onWork={(a) => {
+            const t = workTarget(a, bandPlan)
+            if (!t) {
+              qsyBand(a.band, a.freqMhz ?? undefined)
+              return
+            }
+            const opMode = t.view === 'operate' ? 'digital' : t.view
+            apply(workSpot(opMode, t.freqMhz, t.band, t.call))
+          }}
         />
       </div>
     )
