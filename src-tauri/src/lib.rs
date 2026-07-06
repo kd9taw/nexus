@@ -403,7 +403,7 @@ fn start_wspr_feed(live_paths: &SharedLivePaths, mycall: &str) {
         }
         g.0
     };
-    let alive = || WSPR_FEED.lock().map(|g| g.0 == my_gen).unwrap_or(false);
+    let alive = move || WSPR_FEED.lock().map(|g| g.0 == my_gen).unwrap_or(false);
     let buf = live_paths.clone();
     std::thread::spawn(move || {
         let mut newest = 0i64;
@@ -1223,7 +1223,6 @@ async fn get_path_outlook(
             })
             .unwrap_or_default()
     };
-    use propagation::PathPredictor as _; // bring the trait's `predict` into scope
     // The configured engine: "p533" (native ITU-R P.533, ~100 ms/prediction) or
     // the heuristic fallback. p533 is compute-heavy → keep it off the async core.
     let eng = propagation::make_predictor(&prop_engine, me, station_power_w, ant_gain_dbi);
@@ -1473,7 +1472,6 @@ async fn get_dxped_windows(
             return Ok(v.clone());
         }
     }
-    use propagation::PathPredictor as _;
     // Build the engine ONCE and sweep every target inside one spawn_blocking —
     // the p533 CCIR-cell memo makes same-month targets amortize each other.
     let eng = propagation::make_predictor(&prop_engine, Some(me), station_power_w, ant_gain_dbi);
