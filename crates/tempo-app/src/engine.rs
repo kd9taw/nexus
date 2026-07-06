@@ -629,6 +629,12 @@ impl Engine {
         if !self.settings.band.eq_ignore_ascii_case(band) {
             self.clear_decode_context();
             self.app.clear_stations();
+            // Band switch mid-QSO: without a halt the sequencer keeps calling a
+            // station that isn't on the new band (operator report — directed
+            // calls kept going out after a Needed-click QSY). Same semantics as
+            // the Halt Tx button; working a new spot re-arms AFTER this, so the
+            // click-a-needed → QSY → call flow is unaffected.
+            self.halt_tx();
         }
         self.settings.dial_mhz = dial_mhz;
         self.settings.band = band.to_string();
@@ -653,10 +659,13 @@ impl Engine {
         let mhz = hz as f64 / 1_000_000.0;
         self.settings.dial_mhz = mhz;
         if let Some(band) = crate::bandplan::band_for_dial(mhz) {
-            // Knob QSY across bands invalidates the decode context + roster too.
+            // Knob QSY across bands invalidates the decode context + roster too —
+            // and halts TX for the same reason as set_frequency: the sequencer
+            // must never keep calling across a band switch, however it happened.
             if !self.settings.band.eq_ignore_ascii_case(band) {
                 self.clear_decode_context();
                 self.app.clear_stations();
+                self.halt_tx();
             }
             self.settings.band = band.to_string();
         }
@@ -4918,6 +4927,25 @@ mod tests {
         let snap = e.snapshot();
         assert!(!snap.radio.tx_enabled);
         assert!(!snap.radio.transmitting);
+    }
+
+    #[test]
+    fn band_switch_halts_tx_but_in_band_qsy_does_not() {
+        let mut eng = Engine::new("K2DEF", "FN31", 0);
+        eng.set_frequency(14.074, "20m", "USB");
+        eng.set_tx_enabled(true);
+        assert!(eng.tx_enabled, "armed on 20m");
+        // In-band dial move (FT8→FT4 dial): the QSO context survives — no halt.
+        eng.set_frequency(14.080, "20m", "USB");
+        assert!(eng.tx_enabled, "in-band QSY must not halt TX");
+        // Band switch (the Needed-click case): the sequencer must STOP — a
+        // directed call aimed at the old band's station must not key up here.
+        eng.set_frequency(18.100, "17m", "USB");
+        assert!(!eng.tx_enabled, "band switch must halt TX");
+        // Knob-turned band change reported by the rig: same invariant.
+        eng.set_tx_enabled(true);
+        eng.observe_rig_freq(21_074_000);
+        assert!(!eng.tx_enabled, "rig-knob band switch must halt TX");
     }
 
     #[test]
