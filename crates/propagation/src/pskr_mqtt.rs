@@ -100,15 +100,60 @@ pub fn mqtt_topics(mycall: &str) -> Vec<String> {
 
 /// MQTT topic filters for the near-region opening bands (Phase 2): the per-band
 /// global stream `pskr/filter/v2/{band}/#` (band fixed, everything after it
-/// wildcarded — the broadest broker-side filter that still isolates a band, since
-/// grids can't be prefix-matched at the topic level). The caller narrows to "near
-/// me" client-side (grid distance) and drops own-call spots. VHF + 10 m only (the
-/// Es/opening bands, self-throttling); HF F2 stays own-call-only to bound volume.
+/// wildcarded). The caller narrows to "near me" client-side (grid distance) and
+/// drops own-call spots. VHF + 10 m only here (the Es/opening bands, whose
+/// global streams are self-throttling); the HF F2 census is the GRID-TARGETED
+/// [`hf_region_topics`] instead — its volume bound is server-side.
 pub fn region_topics() -> Vec<String> {
     ["10m", "6m", "4m", "2m"]
         .iter()
         .map(|b| format!("pskr/filter/v2/{b}/#"))
         .collect()
+}
+
+/// The HF F2 bands the near-region census covers (the "openings around you"
+/// expansion). 30m is skipped (thin FT8 traffic, little census value).
+const HF_REGION_BANDS: [&str; 5] = ["40m", "20m", "17m", "15m", "12m"];
+
+/// GRID-TARGETED topic filters for the HF near-region census. Unlike the VHF
+/// bands (global per-band streams, self-throttling), HF F2 volume is huge — so
+/// the volume bound is SERVER-SIDE: the topic scheme carries the 4-char grids
+/// as segments (`pskr/filter/v2/{band}/{mode}/{tx}/{rx}/{txgrid}/{rxgrid}/…`),
+/// letting us subscribe only the grid4 cells within `radius_km` of the
+/// operator, on the sender AND receiver side. The broker then delivers only
+/// in-region reports instead of the global firehose (also what PSK Reporter's
+/// own guidance asks for: the most specific filter possible). The client-side
+/// distance gate stays as defense-in-depth. Empty when the grid is unset —
+/// no region, no census, honestly nothing.
+pub fn hf_region_topics(mygrid: &str, radius_km: f64) -> Vec<String> {
+    let Some(me) = crate::geo::maidenhead_to_latlon(mygrid.trim()) else {
+        return Vec::new();
+    };
+    let mut cells: Vec<String> = Vec::new();
+    for f1 in b'A'..=b'R' {
+        for d1 in b'0'..=b'9' {
+            for f2 in b'A'..=b'R' {
+                for d2 in b'0'..=b'9' {
+                    let g = String::from_utf8(vec![f1, f2, d1, d2]).unwrap();
+                    if let Some(c) = crate::geo::maidenhead_to_latlon(&g) {
+                        if crate::geo::haversine_km(me, c) <= radius_km {
+                            cells.push(g);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let mut out = Vec::with_capacity(cells.len() * HF_REGION_BANDS.len() * 2);
+    for band in HF_REGION_BANDS {
+        for g in &cells {
+            // Sender in the region ("someone near me is being heard on 20m")…
+            out.push(format!("pskr/filter/v2/{band}/+/+/+/{g}/#"));
+            // …and receiver in the region ("someone near me hears 20m").
+            out.push(format!("pskr/filter/v2/{band}/+/+/+/+/{g}/#"));
+        }
+    }
+    out
 }
 
 fn non_empty(s: &str) -> Option<String> {
@@ -185,6 +230,29 @@ mod tests {
         let t = mqtt_topics("kd9taw");
         assert_eq!(t[0], "pskr/filter/v2/+/+/KD9TAW/#"); // who heard me (sender slot)
         assert_eq!(t[1], "pskr/filter/v2/+/+/+/KD9TAW/#"); // who I hear (receiver slot)
+    }
+
+    #[test]
+    fn hf_region_topics_are_grid_targeted_and_bounded() {
+        // EN52 (southern Wisconsin), 800 km: a bounded set of grid4 cells ×
+        // 5 bands × 2 sides — NEVER a global per-band HF stream.
+        let t = hf_region_topics("EN52", 800.0);
+        assert!(!t.is_empty());
+        assert!(
+            t.len() <= 5 * 2 * 220,
+            "cell fan-out stays bounded: {}",
+            t.len()
+        );
+        // The operator's own cell is covered on both sides.
+        assert!(t.contains(&"pskr/filter/v2/20m/+/+/+/EN52/#".to_string()));
+        assert!(t.contains(&"pskr/filter/v2/20m/+/+/+/+/EN52/#".to_string()));
+        // No global HF streams and no VHF (that's region_topics' job).
+        assert!(!t.iter().any(|s| s == "pskr/filter/v2/20m/#"));
+        assert!(!t.iter().any(|s| s.contains("/6m/") || s.contains("/2m/")));
+        // A cell an ocean away is not subscribed.
+        assert!(!t.iter().any(|s| s.contains("JO62")));
+        // Invalid grid → no region → no topics (honest empty).
+        assert!(hf_region_topics("not a grid", 800.0).is_empty());
     }
 
     #[test]

@@ -459,7 +459,11 @@ fn start_pskr_region_feed(region_paths: &SharedRegionPaths, mycall: &str, mygrid
     let call = mycall.trim().to_string();
     let grid = mygrid.trim().to_string();
     std::thread::spawn(move || {
-        let topics = propagation::pskr_region_topics();
+        // VHF/10m: global per-band streams (self-throttling). HF F2: the
+        // grid-targeted census — server-side filtered to the operator's region
+        // so the broker never sends the global 20m firehose.
+        let mut topics = propagation::pskr_region_topics();
+        topics.extend(propagation::hf_region_topics(&grid, REGION_RADIUS_KM));
         let topic_refs: Vec<&str> = topics.iter().map(|s| s.as_str()).collect();
         let base_w = propagation::OpeningConfig::default().base_w;
         // No Now-Bar pill for the region feed — session state isn't surfaced.

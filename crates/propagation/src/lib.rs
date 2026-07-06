@@ -91,7 +91,7 @@ pub use predict::{
     ModeledNow, PathPrediction, PathPredictor,
 };
 pub use pskr_mqtt::{
-    mqtt_topics as pskr_mqtt_topics, parse_mqtt_report as parse_pskr_mqtt,
+    hf_region_topics, mqtt_topics as pskr_mqtt_topics, parse_mqtt_report as parse_pskr_mqtt,
     parse_mqtt_report_payload as parse_pskr_mqtt_payload, region_topics as pskr_region_topics,
     LiveSpots, REGION_SPOT_CAP,
 };
