@@ -29,6 +29,12 @@ import {
   destinationPoint,
   greatCircle,
   terminator,
+  subsolarPoint,
+  flareHafMhz,
+  flareField,
+  flareRScale,
+  flareClass,
+  flareRecoveryMin,
   type Projection,
   type MapView3,
 } from '../mapGeo'
@@ -74,6 +80,9 @@ interface Props {
   /** Live measured ionosonde MUF fixes (KC2G). When present, the MUF overlay is anchored
    * to real data near each sonde and only falls back to the model out over the oceans. */
   muf?: MufStation[]
+  /** GOES long-band X-ray flux (W/m²) — drives the D-RAP flare-blackout layer.
+   * The host merges the 60 s fast lane with the prop snapshot (flareAlert.ts). */
+  xrayLong?: number | null
 }
 
 /** Color for an ionosonde's measured MUF (MHz): a cold→hot scale (blue low → red high)
@@ -84,6 +93,32 @@ function mufDotColor(mhz: number): string {
   const hue = 210 - 210 * t // 210° blue (low) → 0° red (high)
   return `hsl(${hue.toFixed(0)}, 85%, 55%)`
 }
+
+/** Fire palette for the D-RAP flare layer: local Highest Affected Frequency →
+ * pale yellow (fringe) → orange → deep red (everything ≤ 30 MHz eaten). NOT the
+ * MUF blue→red scale on purpose — this layer means absorption/loss, not
+ * opportunity, and must never be confused with the ionosonde dots. */
+function flareColor(hafMhz: number): [number, number, number] {
+  const t = Math.max(0, Math.min(1, (hafMhz - 5) / 25))
+  const lerp = (a: number, b: number, u: number) => Math.round(a + (b - a) * u)
+  if (t < 0.5) {
+    const u = t / 0.5
+    return [255, lerp(225, 140, u), lerp(130, 45, u)] // yellow → orange
+  }
+  const u = (t - 0.5) / 0.5
+  return [255, lerp(140, 35, u), lerp(45, 55, u)] // orange → deep red
+}
+
+/** Flare pulse period (ms) by R-scale — movement = intensity: an R1 breathes
+ * lazily, an R3+ pulses urgently. Indexable with r 1–5. */
+const FLARE_PULSE_MS = [6000, 4000, 3000, 2000, 1600]
+function flarePulsePeriodMs(r: number): number {
+  return FLARE_PULSE_MS[Math.max(0, Math.min(4, r - 1))]
+}
+// Warm ray/sun tones for the flare effects canvas.
+const SUN_CORE = 'rgba(255, 244, 214, 0.95)'
+const SUN_GLOW = 'rgba(255, 205, 110, 0.75)'
+const SUN_FADE = 'rgba(255, 170, 60, 0)'
 
 const INTENT_PRESETS: Record<
   MapIntent,
@@ -140,6 +175,7 @@ type LayerKey =
   | 'relief'
   | 'muf'
   | 'aurora'
+  | 'flare'
   | 'coast'
   | 'grid'
   | 'rings'
@@ -158,6 +194,10 @@ const DEFAULT_LAYERS: Record<LayerKey, Layer> = {
   relief: { label: 'Relief (World view)', visible: true, opacity: 1 },
   muf: { label: 'Ionosonde MUF', visible: true, opacity: 0.9 },
   aurora: { label: 'Aurora oval', visible: false, opacity: 0.85 },
+  // Visible by default and FREE until a real event: the layer only draws during
+  // an M/X flare (R1+, the same onset as the flare insight + toast) — so the
+  // default costs nothing until the sun actually does something.
+  flare: { label: 'Flare blackout (D-RAP)', visible: true, opacity: 0.8 },
   coast: { label: 'Coastlines', visible: true, opacity: 0.85 },
   grid: { label: 'Grid (20°×10°)', visible: true, opacity: 0.5 },
   rings: { label: 'Range rings', visible: true, opacity: 0.55 },
@@ -238,9 +278,13 @@ export function MapView({
   onFocusBand,
   outlook = null,
   muf,
+  xrayLong = null,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
+  // Flare effects overlay (the animated sun + rays) — a separate transparent
+  // canvas so the ~20 fps animation never forces the heavy base map to redraw.
+  const fxRef = useRef<HTMLCanvasElement>(null)
   // Measured ionosonde fixes with a usable MUF → the MUF overlay's live anchor.
   const mufStations = useMemo(
     () =>
@@ -264,12 +308,22 @@ export function MapView({
   // Reused offscreen canvas for the heat layer — allocating one per draw frame
   // would churn GC for nothing.
   const heatCanvasRef = useRef<HTMLCanvasElement | null>(null)
+  // Same reuse for the flare-absorption field's offscreen canvas.
+  const flareCanvasRef = useRef<HTMLCanvasElement | null>(null)
   // Opening-pulse tick: the main nowMs clock is a 60 s greyline tick, far too
   // coarse to animate the heat pulse (it froze the sine). Run a 1 s tick ONLY
   // while the heat layer is on AND an opening is actually detected — an idle map
-  // never redraws for a pulse nobody can see.
+  // never redraws for a pulse nobody can see. (The flare layer shares the tick:
+  // its absorption field breathes on the same 1 s cadence while a flare is live.)
   const [pulseTick, setPulseTick] = useState(0)
   const hasOpening = (prop?.openings?.length ?? 0) > 0
+  // D-RAP flare state. The visualization gates at M1 (R1) — the SAME onset as
+  // the flare insight and toast, so the map never announces a "blackout" the
+  // rest of the app calls quiet. (C-class flux is routine background at solar
+  // max, adds little beyond normal daytime D-layer absorption, and would keep
+  // the pulse tick + fx canvas running near-continuously.)
+  const flareHafNow = flareHafMhz(xrayLong ?? 0)
+  const flareActive = flareRScale(xrayLong ?? 0) >= 1
   // Interactive view: zoom (wheel), Globe rotation + flat-map pan (drag). Reset
   // when the projection changes (rotation/pan don't carry across projections).
   const DEFAULT_VIEW: MapView3 = { zoom: 1, rotate: null, panX: 0, panY: 0 }
@@ -305,13 +359,18 @@ export function MapView({
     const id = setInterval(() => setNowMs(Date.now()), 60_000)
     return () => clearInterval(id)
   }, [])
-  // The 1 s opening-pulse tick — only while the heat layer is on and an opening
-  // is live (an idle map never redraws for an animation nobody can see).
+  // The 1 s opening/flare-pulse tick — only while something animated is actually
+  // visible (an idle map never redraws for an animation nobody can see).
+  const heatPulsing = layers.heat.visible && hasOpening
+  const flarePulsing = layers.flare.visible && flareActive
   useEffect(() => {
-    if (!layers.heat.visible || !hasOpening) return
-    const id = setInterval(() => setPulseTick((t) => t + 1), 1_000)
+    if (!heatPulsing && !flarePulsing) return
+    const id = setInterval(() => {
+      // No redraws for a hidden tab (the fx rAF has the same guard).
+      if (!document.hidden) setPulseTick((t) => t + 1)
+    }, 1_000)
     return () => clearInterval(id)
-  }, [layers.heat.visible, hasOpening])
+  }, [heatPulsing, flarePulsing])
   // Apply the Connect intent preset (soft) whenever it changes — sets projection,
   // default color-by, and which optional layers are on. The user can still tweak
   // any control afterwards; switching intent re-applies.
@@ -634,6 +693,52 @@ export function MapView({
       ctx.globalAlpha = 1
     }
 
+    // SOLAR-FLARE ABSORPTION (NOAA D-RAP): during an M/X flare the sunlit
+    // hemisphere's D-layer absorbs HF — strongest under the sun, tapering as
+    // cos(χ)^0.75, zero at the terminator (flares are line-of-sight). The field
+    // is sampled by flareField() (subsolar point hoisted — this loop runs on
+    // every drag frame) and splatted additively at 1/3 res like the heat layer;
+    // color = the LOCAL Highest Affected Frequency (fire palette), alpha
+    // breathes on the 1 s pulse tick (faster = stronger flare). The animated
+    // sun + rays live on the separate fx canvas (below). Drawn over the night
+    // shading, under spots/stations, so real activity stays legible.
+    if (layers.flare.visible && flareActive && xrayLong) {
+      const hw = Math.max(1, Math.floor(w / 3))
+      const hh = Math.max(1, Math.floor(h / 3))
+      const off =
+        flareCanvasRef.current ?? (flareCanvasRef.current = document.createElement('canvas'))
+      if (off.width !== hw) off.width = hw
+      if (off.height !== hh) off.height = hh
+      const fctx = off.getContext('2d')
+      if (fctx) {
+        fctx.clearRect(0, 0, hw, hh)
+        fctx.globalCompositeOperation = 'lighter'
+        const r = Math.max(1, flareRScale(xrayLong))
+        // Live time like the heat pulse — the 1 s pulseTick forces the redraws.
+        const pulse = 0.8 + 0.2 * Math.sin((Date.now() * 2 * Math.PI) / flarePulsePeriodMs(r))
+        const splat = Math.max(8, Math.min(w, h) * 0.03) / 3
+        for (const s of flareField(nowMs, xrayLong)) {
+          const p = project(proj, { lat: s.lat, lon: s.lon }) // null on the far side
+          if (!p) continue
+          const [cr, cg, cb] = flareColor(s.haf)
+          const x = p[0] / 3
+          const y = p[1] / 3
+          const grad = fctx.createRadialGradient(x, y, 0, x, y, splat)
+          grad.addColorStop(0, `rgb(${cr}, ${cg}, ${cb})`)
+          grad.addColorStop(1, `rgba(${cr}, ${cg}, ${cb}, 0)`)
+          fctx.globalAlpha = 0.1 * (0.3 + 0.7 * (s.haf / flareHafNow)) * pulse
+          fctx.fillStyle = grad
+          fctx.beginPath()
+          fctx.arc(x, y, splat, 0, Math.PI * 2)
+          fctx.fill()
+        }
+        ctx.globalAlpha = layers.flare.opacity
+        ctx.imageSmoothingEnabled = true
+        ctx.drawImage(off, 0, 0, w, h)
+        ctx.globalAlpha = 1
+      }
+    }
+
     // MUF field — the maximum usable frequency WHERE, as a coarse heatmap (7→35 MHz on
     // the colormap): live where an ionosonde is within range (IDW-blended), the foF2 model
     // out over the oceans. Tells you at a glance which bands the ionosphere supports where.
@@ -869,7 +974,172 @@ export function MapView({
     }
     // theme is a draw dependency so colors refresh on theme switch.
     void theme
-  }, [me, kind, colorBy, pathMode, view, size, layers, placed, placedSpots, placedDxped, mufStations, auroraPts, reliefReady, prop, selStation, selectedCall, needByCall, theme, nowMs, focusBand, pulseTick])
+  }, [me, kind, colorBy, pathMode, view, size, layers, placed, placedSpots, placedDxped, mufStations, auroraPts, reliefReady, prop, selStation, selectedCall, needByCall, theme, nowMs, focusBand, pulseTick, xrayLong, flareActive, flareHafNow])
+
+  // THE SUN + RADIATING ENERGY — the flare layer's animated half, on its own
+  // transparent canvas at ~20 fps, mounted ONLY while a flare is active and the
+  // layer is on (a quiet sun costs nothing; the canvas doesn't exist). Globe: a
+  // sun disc hangs in space off the limb in the TRUE subsolar direction,
+  // streaming dashed rays onto the sunlit face; when the subsolar point rotates
+  // behind the planet only a warm corona peeks around the limb. World/AEQD: the
+  // sun sits AT the subsolar point (geochron-style) with rotating spokes.
+  // Stream/pulse speed ∝ R-scale — movement IS the intensity readout.
+  const flareOpacity = layers.flare.opacity
+  useEffect(() => {
+    const fx = fxRef.current
+    const { w, h } = size
+    if (!fx || !me || w === 0 || h === 0 || !flarePulsing || !xrayLong) return
+    const dpr = window.devicePixelRatio || 1
+    fx.width = Math.round(w * dpr)
+    fx.height = Math.round(h * dpr)
+    const fctx = fx.getContext('2d')
+    if (!fctx) return
+    fctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    const proj = makeProjection(kind, me, w, h, view)
+    const [gcx, gcy] = proj.translate()
+    const gR = proj.scale()
+    const r = Math.max(1, flareRScale(xrayLong))
+    const period = flarePulsePeriodMs(r)
+    const dashSpeed = 40 + 45 * r // px/s the ray dashes stream at
+    const KM_PER_DEG = 111.195
+
+    const sunDisc = (x: number, y: number, coreR: number, glowR: number, alpha: number) => {
+      const g = fctx.createRadialGradient(x, y, 0, x, y, glowR)
+      g.addColorStop(0, SUN_CORE)
+      g.addColorStop(0.3, SUN_GLOW)
+      g.addColorStop(1, SUN_FADE)
+      fctx.globalAlpha = alpha
+      fctx.fillStyle = g
+      fctx.beginPath()
+      fctx.arc(x, y, glowR, 0, Math.PI * 2)
+      fctx.fill()
+      fctx.globalAlpha = Math.min(1, alpha * 1.3)
+      fctx.fillStyle = SUN_CORE
+      fctx.beginPath()
+      fctx.arc(x, y, coreR, 0, Math.PI * 2)
+      fctx.fill()
+    }
+
+    let raf = 0
+    let last = 0
+    const draw = (t: number) => {
+      raf = requestAnimationFrame(draw)
+      if (t - last < 48 || document.hidden) return // ~20 fps, idle when hidden
+      last = t
+      fctx.clearRect(0, 0, w, h)
+      const nowWall = Date.now()
+      const ss = subsolarPoint(nowWall)
+      const pulse = 0.75 + 0.25 * Math.sin((nowWall * 2 * Math.PI) / period)
+
+      if (kind === 'globe') {
+        // Where is the sun relative to the visible hemisphere? The view center is
+        // the inverse of the d3 rotation; the subsolar point sits at central
+        // angle δ from it, along screen direction (sin β, −cos β) (no roll).
+        const rot = view.rotate ?? [-me.lon, -me.lat]
+        const center = { lat: -rot[1], lon: -rot[0] }
+        const deltaDeg = haversineKm(center, ss) / KM_PER_DEG
+        const beta = (bearingDeg(center, ss) * Math.PI) / 180
+        const dirX = Math.sin(beta)
+        const dirY = -Math.cos(beta)
+        if (deltaDeg < 90) {
+          // Sunlit face toward us: sun in space off the limb, rays converging on
+          // the subsolar point (D-RAP's subsolar-centered stylization).
+          const sinD = Math.sin((deltaDeg * Math.PI) / 180)
+          const pss: [number, number] = [gcx + dirX * gR * sinD, gcy + dirY * gR * sinD]
+          const sunP: [number, number] = [gcx + dirX * gR * 1.32, gcy + dirY * gR * 1.32]
+          const perpX = -dirY
+          const perpY = dirX
+          const sunCore = gR * 0.055
+          fctx.setLineDash([6, 10])
+          fctx.lineDashOffset = -(((nowWall / 1000) * dashSpeed) % 16)
+          const RAYS = 7
+          for (let i = 0; i < RAYS; i++) {
+            const u = (i / (RAYS - 1)) * 2 - 1 // −1 … +1 across the fan
+            let txx = pss[0] + perpX * u * gR * 0.45
+            let tyy = pss[1] + perpY * u * gR * 0.45
+            const ddx = txx - gcx
+            const ddy = tyy - gcy
+            const dd = Math.hypot(ddx, ddy)
+            if (dd > gR * 0.95) {
+              // keep every ray landing ON the disc
+              txx = gcx + (ddx / dd) * gR * 0.95
+              tyy = gcy + (ddy / dd) * gR * 0.95
+            }
+            const rdx = txx - sunP[0]
+            const rdy = tyy - sunP[1]
+            const rlen = Math.hypot(rdx, rdy) || 1
+            const sx = sunP[0] + (rdx / rlen) * sunCore * 2.2
+            const sy = sunP[1] + (rdy / rlen) * sunCore * 2.2
+            const g = fctx.createLinearGradient(sx, sy, txx, tyy)
+            g.addColorStop(0, 'rgba(255, 235, 180, 0.9)')
+            g.addColorStop(1, 'rgba(255, 150, 60, 0)')
+            fctx.strokeStyle = g
+            fctx.lineWidth = u === 0 ? 2.2 : 1.4
+            fctx.globalAlpha = (0.3 + 0.4 * pulse) * flareOpacity
+            fctx.beginPath()
+            fctx.moveTo(sx, sy)
+            fctx.lineTo(txx, tyy)
+            fctx.stroke()
+          }
+          fctx.setLineDash([])
+          sunDisc(sunP[0], sunP[1], sunCore, gR * (0.16 + 0.03 * pulse), 0.9 * flareOpacity)
+        } else {
+          // Subsolar side faces away: the sun hides behind the planet — draw only
+          // a corona peeking around the limb (clipped OUTSIDE the sphere).
+          const fade = Math.max(0, Math.min(1, (170 - deltaDeg) / 80))
+          if (fade > 0) {
+            fctx.save()
+            fctx.beginPath()
+            fctx.rect(0, 0, w, h)
+            fctx.arc(gcx, gcy, gR, 0, Math.PI * 2, true)
+            fctx.clip('evenodd')
+            const lx = gcx + dirX * gR
+            const ly = gcy + dirY * gR
+            const g = fctx.createRadialGradient(lx, ly, 0, lx, ly, gR * 0.5)
+            g.addColorStop(0, SUN_GLOW)
+            g.addColorStop(1, SUN_FADE)
+            fctx.globalAlpha = (0.3 + 0.35 * pulse) * fade * flareOpacity
+            fctx.fillStyle = g
+            fctx.beginPath()
+            fctx.arc(lx, ly, gR * 0.5, 0, Math.PI * 2)
+            fctx.fill()
+            fctx.restore()
+          }
+        }
+      } else {
+        // Flat maps have no "space" to hang a sun in: it sits at its true
+        // subsolar position (geochron-style) with rotating, pulsing spokes.
+        const pss = project(proj, ss)
+        if (pss) {
+          const rs = Math.max(10, Math.min(w, h) * 0.05)
+          const spin = (nowWall / 1000) * (0.25 + 0.15 * r)
+          for (let i = 0; i < 12; i++) {
+            const a = (i / 12) * Math.PI * 2 + spin
+            const inner = rs * 0.75
+            const outer = rs * (1.7 + 0.45 * pulse + (i % 2) * 0.25)
+            const ix = pss[0] + Math.cos(a) * inner
+            const iy = pss[1] + Math.sin(a) * inner
+            const ox = pss[0] + Math.cos(a) * outer
+            const oy = pss[1] + Math.sin(a) * outer
+            const g = fctx.createLinearGradient(ix, iy, ox, oy)
+            g.addColorStop(0, 'rgba(255, 225, 150, 0.8)')
+            g.addColorStop(1, SUN_FADE)
+            fctx.strokeStyle = g
+            fctx.lineWidth = 1.6
+            fctx.globalAlpha = (0.35 + 0.35 * pulse) * flareOpacity
+            fctx.beginPath()
+            fctx.moveTo(ix, iy)
+            fctx.lineTo(ox, oy)
+            fctx.stroke()
+          }
+          sunDisc(pss[0], pss[1], rs * 0.3, rs * (0.9 + 0.12 * pulse), 0.85 * flareOpacity)
+        }
+      }
+      fctx.globalAlpha = 1
+    }
+    raf = requestAnimationFrame(draw)
+    return () => cancelAnimationFrame(raf)
+  }, [me, kind, view, size, flarePulsing, xrayLong, flareOpacity])
 
   if (!me) {
     return (
@@ -1095,6 +1365,22 @@ export function MapView({
             onDoubleClick={onDoubleClick}
             onPointerLeave={() => setHover(null)}
           />
+          {flarePulsing && (
+            // The animated sun + rays overlay (see the fx effect above) — its own
+            // canvas so the 20 fps animation never redraws the base map. Mounted
+            // only during a flare; never intercepts pointer events.
+            <canvas
+              ref={fxRef}
+              aria-hidden="true"
+              style={{
+                position: 'absolute',
+                inset: 0,
+                width: '100%',
+                height: '100%',
+                pointerEvents: 'none',
+              }}
+            />
+          )}
           {hover && (
             <div className="map-hover" style={{ left: hover.x + 12, top: hover.y + 12 }}>
               {hover.text}
@@ -1125,6 +1411,13 @@ export function MapView({
           )}
           <MapLegend />
           {layers.muf.visible && <MufLegend />}
+          {flarePulsing && xrayLong != null && (
+            <FlareChip
+              xrayLong={xrayLong}
+              hafMhz={flareHafNow}
+              trend={prop?.wxTrend?.xray.dir ?? null}
+            />
+          )}
           {prop && (
             <MapInsightRail
               prop={prop}
@@ -1193,6 +1486,30 @@ function MapLegend() {
       <span title="Colored auras = live spot density per band; pulsing = a detected opening">
         heat = band activity
       </span>
+    </div>
+  )
+}
+
+/** The live flare readout, shown only while the D-RAP layer is actually drawing:
+ * class, R-scale, the absorption ceiling, and where the event is heading (the
+ * X-ray trend word + the D-RAP recovery estimate once it's falling). */
+function FlareChip({
+  xrayLong,
+  hafMhz,
+  trend,
+}: {
+  xrayLong: number
+  hafMhz: number
+  trend: 'rising' | 'steady' | 'falling' | null
+}) {
+  const rec = flareRecoveryMin(xrayLong)
+  const recTxt = rec ? ` (~${Math.round(rec)} min)` : ''
+  const phase =
+    trend === 'rising' ? ' · rising' : trend === 'falling' ? ` · recovering${recTxt}` : recTxt ? ` · fade${recTxt}` : ''
+  return (
+    <div className="flare-chip" role="status">
+      ☀️ {flareClass(xrayLong)} flare · R{flareRScale(xrayLong)} · HF ≤{Math.round(hafMhz)} MHz
+      absorbed on dayside{phase}
     </div>
   )
 }

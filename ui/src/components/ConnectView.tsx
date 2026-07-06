@@ -19,7 +19,8 @@ import type {
 } from '../types'
 import type { AlertView, MufStation, NoaaScalesView } from '../types'
 import type { Theme } from '../useTheme'
-import { getPathOutlook, getBandOutlook, getGettingOut, getSpaceWxScales, getKc2gMuf } from '../api'
+import { getPathOutlook, getBandOutlook, getGettingOut, getSpaceWxScales, getKc2gMuf, getXrayNow } from '../api'
+import { effectiveXray } from '../flareAlert'
 import { latLonToGrid } from '../grid'
 import { MapView, type MapIntent } from './MapView'
 import { provLabel } from './connect/paneFormat'
@@ -209,6 +210,25 @@ export function ConnectView({
       window.clearInterval(id)
     }
   }, [])
+  // X-ray fast lane (60 s) so the map's D-RAP flare layer moves at ~1 min cadence
+  // during an event instead of the 5-min prop snapshot. Best-effort: a failed
+  // fetch just leaves the snapshot's value driving the layer.
+  const [xrayNow, setXrayNow] = useState<number | null>(null)
+  useEffect(() => {
+    let live = true
+    const load = () =>
+      getXrayNow()
+        .then((x) => live && setXrayNow(x.flux))
+        .catch(() => {})
+    load()
+    const id = window.setInterval(load, 60_000)
+    return () => {
+      live = false
+      window.clearInterval(id)
+    }
+  }, [])
+  // The one flux value the map renders (dev-override > fast lane > snapshot).
+  const xrayLong = effectiveXray(xrayNow, prop?.spaceWx.xrayLong)
 
   // One context handed to every pane (built from the already-lifted state above).
   const ctx: PaneContext = {
@@ -316,6 +336,7 @@ export function ConnectView({
               onFocusBand={toggleFocusBand}
               outlook={selectedCall ? pathPred : bandOutlook}
               muf={muf}
+              xrayLong={xrayLong}
             />
           </div>
           {railFrame('right1')}

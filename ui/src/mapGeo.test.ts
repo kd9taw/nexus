@@ -8,6 +8,12 @@ import {
   solarElevationDeg,
   nextTerminatorMs,
   mufMhz,
+  flareHafMhz,
+  flareHafAt,
+  flareRScale,
+  flareClass,
+  flareRecoveryMin,
+  flareField,
 } from './mapGeo'
 import { gridToLatLon, haversineKm } from './grid'
 
@@ -150,5 +156,65 @@ describe('mapGeo (MUF / solar elevation)', () => {
     const night = mufMhz(antiLat, antiLon, ms, 200)
     expect(night).toBeCloseTo(9, 0) // foF2 floor 3 MHz × M3000
     expect(dayHigh).toBeGreaterThan(night)
+  })
+})
+
+describe('mapGeo (D-RAP flare absorption)', () => {
+  const ms = Date.UTC(2024, 5, 21, 12, 0, 0)
+  const ss = subsolarPoint(ms)
+  const antiLat = -ss.lat
+  const antiLon = ((ss.lon + 180 + 540) % 360) - 180
+
+  it('hits the D-RAP HAF anchors: M1 → 15 MHz, X1 → 25 MHz at the subsolar point', () => {
+    expect(flareHafMhz(1e-5)).toBeCloseTo(15, 5)
+    expect(flareHafMhz(1e-4)).toBeCloseTo(25, 5)
+    expect(flareHafMhz(5e-5)).toBeCloseTo(10 * Math.log10(5e-5) + 65, 5) // M5 ≈ 22
+  })
+
+  it('is zero (nothing to draw) for the quiet sun', () => {
+    expect(flareHafMhz(1e-7)).toBe(0) // B1: 10·(−7)+65 < 0 → clamped
+    expect(flareHafMhz(0)).toBe(0)
+    expect(flareHafMhz(NaN)).toBe(0)
+  })
+
+  it('tapers as cos(χ)^0.75: full under the sun, zero on the night side', () => {
+    expect(flareHafAt(ss.lat, ss.lon, ms, 1e-4)).toBeCloseTo(25, 1) // χ ≈ 0
+    expect(flareHafAt(antiLat, antiLon, ms, 1e-4)).toBe(0) // night
+    // A point where the sun sits at 30° elevation: cos χ = sin 30° = 0.5.
+    const p30 = destinationPoint(ss, 0, (90 - 30) * 111.195)
+    const expected = 25 * Math.pow(0.5, 0.75)
+    expect(flareHafAt(p30.lat, p30.lon, ms, 1e-4)).toBeCloseTo(expected, 0)
+  })
+
+  it('mirrors the model.rs R-scale thresholds', () => {
+    expect(flareRScale(9e-6)).toBe(0)
+    expect(flareRScale(1e-5)).toBe(1) // M1
+    expect(flareRScale(5e-5)).toBe(2) // M5
+    expect(flareRScale(1e-4)).toBe(3) // X1
+    expect(flareRScale(1e-3)).toBe(4) // X10
+    expect(flareRScale(2e-3)).toBe(5) // X20
+  })
+
+  it('labels the flare class like the GOES convention', () => {
+    expect(flareClass(1.2e-4)).toBe('X1.2')
+    expect(flareClass(5e-5)).toBe('M5.0')
+    expect(flareClass(2.3e-6)).toBe('C2.3')
+  })
+
+  it('estimates recovery ≈25 min at M1, ≈60 at X1, capped ~120, none below M1', () => {
+    expect(flareRecoveryMin(1e-5)!).toBeCloseTo(25, 0)
+    expect(flareRecoveryMin(1e-4)!).toBeCloseTo(58, 0)
+    expect(flareRecoveryMin(1e-2)!).toBeCloseTo(120, 0) // clamped at the X5 end
+    expect(flareRecoveryMin(5e-6)).toBeNull()
+  })
+
+  it('flareField agrees with flareHafAt (the hoisted math is the same physics)', () => {
+    const field = flareField(ms, 1e-4)
+    expect(field.length).toBeGreaterThan(500) // roughly the dayside half of the grid
+    for (const s of [field[0], field[Math.floor(field.length / 2)], field[field.length - 1]]) {
+      expect(s.haf).toBeCloseTo(flareHafAt(s.lat, s.lon, ms, 1e-4), 6)
+      expect(s.haf).toBeGreaterThanOrEqual(2)
+    }
+    expect(flareField(ms, 1e-7)).toEqual([]) // quiet sun → nothing
   })
 })

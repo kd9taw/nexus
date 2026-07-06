@@ -11,7 +11,7 @@ use serde::Serialize;
 use crate::engine::OpeningView;
 use crate::geo::solar_elevation_deg;
 use crate::likelihood::is_es_season;
-use crate::model::{r_scale, Band, SpaceWx};
+use crate::model::{flare_haf_mhz, r_scale, Band, SpaceWx};
 use crate::solar_wind::SolarWind;
 use crate::space_wx::{TrendDir, WxTrend};
 
@@ -135,12 +135,14 @@ pub fn generate_insights(
                 InsightLevel::Caution
             },
             plain: format!(
-                "Solar flare (R{r}) — daytime low-band HF may be absorbed on the sunlit side"
+                "Solar flare (R{r}) — dayside HF below ~{:.0} MHz degraded (night side unaffected)",
+                flare_haf_mhz(wx.xray_long)
             ),
             technical: format!(
-                "GOES X-ray {:.1e} W/m² ({}-class) → R{r} radio blackout; D-layer absorption ∝ 1/f²",
+                "GOES X-ray {:.1e} W/m² ({}-class) → R{r} radio blackout; D-RAP HAF ≈ {:.0} MHz at the subsolar point, tapering cos(χ)^0.75",
                 wx.xray_long,
-                wx.xray_class()
+                wx.xray_class(),
+                flare_haf_mhz(wx.xray_long)
             ),
             band: Some("40m".to_string()),
         });

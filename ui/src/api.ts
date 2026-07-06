@@ -132,6 +132,12 @@ export async function getKc2gMuf(): Promise<MufStation[]> {
   return invoke<MufStation[]>('get_kc2g_muf')
 }
 
+/** The 60 s X-ray fast lane — the freshest GOES long-band flux, so a flare's
+ * onset reaches the map + alert in ~1 min instead of the 5-min prop cadence. */
+export async function getXrayNow(): Promise<import('./types').XrayNow> {
+  return invoke<import('./types').XrayNow>('get_xray_now')
+}
+
 /** SWPC R/S/G scales + recent alerts (the backend returns a [scales, alerts] tuple). */
 export async function getSpaceWxScales(): Promise<{ scales: NoaaScalesView; alerts: AlertView[] }> {
   const [scales, alerts] = await invoke<[NoaaScalesView, AlertView[]]>('get_space_wx_scales')

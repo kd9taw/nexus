@@ -59,8 +59,9 @@ type AlertKind = 'mycall' | 'newdxcc' | 'newgrid' | 'cq'
 
 const BEEP_HZ: Record<AlertKind, number> = { mycall: 880, newdxcc: 520, newgrid: 740, cq: 620 }
 
-/** Two quick tones — the attention-grabbing alert for a new DXCC ("new one"). */
-function doubleBeep(freq: number): void {
+/** Two quick tones — the attention-grabbing alert for a new DXCC ("new one")
+ * and the M5+/X-class solar-flare heads-up (flareAlert.ts). */
+export function doubleBeep(freq: number): void {
   beep(freq)
   window.setTimeout(() => beep(freq * 1.5), 130)
 }

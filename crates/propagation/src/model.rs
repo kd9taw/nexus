@@ -448,6 +448,18 @@ pub fn r_scale(xray_long: f32) -> u8 {
     }
 }
 
+/// NOAA D-RAP subsolar "Highest Affected Frequency" (MHz, ≥0) for a GOES long
+/// X-ray flux: HAF = 10·log10(flux) + 65 (anchors M1 → 15 MHz, X1 → 25 MHz).
+/// Away from the subsolar point it tapers as cos(solar zenith)^0.75 — the map
+/// layer does the geography; this is the ceiling the flare insight quotes.
+/// Quiet sun (A/B-class) yields 0 — nothing in HF is affected.
+pub fn flare_haf_mhz(xray_long: f32) -> f32 {
+    if xray_long <= 0.0 {
+        return 0.0;
+    }
+    (10.0 * xray_long.log10() + 65.0).max(0.0)
+}
+
 /// The propagation mode behind an opening (grounded in the research thresholds).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PropMode {
@@ -570,6 +582,14 @@ mod tests {
         }
         assert_eq!(Band::from_label("20M"), Some(Band::B20)); // case-insensitive
         assert_eq!(Band::from_label("70cm"), None);
+    }
+
+    #[test]
+    fn flare_haf_hits_the_drap_anchors() {
+        assert!((flare_haf_mhz(1e-5) - 15.0).abs() < 1e-3); // M1 → 15 MHz
+        assert!((flare_haf_mhz(1e-4) - 25.0).abs() < 1e-3); // X1 → 25 MHz
+        assert_eq!(flare_haf_mhz(1e-7), 0.0); // B1: 10·(−7)+65 < 0 → clamped
+        assert_eq!(flare_haf_mhz(0.0), 0.0);
     }
 
     #[test]

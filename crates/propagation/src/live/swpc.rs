@@ -74,6 +74,12 @@ fn fetch_kp(c: &reqwest::blocking::Client) -> Result<f32, String> {
     Ok(kp as f32)
 }
 
+/// Standalone GOES X-ray fetch — the 60 s "fast lane" behind `get_xray_now`, so
+/// a flare's onset reaches the UI in ~1 min instead of the 5-min snapshot TTL.
+pub fn fetch_xray_now() -> Result<f32, String> {
+    fetch_xray(&client()?)
+}
+
 /// Latest GOES long-band (0.1–0.8 nm) X-ray flux (W/m²).
 fn fetch_xray(c: &reqwest::blocking::Client) -> Result<f32, String> {
     let v = get_json(

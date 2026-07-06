@@ -68,12 +68,14 @@ import {
   getFeedHealth,
   getNeedAlerts,
   getAllSpots,
+  getXrayNow,
   setOperatingMode,
   workSpot,
   setLicenseClass,
   stopQsoRecording,
   pointRotatorAtCall,
 } from './api'
+import { processFlare, effectiveXray } from './flareAlert'
 import { setStatus } from './status'
 import type { PropagationSnapshot, FeedHealth, NeedTag, NeedAlert, SpotRow } from './types'
 import { NeededPanel } from './components/NeededPanel'
@@ -310,6 +312,9 @@ export default function App() {
   // Per-(band,mode) last-alert time so a band coming alive toasts once, not every
   // poll (defence in depth — the backend tracker already flags `isNew` once).
   const openingAlertRef = useRef<Map<string, number>>(new Map())
+  // Freshest fast-lane X-ray reading (60 s poller below) — merged with each prop
+  // snapshot so the flare heads-up fires app-wide, whatever view is open.
+  const xrayFastRef = useRef<number | null>(null)
   useEffect(() => {
     let live = true
     const OPENING_ALERT_COOLDOWN_MS = 10 * 60_000
@@ -318,6 +323,8 @@ export default function App() {
         .then((p) => {
           if (!live) return
           setProp(p)
+          // Solar-flare heads-up (edge-triggered; flareAlert.ts owns the dedup).
+          processFlare(effectiveXray(xrayFastRef.current, p.spaceWx.xrayLong))
           // Loud one-shot alert when a band comes alive (the flagship moment).
           const tnow = Date.now()
           for (const o of p.openings) {
@@ -354,6 +361,26 @@ export default function App() {
         .catch(() => {})
     load()
     const id = setInterval(load, 30_000)
+    return () => {
+      live = false
+      clearInterval(id)
+    }
+  }, [])
+  // X-ray fast lane (60 s): flare ONSET reaches the operator in ~1 min instead of
+  // the 5-min prop-snapshot cadence. Best-effort — a failed fetch just leaves the
+  // snapshot's slower value driving the watcher.
+  useEffect(() => {
+    let live = true
+    const load = () =>
+      getXrayNow()
+        .then((x) => {
+          if (!live) return
+          xrayFastRef.current = x.flux
+          processFlare(effectiveXray(x.flux, null))
+        })
+        .catch(() => {})
+    load()
+    const id = setInterval(load, 60_000)
     return () => {
       live = false
       clearInterval(id)

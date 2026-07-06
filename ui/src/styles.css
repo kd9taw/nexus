@@ -2178,6 +2178,21 @@ button.nb-chip:hover {
   font-weight: 600;
   color: var(--text-dim);
 }
+/* Live solar-flare readout (D-RAP layer) — top-left, warm accent, only rendered
+   while a flare is actually degrading HF. */
+.flare-chip {
+  position: absolute;
+  left: var(--space-3);
+  top: var(--space-3);
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-left: 3px solid #ff8c3a;
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-2);
+  font-size: 11px;
+  color: var(--text);
+  pointer-events: none;
+}
 .muf-legend-bar {
   height: 6px;
   border-radius: 2px;

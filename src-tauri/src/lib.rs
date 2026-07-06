@@ -568,6 +568,11 @@ static LAST_SOLAR_WIND: Mutex<Option<propagation::SolarWind>> = Mutex::new(None)
 /// to a Covington inversion of SFI). Refreshed on the space-wx fetch cadence.
 static LAST_SSN: Mutex<Option<f32>> = Mutex::new(None);
 
+/// The X-ray "fast lane" cache: (fetched-at, flux W/m², reading unix time). A
+/// flare's rise takes minutes, so `get_xray_now` refetches GOES every 60 s —
+/// much fresher than the 5-min snapshot TTL — and serves last-good on failure.
+static LAST_XRAY: Mutex<Option<(std::time::Instant, f32, i64)>> = Mutex::new(None);
+
 /// Where settings are persisted: `%APPDATA%\tempo\settings.json` on Windows,
 /// `$XDG_CONFIG_HOME`/`~/.config/tempo/settings.json` on Unix, else CWD.
 fn settings_path() -> PathBuf {
@@ -1245,6 +1250,56 @@ async fn get_kc2g_muf(
             // Serve a stale set rather than nothing; empty if we never had one.
             let g = cache.lock().map_err(|e| e.to_string())?;
             Ok(g.as_ref().map(|(_, v)| v.clone()).unwrap_or_default())
+        }
+    }
+}
+
+/// The freshest GOES long-band X-ray flux for the D-RAP flare layer + heads-up.
+#[derive(serde::Serialize, Clone, Copy)]
+#[serde(rename_all = "camelCase")]
+struct XrayNow {
+    /// GOES 0.1–0.8 nm flux, W/m².
+    flux: f32,
+    /// When the reading was fetched (Unix seconds, UTC).
+    as_of: i64,
+}
+
+/// The 60 s X-ray fast lane: refetches GOES far more often than the 5-min prop
+/// snapshot so a flare's ONSET reaches the map + alert in ~1 min. Serves the
+/// last-good reading on a fetch failure; errors only when we never had one.
+#[tauri::command]
+async fn get_xray_now() -> Result<XrayNow, String> {
+    const XRAY_TTL_SECS: u64 = 60;
+    if let Some((when, flux, as_of)) = LAST_XRAY.lock().ok().and_then(|g| *g) {
+        if when.elapsed().as_secs() < XRAY_TTL_SECS {
+            return Ok(XrayNow { flux, as_of });
+        }
+    }
+    let fetched = tauri::async_runtime::spawn_blocking(propagation::live::swpc::fetch_xray_now)
+        .await
+        .map_err(|e| e.to_string())?;
+    match fetched {
+        Ok(flux) => {
+            let as_of = now_unix();
+            if let Ok(mut g) = LAST_XRAY.lock() {
+                *g = Some((std::time::Instant::now(), flux, as_of));
+            }
+            Ok(XrayNow { flux, as_of })
+        }
+        Err(e) => {
+            // Serve stale rather than nothing (and re-arm the TTL so a NOAA outage
+            // is retried once a minute, not on every UI poll).
+            if let Ok(mut g) = LAST_XRAY.lock() {
+                if let Some(entry) = g.as_mut() {
+                    entry.0 = std::time::Instant::now();
+                }
+            }
+            LAST_XRAY
+                .lock()
+                .ok()
+                .and_then(|g| *g)
+                .map(|(_, flux, as_of)| XrayNow { flux, as_of })
+                .ok_or(e)
         }
     }
 }
@@ -5140,6 +5195,7 @@ pub fn run() {
             get_aurora,
             get_kc2g_muf,
             get_space_wx_scales,
+            get_xray_now,
             get_feed_health,
             qsy_set_enabled,
             qsy_configure,

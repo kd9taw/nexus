@@ -268,8 +268,20 @@ export interface SpaceWxView {
   aIndex: number
   xrayClass: string
   flare: boolean
+  /** Raw GOES long-band (0.1–0.8 nm) X-ray flux, W/m² — the true flare magnitude
+   * behind `xrayClass`/`flare` (drives the map's D-RAP flare layer). */
+  xrayLong?: number
   /** Real-time solar wind; absent when the DSCOVR feed is unavailable. */
   solarWind?: SolarWind | null
+}
+
+/** The 60 s X-ray fast lane (`get_xray_now`) — fresher than the 5-min prop
+ * snapshot so flare onset shows in ~1 min. */
+export interface XrayNow {
+  /** GOES long-band X-ray flux, W/m². */
+  flux: number
+  /** When the reading was fetched (Unix seconds, UTC). */
+  asOf: number
 }
 export interface PropagationSnapshot {
   advisory: PropAdvisory

@@ -254,6 +254,106 @@ export function mufMhz(lat: number, lon: number, nowMs: number, sfi: number): nu
   return Math.max(day, FOF2_FLOOR) * M3000
 }
 
+// ── Solar-flare D-region absorption (NOAA D-RAP, X-ray part) ─────────────────
+// A flare's X-rays ionize the D-layer on the SUNLIT hemisphere only (flares are
+// line-of-sight), absorbing HF strongest under the sun. NOAA's D-RAP model:
+// subsolar Highest Affected Frequency HAF = 10·log10(flux) + 65 MHz (GOES
+// 0.1–0.8 nm long flux, W/m²; anchors M1→15 MHz, X1→25 MHz), tapering with
+// solar zenith angle χ as cos(χ)^0.75 (cos χ = sin(solar elevation)); absorption
+// at frequency f is (HAF/f)^1.5 dB. Quiet sun (A/B-class) puts HAF below HF, so
+// a HAF-driven overlay draws nothing — event-driven by physics, not by toggles.
+// R-scale thresholds MIRROR crates/propagation/src/model.rs `r_scale`.
+
+/** Subsolar-point Highest Affected Frequency (MHz, ≥0) for a GOES long-band
+ * X-ray flux. ~5 MHz at C1, 15 at M1, 25 at X1 — the D-RAP ceiling. */
+export function flareHafMhz(xrayLong: number): number {
+  if (!(xrayLong > 0)) return 0
+  return Math.max(0, 10 * Math.log10(xrayLong) + 65)
+}
+
+/** Local Highest Affected Frequency (MHz) at a point: the subsolar HAF tapered
+ * by cos(χ)^0.75. Zero on the night side. */
+export function flareHafAt(lat: number, lon: number, nowMs: number, xrayLong: number): number {
+  const elev = solarElevationDeg(lat, lon, nowMs)
+  if (elev <= 0) return 0
+  return flareHafMhz(xrayLong) * Math.pow(Math.sin(elev * DEG), 0.75)
+}
+
+/** NOAA radio-blackout R-scale (0 = none) from the GOES long X-ray flux —
+ * the TS mirror of model.rs `r_scale` (R1 ≥ M1 … R5 ≥ X20). */
+export function flareRScale(xrayLong: number): number {
+  if (xrayLong >= 2e-3) return 5
+  if (xrayLong >= 1e-3) return 4
+  if (xrayLong >= 1e-4) return 3
+  if (xrayLong >= 5e-5) return 2
+  if (xrayLong >= 1e-5) return 1
+  return 0
+}
+
+/** Flare class label ("M2.3", "X1.0") from the GOES long flux — display only. */
+export function flareClass(xrayLong: number): string {
+  if (!(xrayLong > 0)) return 'A0.0'
+  const bands: Array<[number, string]> = [
+    [1e-4, 'X'],
+    [1e-5, 'M'],
+    [1e-6, 'C'],
+    [1e-7, 'B'],
+  ]
+  for (const [floor, letter] of bands) {
+    if (xrayLong >= floor) return `${letter}${(xrayLong / floor).toFixed(1)}`
+  }
+  return `A${(xrayLong / 1e-8).toFixed(1)}`
+}
+
+/** One sampled point of the dayside absorption field. */
+export interface FlareSample {
+  lat: number
+  lon: number
+  /** Local Highest Affected Frequency, MHz. */
+  haf: number
+}
+
+/** The dayside HAF field sampled on a lat/lon grid — flareHafAt's math with the
+ * subsolar point HOISTED (calling flareHafAt per point recomputes the subsolar
+ * position ~3k×; here the per-point work is one dot product: cos χ =
+ * sin(elevation) = the great-circle cosine to the subsolar point). Points below
+ * 2 MHz (night side / terminator fringe) are dropped. */
+export function flareField(
+  nowMs: number,
+  xrayLong: number,
+  stepLat = 4,
+  stepLon = 5,
+): FlareSample[] {
+  const sub = flareHafMhz(xrayLong)
+  if (sub <= 0) return []
+  const ss = subsolarPoint(nowMs)
+  const sinSs = Math.sin(ss.lat * DEG)
+  const cosSs = Math.cos(ss.lat * DEG)
+  const out: FlareSample[] = []
+  for (let lat = -88; lat <= 88; lat += stepLat) {
+    const sinLa = Math.sin(lat * DEG)
+    const cosLa = Math.cos(lat * DEG)
+    for (let lon = -177.5; lon < 180; lon += stepLon) {
+      const cosChi = sinLa * sinSs + cosLa * cosSs * Math.cos((lon - ss.lon) * DEG)
+      if (cosChi <= 0) continue
+      const haf = sub * Math.pow(cosChi, 0.75)
+      if (haf < 2) continue
+      out.push({ lat, lon, haf })
+    }
+  }
+  return out
+}
+
+/** D-RAP's empirical fade-recovery estimate (minutes) from the CURRENT flux:
+ * 32.19·L² + 323.45·L + 837.2 for L = log10(flux). The published fit covers
+ * M1–X5 (L −5…−3.3): ≈25 min at M1, ≈60 at X1, capped ≈120 above X5. Below M1
+ * there is no published fit → null (the chip just omits the estimate). */
+export function flareRecoveryMin(xrayLong: number): number | null {
+  if (!(xrayLong >= 1e-5)) return null
+  const l = Math.min(-3.3, Math.log10(xrayLong))
+  return 32.19 * l * l + 323.45 * l + 837.2
+}
+
 /** A lat/lon grid cell for the MUF heatmap (geometry is static; color recomputed). */
 export interface MufCell {
   center: LatLon
