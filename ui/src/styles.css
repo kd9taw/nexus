@@ -8831,7 +8831,9 @@ select.settings-input {
 /* Roster mode (GridTracker-style): the Call Roster pane (first child) is dominant,
    Band Activity + Rx Frequency ride a narrow side rail. */
 .cockpit-lower.roster {
-  grid-template-columns: minmax(0, 1.9fr) minmax(240px, 1fr);
+  /* Rail widened for the FULL decode window (filter chips + sort need ~360px);
+     the roster stays the centerpiece but no longer starves the decodes. */
+  grid-template-columns: minmax(0, 1.4fr) minmax(360px, 1fr);
 }
 .cockpit-side {
   display: flex;
@@ -9078,8 +9080,9 @@ select.settings-input {
   min-width: 0;
 }
 .cockpit-decodes-side {
-  flex: 1 1 0;
-  min-height: 120px;
+  /* The full decode window dominates the rail; Rx Frequency keeps a slimmer share. */
+  flex: 1.6 1 0;
+  min-height: 160px;
   display: flex;
   overflow: hidden;
   padding: 6px 10px;

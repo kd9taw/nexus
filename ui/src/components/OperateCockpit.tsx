@@ -699,6 +699,9 @@ export function OperateCockpit({
               </div>
               <aside className="cockpit-side">
                 <div className="cockpit-decodes-side panel">
+                  {/* The FULL decode window (filters + sort), not the compact
+                      strip — roster mode = decode window + roster on one page
+                      (operator request); only Rx Frequency stays compact. */}
                   <OperateDecodes
                     decodes={snap.recentDecodes}
                     slot={snap.radio.slot}
@@ -710,7 +713,6 @@ export function OperateCockpit({
                     needAlertsByCall={needAlertsByCall}
                     {...decodeClickProps}
                     onErase={() => notifyErase(0)}
-                    compact
                     title="Band Activity"
                   />
                 </div>
