@@ -622,11 +622,22 @@ export default function App() {
   // user's alert settings. processDecodes dedups internally. The third arg makes each
   // alert toast click-to-work — working the station is what you almost always want next
   // (someone calling you, a new DXCC/grid, a CQ). Placed AFTER handleCall so it's in scope.
+  // The QSO context keeps popups quiet while actively working someone / running CQ.
   useEffect(() => {
     if (!snap || !settings) return
-    processDecodes(snap.recentDecodes, settings, (d) => {
-      if (d.from) handleCall(d.from, undefined, d.message, d.snr, d.freqHz)
-    })
+    processDecodes(
+      snap.recentDecodes,
+      settings,
+      (d) => {
+        if (d.from) handleCall(d.from, undefined, d.message, d.snr, d.freqHz)
+      },
+      // Field Day runs its own sequencer (snap.qso is null there) — its state
+      // strings (CallingCq/AwaitExchange/AwaitConfirm/Done) gate identically.
+      {
+        state: snap.fieldDay?.state ?? snap.qso?.state ?? null,
+        dxcall: snap.fieldDay?.dxcall ?? snap.qso?.dxcall ?? null,
+      },
+    )
   }, [snap, settings, handleCall])
 
   // Bumps when a QSO is logged AND "Clear DX call after logging" is on — the

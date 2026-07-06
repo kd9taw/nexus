@@ -430,6 +430,10 @@ pub struct FieldDayStatus {
     pub my_section: String,
     pub running: bool,
     pub state: String,
+    /// The station currently being worked (the FD sequencer's partner) — lets
+    /// the UI quiet decode popups about them mid-contact, like QsoStatus.dxcall.
+    #[serde(default)]
+    pub dxcall: Option<String>,
     pub qso_count: usize,
     pub sections: usize,
     /// Raw per-mode QSO points (phone 1, CW/digital 2) before multipliers.

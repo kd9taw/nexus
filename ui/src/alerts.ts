@@ -66,10 +66,30 @@ export function doubleBeep(freq: number): void {
   window.setTimeout(() => beep(freq * 1.5), 130)
 }
 
+/** What the operator is currently doing in the FT8/FT4 sequencer — lets the
+ * alerts stay quiet while they're already engaged (the chatty-popup fix). */
+export interface QsoContext {
+  /** Sequencer state ("Listening", "CallingCq", "AwaitReport", … "Done"), or
+   * null when the FT8 area isn't active at all. */
+  state: string | null
+  /** The station currently being worked, if any. */
+  dxcall: string | null
+}
+
+/** Engaged = the sequencer is mid-CQ-run or mid-QSO (not just monitoring). */
+function engagedInQso(ctx?: QsoContext): boolean {
+  return !!ctx?.state && ctx.state !== 'Listening' && ctx.state !== 'Done'
+}
+
 /**
  * Inspect the latest decode rows and fire alerts ONLY for new/needed things:
  * someone calling me, a new DXCC entity (aggressive), a new grid, or — if the
  * operator opted in — a plain CQ. Each unique decode alerts at most once.
+ *
+ * Quiet while operating: no popups about the station currently being worked
+ * (every reply from a QSO partner is "directed to me" — that toasted every
+ * over), and no "calling you" popups while mid-QSO/CQ-run (the sequencer is
+ * already answering; the cockpit shows it). Monitoring stays fully alerted.
  */
 export function processDecodes(
   decodes: DecodeRow[],
@@ -78,14 +98,21 @@ export function processDecodes(
   // the alert is about (identical to double-clicking its decode row). Optional so the
   // alert path stays usable without a handler.
   onWork?: (d: DecodeRow) => void,
+  qso?: QsoContext,
 ): void {
+  const engaged = engagedInQso(qso)
+  const partner = qso?.dxcall?.toUpperCase() ?? null
   for (const d of decodes) {
     const call = d.from
+
+    // Already working this station → nothing about them is news (skipped WITHOUT
+    // consuming the dedup key, so a later fresh event can still alert).
+    if (partner && call?.toUpperCase() === partner) continue
 
     // Decide whether this row should alert (highest priority first). New DXCC
     // and new grid are gated by alertNew; a new DXCC is the loud "new one".
     let kind: AlertKind | null = null
-    if (settings.alertMyCall && d.directedToMe) kind = 'mycall'
+    if (settings.alertMyCall && d.directedToMe && !engaged) kind = 'mycall'
     else if (settings.alertNew && d.newDxcc) kind = 'newdxcc'
     else if (settings.alertNew && d.newGrid) kind = 'newgrid'
     else if (settings.alertCq && d.isCq) kind = 'cq'

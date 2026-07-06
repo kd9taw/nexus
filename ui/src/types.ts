@@ -1156,6 +1156,8 @@ export interface FieldDayStatus {
   mySection: string
   running: boolean
   state: string
+  /** The station currently being worked (quiets decode popups about them). */
+  dxcall?: string | null
   qsoCount: number
   sections: number
   points: number

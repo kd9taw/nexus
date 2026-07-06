@@ -2053,13 +2053,19 @@ impl Engine {
         // Set our TX period to the OPPOSITE of the period the DX was decoded in, so
         // we transmit while they listen — WSJT-X's auto-Tx-1st/2nd on double-click.
         // Use the ANSWERED decode's slot (the history row we resolved context
-        // from); `last_decode_slot` is whatever slot decoded most recently and is
-        // 50/50 WRONG for a click on an older row — a wrong parity transmits while
-        // the DX transmits: never heard, and reads as "waits multiple cycles".
+        // from); when the click carried no message (roster/station-card/spot click)
+        // and the DX is calling CQ (not addressed to me), `context_slot` is None —
+        // fall back to the DX's OWN latest decode (their CQ), like the chat path.
+        // `last_decode_slot` is whatever slot decoded most recently from ANYONE and
+        // is 50/50 WRONG on a two-cycle band — a wrong parity transmits while the
+        // DX transmits: never heard, and reads as "waits multiple cycles".
         // (A decode's audio is from the slot before its ingest slot, so the
         // opposite of the DX's period is exactly `ingest_slot % 2`.) This is a DERIVED
         // parity (the sequencer answering), not a manual pick — keep auto-cycle on.
-        if let Some(s) = context_slot.or(self.last_decode_slot) {
+        if let Some(s) = context_slot
+            .or_else(|| self.latest_decode_slot_from(dxcall))
+            .or(self.last_decode_slot)
+        {
             self.apply_cycle_parity(s % 2 == 0);
         }
         // Move our RX onto the DX's audio frequency (and TX with it, unless Hold Tx
@@ -3150,6 +3156,7 @@ impl Engine {
                     my_section: log.myexch.section.clone(),
                     running: *running,
                     state: format!("{:?}", station.state),
+                    dxcall: station.dxcall.clone(),
                     qso_count: log.qso_count(),
                     sections: log.sections(),
                     points: qso_pts,
@@ -5421,6 +5428,24 @@ mod tests {
         // Parity derives from the ANSWERED decode's slot (5 → odd ingest → their
         // audio slot 4/even → we TX on odd), not from the unrelated slot-9 decode.
         assert!(!e.tx_even(), "TX parity opposite the CALLER's period");
+    }
+
+    #[test]
+    fn roster_click_on_a_cqing_station_picks_the_opposite_cycle() {
+        // THE same-cycle bug (operator report, 6m): the DX is calling CQ (so
+        // nothing is addressed to me), the roster click passes no message text,
+        // and a LATER decode from an unrelated station sits on the opposite
+        // parity. Parity must derive from the CLICKED station's own CQ — never
+        // from the unrelated most-recent decode (that transmitted on top of them).
+        let mut e = Engine::new("W9XYZ", "EN37", 0);
+        // PJ4DX's CQ ingests at slot 5 → their audio slot 4 (even): they TX even.
+        e.ingest_decodes_for_test(&[dec_snr("CQ PJ4DX FK52", -10)], 5);
+        // Unrelated traffic ingests at slot 6 — the bare last_decode_slot
+        // fallback would put us on PJ4DX's own (even) cycle.
+        e.ingest_decodes_for_test(&[dec_snr("CQ N0OTH EM48", -3)], 6);
+        e.call_station("PJ4DX");
+        assert_eq!(e.snapshot().qso.unwrap().dxcall.as_deref(), Some("PJ4DX"));
+        assert!(!e.tx_even(), "TX parity opposite the CQing DX's period");
     }
 
     #[test]

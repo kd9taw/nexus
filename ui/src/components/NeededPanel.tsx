@@ -471,7 +471,12 @@ export function NeededPanel({
           rows.map((a) => {
             const canQsy = knownBands.has(a.band)
             const isVoiceCw = a.mode === 'CW' || a.mode === 'Phone'
-            const workable = isVoiceCw && !!onWork
+            // Every mode is click-to-work when the host wires onWork (main window):
+            // the work path QSYs the rig AND opens the matching cockpit — a Digital
+            // need must land in the FT8 cockpit, not just move the dial (the
+            // "radio switched but the app didn't" bug). The pop-out has no onWork,
+            // so its rows fall back to the QSY-only branch below.
+            const workable = !!onWork
             const age = ageLabel(a.admittedAt)
             const evidenceLine = a.evidence
               ? (age ? `${a.evidence} · ${age}` : a.evidence)
