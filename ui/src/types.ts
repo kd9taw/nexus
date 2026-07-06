@@ -1340,6 +1340,13 @@ export interface Settings {
   /** TCP port that rigctld listens on / Tempo launches it with. */
   rigctldPort: number
   /** Antenna rotator: rotctld daemon `host:port` (empty = no rotator). */
+  /** Integrated rotator: Hamlib rotator model # (0 = none) + serial port +
+   * baud — Nexus launches the bundled rotctld itself, like the rig. */
+  rotatorModel?: number
+  rotatorPort?: string
+  rotatorBaud?: number
+  /** ADVANCED: external rotctld host:port override (wins over the integrated
+   * spawn). Empty + model 0 = no rotator. */
   rotatorHost: string
   /** Run the rigctld-compatible CAT broker so other apps share the radio. */
   catBroker: boolean

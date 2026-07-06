@@ -16,10 +16,10 @@ SHA256=5b2a5d6efc37171c24ee6ac44e6304710219859f30fa4dfc77688f71b3440402
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEST="$REPO/src-tauri/resources/hamlib"
 # What rigctld.exe needs at runtime (+ rigctl.exe for `rigctl -l`, + licenses).
-WANT=(rigctld.exe rigctl.exe libhamlib-4.dll libwinpthread-1.dll libusb-1.0.dll libgcc_s_seh-1.dll)
+WANT=(rigctld.exe rigctl.exe rotctld.exe rotctl.exe libhamlib-4.dll libwinpthread-1.dll libusb-1.0.dll libgcc_s_seh-1.dll)
 LIC=(COPYING.txt COPYING.LIB.txt LICENSE.txt AUTHORS.txt)
 
-if [ -f "$DEST/rigctld.exe" ] && [ -f "$DEST/libhamlib-4.dll" ]; then
+if [ -f "$DEST/rigctld.exe" ] && [ -f "$DEST/rotctld.exe" ] && [ -f "$DEST/libhamlib-4.dll" ]; then
   echo "Hamlib already staged at $DEST"; exit 0
 fi
 

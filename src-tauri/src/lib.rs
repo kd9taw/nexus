@@ -2193,6 +2193,8 @@ fn set_settings(
         settings.lotw_max_age_days,
         std::sync::atomic::Ordering::Relaxed,
     );
+    // Integrated rotator daemon follows the settings (spawn/respawn/kill).
+    sync_rotctld(&settings);
     // Capture the feed config before `settings` moves into the engine.
     let cluster_enabled = settings.cluster_enabled;
     let cluster_hosts = settings.cluster_hosts.clone();
@@ -2581,20 +2583,88 @@ async fn probe_cat_ports(state: State<'_, SharedEngine>) -> Result<CatProbeResul
     }
 }
 
+/// The spawned rotctld daemon (integrated rotator) + the params it was
+/// spawned with, so a settings change respawns only when something changed.
+static ROTCTLD: Mutex<Option<(tempo_audio::rigctld_proc::RigctldProc, (u32, String, u32))>> =
+    Mutex::new(None);
+/// The integrated daemon's local port (rotctld's upstream default; the rig's
+/// rigctld owns 4532, so there is no collision).
+const ROTCTLD_PORT: u16 = 4533;
+
+/// The address every rotator command talks to: the ADVANCED external override
+/// when set, else the integrated daemon (when a model is configured), else
+/// None — no rotator.
+fn effective_rotator_addr(st: &tempo_app::settings::Settings) -> Option<String> {
+    let host = st.rotator_host.trim();
+    if !host.is_empty() {
+        return Some(host.to_string());
+    }
+    (st.rotator_model > 0).then(|| format!("127.0.0.1:{ROTCTLD_PORT}"))
+}
+
+/// Reconcile the integrated rotctld daemon with settings: spawn it when a
+/// model is configured (and no external override), respawn on param changes,
+/// kill it when unconfigured. Errors surface on the connection log — a dead
+/// rotctld must be visible, not silent.
+fn sync_rotctld(st: &tempo_app::settings::Settings) {
+    let want = st.rotator_host.trim().is_empty() && st.rotator_model > 0;
+    let params = (
+        st.rotator_model,
+        st.rotator_port.trim().to_string(),
+        st.rotator_baud,
+    );
+    let Ok(mut g) = ROTCTLD.lock() else { return };
+    match (&mut *g, want) {
+        (Some((_, p)), true) if *p == params => {} // running with the right params
+        (slot, true) => {
+            *slot = None; // kill-on-drop reaps a stale daemon first
+            match tempo_audio::rigctld_proc::spawn_rotctld(
+                params.0,
+                &params.1,
+                params.2,
+                ROTCTLD_PORT,
+            ) {
+                Ok(proc) => {
+                    conn_log(
+                        "Rotator",
+                        "info",
+                        format!(
+                            "rotctld launched (model {} on {} @ {}, :{ROTCTLD_PORT})",
+                            params.0,
+                            if params.1.is_empty() { "-" } else { &params.1 },
+                            params.2
+                        ),
+                    );
+                    *slot = Some((proc, params));
+                }
+                Err(e) => {
+                    conn_log("Rotator", "error", format!("rotctld launch failed: {e}"));
+                }
+            }
+        }
+        (slot @ Some(_), false) => {
+            conn_log("Rotator", "info", "rotctld stopped (rotator unconfigured)");
+            *slot = None;
+        }
+        (None, false) => {}
+    }
+}
+
 /// Point the antenna rotator at an absolute azimuth (degrees) via rotctld.
 #[tauri::command]
 async fn point_rotator(state: State<'_, SharedEngine>, az_deg: f64) -> Result<(), String> {
     #[cfg(feature = "radio")]
     {
-        let host = state
-            .lock()
-            .map_err(|e| e.to_string())?
-            .settings()
-            .rotator_host
-            .clone();
-        if host.trim().is_empty() {
-            return Err("Set the rotator (rotctld) host:port in Settings first.".to_string());
-        }
+        let host = {
+            let eng = state.lock().map_err(|e| e.to_string())?;
+            effective_rotator_addr(eng.settings())
+        };
+        let Some(host) = host else {
+            return Err(
+                "Set up your rotator in Settings (pick a model + port; Nexus runs rotctld for you)."
+                    .to_string(),
+            );
+        };
         tauri::async_runtime::spawn_blocking(move || tempo_audio::rotator::point(&host, az_deg))
             .await
             .map_err(|e| e.to_string())?
@@ -2612,15 +2682,16 @@ async fn point_rotator(state: State<'_, SharedEngine>, az_deg: f64) -> Result<()
 async fn stop_rotator(state: State<'_, SharedEngine>) -> Result<(), String> {
     #[cfg(feature = "radio")]
     {
-        let host = state
-            .lock()
-            .map_err(|e| e.to_string())?
-            .settings()
-            .rotator_host
-            .clone();
-        if host.trim().is_empty() {
-            return Err("Set the rotator (rotctld) host:port in Settings first.".to_string());
-        }
+        let host = {
+            let eng = state.lock().map_err(|e| e.to_string())?;
+            effective_rotator_addr(eng.settings())
+        };
+        let Some(host) = host else {
+            return Err(
+                "Set up your rotator in Settings (pick a model + port; Nexus runs rotctld for you)."
+                    .to_string(),
+            );
+        };
         tauri::async_runtime::spawn_blocking(move || tempo_audio::rotator::stop(&host))
             .await
             .map_err(|e| e.to_string())?
@@ -2645,13 +2716,16 @@ async fn point_rotator_at_call(
         let (host, mygrid) = {
             let eng = state.lock().map_err(|e| e.to_string())?;
             (
-                eng.settings().rotator_host.clone(),
+                effective_rotator_addr(eng.settings()),
                 eng.settings().mygrid.clone(),
             )
         };
-        if host.trim().is_empty() {
-            return Err("Set the rotator (rotctld) host:port in Settings first.".to_string());
-        }
+        let Some(host) = host else {
+            return Err(
+                "Set up your rotator in Settings (pick a model + port; Nexus runs rotctld for you)."
+                    .to_string(),
+            );
+        };
         let me = propagation::geo::maidenhead_to_latlon(mygrid.trim())
             .ok_or("Set your grid square in Settings so a bearing can be computed.")?;
         let info = propagation::dxcc::resolve(&call)
@@ -2675,15 +2749,13 @@ async fn point_rotator_at_call(
 async fn read_rotator(state: State<'_, SharedEngine>) -> Result<Option<f64>, String> {
     #[cfg(feature = "radio")]
     {
-        let host = state
-            .lock()
-            .map_err(|e| e.to_string())?
-            .settings()
-            .rotator_host
-            .clone();
-        if host.trim().is_empty() {
-            return Ok(None);
-        }
+        let host = {
+            let eng = state.lock().map_err(|e| e.to_string())?;
+            effective_rotator_addr(eng.settings())
+        };
+        let Some(host) = host else {
+            return Ok(None); // no rotator configured — the pane shows its hint
+        };
         Ok(
             tauri::async_runtime::spawn_blocking(move || tempo_audio::rotator::read_azimuth(&host))
                 .await
@@ -5730,6 +5802,10 @@ pub fn run() {
     }
     start_pskr_feed(&live_paths, &cluster_call, &health);
     start_wspr_feed(&live_paths, &cluster_call);
+    // Integrated rotator: launch the bundled rotctld when a model is configured.
+    if let Ok(eng) = engine.lock() {
+        sync_rotctld(eng.settings());
+    }
     if region_enabled {
         start_pskr_region_feed(&region_paths, &cluster_call, &region_grid);
     }

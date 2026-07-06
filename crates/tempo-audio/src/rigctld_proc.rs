@@ -135,6 +135,71 @@ fn resolve_rigctld() -> std::ffi::OsString {
     std::ffi::OsString::from("rigctld")
 }
 
+/// Build the `rotctld` argument vector — same shape as [`rigctld_args`] minus
+/// the network-rig special case (rotators are serial devices to Hamlib).
+pub fn rotctld_args(model: u32, port: &str, baud: u32, tcp_port: u16) -> Vec<String> {
+    let mut args = vec!["-m".to_string(), model.to_string()];
+    if !port.is_empty() {
+        args.push("-r".to_string());
+        args.push(port.to_string());
+        args.push("-s".to_string());
+        args.push(baud.to_string());
+    }
+    args.push("-t".to_string());
+    args.push(tcp_port.to_string());
+    args
+}
+
+/// The bundled `rotctld` (ships beside rigctld in the Hamlib bundle), falling
+/// back to PATH — same resolution as [`resolve_rigctld`].
+fn resolve_rotctld() -> std::ffi::OsString {
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            for cand in [
+                "hamlib/rotctld.exe",
+                "resources/hamlib/rotctld.exe",
+                "rotctld.exe",
+                "hamlib/rotctld",
+            ] {
+                let p = dir.join(cand);
+                if p.is_file() {
+                    return p.into_os_string();
+                }
+            }
+        }
+    }
+    std::ffi::OsString::from("rotctld")
+}
+
+/// Spawn `rotctld` for a ROTATOR `model` on `port`@`baud`, listening on
+/// `tcp_port` — the rotator twin of [`spawn_rigctld`], with the same
+/// kill-on-drop + Windows job-object lifetime guarantees (reuses
+/// [`RigctldProc`]; the handle is daemon-agnostic).
+pub fn spawn_rotctld(
+    model: u32,
+    port: &str,
+    baud: u32,
+    tcp_port: u16,
+) -> std::io::Result<RigctldProc> {
+    let args = rotctld_args(model, port, baud, tcp_port);
+    let mut cmd = Command::new(resolve_rotctld());
+    cmd.args(&args);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    let child = cmd.spawn()?;
+    #[cfg(windows)]
+    let job = assign_kill_on_close_job(&child);
+    Ok(RigctldProc {
+        child,
+        #[cfg(windows)]
+        job,
+    })
+}
+
 /// Spawn `rigctld` for `model` on `serial_port`@`baud`, listening on
 /// `tcp_port`. Returns a kill-on-drop handle. Uses the bundled Hamlib if present
 /// (see [`resolve_rigctld`]), otherwise a `rigctld` on `PATH`.
@@ -170,6 +235,19 @@ pub fn spawn_rigctld(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rotctld_args_mirror_the_rig_shape() {
+        assert_eq!(
+            rotctld_args(601, "COM7", 9600, 4533),
+            vec!["-m", "601", "-r", "COM7", "-s", "9600", "-t", "4533"]
+        );
+        // No port (Dummy rotator for testing) → no -r/-s.
+        assert_eq!(
+            rotctld_args(1, "", 9600, 4533),
+            vec!["-m", "1", "-t", "4533"]
+        );
+    }
 
     #[test]
     fn args_with_serial_port() {

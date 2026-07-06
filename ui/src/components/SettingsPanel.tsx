@@ -214,6 +214,11 @@ export function SettingsPanel({
   // the answer to "I hit save and couldn't tell anything happened".
   const [creds, setCreds] = useState<CredStatus[]>([])
   // ARRL LoTW user-activity list (the decode/roster LoTW marks).
+  // Rotator "Other model" entry: UI mode + text live in LOCAL state so a
+  // sentinel can never leak into the form (review catch: -1 in the payload
+  // failed serde's u32 and rejected the ENTIRE settings save).
+  const [rotOther, setRotOther] = useState(false)
+  const [rotCustom, setRotCustom] = useState('')
   const [lotwUsers, setLotwUsers] = useState<LotwUsersStatus | null>(null)
   const [lotwFetching, setLotwFetching] = useState(false)
   useEffect(() => {
@@ -1334,21 +1339,111 @@ export function SettingsPanel({
                 <span className="settings-hint">Port Nexus launches rigctld on.</span>
               </label>
 
-              <label className="settings-field">
-                <span className="settings-label">Rotator (rotctld)</span>
+              <div className="settings-field">
+                <span className="settings-label">Antenna rotator</span>
+                {(() => {
+                  const CURATED = [
+                    '0', '601', '603', '602', '901', '902', '202', '204', '401',
+                    '403', '405', '1001', '1102', '1701', '1',
+                  ]
+                  const modelStr = String(form.rotatorModel ?? 0)
+                  const isOther = rotOther || !CURATED.includes(modelStr)
+                  return (
+                    <>
+                      <select
+                        value={isOther ? 'other' : modelStr}
+                        onChange={(e) => {
+                          const v = e.target.value
+                          if (v === 'other') {
+                            setRotOther(true)
+                            setRotCustom(
+                              (form.rotatorModel ?? 0) > 0 ? String(form.rotatorModel) : '',
+                            )
+                          } else {
+                            setRotOther(false)
+                            updateNum('rotatorModel', Number(v))
+                          }
+                        }}
+                        aria-label="Rotator model"
+                      >
+                        <option value="0">None</option>
+                        <option value="601">Yaesu GS-232A</option>
+                        <option value="603">Yaesu GS-232B</option>
+                        <option value="602">GS-232 (generic)</option>
+                        <option value="901">SPID Rot2Prog</option>
+                        <option value="902">SPID Rot1Prog</option>
+                        <option value="202">EasyComm II</option>
+                        <option value="204">EasyComm III</option>
+                        <option value="401">Hy-Gain Rotor-EZ</option>
+                        <option value="403">Hy-Gain DCU</option>
+                        <option value="405">Green Heron RT-21</option>
+                        <option value="1001">M2 RC2800</option>
+                        <option value="1102">EA4TX ARS (az)</option>
+                        <option value="1701">Prosistel D (az)</option>
+                        <option value="1">Dummy (testing — no hardware)</option>
+                        <option value="other">Other Hamlib model #…</option>
+                      </select>
+                      {isOther && (
+                        <input
+                          className="settings-input"
+                          type="number"
+                          min="1"
+                          placeholder="Hamlib rotator model number (rotctl -l lists them)"
+                          value={rotCustom}
+                          onChange={(e) => {
+                            setRotCustom(e.target.value)
+                            const n = Number(e.target.value)
+                            // Only ever commit a REAL model; an incomplete
+                            // entry leaves the last valid value in the form.
+                            if (Number.isInteger(n) && n > 0) updateNum('rotatorModel', n)
+                          }}
+                          aria-label="Hamlib rotator model number"
+                        />
+                      )}
+                    </>
+                  )
+                })()}
+                {(form.rotatorModel ?? 0) > 1 && (
+                  <div className="settings-inline-pair">
+                    <input
+                      className="settings-input"
+                      type="text"
+                      value={form.rotatorPort ?? ''}
+                      placeholder="COM7 / /dev/ttyUSB1"
+                      onChange={(e) => update('rotatorPort', e.target.value)}
+                      autoComplete="off"
+                      spellCheck={false}
+                      aria-label="Rotator serial port"
+                    />
+                    <input
+                      className="settings-input"
+                      type="number"
+                      value={form.rotatorBaud ?? 9600}
+                      onChange={(e) => {
+                        const n = Number(e.target.value)
+                        if (!Number.isNaN(n)) updateNum('rotatorBaud', n)
+                      }}
+                      aria-label="Rotator baud rate"
+                      title="Baud rate (GS-232 default 9600)"
+                    />
+                  </div>
+                )}
+                <span className="settings-hint">
+                  Pick your rotator and its COM port — Nexus runs the control daemon for you
+                  (same as the rig). Then use the Rotor pane in Connect, ↗ on Needed rows,
+                  or the compass anywhere.
+                </span>
                 <input
                   className="settings-input"
                   type="text"
                   value={form.rotatorHost}
-                  placeholder="host:port — e.g. 127.0.0.1:4533"
+                  placeholder="Advanced: external rotctld host:port (overrides the above)"
                   onChange={(e) => update('rotatorHost', e.target.value)}
                   autoComplete="off"
                   spellCheck={false}
+                  aria-label="External rotctld address (advanced)"
                 />
-                <span className="settings-hint">
-                  Run rotctld; then click ↗ on a Needed row to point the antenna. Empty = off.
-                </span>
-              </label>
+              </div>
 
               <label className="settings-field">
                 <span className="settings-label">WinKeyer port</span>

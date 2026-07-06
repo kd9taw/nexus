@@ -156,8 +156,18 @@ pub struct Settings {
     pub cw_pitch_hz: f32,
     /// Local TCP port Tempo uses for rigctld (it spawns rigctld on this port).
     pub rigctld_port: u16,
-    /// Antenna rotator: `rotctld` daemon address `host:port` (the operator runs rotctld).
-    /// Empty = no rotator. Nexus connects to point the antenna (read-only `p` to read).
+    /// Antenna rotator, the INTEGRATED way: a Hamlib rotator model number
+    /// (0 = no rotator) + serial port + baud — Nexus launches the bundled
+    /// `rotctld` itself, exactly like the rig's rigctld. No command lines.
+    #[serde(default)]
+    pub rotator_model: u32,
+    #[serde(default)]
+    pub rotator_port: String,
+    #[serde(default = "default_rotator_baud")]
+    pub rotator_baud: u32,
+    /// ADVANCED override: an external `rotctld` daemon address `host:port`
+    /// (for operators who already run their own). Non-empty wins over the
+    /// integrated model/port spawn. Empty + model 0 = no rotator.
     pub rotator_host: String,
     /// Run the rigctld-compatible CAT **broker** so other apps (WSJT-X / N1MM /
     /// loggers) share the radio THROUGH Nexus, on `cat_broker_port`. Off by default.
@@ -481,6 +491,10 @@ fn default_tune_timeout() -> u32 {
     12
 }
 
+fn default_rotator_baud() -> u32 {
+    9600 // the GS-232 family default
+}
+
 fn default_save_wav() -> String {
     "none".to_string()
 }
@@ -599,6 +613,9 @@ impl Default for Settings {
             winkeyer_port: String::new(),
             cw_pitch_hz: 600.0,
             rigctld_port: 4532,
+            rotator_model: 0,
+            rotator_port: String::new(),
+            rotator_baud: default_rotator_baud(),
             rotator_host: String::new(),
             cat_broker: false,
             cat_broker_port: 4532,
