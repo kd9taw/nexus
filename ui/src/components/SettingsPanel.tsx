@@ -29,6 +29,7 @@ import { pushToast, withErrorToast } from '../toast'
 import { loadProfiles, saveProfile, deleteProfile, type Profile } from '../profiles'
 import { getConnectionLog, getCredentialsStatus } from '../api'
 import { fetchLotwUsers, getLotwUsersStatus, type LotwUsersStatus } from '../api'
+import { discoverFlex } from '../api'
 import type { ConnEvent, CredStatus } from '../types'
 import { FrequencyControl } from './FrequencyControl'
 import { LevelMeter } from './LevelMeter'
@@ -217,6 +218,8 @@ export function SettingsPanel({
   // Rotator "Other model" entry: UI mode + text live in LOCAL state so a
   // sentinel can never leak into the form (review catch: -1 in the payload
   // failed serde's u32 and rejected the ENTIRE settings save).
+  // Find-my-Flex discovery (network rig section).
+  const [flexScanning, setFlexScanning] = useState(false)
   const [rotOther, setRotOther] = useState(false)
   const [rotCustom, setRotCustom] = useState('')
   const [lotwUsers, setLotwUsers] = useState<LotwUsersStatus | null>(null)
@@ -1252,18 +1255,77 @@ export function SettingsPanel({
               {form.rigConn === 'network' && (
                 <label className="settings-field">
                   <span className="settings-label">Network Address</span>
-                  <input
-                    className="settings-input"
-                    type="text"
-                    value={form.rigAddr}
-                    placeholder="192.168.1.50:4992"
-                    onChange={(e) => update('rigAddr', e.target.value)}
-                    autoComplete="off"
-                    spellCheck={false}
-                  />
+                  <div className="settings-input-row">
+                    <input
+                      className="settings-input"
+                      type="text"
+                      value={form.rigAddr}
+                      placeholder="192.168.1.50:4992"
+                      onChange={(e) => update('rigAddr', e.target.value)}
+                      autoComplete="off"
+                      spellCheck={false}
+                    />
+                    <button
+                      type="button"
+                      className="settings-test-btn"
+                      disabled={flexScanning}
+                      onClick={() => {
+                        setFlexScanning(true)
+                        discoverFlex()
+                          .then((radios) => {
+                            if (radios.length === 0) {
+                              pushToast(
+                                'No Flex announced itself in 3 s — is the radio on this network? (If SmartSDR is running here it can hold the discovery port.)',
+                                'info',
+                                8000,
+                              )
+                              return
+                            }
+                            const r = radios[0]
+                            update('rigAddr', `${r.ip}:4992`)
+                            pushToast(
+                              `Found ${r.model}${r.nickname ? ` "${r.nickname}"` : ''} at ${r.ip}${radios.length > 1 ? ` (+${radios.length - 1} more — first taken)` : ''}`,
+                              'success',
+                              6000,
+                            )
+                          })
+                          .catch((e) =>
+                            pushToast(
+                              `Flex scan failed: ${e instanceof Error ? e.message : e}`,
+                              'error',
+                            ),
+                          )
+                          .finally(() => setFlexScanning(false))
+                      }}
+                      title="Listen 3 s for a FlexRadio announcing itself on this network and fill its address (written to the published discovery format — not yet verified on real hardware)"
+                    >
+                      {flexScanning ? 'Scanning…' : 'Find my Flex'}
+                    </button>
+                  </div>
+                  {(() => {
+                    const daxIn = audio.input.find((d) => /dax.*rx\s*1/i.test(d)) ?? audio.input.find((d) => /dax/i.test(d))
+                    const daxOut = audio.output.find((d) => /dax.*tx/i.test(d)) ?? audio.output.find((d) => /dax/i.test(d))
+                    const paired = form.audioIn === daxIn && form.audioOut === daxOut
+                    return daxIn && daxOut && !paired ? (
+                      <button
+                        type="button"
+                        className="settings-test-btn"
+                        onClick={() => {
+                          update('audioIn', daxIn)
+                          update('audioOut', daxOut)
+                          pushToast(`DAX paired: ${daxIn} → in, ${daxOut} → out`, 'success', 6000)
+                        }}
+                        title="SmartSDR's DAX virtual audio devices were detected — one click sets them as Nexus's audio in/out (bit-clean digital audio, no sound card)"
+                      >
+                        ⚡ Pair DAX audio ({daxIn})
+                      </button>
+                    ) : null
+                  })()}
                   <span className="settings-hint">
                     host:port of the radio — a FlexRadio's IP on SmartSDR's port 4992, or a
-                    remote rigctld. Pick the DAX audio devices under Audio.
+                    remote rigctld. Nexus runs BESIDE SmartSDR as the digital brain: CAT
+                    follows SmartSDR's ACTIVE slice (perfect for single-slice digital;
+                    multi-slice targeting isn't supported), audio rides DAX.
                   </span>
                 </label>
               )}

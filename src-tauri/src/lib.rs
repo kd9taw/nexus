@@ -2677,6 +2677,33 @@ async fn point_rotator(state: State<'_, SharedEngine>, az_deg: f64) -> Result<()
     }
 }
 
+#[derive(serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct FlexRadioDto {
+    model: String,
+    nickname: String,
+    ip: String,
+}
+
+/// Listen ~3 s for FlexRadio LAN discovery broadcasts (UDP 4992) — the
+/// Settings "Find my Flex" button. Empty = nothing announced. Read-only.
+#[tauri::command]
+async fn discover_flex() -> Result<Vec<FlexRadioDto>, String> {
+    tauri::async_runtime::spawn_blocking(|| tempo_net::flexdisc::discover(3))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+        .map(|v| {
+            v.into_iter()
+                .map(|r| FlexRadioDto {
+                    model: r.model,
+                    nickname: r.nickname,
+                    ip: r.ip,
+                })
+                .collect()
+        })
+}
+
 /// Stop the rotator immediately (rotctld `S`) — the control panel's STOP.
 #[tauri::command]
 async fn stop_rotator(state: State<'_, SharedEngine>) -> Result<(), String> {
@@ -6082,6 +6109,7 @@ pub fn run() {
             probe_cat_ports,
             point_rotator,
             stop_rotator,
+            discover_flex,
             point_rotator_at_call,
             read_rotator,
             cw_decode,

@@ -731,6 +731,11 @@ export async function pointRotatorAtCall(call: string): Promise<number> {
 }
 
 /** Current rotator azimuth (degrees), or null if rotctld is unset/unreachable. */
+/** Scan ~3s for FlexRadio LAN discovery broadcasts (the Find-my-Flex button). */
+export async function discoverFlex(): Promise<{ model: string; nickname: string; ip: string }[]> {
+  return invoke('discover_flex')
+}
+
 /** Stop the rotator immediately (rotctld S). */
 export async function stopRotator(): Promise<void> {
   return invoke('stop_rotator')
