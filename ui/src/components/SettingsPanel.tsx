@@ -1283,11 +1283,25 @@ export function SettingsPanel({
                               return
                             }
                             const r = radios[0]
-                            update('rigAddr', `${r.ip}:4992`)
+                            // The WSJT-X-proven path: CAT rides the SmartSDR CAT
+                            // app on THIS PC (model 2036, 127.0.0.1:5004), never
+                            // the radio's own 4992 — Hamlib's direct native
+                            // backend is alpha and failed on a real 6400M.
+                            update('rigAddr', '127.0.0.1:5004')
+                            markDirty()
+                            setForm((prev) =>
+                              prev
+                                ? {
+                                    ...prev,
+                                    rigModel: 2036,
+                                    rigModelName: 'FlexRadio FLEX-6xxx (SmartSDR CAT)',
+                                  }
+                                : prev,
+                            )
                             pushToast(
-                              `Found ${r.model}${r.nickname ? ` "${r.nickname}"` : ''} at ${r.ip}${radios.length > 1 ? ` (+${radios.length - 1} more — first taken)` : ''}`,
+                              `Found ${r.model}${r.nickname ? ` "${r.nickname}"` : ''} at ${r.ip}${radios.length > 1 ? ` (+${radios.length - 1} more — first taken)` : ''}. CAT set to SmartSDR CAT: open the SmartSDR CAT app, add a TCP port 5004, then Save + Test CAT.`,
                               'success',
-                              6000,
+                              12000,
                             )
                           })
                           .catch((e) =>
@@ -1322,10 +1336,12 @@ export function SettingsPanel({
                     ) : null
                   })()}
                   <span className="settings-hint">
-                    host:port of the radio — a FlexRadio's IP on SmartSDR's port 4992, or a
-                    remote rigctld. Nexus runs BESIDE SmartSDR as the digital brain: CAT
-                    targets slice A (Hamlib's SmartSDR slice-A model — run your digital
-                    slice on A; other slices aren't targetable), audio rides DAX.
+                    host:port. For a Flex: the WSJT-X-proven path is the SmartSDR CAT app
+                    on THIS PC — add a TCP port in SmartSDR CAT (5004 by convention; 5002
+                    is DDUtil's), use 127.0.0.1:5004 with the FLEX-6xxx model, and audio
+                    rides DAX. (Direct-to-radio :4992 needs Hamlib's experimental native
+                    model and failed on real hardware — not recommended.) Other rigs: a
+                    remote rigctld's host:port works with their normal model.
                   </span>
                 </label>
               )}

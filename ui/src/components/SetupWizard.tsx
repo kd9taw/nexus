@@ -183,14 +183,15 @@ export function SetupWizard({ settings, onApply, onTestCat, onSkip }: Props) {
           return
         }
         const r = radios[0]
-        setRigAddr(`${r.ip}:4992`)
-        // CAT needs a Hamlib model, not just an address — a found Flex means
-        // the SmartSDR slice-A model (23005). Manual addresses keep whatever
-        // model is configured (the hint points at Settings for other rigs).
-        setRigModel(23005)
-        setRigModelName('FlexRadio SmartSDR (slice A)')
+        // The WSJT-X-proven path: CAT rides the SmartSDR CAT app on THIS PC
+        // (model 2036 @ 127.0.0.1:5004), never the radio's own :4992 — the
+        // direct native backend is alpha in Hamlib and failed on a real 6400M
+        // (WSAEADDRNOTAVAIL). Discovery still proves the radio is reachable.
+        setRigAddr('127.0.0.1:5004')
+        setRigModel(2036)
+        setRigModelName('FlexRadio FLEX-6xxx (SmartSDR CAT)')
         setFlexNote(
-          `Found ${r.model}${r.nickname ? ` "${r.nickname}"` : ''} at ${r.ip}${radios.length > 1 ? ` (+${radios.length - 1} more — first taken)` : ''}`,
+          `Found ${r.model}${r.nickname ? ` "${r.nickname}"` : ''} at ${r.ip}${radios.length > 1 ? ` (+${radios.length - 1} more — first taken)` : ''} — CAT set to ride SmartSDR CAT: open the SmartSDR CAT app, add a TCP port 5004, then Test CAT below.`,
         )
       })
       .catch((e) => setFlexNote(`Scan failed: ${e instanceof Error ? e.message : e}`))
@@ -356,8 +357,10 @@ export function SetupWizard({ settings, onApply, onTestCat, onSkip }: Props) {
               </button>
               {flexNote && <span className="wizard-field-hint">{flexNote}</span>}
               <span className="wizard-field-hint">
-                A found Flex also sets the CAT model (SmartSDR slice A). Other network
-                rigs: pick their model later in Settings ▸ Rig Control.
+                A found Flex configures the WSJT-X-proven path: CAT through the SmartSDR
+                CAT app on this PC (model FLEX-6xxx @ 127.0.0.1:5004 — add that TCP port
+                in SmartSDR CAT once), audio through DAX. Other network rigs: pick their
+                model later in Settings ▸ Rig Control.
               </span>
               {dax && (audioIn !== dax.input || audioOut !== dax.output) && (
                 <button

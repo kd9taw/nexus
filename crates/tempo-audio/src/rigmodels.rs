@@ -67,8 +67,14 @@ pub fn rig_models() -> Vec<(u32, &'static str)> {
         (2047, "Elecraft K4"),
         (2044, "Elecraft KX2"),
         (2045, "Elecraft KX3"),
-        // FlexRadio
-        (23005, "FlexRadio SmartSDR (slice A)"),
+        // FlexRadio. 2036 is the WSJT-X-proven path: it speaks the Flex dialect
+        // of Kenwood CAT served by the SmartSDR CAT app's TCP/serial ports on
+        // the PC (127.0.0.1:5004 by convention — 5002 is the DDUtil port).
+        // 23005 talks the radio's native API directly and is alpha-grade in
+        // Hamlib (failed on a real 6400M with WSAEADDRNOTAVAIL) — keep it
+        // selectable, but nothing auto-picks it anymore.
+        (2036, "FlexRadio FLEX-6xxx (SmartSDR CAT)"),
+        (23005, "FlexRadio SmartSDR native (experimental)"),
         (2048, "FlexRadio PowerSDR (TS-2000 emul.)"),
         // Ten-Tec
         (16013, "Ten-Tec Eagle (599)"),
