@@ -311,6 +311,12 @@ export function MapView({
   const [layers, setLayers] = useState(DEFAULT_LAYERS)
   const [size, setSize] = useState({ w: 0, h: 0 })
   const [hover, setHover] = useState<{ x: number; y: number; text: string } | null>(null)
+  // The hovered feature's call — drives the on-canvas hover ring (changes only
+  // on target enter/leave, so it never redraws per mouse-move) — and whether a
+  // drag is IN PROGRESS (cursor turns 'grabbing' only then; the resting cursor
+  // is a normal arrow so precision clicking feels like clicking).
+  const [hoverKey, setHoverKey] = useState<string | null>(null)
+  const [dragging, setDragging] = useState(false)
   // Last pointer-up (time+pos) — lets pointer-up swallow the 2nd click of a dblclick.
   const lastUpRef = useRef<{ t: number; x: number; y: number } | null>(null)
   // Reused offscreen canvas for the heat layer — allocating one per draw frame
@@ -872,13 +878,24 @@ export function MapView({
         // Band focus: the focused band stays bright; everything else recedes.
         const focusF = dimBand(sp.band)
         const isSel = sp.call === selectedCall
-        ctx.globalAlpha = isSel
-          ? layers.liveSpots.opacity
-          : layers.liveSpots.opacity * fade * (sp.approx ? 0.7 : 1) * focusF
+        const isHover = sp.call === hoverKey
+        ctx.globalAlpha =
+          isSel || isHover
+            ? layers.liveSpots.opacity
+            : layers.liveSpots.opacity * fade * (sp.approx ? 0.7 : 1) * focusF
         ctx.beginPath()
-        ctx.arc(p[0], p[1], sp.heardMe ? 3 : 2.2, 0, Math.PI * 2)
+        ctx.arc(p[0], p[1], sp.heardMe ? 3.5 : 2.8, 0, Math.PI * 2)
         ctx.fillStyle = sp.heardMe ? GETTING_OUT : bandColor(sp.band)
         ctx.fill()
+        // Hover ring: "you're on it — click lands here". Selection gets the
+        // louder accent ring + label below.
+        if (isHover && !isSel) {
+          ctx.beginPath()
+          ctx.arc(p[0], p[1], 6, 0, Math.PI * 2)
+          ctx.strokeStyle = cssVar('--text')
+          ctx.lineWidth = 1.2
+          ctx.stroke()
+        }
         // A CLICKED spot must visibly respond (operator report: clicks looked
         // dead) — accent ring + callsign label, same language as station dots.
         if (isSel) {
@@ -965,6 +982,7 @@ export function MapView({
         const need = needByCall.get(s.call.toUpperCase())
         const nc = needColor(need)
         const isSel = s.call === selectedCall
+        const isHover = s.call === hoverKey
         // Recency fade — heard recently pops, going stale fades toward the noise.
         const ageF = s.presence === 'active' ? 1 : s.presence === 'idle' ? 0.6 : 0.32
         const ringed = (byNeed && nc) || isSel
@@ -979,6 +997,14 @@ export function MapView({
         ctx.fillStyle = fill
         ctx.fill()
         ctx.globalAlpha = layers.stations.opacity * ageF
+        if (isHover && !ringed) {
+          // Hover ring: "you're on it — click lands here".
+          ctx.beginPath()
+          ctx.arc(xy[0], xy[1], r + 2.5, 0, Math.PI * 2)
+          ctx.strokeStyle = cssVar('--text')
+          ctx.lineWidth = 1.2
+          ctx.stroke()
+        }
         if (ringed) {
           // bright ring on the valuable / selected ones
           ctx.beginPath()
@@ -1034,7 +1060,7 @@ export function MapView({
     }
     // theme is a draw dependency so colors refresh on theme switch.
     void theme
-  }, [me, kind, colorBy, pathMode, view, size, layers, placed, placedSpots, placedDxped, mufStations, auroraPts, reliefReady, prop, selStation, selectedCall, needByCall, theme, nowMs, focusBand, pulseTick, xrayEff, flareActive, flareHafNow])
+  }, [me, kind, colorBy, pathMode, view, size, layers, placed, placedSpots, placedDxped, mufStations, auroraPts, reliefReady, prop, selStation, selectedCall, needByCall, theme, nowMs, focusBand, pulseTick, xrayEff, flareActive, flareHafNow, hoverKey])
 
   // THE SUN + RADIATING ENERGY — the flare layer's animated half, on its own
   // transparent canvas at ~20 fps, mounted ONLY while a flare is active and the
@@ -1225,7 +1251,7 @@ export function MapView({
       let best: MapHit | null = null
       for (const { s, ll, xy } of placed) {
         const d = Math.hypot(xy[0] - mx, xy[1] - my)
-        if (d < 9 && (!best || d < best.d)) best = { kind: 'station', d, s, ll }
+        if (d < 10 && (!best || d < best.d)) best = { kind: 'station', d, s, ll }
       }
       if (best) return best
     }
@@ -1241,8 +1267,9 @@ export function MapView({
       let best: MapHit | null = null
       for (const { sp, xy } of placedSpots) {
         const d = Math.hypot(xy[0] - mx, xy[1] - my)
-        // 9 px target on a ~2 px dot — small dots were genuinely hard to hit.
-        if (d < 9 && (!best || d < best.d)) best = { kind: 'spot', d, sp }
+        // Generous 10 px target on a ~3 px dot — small dots were genuinely
+        // hard to hit (operator report).
+        if (d < 10 && (!best || d < best.d)) best = { kind: 'spot', d, sp }
       }
       if (best) return best
     }
@@ -1277,8 +1304,10 @@ export function MapView({
     const mode = sp.mode ? ` ${sp.mode}` : ''
     return `${sp.call} · ${sp.band}${mode}${freq} · ${age} ago${sp.heardMe ? ' · heard YOU' : ''}${sp.approx ? ' · ~location' : ''}${workHint}`
   }
-  // Drag = spin the Globe / pan the flat maps; a press that doesn't move = a
+  // Drag = spin the Globe / pan the flat maps; a press that doesn't travel = a
   // click (select a station). Wheel zooms (the native listener, below).
+  const hitCall = (hit: MapHit | null): string | null =>
+    hit ? (hit.kind === 'station' ? hit.s.call : hit.kind === 'dxped' ? hit.card.call : hit.sp.call) : null
   const onPointerDown = (e: React.PointerEvent) => {
     ;(e.currentTarget as Element).setPointerCapture?.(e.pointerId)
     dragRef.current = { x: e.clientX, y: e.clientY, base: view, moved: false }
@@ -1291,13 +1320,20 @@ export function MapView({
       const my = e.clientY - rect.top
       const hit = hitTest(mx, my)
       setHover(hit ? { x: mx, y: my, text: hitText(hit) } : null)
+      setHoverKey(hitCall(hit)) // state only changes on target enter/leave
       return
     }
     const dx = e.clientX - d.x
     const dy = e.clientY - d.y
-    if (!d.moved && Math.abs(dx) + Math.abs(dy) > 3) d.moved = true
+    // A human click wobbles a few px — 6 px of true distance before a press
+    // counts as a drag (the old 3 px Manhattan gate ate clicks as micro-spins).
+    if (!d.moved && Math.hypot(dx, dy) > 6) {
+      d.moved = true
+      setDragging(true)
+    }
     if (!d.moved) return
     setHover(null)
+    setHoverKey(null)
     if (kind === 'globe') {
       const k = 0.32 / (d.base.zoom || 1) // deg per px, slower when zoomed in
       const base = d.base.rotate ?? (me ? [-me.lon, -me.lat] : [0, 0])
@@ -1310,6 +1346,7 @@ export function MapView({
   const onPointerUp = (e: React.PointerEvent) => {
     const d = dragRef.current
     dragRef.current = null
+    setDragging(false)
     if (d && !d.moved) {
       // The 2nd click of a double-click must NOT toggle the selection made by the
       // 1st (select→deselect churn right before the work gesture fires). Single
@@ -1416,15 +1453,26 @@ export function MapView({
             style={{
               width: '100%',
               height: '100%',
-              // Pointer over an interactive feature → pointer cursor (it's clickable).
-              cursor: hover ? 'pointer' : kind === 'world' ? 'move' : 'grab',
+              // Pointer over a feature → pointer (clickable); mid-drag → grabbing;
+              // otherwise a NORMAL ARROW — the permanent grab-glove made precise
+              // dot clicks feel impossible (operator report). Drag still spins/pans.
+              cursor: hover ? 'pointer' : dragging ? 'grabbing' : 'default',
               touchAction: 'none',
             }}
             onPointerDown={onPointerDown}
             onPointerMove={onPointerMove}
             onPointerUp={onPointerUp}
             onDoubleClick={onDoubleClick}
-            onPointerLeave={() => setHover(null)}
+            onPointerCancel={() => {
+              // A cancelled pointer (touch interruption) must not strand the
+              // grabbing cursor or a phantom drag.
+              dragRef.current = null
+              setDragging(false)
+            }}
+            onPointerLeave={() => {
+              setHover(null)
+              setHoverKey(null)
+            }}
           />
           {flarePulsing && (
             // The animated sun + rays overlay (see the fx effect above) — its own
