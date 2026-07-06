@@ -22,6 +22,8 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Manual trigger — also the diagnostic lever for "why has CI never run".
+  workflow_dispatch:
 
 # Cancel superseded runs on the same ref to save CI minutes.
 concurrency:
