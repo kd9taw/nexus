@@ -9,6 +9,7 @@ import { RotateCcw } from 'lucide-react'
 import type {
   AuroraPoint,
   PcaView,
+  SatView,
   MapSpot,
   MufStation,
   NeedTag,
@@ -19,10 +20,11 @@ import type {
 } from '../types'
 import { MapInsightRail } from './prop/MapInsightRail'
 import type { Theme } from '../useTheme'
-import { getAurora, getDeclination, getPca } from '../api'
+import { getAurora, getDeclination, getPca, getSatellites } from '../api'
 // CQ-zone boundaries (HB9HIL hamradio-zones-geojson, MIT — see NOTICE): bundled
 // as a raw asset and fetched lazily so the 2.7 MB never loads until toggled on.
 import cqzonesUrl from '../data/cqzones.geojson?url'
+import { satChasingSet } from '../features/satChase'
 import { gridToLatLon, haversineKm, bearingDeg, magneticDeg, type LatLon } from '../grid'
 import {
   basemap,
@@ -191,6 +193,7 @@ type LayerKey =
   | 'pca'
   | 'gridLabels'
   | 'cqzones'
+  | 'sats'
   | 'coast'
   | 'grid'
   | 'rings'
@@ -220,6 +223,7 @@ const DEFAULT_LAYERS: Record<LayerKey, Layer> = {
   grid: { label: 'Grid (20°×10°)', visible: true, opacity: 0.5 },
   gridLabels: { label: 'Grid labels (AA…RR)', visible: false, opacity: 0.7 },
   cqzones: { label: 'CQ zones', visible: false, opacity: 0.6 },
+  sats: { label: 'Satellites (amateur)', visible: false, opacity: 0.9 },
   rings: { label: 'Range rings', visible: true, opacity: 0.55 },
   heat: { label: 'Band heat (openings)', visible: true, opacity: 0.55 },
   liveSpots: { label: 'Live spots (cluster/RBN)', visible: true, opacity: 0.9 },
@@ -616,6 +620,28 @@ export function MapView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cqzonesOn])
 
+  // Amateur satellites — polled only while the layer is on (subpoints move
+  // ~4°/min; 30 s keeps dots honest without hammering the 10-min view cache).
+  const [sats, setSats] = useState<SatView | null>(null)
+  const satsOn = layers.sats.visible
+  useEffect(() => {
+    if (!satsOn) {
+      setSats(null)
+      return
+    }
+    let live = true
+    const load = () =>
+      getSatellites()
+        .then((s) => live && setSats(s))
+        .catch(() => {})
+    load()
+    const id = setInterval(load, 30_000)
+    return () => {
+      live = false
+      clearInterval(id)
+    }
+  }, [satsOn])
+
   // Draw.
   useEffect(() => {
     const canvas = canvasRef.current
@@ -806,6 +832,35 @@ export function MapView({
         const [lat, lon] = f.properties.cq_zone_name_loc
         const p = project(proj, { lat, lon })
         if (p) ctx.fillText(String(f.properties.cq_zone_number), p[0], p[1])
+      }
+      ctx.globalAlpha = 1
+    }
+    // Amateur satellites: subpoint dots + name labels; chased birds also get a
+    // dashed footprint ring (their radio horizon). Null data = nothing drawn.
+    if (layers.sats.visible && sats) {
+      ctx.globalAlpha = layers.sats.opacity
+      const chasedSet = satChasingSet()
+      ctx.font = `500 10px ${cssVar('--font-mono') || 'monospace'}`
+      ctx.textAlign = 'left'
+      ctx.textBaseline = 'middle'
+      for (const b of sats.birds) {
+        const p = project(proj, { lat: b.lat, lon: b.lon })
+        if (!p) continue
+        const isChased = chasedSet.has(b.name.toUpperCase())
+        if (isChased) {
+          ctx.strokeStyle = 'rgba(94, 234, 212, 0.55)'
+          ctx.setLineDash([4, 4])
+          ctx.lineWidth = 1
+          ctx.beginPath()
+          path(rangeRing({ lat: b.lat, lon: b.lon }, b.footprintKm))
+          ctx.stroke()
+          ctx.setLineDash([])
+        }
+        ctx.fillStyle = isChased ? '#5eead4' : 'rgba(148, 163, 184, 0.95)'
+        ctx.beginPath()
+        ctx.arc(p[0], p[1], isChased ? 3.5 : 2.5, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.fillText(b.name, p[0] + 6, p[1])
       }
       ctx.globalAlpha = 1
     }
@@ -1212,7 +1267,7 @@ export function MapView({
     }
     // theme is a draw dependency so colors refresh on theme switch.
     void theme
-  }, [me, kind, colorBy, pathMode, view, size, layers, placed, placedSpots, placedDxped, mufStations, auroraPts, pca, cqzones, reliefReady, prop, selStation, selectedCall, needByCall, theme, nowMs, focusBand, pulseTick, xrayEff, flareActive, flareHafNow, hoverKey])
+  }, [me, kind, colorBy, pathMode, view, size, layers, placed, placedSpots, placedDxped, mufStations, auroraPts, pca, cqzones, sats, reliefReady, prop, selStation, selectedCall, needByCall, theme, nowMs, focusBand, pulseTick, xrayEff, flareActive, flareHafNow, hoverKey])
 
   // THE SUN + RADIATING ENERGY — the flare layer's animated half, on its own
   // transparent canvas at ~20 fps, mounted ONLY while a flare is active and the

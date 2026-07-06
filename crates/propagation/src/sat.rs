@@ -23,7 +23,7 @@
 //! negligible here). Look angles are the standard SEZ (South-East-Zenith)
 //! topocentric transform (Vallado §4.4).
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::geo::days_from_civil;
 
@@ -34,7 +34,7 @@ const WGS84_F: f64 = 1.0 / 298.257_223_563;
 /// A satellite's orbital elements as the two (optionally three) lines Celestrak
 /// serves. Kept as raw text so the pure math and the fetch/parse layer share one
 /// type; `sgp4` re-parses the lines on demand.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Tle {
     /// The object name (the "0 " / bare name line above the element lines).

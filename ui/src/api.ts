@@ -142,6 +142,11 @@ export async function getDeclination(): Promise<number | null> {
   return invoke<number | null>('get_declination')
 }
 
+/** Amateur satellites: subpoints now + next-24h passes. Null = no elements. */
+export async function getSatellites(): Promise<import('./types').SatView | null> {
+  return invoke<import('./types').SatView | null>('get_satellites')
+}
+
 /** The 60 s X-ray fast lane — the freshest GOES long-band flux, so a flare's
  * onset reaches the map + alert in ~1 min instead of the 5-min prop cadence. */
 export async function getXrayNow(): Promise<import('./types').XrayNow> {

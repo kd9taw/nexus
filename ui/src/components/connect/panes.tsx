@@ -20,6 +20,7 @@ import { BeaconMonitor } from '../prop/BeaconMonitor'
 import { InsightFeed } from '../prop/InsightFeed'
 import { ChasePane } from '../prop/ChasePane'
 import { ChaseFeedPane } from '../prop/ChaseFeedPane'
+import { SatPassesPane } from '../prop/SatPassesPane'
 import { GetoutCompass } from '../prop/GetoutCompass'
 import { getoutSummary } from '../../features/getout'
 import { GreylineWindow } from '../prop/GreylineWindow'
@@ -485,6 +486,16 @@ export const PANES: PaneDef[] = [
     // scored (need × openness × rarity × time-remaining). Basic = top-3 plain rows;
     // Expert = the full table. Null when nothing chase-worthy → the basic() hint.
     expert: (c) => <ChaseFeedPane ctx={c} />,
+  },
+  {
+    id: 'satPasses',
+    title: 'Satellite Passes',
+    category: 'b3',
+    // Self-fetching pane (get_satellites) — the Basic line stays a static honest
+    // hint because the data lives inside the component, not PaneContext.
+    basic: () =>
+      'Upcoming amateur-satellite passes over your QTH appear here once orbital elements load.',
+    expert: (c) => <SatPassesPane expert={c.expert} />,
   },
 ]
 

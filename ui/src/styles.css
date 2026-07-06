@@ -934,6 +934,42 @@ button.nb-chip:hover {
   color: var(--text-dim);
   white-space: nowrap;
 }
+/* Satellite Passes pane. */
+.sat-stale {
+  margin: 0 0 var(--space-1);
+  font-size: var(--fs-micro);
+  color: var(--warn, #e8a13c);
+}
+.sat-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.sat-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--fs-label);
+}
+.sat-name {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  min-width: 7em;
+}
+.sat-when {
+  color: var(--accent);
+}
+.sat-el {
+  font-family: var(--font-mono);
+}
+.sat-arc,
+.sat-dur {
+  color: var(--text-dim);
+  font-size: var(--fs-micro);
+}
 /* Logbook needs-confirmation filter chip. */
 .log-filter-chip {
   font-size: var(--fs-label);

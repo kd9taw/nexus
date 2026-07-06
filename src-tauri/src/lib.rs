@@ -1663,6 +1663,219 @@ fn get_declination(state: State<'_, SharedEngine>) -> Result<Option<f64>, String
     Ok(propagation::wmm::declination_for_grid(&mygrid, now_unix()))
 }
 
+/// Where fetched TLEs persist (beside settings.json): day-scale orbital elements,
+/// so surviving a restart matters more than freshness-to-the-minute.
+fn tles_path() -> PathBuf {
+    settings_path()
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("tles.json")
+}
+
+/// Celestrak amateur TLE cache: (fetched-at, elements). 12 h TTL per the spec —
+/// Celestrak asks consumers to cache; TLEs are day-scale data.
+static TLE_CACHE: Mutex<Option<(std::time::Instant, Vec<propagation::sat::Tle>)>> =
+    Mutex::new(None);
+/// Computed PASS-LIST cache (the expensive 24 h scan). Subpoints are NEVER
+/// cached — a LEO ground track moves ~4°/min, so positions are recomputed on
+/// every call (one cheap sgp4 eval per bird) while the pass scan reuses this.
+static SAT_PASSES: Mutex<Option<(std::time::Instant, String, Vec<SatPassDto>)>> =
+    Mutex::new(None);
+
+/// One bird's sub-satellite point right now.
+#[derive(serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct SatBird {
+    name: String,
+    lat: f64,
+    lon: f64,
+    alt_km: f64,
+    /// Horizon-circle radius (km) — the footprint ring the map draws for chased birds.
+    footprint_km: f64,
+}
+
+/// The satellites view: positions NOW + upcoming passes over the operator's QTH.
+#[derive(serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct SatView {
+    /// Age of the OLDEST element set in days — the UI badges > 14 d as stale.
+    tle_age_days: f64,
+    birds: Vec<SatBird>,
+    /// Next-24 h passes over the QTH, all birds (empty when the grid is unset).
+    /// Sorted by AOS. Geometry only — no transponder/workability claim.
+    passes: Vec<SatPassDto>,
+}
+
+#[derive(serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct SatPassDto {
+    name: String,
+    aos_unix: i64,
+    los_unix: i64,
+    max_el_deg: f64,
+    aos_az_deg: f64,
+    los_az_deg: f64,
+}
+
+/// Current amateur-satellite picture: sub-satellite points for the Celestrak
+/// amateur group + next-24 h passes over the operator's grid. TLEs cached 12 h
+/// (+ persisted beside settings, so a restart serves instantly and offline
+/// starts stay honest). Subpoints are recomputed EVERY call (LEO tracks move
+/// ~4°/min); only the 24 h pass scan caches (10 min). Staleness is per bird:
+/// elements >30 days drop that bird alone (SGP4 accuracy is gone); `None` only
+/// when no usable elements exist at all — the UI draws nothing.
+#[tauri::command]
+async fn get_satellites(state: State<'_, SharedEngine>) -> Result<Option<SatView>, String> {
+    const TLE_TTL_SECS: u64 = 12 * 3600;
+    const VIEW_TTL_SECS: u64 = 600;
+    const STALE_DAYS: f64 = 30.0;
+    let mygrid = {
+        let eng = state.lock().map_err(|e| e.to_string())?;
+        eng.settings().mygrid.clone()
+    };
+    let now = now_unix();
+    let key = format!("{}|{}", now / (VIEW_TTL_SECS as i64), mygrid);
+    let cached_passes = {
+        let g = SAT_PASSES.lock().map_err(|e| e.to_string())?;
+        g.as_ref().and_then(|(when, k, v)| {
+            (*k == key && when.elapsed().as_secs() < VIEW_TTL_SECS).then(|| v.clone())
+        })
+    };
+    // Elements: fresh cache → network (persisting on success) → disk → None.
+    let cached = {
+        let g = TLE_CACHE.lock().map_err(|e| e.to_string())?;
+        g.as_ref().and_then(|(when, t)| {
+            (when.elapsed().as_secs() < TLE_TTL_SECS).then(|| t.clone())
+        })
+    };
+    let tles = match cached {
+        Some(t) => t,
+        None => {
+            match tauri::async_runtime::spawn_blocking(propagation::live::tle::fetch_tles)
+                .await
+                .map_err(|e| e.to_string())?
+            {
+                Ok(t) if !t.is_empty() => {
+                    if let Ok(mut g) = TLE_CACHE.lock() {
+                        *g = Some((std::time::Instant::now(), t.clone()));
+                    }
+                    if let Ok(json) = serde_json::to_string(&t) {
+                        let _ = std::fs::write(tles_path(), json);
+                    }
+                    t
+                }
+                _ => {
+                    // Fetch failed — serve the stale cache, else the persisted set.
+                    let stale = TLE_CACHE
+                        .lock()
+                        .ok()
+                        .and_then(|g| g.as_ref().map(|(_, t)| t.clone()));
+                    match stale {
+                        Some(t) => t,
+                        None => {
+                            let disk: Option<Vec<propagation::sat::Tle>> =
+                                std::fs::read_to_string(tles_path())
+                                    .ok()
+                                    .and_then(|s| serde_json::from_str(&s).ok());
+                            match disk {
+                                Some(t) if !t.is_empty() => {
+                                    if let Ok(mut g) = TLE_CACHE.lock() {
+                                        *g = Some((std::time::Instant::now(), t.clone()));
+                                    }
+                                    t
+                                }
+                                _ => return Ok(None), // never had elements — honest no-data
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    };
+    let observer = propagation::geo::maidenhead_to_latlon(mygrid.trim());
+    let need_passes = cached_passes.is_none();
+    let out = tauri::async_runtime::spawn_blocking(move || {
+        use propagation::sat;
+        const RE_KM: f64 = 6371.0;
+        // Staleness is PER BIRD (the spec's rule): a decaying cubesat with a
+        // month-old epoch drops out alone — it must never blank the fresh
+        // majority (review catch: the old max-age gate killed the whole view).
+        let fresh: Vec<&propagation::sat::Tle> = tles
+            .iter()
+            .filter(|t| {
+                sat::tle_age_days(&t.line1, now).is_some_and(|a| a <= STALE_DAYS)
+            })
+            .collect();
+        if fresh.is_empty() {
+            return None; // every element set is decayed — honest no-data
+        }
+        // Badge scalar = oldest INCLUDED bird (an excluded outlier must not
+        // make the whole pane read stale).
+        let tle_age_days = fresh
+            .iter()
+            .filter_map(|t| sat::tle_age_days(&t.line1, now))
+            .fold(0.0f64, f64::max);
+        let mut birds = Vec::new();
+        let mut computed_passes = Vec::new();
+        for t in &fresh {
+            if let Some((lat, lon, alt_km)) = sat::subpoint(t, now) {
+                let footprint_km = RE_KM * (RE_KM / (RE_KM + alt_km)).acos();
+                birds.push(SatBird {
+                    name: t.name.clone(),
+                    lat,
+                    lon,
+                    alt_km,
+                    footprint_km,
+                });
+                if need_passes {
+                    if let Some(obs) = observer {
+                        for p in sat::passes(t, obs, now, 24) {
+                            computed_passes.push(SatPassDto {
+                                name: t.name.clone(),
+                                aos_unix: p.aos_unix,
+                                los_unix: p.los_unix,
+                                max_el_deg: p.max_el_deg,
+                                aos_az_deg: p.aos_az_deg,
+                                los_az_deg: p.los_az_deg,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        let passes = match cached_passes {
+            Some(p) => p,
+            None => {
+                computed_passes.sort_by_key(|p| p.aos_unix);
+                computed_passes
+            }
+        };
+        Some((
+            SatView {
+                tle_age_days,
+                birds,
+                passes: passes.clone(),
+            },
+            passes,
+            need_passes,
+        ))
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(match out {
+        Some((view, passes, computed)) => {
+            if computed {
+                if let Ok(mut g) = SAT_PASSES.lock() {
+                    *g = Some((std::time::Instant::now(), key, passes));
+                }
+            }
+            Some(view)
+        }
+        None => None,
+    })
+}
+
 /// Real-time KC2G ionosonde MUF/foF2 station fixes for the Connect map's MUF
 /// overlay. Cached `KC2G_TTL_SECS`; serves the last-good set on a fetch failure,
 /// empty if we never had one (never fabricated).
@@ -5699,6 +5912,7 @@ pub fn run() {
             get_aurora,
             get_pca,
             get_declination,
+            get_satellites,
             get_kc2g_muf,
             get_space_wx_scales,
             get_xray_now,

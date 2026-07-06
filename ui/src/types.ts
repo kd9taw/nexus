@@ -299,6 +299,24 @@ export interface PcaView {
   points: { lat: number; lon: number; db30: number }[]
 }
 
+/** Satellites view (get_satellites): amateur-bird subpoints now + next-24h passes
+ * over the QTH. Null = no orbital elements (or all >30 d stale) — draw nothing. */
+export interface SatView {
+  /** Age of the oldest element set (days) — badge stale when > 14. */
+  tleAgeDays: number
+  birds: { name: string; lat: number; lon: number; altKm: number; footprintKm: number }[]
+  /** Sorted by AOS; geometry only — no transponder/workability claim. */
+  passes: SatPass[]
+}
+export interface SatPass {
+  name: string
+  aosUnix: number
+  losUnix: number
+  maxElDeg: number
+  aosAzDeg: number
+  losAzDeg: number
+}
+
 /** Real-time solar wind (DSCOVR) — the leading geomagnetic indicator (leads Kp/A). */
 export interface SolarWind {
   /** Bz (GSM), nT. Negative = southward = geoeffective. */
