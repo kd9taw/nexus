@@ -92,6 +92,24 @@ the published Recommendation methods; no ITU code is included.
 Natural Earth 1:10m land polygons (via the `world-atlas` package), which are
 **public domain**. Regenerate with `scripts/gen-grid-rarity.mjs`.
 
+### CQ zone boundaries
+`ui/src/data/cqzones.geojson` is from HB9HIL's hamradio-zones-geojson
+(<https://github.com/HB9HIL/hamradio-zones-geojson>), **MIT** (© 2024 HB9HIL);
+the license text ships beside it (`cqzones.LICENSE.txt`).
+
+### WSPR reception data (runtime service)
+The optional "getting out" beacon evidence queries **wspr.live** (the
+community mirror of wsprnet.org) at runtime under its free-non-commercial
+terms; no WSPR data is redistributed with the app. Data courtesy of
+wspr.live / wsprnet.org contributors.
+
+### World Magnetic Model coefficients (WMM2025)
+`crates/propagation/data/WMM_2025.COF` is the official WMM2025 coefficient
+file produced by NOAA/NCEI and the British Geological Survey. As a work of
+the US government it is **public domain**; the model is valid 2025.0–2030.0.
+The declination evaluator (`crates/propagation/src/wmm.rs`) is an original
+implementation validated against the official WMM2025 test-value table.
+
 ---
 
 ## Linked native libraries

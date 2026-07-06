@@ -87,7 +87,7 @@ pub fn build_map_spots(now: i64, me_call: &str, spots: &[PathSpot], cap: usize) 
             grid_rarity: if approx {
                 None // centroid placement — the grid would be the entity's
             } else {
-                subject_grid.and_then(crate::gridrarity::grid_rarity)
+                subject_grid.and_then(crate::gridrarity::effective_rarity)
             },
         };
         best.entry(call)

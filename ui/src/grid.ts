@@ -83,3 +83,10 @@ export function bearingLabel(myGrid: string, peerGrid: string | null): string | 
   if (!me || !them) return null
   return `${bearingDeg(me, them)}°`
 }
+
+/** The magnetic heading for a true bearing given the QTH declination (° east-
+ * positive, WMM): magnetic = true − declination. Null declination = unknown. */
+export function magneticDeg(trueDeg: number, declination: number | null): number | null {
+  if (declination == null || !Number.isFinite(declination)) return null
+  return Math.round((trueDeg - declination + 360) % 360)
+}

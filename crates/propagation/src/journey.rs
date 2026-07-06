@@ -19,7 +19,8 @@
 
 use crate::awards::{valid_state, AWARD_BANDS, WAS_STATES};
 use crate::dxcc;
-use crate::geo::{haversine_km, maidenhead_to_latlon, solar_elevation_deg};
+use crate::geo::{civil_from_days, haversine_km, maidenhead_to_latlon, solar_elevation_deg};
+use crate::gridrarity::{grid_rarity, GridRarity};
 use crate::model::{Band, ModeClass};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
@@ -90,6 +91,10 @@ pub struct JourneyQso {
     pub pota: bool,
     /// True if this contact carried a SOTA reference (a summit chase).
     pub sota: bool,
+    /// The hunted park id (e.g. `"K-1234"`), when this was a POTA contact.
+    pub pota_ref: Option<String>,
+    /// The hunted summit id (e.g. `"W7A/MN-001"`), when this was a SOTA contact.
+    pub sota_ref: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -226,6 +231,20 @@ pub struct NextMilestone {
     pub remaining: u32,
 }
 
+/// A personal, on-air Marathon (CQ-DX-Marathon-inspired): entities + zones worked
+/// in the current UTC year, plus the operator's best year on record.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Marathon {
+    pub year: i32,
+    pub entities: u32,
+    pub zones: u32,
+    pub score: u32,
+    /// The operator's best-scoring year to date (`None` on an empty log).
+    pub best_year: Option<i32>,
+    pub best_score: u32,
+}
+
 /// The full Journey snapshot returned to the UI.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -242,6 +261,7 @@ pub struct JourneySummary {
     pub feats: Vec<Feat>,
     pub bests: Vec<PersonalBest>,
     pub streak: Streak,
+    pub marathon: Marathon,
 }
 
 // ---------------------------------------------------------------------------
@@ -313,6 +333,17 @@ fn grid4_of(grid: &str) -> String {
         .to_uppercase()
 }
 
+/// Normalize an OTA reference (trim + uppercase); `None` if absent or blank.
+fn norm_ref(r: Option<&str>) -> Option<String> {
+    let r = r?.trim().to_uppercase();
+    (!r.is_empty()).then_some(r)
+}
+
+/// Calendar month (1–12, UTC) of a Unix timestamp.
+fn month_of(unix: i64) -> u32 {
+    civil_from_days(unix.div_euclid(86_400)).1
+}
+
 // ---------------------------------------------------------------------------
 // The computation.
 // ---------------------------------------------------------------------------
@@ -352,6 +383,13 @@ pub fn compute(
     let mut worked_mode: HashSet<ModeClass> = HashSet::new();
     let mut worked_slot: HashSet<(Band, ModeClass)> = HashSet::new();
     let mut cfm_slot: HashSet<(Band, ModeClass)> = HashSet::new();
+    // Rare/UltraRare grids (the "gems") and distinct hunted POTA/SOTA references.
+    let mut worked_gem: HashSet<String> = HashSet::new();
+    let mut cfm_gem: HashSet<String> = HashSet::new();
+    let mut worked_pota_ref: HashSet<String> = HashSet::new();
+    let mut cfm_pota_ref: HashSet<String> = HashSet::new();
+    let mut worked_sota_ref: HashSet<String> = HashSet::new();
+    let mut cfm_sota_ref: HashSet<String> = HashSet::new();
 
     for x in &d {
         let c = x.q.confirmed;
@@ -386,6 +424,27 @@ pub fn compute(
             if c {
                 cfm_grid.insert(g.clone());
             }
+            if matches!(
+                grid_rarity(g),
+                Some(GridRarity::Rare | GridRarity::UltraRare)
+            ) {
+                worked_gem.insert(g.clone());
+                if c {
+                    cfm_gem.insert(g.clone());
+                }
+            }
+        }
+        if let Some(r) = norm_ref(x.q.pota_ref.as_deref()) {
+            worked_pota_ref.insert(r.clone());
+            if c {
+                cfm_pota_ref.insert(r);
+            }
+        }
+        if let Some(r) = norm_ref(x.q.sota_ref.as_deref()) {
+            worked_sota_ref.insert(r.clone());
+            if c {
+                cfm_sota_ref.insert(r);
+            }
         }
         if let Some(b) = x.q.band {
             worked_band.insert(b);
@@ -400,7 +459,7 @@ pub fn compute(
     }
 
     let firsts = compute_firsts(&d);
-    let ladders = compute_ladders(
+    let mut ladders = compute_ladders(
         worked_entity.len() as u32,
         cfm_entity.len() as u32,
         worked_state.len() as u32,
@@ -411,7 +470,45 @@ pub fn compute(
         cfm_zone.len() as u32,
         worked_grid.len() as u32,
         cfm_grid.len() as u32,
+        worked_gem.len() as u32,
+        cfm_gem.len() as u32,
     );
+    // Hunter ladders are opt-in: only shown once the operator has actually hunted a
+    // park/summit (unlike the universal awards above, not everyone chases OTA).
+    if !worked_pota_ref.is_empty() {
+        ladders.push(ladder(
+            "pota-hunter",
+            "Park Hunter",
+            "Distinct POTA parks you've hunted — chase activators across the map.",
+            "Parks On The Air lets hunters work activators in parks worldwide; each park is a new catch.",
+            worked_pota_ref.len() as u32,
+            cfm_pota_ref.len() as u32,
+            &[
+                ("First Park", 10, Tier::Bronze),
+                ("Twenty-Five Parks", 25, Tier::Silver),
+                ("Fifty Parks", 50, Tier::Silver),
+                ("Hundred Parks", 100, Tier::Gold),
+                ("Park Legend", 250, Tier::Legendary),
+            ],
+        ));
+    }
+    if !worked_sota_ref.is_empty() {
+        ladders.push(ladder(
+            "sota-hunter",
+            "Summit Chaser",
+            "Distinct SOTA summits you've chased — every peak an activator carried a radio up.",
+            "Summits On The Air rewards chasers who work operators atop mountains; each summit counts once.",
+            worked_sota_ref.len() as u32,
+            cfm_sota_ref.len() as u32,
+            &[
+                ("First Summits", 5, Tier::Bronze),
+                ("Ten Summits", 10, Tier::Silver),
+                ("Twenty-Five Summits", 25, Tier::Silver),
+                ("Fifty Summits", 50, Tier::Gold),
+                ("Summit Legend", 100, Tier::Legendary),
+            ],
+        ));
+    }
     let collections = compute_collections(
         &worked_state,
         &cfm_state,
@@ -425,6 +522,7 @@ pub fn compute(
     let feats = compute_feats(&d, &worked_band, &worked_mode, power_w);
     let bests = compute_bests(&d, power_w);
     let streak = compute_streak(&d, streak_enabled, now_unix);
+    let marathon = compute_marathon(&d, now_unix);
     let next_milestone = nearest_milestone(&ladders);
 
     let xp = total_qsos as u64 * 10
@@ -451,6 +549,7 @@ pub fn compute(
         feats,
         bests,
         streak,
+        marathon,
     }
 }
 
@@ -611,6 +710,8 @@ fn compute_ladders(
     waz_c: u32,
     grid_w: u32,
     grid_c: u32,
+    gem_w: u32,
+    gem_c: u32,
 ) -> Vec<Ladder> {
     vec![
         ladder(
@@ -687,6 +788,22 @@ fn compute_ladders(
                 ("Twenty-Five", 25, Tier::Silver),
                 ("Fifty Grids", 50, Tier::Gold),
                 ("VUCC", 100, Tier::Platinum),
+            ],
+        ),
+        ladder(
+            "grid-gems",
+            "Grid Gems",
+            "Rare grid squares worked — almost-no-land grids and open-water ones a rover, \
+             maritime mobile or DXpedition had to reach.",
+            "Most grids hold a city; a handful are near-empty ocean, prized on VHF and 6 m.",
+            gem_w,
+            gem_c,
+            &[
+                ("First Gem", 1, Tier::Bronze),
+                ("Five Gems", 5, Tier::Silver),
+                ("Ten Gems", 10, Tier::Silver),
+                ("Twenty-Five", 25, Tier::Gold),
+                ("Fifty Gems", 50, Tier::Legendary),
             ],
         ),
     ]
@@ -968,6 +1085,56 @@ fn compute_feats(
             .then(|| "Set your station power in Settings to unlock QRP feats.".into()),
     });
 
+    // Sporadic-E Summer — a long 6 m contact in the summer Es season. May–Aug is the
+    // northern Es season; southern-hemisphere operators earn it in their Nov–Feb
+    // summer, so either window counts (hemisphere-fair, and permanent once earned).
+    let es_hit = d.iter().find(|x| {
+        x.q.band == Some(Band::B6)
+            && x.dist_km.map(|km| km >= 1000.0).unwrap_or(false)
+            && matches!(month_of(x.q.when_unix), 5..=8 | 11..=12 | 1..=2)
+    });
+    feats.push(Feat {
+        id: "es-season".into(),
+        title: "Sporadic-E Summer".into(),
+        meaning: "Work 6 m over 1,000 km during the summer sporadic-E season.".into(),
+        heritage: "Each summer the E layer thickens into fleeting clouds that hurl 6 m far past \
+                   the horizon."
+            .into(),
+        tier: Tier::Silver,
+        unlocked: es_hit.is_some(),
+        current: if es_hit.is_some() { 1.0 } else { 0.0 },
+        target: 1.0,
+        unit: "opening".into(),
+        detail: es_hit.map(detail_call),
+        gated: false,
+        gate_hint: None,
+    });
+
+    // Top-Band Season — a long 160 m contact in the winter DX season. Nov–Feb is the
+    // northern top-band season (long nights, low absorption); southern operators earn
+    // it in their May–Aug winter, so either window counts.
+    let tb_hit = d.iter().find(|x| {
+        x.q.band == Some(Band::B160)
+            && x.dist_km.map(|km| km >= 1500.0).unwrap_or(false)
+            && matches!(month_of(x.q.when_unix), 11..=12 | 1..=2 | 5..=8)
+    });
+    feats.push(Feat {
+        id: "top-band-winter".into(),
+        title: "Top-Band Season".into(),
+        meaning: "Work 160 m over 1,500 km during the winter top-band DX season.".into(),
+        heritage: "On 160 m the long winter nights and quiet ionosphere open the hardest band on \
+                   the dial."
+            .into(),
+        tier: Tier::Gold,
+        unlocked: tb_hit.is_some(),
+        current: if tb_hit.is_some() { 1.0 } else { 0.0 },
+        target: 1.0,
+        unit: "opening".into(),
+        detail: tb_hit.map(detail_call),
+        gated: false,
+        gate_hint: None,
+    });
+
     feats
 }
 
@@ -1109,6 +1276,55 @@ fn compute_streak(d: &[Derived], enabled: bool, now_unix: i64) -> Streak {
     }
 }
 
+// ----- marathon -----
+
+/// Personal annual marathon: distinct DXCC entities + CQ zones worked in the current
+/// UTC year (an on-air race, so worked — not confirmed), plus the best year on record.
+fn compute_marathon(d: &[Derived], now_unix: i64) -> Marathon {
+    let year_of = |t: i64| civil_from_days(t.div_euclid(86_400)).0 as i32;
+    let current_year = year_of(now_unix);
+
+    // year → (distinct DXCC entities, distinct CQ zones) worked that year.
+    let mut by_year: HashMap<i32, (HashSet<&str>, HashSet<u8>)> = HashMap::new();
+    for x in d {
+        let e = by_year.entry(year_of(x.q.when_unix)).or_default();
+        if x.is_dxcc {
+            if let Some(ent) = x.entity {
+                e.0.insert(ent);
+            }
+        }
+        if (1..=40).contains(&x.zone) {
+            e.1.insert(x.zone);
+        }
+    }
+    let score_of = |ez: &(HashSet<&str>, HashSet<u8>)| (ez.0.len() + ez.1.len()) as u32;
+
+    let (entities, zones) = by_year
+        .get(&current_year)
+        .map(|ez| (ez.0.len() as u32, ez.1.len() as u32))
+        .unwrap_or((0, 0));
+
+    // Best (year, score) across all years; ties go to the later year (so the current
+    // year wins a tie against an older one — it "counts even if it's also the best").
+    let (best_year, best_score) = match by_year
+        .iter()
+        .map(|(y, ez)| (*y, score_of(ez)))
+        .max_by(|a, b| a.1.cmp(&b.1).then(a.0.cmp(&b.0)))
+    {
+        Some((y, s)) => (Some(y), s),
+        None => (None, 0),
+    };
+
+    Marathon {
+        year: current_year,
+        entities,
+        zones,
+        score: entities + zones,
+        best_year,
+        best_score,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1125,6 +1341,8 @@ mod tests {
             rst_rcvd: None,
             pota: false,
             sota: false,
+            pota_ref: None,
+            sota_ref: None,
         }
     }
 
@@ -1300,5 +1518,192 @@ mod tests {
         assert_eq!(continent_of_zone(0), None);
         assert_eq!(continent_of_zone(3), Some("NA"));
         assert_eq!(continent_of_zone(40), Some("EU"));
+    }
+
+    // UTC Unix seconds for a calendar date/time (exercises the year/month boundaries
+    // without magic numbers).
+    fn unix_at(y: i64, m: u32, d: u32, hh: i64, mm: i64) -> i64 {
+        crate::geo::days_from_civil(y, m, d) * 86_400 + hh * 3600 + mm * 60
+    }
+
+    #[test]
+    fn hunter_ladders_count_distinct_normalized_refs() {
+        let park = |call: &str, park: &str, when: i64| JourneyQso {
+            pota: true,
+            pota_ref: Some(park.into()),
+            confirmed: true,
+            ..qso(call, Band::B20, ModeClass::Digital, when)
+        };
+        let qsos = vec![
+            park("K1AAA", "K-1234", 1),
+            park("K2BBB", " k-1234 ", 2), // same park, whitespace + case → still 1 distinct
+            park("K3CCC", "K-5678", 3),
+        ];
+        let j = compute(&qsos, "W9XYZ", None, None, false, 1000);
+        let pota = j.ladders.iter().find(|l| l.id == "pota-hunter").unwrap();
+        assert_eq!(pota.worked, 2, "K-1234 (dup) + K-5678 = 2 distinct parks");
+        assert_eq!(pota.confirmed, 2, "both parks confirmed");
+        // No summits hunted → no SOTA ladder shown.
+        assert!(
+            j.ladders.iter().all(|l| l.id != "sota-hunter"),
+            "no summits → no SOTA ladder"
+        );
+
+        // SOTA mirrors POTA on its own refs.
+        let summit = |call: &str, summit: &str, when: i64| JourneyQso {
+            sota: true,
+            sota_ref: Some(summit.into()),
+            ..qso(call, Band::B20, ModeClass::Cw, when)
+        };
+        let sqsos = vec![
+            summit("W7AAA", "W7A/MN-001", 1),
+            summit("W7BBB", "w7a/mn-001", 2), // dup summit, normalized
+            summit("W7CCC", "W7A/MN-002", 3),
+        ];
+        let js = compute(&sqsos, "W9XYZ", None, None, false, 1000);
+        let sota = js.ladders.iter().find(|l| l.id == "sota-hunter").unwrap();
+        assert_eq!(sota.worked, 2, "MN-001 (dup) + MN-002 = 2 distinct summits");
+        assert!(
+            js.ladders.iter().all(|l| l.id != "pota-hunter"),
+            "no parks → no POTA ladder"
+        );
+
+        // A log with no OTA at all shows neither hunter ladder.
+        let plain = compute(
+            &[qso("A1A", Band::B20, ModeClass::Cw, 1)],
+            "W9XYZ",
+            None,
+            None,
+            false,
+            1000,
+        );
+        assert!(plain
+            .ladders
+            .iter()
+            .all(|l| l.id != "pota-hunter" && l.id != "sota-hunter"));
+    }
+
+    #[test]
+    fn marathon_respects_year_boundaries_and_tracks_best() {
+        let dec31 = unix_at(2025, 12, 31, 23, 59); // last minute of 2025
+        let jan1 = unix_at(2026, 1, 1, 0, 0); // first instant of 2026
+        let now = unix_at(2026, 7, 1, 0, 0); // current year is 2026
+        let qsos = vec![
+            // 2025: England (zone 14) + Japan (zone 25) → 2 entities, 2 zones, score 4.
+            qso("G3XYZ", Band::B20, ModeClass::Digital, dec31),
+            qso("JA1ABC", Band::B20, ModeClass::Digital, dec31 - 3600),
+            // 2026: United States (zone 5) → 1 entity, 1 zone, score 2.
+            qso("W1AW", Band::B20, ModeClass::Digital, jan1),
+        ];
+        let m = compute(&qsos, "W9XYZ", Some("EN61"), None, false, now).marathon;
+        assert_eq!(m.year, 2026);
+        assert_eq!(m.entities, 1, "only the Jan-1 US QSO is this year");
+        assert_eq!(m.zones, 1);
+        assert_eq!(m.score, 2);
+        assert_eq!(m.best_year, Some(2025), "2025's score of 4 beats 2026's 2");
+        assert_eq!(m.best_score, 4);
+
+        // A current-year-only log makes the current year the best year.
+        let cur = vec![qso("JA1ABC", Band::B20, ModeClass::Digital, jan1)];
+        let m2 = compute(&cur, "W9XYZ", Some("EN61"), None, false, now).marathon;
+        assert_eq!(m2.best_year, Some(2026));
+        assert_eq!(m2.best_score, m2.score);
+
+        // Empty log: no best year, zero score.
+        let m3 = compute(&[], "W9XYZ", Some("EN61"), None, false, now).marathon;
+        assert_eq!(m3.best_year, None);
+        assert_eq!(m3.best_score, 0);
+        assert_eq!(m3.score, 0);
+    }
+
+    #[test]
+    fn seasonal_feats_unlock_by_band_distance_and_month() {
+        // EN61 (Chicago) → DM12 (San Diego) is ~2,900 km — clears both thresholds.
+        let long_6m = |when: i64| JourneyQso {
+            grid: Some("DM12".into()),
+            ..qso("K7ABC", Band::B6, ModeClass::Digital, when)
+        };
+        let now = unix_at(2026, 7, 1, 0, 0);
+
+        // 6 m ≥1,000 km in June → Sporadic-E Summer unlocks.
+        let june = long_6m(unix_at(2026, 6, 15, 12, 0));
+        let es = compute(
+            std::slice::from_ref(&june),
+            "W9XYZ",
+            Some("EN61"),
+            None,
+            false,
+            now,
+        )
+        .feats
+        .into_iter()
+        .find(|f| f.id == "es-season")
+        .unwrap();
+        assert!(es.unlocked, "6 m long-haul in June unlocks Es");
+
+        // Same band/distance in March → outside the Es window, no unlock.
+        let march = long_6m(unix_at(2026, 3, 15, 12, 0));
+        let es = compute(
+            std::slice::from_ref(&march),
+            "W9XYZ",
+            Some("EN61"),
+            None,
+            false,
+            now,
+        )
+        .feats
+        .into_iter()
+        .find(|f| f.id == "es-season")
+        .unwrap();
+        assert!(!es.unlocked, "March is outside the Es season");
+
+        // 160 m ≥1,500 km in December → Top-Band Season unlocks.
+        let top = JourneyQso {
+            grid: Some("DM12".into()),
+            ..qso(
+                "K7ABC",
+                Band::B160,
+                ModeClass::Cw,
+                unix_at(2026, 12, 15, 12, 0),
+            )
+        };
+        let tb = compute(
+            std::slice::from_ref(&top),
+            "W9XYZ",
+            Some("EN61"),
+            None,
+            false,
+            now,
+        )
+        .feats
+        .into_iter()
+        .find(|f| f.id == "top-band-winter")
+        .unwrap();
+        assert!(tb.unlocked, "160 m long-haul in December unlocks top band");
+    }
+
+    #[test]
+    fn grid_gems_counts_only_rare_and_ultra_grids() {
+        // JJ00 is mid-Atlantic open water (UltraRare); EN52 is common land — per the
+        // shipped rarity table.
+        assert_eq!(grid_rarity("JJ00"), Some(GridRarity::UltraRare));
+        assert_eq!(grid_rarity("EN52"), Some(GridRarity::Common));
+
+        let at = |call: &str, grid: &str, when: i64| JourneyQso {
+            grid: Some(grid.into()),
+            confirmed: true,
+            ..qso(call, Band::B6, ModeClass::Digital, when)
+        };
+        let qsos = vec![
+            at("A1A", "JJ00", 1), // ultra-rare open water → counts
+            at("A2A", "EN52", 2), // common land → does NOT count
+        ];
+        let j = compute(&qsos, "W9XYZ", Some("EN61"), None, false, 1000);
+        let gems = j.ladders.iter().find(|l| l.id == "grid-gems").unwrap();
+        assert_eq!(
+            gems.worked, 1,
+            "only JJ00 (ultra) is a gem, EN52 (common) is not"
+        );
+        assert_eq!(gems.confirmed, 1);
     }
 }

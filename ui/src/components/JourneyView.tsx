@@ -7,8 +7,9 @@ import type {
   JourneySummary,
   JourneyTier,
 } from '../types'
-import { getJourney } from '../api'
+import { getJourney, getSettings } from '../api'
 import { StateBlock } from './StateBlock'
+import { shareCard } from '../features/shareCard'
 
 /**
  * Journey — the in-app, beginner-first achievement layer (separate from the
@@ -21,12 +22,17 @@ import { StateBlock } from './StateBlock'
 export function JourneyView() {
   const [j, setJourney] = useState<JourneySummary | null>(null)
   const [err, setErr] = useState<string | null>(null)
+  // Operator call for the share cards (best-effort — cards still render without).
+  const [myCall, setMyCall] = useState('')
 
   useEffect(() => {
     let alive = true
     getJourney()
       .then((s) => alive && setJourney(s))
       .catch((e) => alive && setErr(e instanceof Error ? e.message : String(e)))
+    getSettings()
+      .then((s) => alive && setMyCall(s.mycall ?? ''))
+      .catch(() => {})
     return () => {
       alive = false
     }
@@ -88,7 +94,52 @@ export function JourneyView() {
             </span>
           </div>
         )}
+        <button
+          type="button"
+          className="jy-share"
+          title="Copy a share-card image of your Journey (local render — nothing is uploaded)"
+          onClick={() =>
+            shareCard({
+              call: myCall || 'MY STATION',
+              headline: `Level ${j.level}`,
+              sub: `${j.totalQsos.toLocaleString()} QSOs logged · ${j.xp.toLocaleString()} XP`,
+              footer: 'Journey · Nexus',
+            })
+          }
+        >
+          ⤴ Share
+        </button>
       </section>
+
+      {/* Annual marathon — this year's on-air race against your own best. */}
+      {j.marathon && (
+        <section className="jy-section">
+          <div className="jy-section-head">
+            <h2>DX Marathon {j.marathon.year}</h2>
+            <span className="jy-section-note">
+              Entities + zones worked this calendar year — resets every Jan 1 (CQ DX
+              Marathon-style, personal).
+            </span>
+          </div>
+          <div className="jy-marathon panel">
+            <span className="jy-marathon-score" title="Entities + zones this year">
+              {j.marathon.score}
+            </span>
+            <span className="jy-marathon-parts">
+              {j.marathon.entities} entities · {j.marathon.zones} zones
+            </span>
+            {j.marathon.bestYear != null && j.marathon.bestYear !== j.marathon.year && (
+              <span className="jy-marathon-best">
+                personal best {j.marathon.bestScore} ({j.marathon.bestYear})
+                {j.marathon.score > j.marathon.bestScore ? ' — beaten!' : ''}
+              </span>
+            )}
+            {j.marathon.bestYear === j.marathon.year && j.marathon.score > 0 && (
+              <span className="jy-marathon-best">your best year yet</span>
+            )}
+          </div>
+        </section>
+      )}
 
       {/* Firsts — the moments that kill the first-100-QSO motivational dead zone. */}
       <section className="jy-section">
@@ -139,7 +190,7 @@ export function JourneyView() {
         </div>
         <div className="jy-feats">
           {j.feats.map((f) => (
-            <FeatCard key={f.id} feat={f} />
+            <FeatCard key={f.id} feat={f} myCall={myCall} />
           ))}
         </div>
       </section>
@@ -265,7 +316,7 @@ const TIER_LABEL: Record<JourneyTier, string> = {
   legendary: 'Legendary',
 }
 
-function FeatCard({ feat }: { feat: JourneyFeat }) {
+function FeatCard({ feat, myCall }: { feat: JourneyFeat; myCall?: string }) {
   const pct = feat.target > 0 ? Math.min(100, (feat.current / feat.target) * 100) : 0
   const fmt = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(0))
   return (
@@ -277,6 +328,23 @@ function FeatCard({ feat }: { feat: JourneyFeat }) {
         <span className="jy-feat-mark">{feat.unlocked ? '★' : feat.gated ? '🔒' : '○'}</span>
         <strong>{feat.title}</strong>
         <span className={`jy-tier-pill jy-tier-${feat.tier}`}>{TIER_LABEL[feat.tier]}</span>
+        {feat.unlocked && (
+          <button
+            type="button"
+            className="jy-share jy-share-sm"
+            title="Copy a share-card image of this feat (local render — nothing is uploaded)"
+            onClick={() =>
+              shareCard({
+                call: myCall || 'MY STATION',
+                headline: feat.title,
+                sub: feat.meaning,
+                footer: `${TIER_LABEL[feat.tier]} feat · Journey · Nexus`,
+              })
+            }
+          >
+            ⤴
+          </button>
+        )}
       </div>
       <p className="jy-feat-meaning">{feat.meaning}</p>
       {feat.gated ? (

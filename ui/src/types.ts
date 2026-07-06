@@ -903,6 +903,18 @@ export interface JourneySummary {
   feats: JourneyFeat[]
   bests: JourneyPersonalBest[]
   streak: JourneyStreak
+  /** Annual personal DX marathon (entities + zones worked THIS calendar year). */
+  marathon?: JourneyMarathon
+}
+
+/** The annual marathon scoreboard — resets every Jan 1, best year remembered. */
+export interface JourneyMarathon {
+  year: number
+  entities: number
+  zones: number
+  score: number
+  bestYear: number | null
+  bestScore: number
 }
 
 /** DXCC-first award progress, computed from the logbook (cty.dat-resolved). */

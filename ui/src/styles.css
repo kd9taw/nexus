@@ -925,6 +925,45 @@ button.nb-chip:hover {
   border-radius: 3px;
   padding: 1px 2px;
 }
+/* Annual DX marathon card. */
+.jy-marathon {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+.jy-marathon-score {
+  font-family: var(--font-mono);
+  font-size: 2.2em;
+  font-weight: 800;
+  color: var(--accent);
+}
+.jy-marathon-parts {
+  color: var(--text-dim);
+}
+.jy-marathon-best {
+  color: var(--text-faint);
+  font-size: var(--fs-label);
+}
+/* Journey share buttons (hero + unlocked feats) — quiet chrome, local render. */
+.jy-share {
+  background: transparent;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  padding: var(--space-1) var(--space-2);
+  cursor: pointer;
+  align-self: flex-start;
+}
+.jy-share:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.jy-share-sm {
+  margin-left: auto;
+  padding: 0 6px;
+  font-size: var(--fs-label);
+}
 /* PCA (proton event) chip — the flare chip's violet sibling. */
 .pca-chip {
   border-left-color: #a855f7;

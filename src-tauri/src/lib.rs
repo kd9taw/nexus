@@ -117,6 +117,13 @@ static PSKR_STOP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool:
 
 /// One-shot latch for the PSK Reporter MQTT daemon thread (see RBN_CW_STARTED).
 static PSKR_STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// WSPR poller ownership: (generation, callsign being polled). A start for the
+/// SAME call is a no-op (apply_settings calls this on every save); a start for
+/// a DIFFERENT call — or an invalidated one — bumps the generation, which the
+/// running thread observes and exits on (checked immediately before every
+/// push, so even a fetch in flight across restart_live_feeds' drain can never
+/// repollute the buffer with the old call's evidence — review catch).
+static WSPR_FEED: Mutex<(u64, String)> = Mutex::new((0, String::new()));
 
 /// One-shot latch for the near-region opening MQTT daemon thread (Phase 2).
 static PSKR_REGION_STARTED: std::sync::atomic::AtomicBool =
@@ -353,6 +360,12 @@ fn start_pskr_feed(live_paths: &SharedLivePaths, mycall: &str, health: &SharedHe
                 {
                     hp.pskr_last_event
                         .store(now_unix(), std::sync::atomic::Ordering::Relaxed);
+                    // Rarity census: every heard TX grid is activity evidence.
+                    if let Some(g) = spot.tx_grid.as_deref() {
+                        if let Ok(mut c) = propagation::gridrarity::census().write() {
+                            c.observe(g);
+                        }
+                    }
                     if let Ok(mut b) = buf.lock() {
                         b.push(spot);
                     }
@@ -361,6 +374,69 @@ fn start_pskr_feed(live_paths: &SharedLivePaths, mycall: &str, health: &SharedHe
             &PSKR_STOP,
             &hp_conn.pskr_connected,
         );
+    });
+}
+
+/// Poll wspr.live every 5 min for who's hearing MYCALL's WSPR beacons — the
+/// beacon-grade "getting out" evidence lane (bounded 1-hour query per the
+/// wspr.live fair-use policy; data courtesy of wspr.live / wsprnet.org). Rows
+/// at-or-before the newest already-pushed timestamp are skipped, so re-fetching
+/// the sliding window never duplicates bus entries. Best-effort: a WSPR-less
+/// station simply gets empty answers. Each call OWNS a new WSPR_GEN generation:
+/// the previous poller (if any) exits at its next check, so a callsign change
+/// tears the old-call query down instead of leaving it repolluting the drained
+/// buffer (review catch).
+fn start_wspr_feed(live_paths: &SharedLivePaths, mycall: &str) {
+    let call_ok = is_real_call(mycall);
+    let call = mycall.trim().to_uppercase();
+    let my_gen = {
+        let Ok(mut g) = WSPR_FEED.lock() else { return };
+        if call_ok && g.1 == call {
+            return; // already polling this exact call — idempotent
+        }
+        // Supersede whatever ran before (a rename kills the old-call poller
+        // even when the new call is invalid — feeds stay down, honestly).
+        g.0 += 1;
+        g.1 = if call_ok { call.clone() } else { String::new() };
+        if !call_ok {
+            return;
+        }
+        g.0
+    };
+    let alive = || WSPR_FEED.lock().map(|g| g.0 == my_gen).unwrap_or(false);
+    let buf = live_paths.clone();
+    std::thread::spawn(move || {
+        let mut newest = 0i64;
+        loop {
+            if !alive() {
+                return; // superseded (rename/restart) — die quietly
+            }
+            if let Ok(spots) = propagation::live::wspr::fetch_wspr(&call) {
+                // Re-check AFTER the (up to 20 s) fetch so an in-flight answer
+                // for the OLD call can never land after the rename drain.
+                if !alive() {
+                    return;
+                }
+                let fresh: Vec<_> = spots.into_iter().filter(|s| s.time > newest).collect();
+                if let Some(m) = fresh.iter().map(|s| s.time).max() {
+                    newest = m;
+                }
+                if !fresh.is_empty() {
+                    if let Ok(mut b) = buf.lock() {
+                        for sp in fresh {
+                            b.push(sp);
+                        }
+                    }
+                }
+            }
+            // 5-min cadence, sliced so a superseded poller exits within ~2 s.
+            for _ in 0..150 {
+                if !alive() {
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_secs(2));
+            }
+        }
     });
 }
 
@@ -412,6 +488,11 @@ fn start_pskr_region_feed(region_paths: &SharedRegionPaths, mycall: &str, mygrid
                     });
                 if !near {
                     return;
+                }
+                if let Some(g) = spot.tx_grid.as_deref() {
+                    if let Ok(mut c) = propagation::gridrarity::census().write() {
+                        c.observe(g);
+                    }
                 }
                 if let Ok(mut b) = buf.lock() {
                     b.push(spot);
@@ -598,6 +679,17 @@ fn logbook_path() -> PathBuf {
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| PathBuf::from("."))
         .join("log.adi")
+}
+
+/// Where the grid-activity census is persisted (beside settings.json): a small
+/// bounded JSON of decayed per-grid heard counts — the demote-only refinement
+/// evidence for the rarity gems. Losing it is harmless (it re-accumulates).
+fn census_path() -> PathBuf {
+    settings_path()
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("grid_census.json")
 }
 
 /// The WSJT-X-format decode log (`ALL.TXT`), in the same base dir as the logbook —
@@ -1560,6 +1652,19 @@ async fn get_pca(
     }))
 }
 
+/// Magnetic declination (degrees, east-positive) at the operator's QTH right
+/// now — WMM2025 from the vendored NOAA coefficients. The UI subtracts it from
+/// true bearings to show the magnetic heading a compass-zeroed rotator needs.
+/// `None` when the grid is unset/invalid.
+#[tauri::command]
+fn get_declination(state: State<'_, SharedEngine>) -> Result<Option<f64>, String> {
+    let mygrid = {
+        let eng = state.lock().map_err(|e| e.to_string())?;
+        eng.settings().mygrid.clone()
+    };
+    Ok(propagation::wmm::declination_for_grid(&mygrid, now_unix()))
+}
+
 /// Real-time KC2G ionosonde MUF/foF2 station fixes for the Connect map's MUF
 /// overlay. Cached `KC2G_TTL_SECS`; serves the last-good set on a fetch failure,
 /// empty if we never had one (never fabricated).
@@ -1820,6 +1925,7 @@ fn set_settings(
         start_cluster_feeds(spots.inner(), &cluster_hosts, &mycall, health.inner());
     }
     start_pskr_feed(live_paths.inner(), &mycall, health.inner());
+    start_wspr_feed(live_paths.inner(), &mycall);
     if opening_regional {
         start_pskr_region_feed(region_paths.inner(), &mycall, &mygrid);
     }
@@ -1850,7 +1956,7 @@ fn restart_live_feeds(
     conn_log(
         "Feeds",
         "info",
-        "callsign changed — restarting cluster + PSK Reporter feeds under the new call",
+        "callsign changed — restarting cluster + PSK Reporter + WSPR feeds under the new call",
     );
     CLUSTER_STOP.store(true, SeqCst);
     PSKR_STOP.store(true, SeqCst);
@@ -1912,6 +2018,7 @@ fn restart_live_feeds(
             start_cluster_feeds(&spots, &cluster_hosts, &mycall, &health);
         }
         start_pskr_feed(&live_paths, &mycall, &health);
+        start_wspr_feed(&live_paths, &mycall);
         if opening_regional {
             start_pskr_region_feed(&SharedRegionPaths(region_paths), &mycall, &mygrid);
         }
@@ -3263,6 +3370,27 @@ async fn get_journey(
                 .their_program
                 .as_deref()
                 .is_some_and(|p| p.eq_ignore_ascii_case("SOTA")),
+            // Hunter ladders count DISTINCT park/summit references.
+            pota_ref: if r
+                .ota
+                .their_program
+                .as_deref()
+                .is_some_and(|p| p.eq_ignore_ascii_case("POTA"))
+            {
+                r.ota.their_ref.clone()
+            } else {
+                None
+            },
+            sota_ref: if r
+                .ota
+                .their_program
+                .as_deref()
+                .is_some_and(|p| p.eq_ignore_ascii_case("SOTA"))
+            {
+                r.ota.their_ref.clone()
+            } else {
+                None
+            },
         })
         .collect();
     let grid = (!s.mygrid.is_empty()).then_some(s.mygrid.as_str());
@@ -5226,6 +5354,7 @@ pub fn run() {
         start_cluster_feeds(&spots, &cluster_hosts, &cluster_call, &health);
     }
     start_pskr_feed(&live_paths, &cluster_call, &health);
+    start_wspr_feed(&live_paths, &cluster_call);
     if region_enabled {
         start_pskr_region_feed(&region_paths, &cluster_call, &region_grid);
     }
@@ -5280,8 +5409,17 @@ pub fn run() {
         eng.set_dxcc_resolver(|call| {
             propagation::dxcc::resolve(call).map(|i| i.entity.to_string())
         });
-        // Grid-rarity gems (geography table lives in the propagation crate).
-        eng.set_grid_rarity_resolver(propagation::gridrarity::tier_u8);
+        // Grid-rarity gems: geography table + the measured-activity census
+        // (demote-only refinement). Restore the persisted census BEFORE any
+        // stamping so the first snapshot already shows refined tiers.
+        if let Ok(text) = std::fs::read_to_string(census_path()) {
+            if let Ok(c) = serde_json::from_str::<propagation::gridrarity::RarityCensus>(&text) {
+                if let Ok(mut g) = propagation::gridrarity::census().write() {
+                    *g = c;
+                }
+            }
+        }
+        eng.set_grid_rarity_resolver(propagation::gridrarity::effective_tier_u8);
         eng.set_log_path(logbook_path());
         // Restore persisted Tempo conversation threads so chat history (and the `*`
         // band feed) survives an app restart. Best-effort: a missing/corrupt file
@@ -5297,6 +5435,23 @@ pub fn run() {
             }
         }
     }
+
+    // Decay + persist the grid-activity census on a slow cadence (10 min): the
+    // decay keeps a one-off DXpedition from permanently un-raring a water grid,
+    // and the small JSON survives restarts. Skips the write when nothing is
+    // tracked (no idle disk churn).
+    std::thread::spawn(|| loop {
+        std::thread::sleep(std::time::Duration::from_secs(600));
+        let json = propagation::gridrarity::census().write().ok().map(|mut c| {
+            c.decay(now_unix());
+            (c.is_empty(), serde_json::to_string(&*c))
+        });
+        if let Some((empty, Ok(text))) = json {
+            if !empty {
+                let _ = std::fs::write(census_path(), text);
+            }
+        }
+    });
 
     // Persist Tempo conversation threads to disk on a slow cadence so chat history
     // survives a restart — only writes when something changed (no idle disk churn).
@@ -5545,6 +5700,7 @@ pub fn run() {
             get_getting_out,
             get_aurora,
             get_pca,
+            get_declination,
             get_kc2g_muf,
             get_space_wx_scales,
             get_xray_now,

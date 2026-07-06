@@ -42,6 +42,7 @@ pub mod solar_wind;
 pub mod space_wx;
 pub mod spot;
 pub mod swpc_scales;
+pub mod wmm;
 
 /// Live feed adapters (NOAA SWPC + PSK Reporter). Opt-in via the `live` feature.
 #[cfg(feature = "live")]

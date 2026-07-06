@@ -4,7 +4,7 @@
 // route through the shared tokens (status/need) and the colormap LUT, so color
 // means one thing app-wide. See tasks/specs/UI-map.md.
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { geoPath } from 'd3-geo'
+import { geoPath, type GeoPermissibleObjects } from 'd3-geo'
 import { RotateCcw } from 'lucide-react'
 import type {
   AuroraPoint,
@@ -19,8 +19,11 @@ import type {
 } from '../types'
 import { MapInsightRail } from './prop/MapInsightRail'
 import type { Theme } from '../useTheme'
-import { getAurora, getPca } from '../api'
-import { gridToLatLon, haversineKm, bearingDeg, type LatLon } from '../grid'
+import { getAurora, getDeclination, getPca } from '../api'
+// CQ-zone boundaries (HB9HIL hamradio-zones-geojson, MIT — see NOTICE): bundled
+// as a raw asset and fetched lazily so the 2.7 MB never loads until toggled on.
+import cqzonesUrl from '../data/cqzones.geojson?url'
+import { gridToLatLon, haversineKm, bearingDeg, magneticDeg, type LatLon } from '../grid'
 import {
   basemap,
   graticule,
@@ -186,6 +189,8 @@ type LayerKey =
   | 'aurora'
   | 'flare'
   | 'pca'
+  | 'gridLabels'
+  | 'cqzones'
   | 'coast'
   | 'grid'
   | 'rings'
@@ -213,6 +218,8 @@ const DEFAULT_LAYERS: Record<LayerKey, Layer> = {
   pca: { label: 'Proton polar cap (PCA)', visible: true, opacity: 0.8 },
   coast: { label: 'Coastlines', visible: true, opacity: 0.85 },
   grid: { label: 'Grid (20°×10°)', visible: true, opacity: 0.5 },
+  gridLabels: { label: 'Grid labels (AA…RR)', visible: false, opacity: 0.7 },
+  cqzones: { label: 'CQ zones', visible: false, opacity: 0.6 },
   rings: { label: 'Range rings', visible: true, opacity: 0.55 },
   heat: { label: 'Band heat (openings)', visible: true, opacity: 0.55 },
   liveSpots: { label: 'Live spots (cluster/RBN)', visible: true, opacity: 0.9 },
@@ -579,6 +586,36 @@ export function MapView({
     }
   }, [pcaOn])
 
+  // Magnetic declination at the QTH (WMM2025) — quasi-static, fetched once;
+  // lets hover bearings show the compass heading beside true.
+  const [declination, setDeclination] = useState<number | null>(null)
+  useEffect(() => {
+    getDeclination()
+      .then(setDeclination)
+      .catch(() => {})
+  }, [])
+
+  // CQ-zone polygons — loaded once, only when the layer is first enabled.
+  type CqZoneFeature = {
+    type: 'Feature'
+    properties: { cq_zone_number: number; cq_zone_name: string; cq_zone_name_loc: [number, number] }
+    geometry: GeoPermissibleObjects
+  }
+  const [cqzones, setCqzones] = useState<CqZoneFeature[] | null>(null)
+  const cqzonesOn = layers.cqzones.visible
+  useEffect(() => {
+    if (!cqzonesOn || cqzones) return
+    let live = true
+    fetch(cqzonesUrl)
+      .then((r) => r.json())
+      .then((g) => live && setCqzones((g?.features as CqZoneFeature[]) ?? []))
+      .catch(() => {})
+    return () => {
+      live = false
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cqzonesOn])
+
   // Draw.
   useEffect(() => {
     const canvas = canvasRef.current
@@ -708,6 +745,69 @@ export function MapView({
       ctx.strokeStyle = cssVar('--border-soft')
       ctx.lineWidth = 0.5
       ctx.stroke()
+    }
+    // Maidenhead labels (default off): 2-char FIELD letters when a field spans
+    // enough pixels to read, densifying to 4-char squares only inside fields
+    // that are large on screen (zoomed in) — bounded work, nothing at low zoom.
+    if (layers.gridLabels.visible) {
+      ctx.globalAlpha = layers.gridLabels.opacity
+      ctx.fillStyle = cssVar('--text-faint')
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      for (let fi = 0; fi < 18; fi++) {
+        for (let fj = 0; fj < 18; fj++) {
+          const clon = -180 + fi * 20 + 10
+          const clat = -90 + fj * 10 + 5
+          const pc = project(proj, { lat: clat, lon: clon })
+          if (!pc || pc[0] < -40 || pc[0] > w + 40 || pc[1] < -40 || pc[1] > h + 40) continue
+          // Field width in px via a 2° probe at the field center.
+          const probe = project(proj, { lat: clat, lon: clon + 2 })
+          const sqW = probe ? Math.hypot(probe[0] - pc[0], probe[1] - pc[1]) : 0
+          const fieldW = sqW * 10
+          if (fieldW < 70) continue
+          const field = String.fromCharCode(65 + fi) + String.fromCharCode(65 + fj)
+          if (fieldW < 420) {
+            ctx.font = `600 ${Math.min(22, 10 + fieldW / 40)}px ${cssVar('--font-mono') || 'monospace'}`
+            ctx.fillText(field, pc[0], pc[1])
+          } else {
+            // Zoomed in: label the 10×10 squares of this field instead.
+            ctx.font = `500 11px ${cssVar('--font-mono') || 'monospace'}`
+            for (let di = 0; di < 10; di++) {
+              for (let dj = 0; dj < 10; dj++) {
+                const p = project(proj, {
+                  lat: -90 + fj * 10 + dj + 0.5,
+                  lon: -180 + fi * 20 + di * 2 + 1,
+                })
+                if (!p || p[0] < 0 || p[0] > w || p[1] < 0 || p[1] > h) continue
+                ctx.fillText(`${field}${di}${dj}`, p[0], p[1])
+              }
+            }
+          }
+        }
+      }
+      ctx.globalAlpha = 1
+    }
+    // CQ-zone boundaries (MIT, HB9HIL) — thin amber borders + zone numbers at
+    // each zone's label anchor. Only drawn once the lazy asset has loaded.
+    if (layers.cqzones.visible && cqzones) {
+      ctx.globalAlpha = layers.cqzones.opacity
+      ctx.strokeStyle = 'rgba(217, 164, 65, 0.75)'
+      ctx.lineWidth = 0.8
+      for (const f of cqzones) {
+        ctx.beginPath()
+        path(f.geometry)
+        ctx.stroke()
+      }
+      ctx.font = `700 12px ${cssVar('--font-mono') || 'monospace'}`
+      ctx.fillStyle = 'rgba(217, 164, 65, 0.9)'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      for (const f of cqzones) {
+        const [lat, lon] = f.properties.cq_zone_name_loc
+        const p = project(proj, { lat, lon })
+        if (p) ctx.fillText(String(f.properties.cq_zone_number), p[0], p[1])
+      }
+      ctx.globalAlpha = 1
     }
     if (layers.rings.visible && kind !== 'world') {
       ctx.globalAlpha = layers.rings.opacity
@@ -1112,7 +1212,7 @@ export function MapView({
     }
     // theme is a draw dependency so colors refresh on theme switch.
     void theme
-  }, [me, kind, colorBy, pathMode, view, size, layers, placed, placedSpots, placedDxped, mufStations, auroraPts, pca, reliefReady, prop, selStation, selectedCall, needByCall, theme, nowMs, focusBand, pulseTick, xrayEff, flareActive, flareHafNow, hoverKey])
+  }, [me, kind, colorBy, pathMode, view, size, layers, placed, placedSpots, placedDxped, mufStations, auroraPts, pca, cqzones, reliefReady, prop, selStation, selectedCall, needByCall, theme, nowMs, focusBand, pulseTick, xrayEff, flareActive, flareHafNow, hoverKey])
 
   // THE SUN + RADIATING ENERGY — the flare layer's animated half, on its own
   // transparent canvas at ~20 fps, mounted ONLY while a flare is active and the
@@ -1358,7 +1458,9 @@ export function MapView({
   const hitText = (hit: MapHit): string => {
     if (hit.kind === 'station') {
       const s = hit.s
-      return `${s.call} · ${s.country ? s.country + ' · ' : ''}${s.grid} · ${s.snr} dB · ${bearingDeg(me, hit.ll)}° ${Math.round(haversineKm(me, hit.ll)).toLocaleString()} km`
+      const brg = bearingDeg(me, hit.ll)
+      const mag = magneticDeg(brg, declination)
+      return `${s.call} · ${s.country ? s.country + ' · ' : ''}${s.grid} · ${s.snr} dB · ${brg}°T${mag != null ? ` (${mag}°M)` : ''} ${Math.round(haversineKm(me, hit.ll)).toLocaleString()} km`
     }
     if (hit.kind === 'dxped') {
       const c = hit.card

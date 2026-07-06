@@ -198,7 +198,8 @@ pub fn score(
     // Rarity spice: a NEEDED rare grid outranks plain grid/band needs — an
     // ultra-rare (water-only, rover/maritime) needed grid lands between
     // NewZone (70) and NewEntity (100). Rarity alone never creates an alert.
-    let rarity = g4.as_deref().and_then(crate::gridrarity::grid_rarity);
+    // Display tier = geography refined by the activity census (demote-only).
+    let rarity = g4.as_deref().and_then(crate::gridrarity::effective_rarity);
     let rarity_boost = if tags.contains(&NeedTag::NewGrid) {
         match rarity {
             Some(crate::gridrarity::GridRarity::UltraRare) => 30,

@@ -3,9 +3,10 @@
 // roster filters (Needed-only, Hide-worked) and double-click-to-work. This is the
 // "Roster" cockpit layout's primary surface — distinct from the waterfall-first
 // "Classic" layout, not just a reshaped pane.
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { NeedTag, Station } from '../types'
-import { gridToLatLon, haversineKm, bearingDeg, distanceLabel, bearingLabel } from '../grid'
+import { gridToLatLon, haversineKm, bearingDeg, distanceLabel, bearingLabel, magneticDeg } from '../grid'
+import { getDeclination } from '../api'
 import { isIgnored } from '../txMessages'
 import { RarityGem } from './RarityGem'
 
@@ -68,6 +69,14 @@ export function OperateRoster({
   ignoredCalls,
   onToggleIgnore,
 }: Props) {
+  // QTH magnetic declination (WMM) — the Brg column's tooltip shows the compass
+  // heading a rotator zeroed on magnetic north needs.
+  const [declination, setDeclination] = useState<number | null>(null)
+  useEffect(() => {
+    getDeclination()
+      .then(setDeclination)
+      .catch(() => {})
+  }, [])
   const [sort, setSort] = useState<{ key: SortKey; dir: 'asc' | 'desc' }>({ key: 'need', dir: 'desc' })
   const [neededOnly, setNeededOnly] = useState(false)
   const [hideWorked, setHideWorked] = useState(false)
@@ -203,7 +212,19 @@ export function OperateRoster({
                   <RarityGem rarity={s.gridRarity} />
                 </span>
                 <span className="or-dist">{distanceLabel(myGrid, s.grid) ?? '—'}</span>
-                <span className="or-brg">{bearingLabel(myGrid, s.grid) ?? '—'}</span>
+                <span
+                  className="or-brg"
+                  title={(() => {
+                    const me = gridToLatLon(myGrid)
+                    const them = s.grid ? gridToLatLon(s.grid) : null
+                    if (!me || !them) return undefined
+                    const t = bearingDeg(me, them)
+                    const mg = magneticDeg(t, declination)
+                    return mg != null ? `${t}° true · ${mg}° magnetic (WMM)` : `${t}° true`
+                  })()}
+                >
+                  {bearingLabel(myGrid, s.grid) ?? '—'}
+                </span>
                 <span className={`or-snr snr-${snrClass(s.snr)}`}>
                   {s.snr > 0 ? '+' : ''}
                   {s.snr}

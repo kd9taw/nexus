@@ -137,6 +137,11 @@ export async function getPca(): Promise<import('./types').PcaView | null> {
   return invoke<import('./types').PcaView | null>('get_pca')
 }
 
+/** Magnetic declination (° east-positive) at the QTH (WMM2025); null = no grid. */
+export async function getDeclination(): Promise<number | null> {
+  return invoke<number | null>('get_declination')
+}
+
 /** The 60 s X-ray fast lane — the freshest GOES long-band flux, so a flare's
  * onset reaches the map + alert in ~1 min instead of the 5-min prop cadence. */
 export async function getXrayNow(): Promise<import('./types').XrayNow> {
