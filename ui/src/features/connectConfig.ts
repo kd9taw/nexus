@@ -14,7 +14,7 @@ export type SlotId = (typeof SLOT_IDS)[number]
 export const PANE_IDS = [
   'advisory', 'bandAdvisor', 'selection', 'outlook', 'openings', 'spacewx', 'getout',
   'bestband', 'activity', 'beacons', 'insights', 'chase',
-  'greyline', 'bandHours', 'esNowcast', 'measuredMuf',
+  'greyline', 'bandHours', 'esNowcast', 'measuredMuf', 'chaseFeed',
 ] as const
 export type PaneId = (typeof PANE_IDS)[number]
 

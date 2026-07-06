@@ -1184,14 +1184,36 @@ struct DxpedWindow {
     best: String,
     /// Top bands' 24 h outlooks, best first — feeds LikelihoodHeatmap directly.
     outlook: Vec<propagation::BandOutlook>,
+    /// Week planner: per-day best shot for the next `days` days (index 0 = today,
+    /// anchored at now + n·24 h so the engine sees each day's own date). Empty
+    /// when the caller asked for a single day.
+    days: Vec<DxpedDayBest>,
+    /// Announced on-air dates (from the forward calendar). None for expeditions
+    /// active NOW (the dashboard cards carry no end date) — consumers treat None
+    /// as "on the air, no date gate". The wake-me alarm needs these so it never
+    /// fires for a station that is not transmitting yet.
+    start_unix: Option<i64>,
+    end_unix: Option<i64>,
 }
 
-/// Windows cache: (computed-at, params-key, value). The windows are month-scale
-/// climatology — recompute only when the params change (UTC day, grid, engine,
-/// power, SSN, target set) or 6 h pass. A p533 sweep of ~20 targets is seconds
-/// (release) and runs off the async core; cached serves are instant.
-static DXPED_WINDOWS: Mutex<Option<(std::time::Instant, String, Vec<DxpedWindow>)>> =
-    Mutex::new(None);
+/// One day of the week planner: the day's best-band headline + its 0..1 score
+/// (the calendar strip colors by score; the headline is the tooltip).
+#[derive(serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct DxpedDayBest {
+    day_unix: i64,
+    best: String,
+    score: f32,
+}
+
+/// Windows cache, keyed by the full params string (UTC day, grid, engine, power,
+/// SSN, target set, day count). The windows are month-scale climatology — entries
+/// live 6 h. Keyed (not single-slot) because Connect polls 1-day windows while
+/// the DXpeditions board polls the 7-day planner; a single slot would thrash and
+/// re-run the p533 sweep on every alternating call. Expired entries are pruned on
+/// insert, so the map stays at the handful of live param shapes.
+static DXPED_WINDOWS: Mutex<Vec<(std::time::Instant, String, Vec<DxpedWindow>)>> =
+    Mutex::new(Vec::new());
 
 /// Modelled best-contact windows for every active + upcoming DXpedition, from
 /// the operator's grid, using the CONFIGURED prediction engine (Settings ▸
@@ -1205,8 +1227,12 @@ static DXPED_WINDOWS: Mutex<Option<(std::time::Instant, String, Vec<DxpedWindow>
 async fn get_dxped_windows(
     state: State<'_, SharedEngine>,
     cache: State<'_, PropCache>,
+    days: Option<u32>,
 ) -> Result<Vec<DxpedWindow>, String> {
     const WINDOWS_TTL_SECS: u64 = 6 * 3600;
+    // 1 = today only (Connect's default); the DXpeditions board asks for 7 (the
+    // week planner). Clamped so a bad caller can't request an unbounded sweep.
+    let days = days.unwrap_or(1).clamp(1, 10);
     let (mygrid, prop_engine, station_power_w) = {
         let eng = state.lock().map_err(|e| e.to_string())?;
         let st = eng.settings();
@@ -1223,22 +1249,30 @@ async fn get_dxped_windows(
             return Ok(Vec::new()); // no snapshot yet — the board is empty too
         };
         let mut seen = std::collections::HashSet::new();
-        let mut targets: Vec<(String, (f64, f64))> = Vec::new();
+        let mut targets: Vec<(String, (f64, f64), Option<i64>, Option<i64>)> = Vec::new();
+        // Active cards carry no dates (they're on the air NOW); calendar entries
+        // carry the announced start/end so the alarm can gate on them.
         let cards = s
             .dxpeditions
             .workable_now
             .iter()
-            .map(|c| (&c.call, c.bearing_deg, c.distance_km));
-        let cal = s
-            .dxpeditions
-            .upcoming
-            .iter()
-            .map(|e| (&e.call, e.bearing_deg, e.distance_km));
-        for (call, brg, km) in cards.chain(cal) {
+            .map(|c| (&c.call, c.bearing_deg, c.distance_km, None, None));
+        let cal = s.dxpeditions.upcoming.iter().map(|e| {
+            (
+                &e.call,
+                e.bearing_deg,
+                e.distance_km,
+                Some(e.start_unix),
+                Some(e.end_unix),
+            )
+        });
+        for (call, brg, km, start, end) in cards.chain(cal) {
             if seen.insert(call.clone()) {
                 targets.push((
                     call.clone(),
                     propagation::geo::destination_point(me, brg as f64, km as f64),
+                    start,
+                    end,
                 ));
             }
         }
@@ -1255,19 +1289,20 @@ async fn get_dxped_windows(
         return Ok(Vec::new());
     }
     let day = now_unix() / 86_400;
-    let mut calls: Vec<&str> = targets.iter().map(|(c, _)| c.as_str()).collect();
+    let mut calls: Vec<&str> = targets.iter().map(|(c, ..)| c.as_str()).collect();
     calls.sort_unstable();
     let key = format!(
-        "{day}|{mygrid}|{prop_engine}|{:?}|{:?}|{}",
+        "{day}|{days}|{mygrid}|{prop_engine}|{:?}|{:?}|{}",
         station_power_w,
         wx.ssn.map(|v| v.round() as i32),
         calls.join(",")
     );
     if let Ok(g) = DXPED_WINDOWS.lock() {
-        if let Some((when, k, v)) = g.as_ref() {
-            if *k == key && when.elapsed().as_secs() < WINDOWS_TTL_SECS {
-                return Ok(v.clone());
-            }
+        if let Some((_, _, v)) = g
+            .iter()
+            .find(|(when, k, _)| *k == key && when.elapsed().as_secs() < WINDOWS_TTL_SECS)
+        {
+            return Ok(v.clone());
         }
     }
     use propagation::PathPredictor as _;
@@ -1278,19 +1313,43 @@ async fn get_dxped_windows(
     let out = tauri::async_runtime::spawn_blocking(move || {
         targets
             .into_iter()
-            .map(|(call, dx)| {
+            .map(|(call, dx, start_unix, end_unix)| {
                 let mut p = eng.predict(dx, t, &wx);
                 p.bands.truncate(4);
-                let best = p
-                    .bands
-                    .first()
-                    .map(|b| format!("{} {} {}", b.band, b.workability, b.window))
-                    .unwrap_or_default();
+                let best_line = |p: &propagation::PathPrediction| {
+                    p.bands
+                        .first()
+                        .map(|b| format!("{} {} {}", b.band, b.workability, b.window))
+                        .unwrap_or_default()
+                };
+                let best = best_line(&p);
+                // Week planner: day 0 reuses today's prediction; each further day
+                // re-anchors at now + n·24 h so the engine derives that day's own
+                // date (month boundaries included). Same-month days amortize via
+                // the CCIR-cell memo, so the 7-day sweep is far below 7× cost.
+                let days_out = if days > 1 {
+                    (0..days as i64)
+                        .map(|n| {
+                            let dt = t + n * 86_400;
+                            let dp = if n == 0 { p.clone() } else { eng.predict(dx, dt, &wx) };
+                            DxpedDayBest {
+                                day_unix: dt,
+                                best: best_line(&dp),
+                                score: dp.bands.first().map(|b| b.score).unwrap_or(0.0),
+                            }
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                };
                 DxpedWindow {
                     call,
                     engine: p.engine,
                     best,
                     outlook: p.bands,
+                    days: days_out,
+                    start_unix,
+                    end_unix,
                 }
             })
             .collect::<Vec<_>>()
@@ -1298,7 +1357,9 @@ async fn get_dxped_windows(
     .await
     .map_err(|e| e.to_string())?;
     if let Ok(mut g) = DXPED_WINDOWS.lock() {
-        *g = Some((std::time::Instant::now(), key, out.clone()));
+        g.retain(|(when, _, _)| when.elapsed().as_secs() < WINDOWS_TTL_SECS);
+        g.retain(|(_, k, _)| *k != key);
+        g.push((std::time::Instant::now(), key, out.clone()));
     }
     Ok(out)
 }

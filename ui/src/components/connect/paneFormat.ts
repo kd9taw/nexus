@@ -9,6 +9,7 @@ import { nextTerminatorMs } from '../../mapGeo'
 import { gridToLatLon, haversineKm } from '../../grid'
 import { dualStateLabel, kpImpact, sortInsights } from '../../propViz'
 import { buildChaseTargets, chaseSummaryLine } from '../../features/chase'
+import { buildChaseFeed, chaseFeedLine as feedSummary } from '../../features/chaseFeed'
 import { getoutSummary } from '../../features/getout'
 import type { NeedTag, PropagationSnapshot } from '../../types'
 import type { PaneContext } from './paneContext'
@@ -64,6 +65,19 @@ export function advisoryLine(c: PaneContext): string {
 /** Chase — how many needed stations are being heard, and how many are workable right now. */
 export function chaseLine(c: PaneContext): string {
   return chaseSummaryLine(buildChaseTargets(c.needAlerts, c.bandOutlook, Date.now()))
+}
+
+/** Chase Feed — the ranked fusion of heard needs + on-air expeditions. */
+export function chaseFeedLine(c: PaneContext): string {
+  return feedSummary(
+    buildChaseFeed(
+      c.needAlerts,
+      c.bandOutlook,
+      c.prop && c.prop.source !== 'offline' ? c.prop.dxpeditions : null,
+      c.dxpedWindows,
+      Date.now(),
+    ),
+  )
 }
 
 export function bandAdvisorLine(c: PaneContext): string {

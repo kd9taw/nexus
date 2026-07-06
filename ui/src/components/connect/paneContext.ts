@@ -37,6 +37,8 @@ export interface PaneContext {
   selDxped: WorkableCard | null
   /** The selected DXpedition's modelled best-shot window, when known. */
   selDxpedWindow: DxpedWindow | null
+  /** ALL modelled expedition windows by UPPERCASE call (the chase feed ranks with them). */
+  dxpedWindows: Map<string, DxpedWindow>
   selGrid: string | null
   // outlook (API-fetched in ConnectView)
   pathPred: PathPrediction | null

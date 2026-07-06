@@ -14,6 +14,7 @@ import { DxpedCalendar } from './prop/DxpedCalendar'
 import { modeClassOf } from '../features/needs'
 import { getDxpedWindows } from '../api'
 import { chasingSet, toggleChasing } from '../features/dxpedChase'
+import { alarmMap, setAlarmLead, toggleAlarm } from '../features/dxpedAlarm'
 
 interface Props {
   snap: PropagationSnapshot | null
@@ -53,7 +54,7 @@ export function DxpeditionsView({ snap, onWorkSpot, onShowOnMap, onPopOut }: Pro
     let live = true
     let retry = 0
     const load = () =>
-      getDxpedWindows()
+      getDxpedWindows(7) // 7-day week planner — feeds the calendar's best-days strip
         .then((list) => {
           if (!live) return
           setWindows(new Map(list.map((w) => [w.call.toUpperCase(), w])))
@@ -77,6 +78,17 @@ export function DxpeditionsView({ snap, onWorkSpot, onShowOnMap, onPopOut }: Pro
   const onToggleChase = (call: string) => {
     toggleChasing(call)
     setChased(chasingSet())
+  }
+  // Wake-me alarms — localStorage is the source of truth (shared with the
+  // App-level scheduler); mirror it into state after each edit, like `chased`.
+  const [alarms, setAlarms] = useState(() => alarmMap())
+  const onToggleAlarm = (call: string) => {
+    toggleAlarm(call)
+    setAlarms(alarmMap())
+  }
+  const onAlarmLead = (call: string, leadMin: number) => {
+    setAlarmLead(call, leadMin)
+    setAlarms(alarmMap())
   }
 
   if (!snap) {
@@ -169,6 +181,9 @@ export function DxpeditionsView({ snap, onWorkSpot, onShowOnMap, onPopOut }: Pro
         windows={windows}
         chasing={chased}
         onToggleChase={onToggleChase}
+        alarms={alarms}
+        onToggleAlarm={onToggleAlarm}
+        onAlarmLead={onAlarmLead}
       />
       {dxpeditions.upcoming.length === 0 && (
         <p className="dx-none">The forward calendar is empty — announced operations land here.</p>

@@ -886,6 +886,62 @@ button.nb-chip:hover {
   color: var(--text-dim);
   margin: var(--space-1) 0;
 }
+/* Week-planner strip: one chip per modelled day, colored by best score. */
+.cal-week {
+  display: flex;
+  gap: 3px;
+  margin: var(--space-1) 0;
+}
+.cal-day {
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  padding: 1px 5px;
+  border-radius: 3px;
+  border: 1px solid var(--border-soft);
+  color: var(--text-dim);
+}
+.cal-day.good {
+  color: var(--band-open);
+  border-color: var(--band-open);
+  font-weight: 700;
+}
+.cal-day.fair {
+  color: var(--band-marginal);
+  border-color: var(--band-marginal);
+}
+.cal-day.off {
+  opacity: 0.35;
+}
+/* Wake-me alarm: ⏰ toggle (reuses .wn-chase chrome) + lead-time select. */
+.cal-alarm.active {
+  color: var(--warn, #e8a13c);
+  border-color: var(--warn, #e8a13c);
+}
+.cal-lead {
+  font-size: var(--fs-micro);
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--border-soft);
+  border-radius: 3px;
+  padding: 1px 2px;
+}
+/* Chase Feed pane — rank number + last-days urgency chip on chase-row chrome. */
+.cfeed-rank {
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  color: var(--text-faint);
+  min-width: 1.1em;
+  text-align: right;
+}
+.cfeed-ends {
+  font-size: var(--fs-micro);
+  font-weight: 700;
+  color: var(--warn, #e8a13c);
+  border: 1px solid var(--warn, #e8a13c);
+  border-radius: 3px;
+  padding: 0 var(--space-1);
+  text-transform: uppercase;
+}
 .cal-modes {
   color: var(--text-faint);
 }

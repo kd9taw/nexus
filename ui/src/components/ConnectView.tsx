@@ -264,6 +264,7 @@ export function ConnectView({
     selSpot,
     selDxped,
     selDxpedWindow: selDxped ? (dxpedWindows.get(selDxped.call.toUpperCase()) ?? null) : null,
+    dxpedWindows,
     selGrid,
     pathPred,
     bandOutlook,

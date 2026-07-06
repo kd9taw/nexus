@@ -79,6 +79,7 @@ import {
 } from './api'
 import { processFlare, effectiveXray } from './flareAlert'
 import { processDxpedAlerts } from './features/dxpedChase'
+import { checkDxpedAlarms } from './features/dxpedAlarm'
 import { dxpedWorkMode } from './components/connect/paneFormat'
 import { setStatus } from './status'
 import type { PropagationSnapshot, FeedHealth, NeedTag, NeedAlert, SpotRow, DxpedWindow, WorkableCard } from './types'
@@ -347,6 +348,8 @@ export default function App() {
             qsoPartnerRef.current,
             (c) => workDxpedRef.current?.(c),
           )
+          // Armed wake-me alarms (dxpedAlarm.ts owns persistence + never-twice).
+          checkDxpedAlarms(dxpedWindowsRef.current, Date.now())
           // Loud one-shot alert when a band comes alive (the flagship moment).
           const tnow = Date.now()
           for (const o of p.openings) {

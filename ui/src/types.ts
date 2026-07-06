@@ -269,6 +269,18 @@ export interface DxpedWindow {
   best: string
   /** Top bands' 24 h outlooks, best first — feeds LikelihoodHeatmap. */
   outlook: BandOutlook[]
+  /** Week planner: per-day best shot, index 0 = today (empty/absent for 1-day calls). */
+  days?: DxpedDayBest[]
+  /** Announced on-air dates (forward-calendar entries only; null = active NOW,
+   * no date gate). The wake-me alarm fires only inside these. */
+  startUnix?: number | null
+  endUnix?: number | null
+}
+/** One day of the week planner: best-band headline + 0..1 score for the strip. */
+export interface DxpedDayBest {
+  dayUnix: number
+  best: string
+  score: number
 }
 /** Real-time solar wind (DSCOVR) — the leading geomagnetic indicator (leads Kp/A). */
 export interface SolarWind {

@@ -18,6 +18,7 @@ import { ActivityMatrix } from '../prop/ActivityMatrix'
 import { BeaconMonitor } from '../prop/BeaconMonitor'
 import { InsightFeed } from '../prop/InsightFeed'
 import { ChasePane } from '../prop/ChasePane'
+import { ChaseFeedPane } from '../prop/ChaseFeedPane'
 import { GetoutCompass } from '../prop/GetoutCompass'
 import { getoutSummary } from '../../features/getout'
 import { GreylineWindow } from '../prop/GreylineWindow'
@@ -38,6 +39,7 @@ import {
   beaconsLine,
   insightsLine,
   chaseLine,
+  chaseFeedLine,
   greylineLine,
   bandHoursLine,
   esNowcastLine,
@@ -448,6 +450,16 @@ export const PANES: PaneDef[] = [
       const m = c.muf ?? []
       return m.length ? <MeasuredMuf stations={m} /> : null
     },
+  },
+  {
+    id: 'chaseFeed',
+    title: 'Chase Feed',
+    category: 'b3',
+    basic: chaseFeedLine,
+    // The ranked "chase tonight" board: heard needs + on-air expeditions fused and
+    // scored (need × openness × rarity × time-remaining). Basic = top-3 plain rows;
+    // Expert = the full table. Null when nothing chase-worthy → the basic() hint.
+    expert: (c) => <ChaseFeedPane ctx={c} />,
   },
 ]
 

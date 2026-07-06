@@ -141,8 +141,8 @@ export async function getXrayNow(): Promise<import('./types').XrayNow> {
 /** Modelled best-contact windows for every active + upcoming DXpedition ("Your
  * Window") — computed from YOUR grid with the configured prediction engine and
  * server-cached (climatology; recomputed on day/engine/target changes). */
-export async function getDxpedWindows(): Promise<import('./types').DxpedWindow[]> {
-  return invoke<import('./types').DxpedWindow[]>('get_dxped_windows')
+export async function getDxpedWindows(days?: number): Promise<import('./types').DxpedWindow[]> {
+  return invoke<import('./types').DxpedWindow[]>('get_dxped_windows', { days })
 }
 
 /** SWPC R/S/G scales + recent alerts (the backend returns a [scales, alerts] tuple). */
