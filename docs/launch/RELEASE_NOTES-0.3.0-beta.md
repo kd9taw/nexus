@@ -60,7 +60,7 @@ anyway." Verify the SHA-256 published beside the download first.
 
 ## Reporting
 
-Bugs & field reports: https://github.com/kd9taw/nexus/issues — include your
+Bugs & field reports: https://sourceforge.net/p/nexus-ham-radio/tickets/ — include your
 Nexus version, rig, and the Settings ▸ Connections log. FT1/DX1 on-air
 decode reports are gold.
 

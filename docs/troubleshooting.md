@@ -265,7 +265,7 @@ A report we can act on has three things:
 3. **What you saw vs. what you expected** — band, dial, mode, and for connector
    issues, the relevant lines from the **Connections log**.
 
-File it at <https://github.com/kd9taw/nexus/issues>. That detail is the difference
+File it at <https://sourceforge.net/p/nexus-ham-radio/tickets/>. That detail is the difference
 between a fix and a round-trip of questions.
 
 ---

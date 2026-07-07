@@ -73,8 +73,10 @@ simulation-validated, not on-air-proven.
 ## Report a bug or an on-air result
 
 Bug reports and **FT1/DX1 on-air decode reports** are the most valuable thing
-you can send during the beta:
-[GitHub Issues](https://github.com/kd9taw/nexus/issues).
+you can send during the beta. Open a ticket on the
+[SourceForge ticket tracker](https://sourceforge.net/p/nexus-ham-radio/tickets/). For an on-air report, include your
+call + grid, the other station's call + grid, band and dial frequency, tier
+(FT1 or DX1), reported SNR, dT, cycle count, and whether it decoded.
 
 ---
 

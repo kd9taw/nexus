@@ -59,8 +59,8 @@ Send honest on-air reports: band, dial frequency, which tier (FT1 or DX1),
 distance and rough conditions, and what you decoded versus what you expected —
 including the surprises (false decodes, retransmissions that combined, stations
 you saw that others didn't). Field reports are the single most useful contribution
-right now. Use the issue tracker at
-<https://github.com/kd9taw/nexus/issues>.
+right now. Open a ticket on the SourceForge tracker at
+<https://sourceforge.net/p/nexus-ham-radio/tickets/>.
 
 ---
 

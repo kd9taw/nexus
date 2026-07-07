@@ -94,8 +94,8 @@ beta's headline goal.
 - [Rig Setup](Rig-Setup) — Yaesu, Icom, FlexRadio, Xiegu, rotators.
 - [FAQ](FAQ) — the common questions.
 
-Found something out of date, or have an on-air result to share? Open an issue at
-<https://github.com/kd9taw/nexus/issues>.
+Found something out of date, or have an on-air result to share? Open a ticket at
+<https://sourceforge.net/p/nexus-ham-radio/tickets/>.
 
 ---
 

@@ -26,9 +26,11 @@ chatter is welcome there too.
 
 ## 3. Report something
 
-- **Bug?** Open a [bug report](https://github.com/kd9taw/nexus/issues/new?template=bug_report.md).
-- **FT1/DX1 on-air result (success or failure)?** Open an [on-air report](https://github.com/kd9taw/nexus/issues/new?template=on_air_report.md) — this is the data the FT1/DX1 tiers need most.
-- **Idea?** Open a [feature request](https://github.com/kd9taw/nexus/issues/new?template=feature_request.md).
+Reports go to the **[SourceForge ticket tracker](https://sourceforge.net/p/nexus-ham-radio/tickets/)** — [open a new ticket](https://sourceforge.net/p/nexus-ham-radio/tickets/new/) and name the kind in the title:
+
+- **Bug** — include your OS, radio, Nexus version, and the steps to reproduce.
+- **FT1/DX1 on-air result (success or failure)** — the data the FT1/DX1 tiers need most. Include your call + grid, the other station's call + grid, band and dial frequency, tier (FT1 or DX1), reported SNR, dT, cycle/transmission count, and whether it decoded (plus any surprises — false decodes, retransmissions that combined, stations others didn't see).
+- **Feature idea** — what you want and the operating scenario it serves.
 
 ## 4. Reach the maintainer
 
