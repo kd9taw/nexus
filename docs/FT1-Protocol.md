@@ -1,8 +1,8 @@
 # The FT1 Protocol — How It Works & What Makes It Different
 
-*A technical companion to the Tempo product brief.*
+*A technical companion to the Nexus documentation.*
 
-> **Tempo** is an off-grid, weak-signal **text** application for amateur radio, by Seth McCallister, KD9TAW. Repository: [github.com/kd9taw/nexus](https://github.com/kd9taw/nexus) · Manual: see `tempo/docs/manual/` in the repo · License: GPL-3.0.
+> **FT1** is the native weak-signal text waveform of **Nexus** (its off-grid "Tempo" calling layer), by Seth McCallister, KD9TAW. Repository: [github.com/kd9taw/nexus](https://github.com/kd9taw/nexus) · Manual: see `docs/manual/` in the repo · License: GPL-3.0.
 >
 > **Honesty banner, up front.** Every sensitivity number in this document is **simulation-validated only** — AWGN and Rayleigh-fading sweeps in the project's test harnesses (`ft1_test_standalone`, `dx1_test`, re-validated in the Rust test suite) — and is **not** on-air proven. Where the implementation does not yet expose a feature, that is stated plainly. On-air decode-rate-vs-SNR validation is the project's #1 remaining gate. Read accordingly.
 
@@ -292,4 +292,4 @@ FT1 is a coherent 4-CPM turbo modem on a 4-second conversational cycle, sharing 
 
 ---
 
-*Author: Seth McCallister, KD9TAW. License: GPL-3.0. Repository: [github.com/kd9taw/nexus](https://github.com/kd9taw/nexus) · Manual: `tempo/docs/manual/` (see `Tempo-Chat.md`, `Architecture-and-Protocol.md`, `Roadmap.md`).*
+*Author: Seth McCallister, KD9TAW. License: GPL-3.0. Repository: [github.com/kd9taw/nexus](https://github.com/kd9taw/nexus) · Manual: `docs/manual/` (see `Tempo-Chat.md`, `Architecture-and-Protocol.md`, `Roadmap.md`).*

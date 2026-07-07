@@ -77,9 +77,9 @@ p > em:only-child{color:var(--ink-faint); font-size:8.6pt;}
 </style></head>
 <body><div class="bg"></div><main>
 <h1>The FT1 Protocol — How It Works &amp; What Makes It Different</h1>
-<p><em>A technical companion to the Tempo product brief.</em></p>
+<p><em>A technical companion to the Nexus documentation.</em></p>
 <blockquote>
-<p><strong>Tempo</strong> is an off-grid, weak-signal <strong>text</strong> application for amateur radio, by Seth McCallister, KD9TAW. Repository: <a href="https://github.com/kd9taw/nexus">github.com/kd9taw/nexus</a> · Manual: see <code>tempo/docs/manual/</code> in the repo · License: GPL-3.0.</p>
+<p><strong>FT1</strong> is the native weak-signal text waveform of <strong>Nexus</strong> (its off-grid "Tempo" calling layer), by Seth McCallister, KD9TAW. Repository: <a href="https://github.com/kd9taw/nexus">github.com/kd9taw/nexus</a> · Manual: see <code>docs/manual/</code> in the repo · License: GPL-3.0.</p>
 <p><strong>Honesty banner, up front.</strong> Every sensitivity number in this document is <strong>simulation-validated only</strong> — AWGN and Rayleigh-fading sweeps in the project's test harnesses (<code>ft1_test_standalone</code>, <code>dx1_test</code>, re-validated in the Rust test suite) — and is <strong>not</strong> on-air proven. Where the implementation does not yet expose a feature, that is stated plainly. On-air decode-rate-vs-SNR validation is the project's #1 remaining gate. Read accordingly.</p>
 </blockquote>
 <hr>
@@ -492,5 +492,5 @@ p > em:only-child{color:var(--ink-faint); font-size:8.6pt;}
 <hr>
 <p><em>Grounding: the waveform/FEC/sync constants come from the modem source — <code>libft1/include/libft1.h</code>, <code>libft1/ft1_cabi.f90</code>, <code>libft1/dx1/*.f90</code>, <code>crates/ft1-sys/src/lib.rs</code>, <code>crates/ft1/src/lib.rs</code>, and <code>crates/tempo-core/src/timing.rs</code>. The IR-HARQ schedule and the design-analysis throughput/threshold figures in §6 are from the project's Phase-1 IR-HARQ protocol-design analysis (a separate research document); the measured combiner/pipeline gains are from the live HARQ validation harness. All §6 figures are simulation- and Windows-cross-build-validated, not on-air measurements. See also <code>docs/ARCHITECTURE.md</code> and the operator manual (<code>docs/manual/</code>).</em></p>
 <hr>
-<p><em>Author: Seth McCallister, KD9TAW. License: GPL-3.0. Repository: <a href="https://github.com/kd9taw/nexus">github.com/kd9taw/nexus</a> · Manual: <code>tempo/docs/manual/</code> (see <code>Tiers-FT1-vs-DX1.md</code>, <code>Architecture-and-Protocol.md</code>, <code>Roadmap.md</code>).</em></p>
+<p><em>Author: Seth McCallister, KD9TAW. License: GPL-3.0. Repository: <a href="https://github.com/kd9taw/nexus">github.com/kd9taw/nexus</a> · Manual: <code>docs/manual/</code> (see <code>Tiers-FT1-vs-DX1.md</code>, <code>Architecture-and-Protocol.md</code>, <code>Roadmap.md</code>).</em></p>
 </main></body></html>

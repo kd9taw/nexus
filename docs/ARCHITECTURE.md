@@ -529,15 +529,15 @@ window (`idt_lo = 0`, `idt_hi = wave.len() − frame_len()`). The default carrie
 
 ## 7. Rig control
 
-Tempo handles rig control **in-app** — the operator does not run `rigctld`
+Nexus handles rig control **in-app** — the operator does not run `rigctld`
 themselves (`crates/tempo-audio/src/rig.rs`, `rigctld_proc.rs`). PTT methods:
 
-- **CAT** — Tempo **launches Hamlib's `rigctld`** (`spawn_rigctld` builds the
+- **CAT** — Nexus **launches Hamlib's `rigctld`** (`spawn_rigctld` builds the
   `-m <model> [-r <port> -s <baud>] -t <tcp_port>` command line) and talks to it
   over **TCP** (line protocol: `T 1`/`T 0` PTT, `F <hz>` set freq, `M <mode> <pb>`
   set mode; `RPRT 0` = success). Using `rigctld` rather than linking `libhamlib`
-  keeps Tempo free of a C build dependency. The handle is **kill-on-drop**, so the
-  daemon dies with Tempo.
+  keeps Nexus free of a C build dependency. The handle is **kill-on-drop**, so the
+  daemon dies with Nexus.
 - **Serial RTS / DTR** — keys PTT by asserting a serial control line (feature
   `serial`, via the `serialport` crate). Without the feature it logs and falls
   back to a VOX-style no-op so the engine still runs.
@@ -583,7 +583,7 @@ network**.
 
 ## 9. Windows build / cross-compile design
 
-Tempo's **primary OS is Windows**, but the build host may be Linux/WSL2
+Nexus's **primary OS is Windows**, but the build host may be Linux/WSL2
 (cross-compile). The modem is Fortran + C/C++ + FFTW, so the Windows build uses
 the **GNU toolchain** (MSVC has no Fortran) and the Rust **`x86_64-pc-windows-gnu`**
 target.
@@ -645,7 +645,7 @@ stages the Hamlib Windows runtime (`rigctld.exe`, `rigctl.exe`, `libhamlib-4.dll
 `libwinpthread-1.dll`, `libusb-1.0.dll`, `libgcc_s_seh-1.dll`, plus its license
 files — checksum-verified, not committed). At runtime `resolve_rigctld()` prefers
 this bundled copy (§7), so CAT works offline. Hamlib is GPL/LGPL — compatible with
-Tempo's GPLv3.
+Nexus's GPLv3.
 
 ### 9.5 Build entry points
 
@@ -689,7 +689,7 @@ the bundled UI rather than a blank page).
 **not yet on-air / hardware-validated**. FT1 AWGN 50% ≈ −15 dB; DX1 AWGN 50%
 ≈ −18.6 dB with a ~3.7 dB fading penalty. IR-HARQ and full-passband DX1 are live
 (§6) but their gains are simulation-measured only. **On-air decode-rate-vs-SNR is
-pending** and is the remaining gate before relying on Tempo operationally.
+pending** and is the remaining gate before relying on Nexus operationally.
 Published binaries are cross-compiled beta.
 
 ---
@@ -718,7 +718,7 @@ Not yet built (tracked as Phase 2):
 
 ## 12. License & heritage
 
-Tempo is free software under the **GNU GPL v3 or later** (`COPYING`), inherited
+Nexus is free software under the **GNU GPL v3 or later** (`COPYING`), inherited
 from its upstream lineage:
 
 - **WSJT-X** (Joe Taylor K1JT and the WSJT Development Group, GPLv3) — the FT8/FT4
@@ -734,6 +734,6 @@ from its upstream lineage:
 
 This is experimental amateur-radio software; operate within your license
 privileges and local regulations. ARRL Field Day prohibits fully-automated
-contacts, so Tempo's Field Day workflow is operator-initiated by design.
+contacts, so Nexus's Field Day workflow is operator-initiated by design.
 
 **Author / open-source contact:** Seth McCallister (KD9TAW) &lt;kd9taw@protonmail.com&gt;

@@ -1,14 +1,14 @@
-# Tempo
+# Tempo — the off-grid calling layer in Nexus
 
-### Off-grid HF text messaging at the speed of conversation.
+### The off-grid calling layer inside Nexus — text at the speed of conversation.
 
-*Fast, two-way weak-signal text in a genuinely modern messenger — built on new, purpose-designed waveforms. The radio stays first-class; the experience finally feels like this decade.*
+*Tempo is Nexus's chat-first, off-grid text layer — fast, two-way weak-signal text in a genuinely modern messenger, built on new, purpose-designed waveforms. Nexus is the all-mode ham radio operations center; Tempo is the calling layer inside it. The radio stays first-class; the experience finally feels like this decade.*
 
 ---
 
 ## Why Tempo — the core idea
 
-Three things make Tempo different, and they're the whole pitch:
+Three things make Tempo stand out as Nexus's off-grid calling layer, and they're the whole pitch:
 
 - **Faster two-way — conversation, not a slideshow.** FT1's fast tier runs a **4-second** over — roughly **4× quicker turnaround** than the 15-second cycle behind FT8 and JS8. A keyboard QSO that actually flows back and forth.
 - **A modern experience — a messenger, not a lab bench.** A clean, chat-first window: people, threads, a live decode feed, one-tap controls, and three field themes including a night-vision **Amber**. The radio without the clutter.
@@ -30,7 +30,7 @@ And almost all of it is wrapped in interfaces that feel like test equipment: den
 
 ## Meet Tempo
 
-**Tempo is a modern, chat-first HF text-messaging app for the off-grid / preparedness ham community.** It looks and feels like a messaging app — presence, a live decode feed, a conversation thread — but it never hides the radio. Under that interface sit two purpose-built weak-signal waveforms and a one-tap toggle: **FT1 (Fast)** for conversation and **DX1 (Robust)** for reach. Both carry the same standard 77-bit messages, so Chat, auto-QSO, and Field Day work identically on either.
+**Tempo is Nexus's modern, chat-first HF text layer for the off-grid / preparedness ham community.** It looks and feels like a messaging app — presence, a live decode feed, a conversation thread — but it never hides the radio. Under that interface sit two purpose-built weak-signal waveforms and a one-tap toggle: **FT1 (Fast)** for conversation and **DX1 (Robust)** for reach. Both carry the same standard 77-bit messages, so Chat, auto-QSO, and Field Day work identically on either.
 
 It's free and open source (GPL-3.0), authored by **Seth McCallister, KD9TAW**, who also designed the FT1 and DX1 waveforms.
 
@@ -129,4 +129,4 @@ The best feedback is a GitHub issue with your **rig, band, observed SNR, and dec
 
 ---
 
-*Tempo — © Seth McCallister, KD9TAW. Free and open source under GPL-3.0-or-later. github.com/kd9taw/nexus*
+*Nexus — © 2026 Seth McCallister, KD9TAW. Free and open source under GPL-3.0-or-later. github.com/kd9taw/nexus*
