@@ -1,6 +1,6 @@
 # DX1 — the robust tier
 
-*The fading-resilient companion to [FT1](ft1.md), by Seth McCallister, KD9TAW.
+*The fading-resilient companion to [FT1](ft1.md), by KD9TAW.
 This page is the approachable story; the full DSP is in
 [FT1-Protocol.md](../FT1-Protocol.md).*
 

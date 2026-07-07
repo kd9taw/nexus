@@ -56,5 +56,5 @@ Nexus is a free, GPLv3, all-mode amateur radio operations center: FT8/FT4 digita
 
 ---
 
-*Nexus is GPL-3.0. Author: Seth McCallister (KD9TAW). Source: [github.com/kd9taw/nexus](https://github.com/kd9taw/nexus).*
+*Nexus is GPL-3.0. Author: KD9TAW. Source: [github.com/kd9taw/nexus](https://github.com/kd9taw/nexus).*
 *The FT8/FT4 tier is the production core. FT1/DX1 are simulation-validated, not yet proven on the air — on-air decode-rate reports are the remaining gate.*

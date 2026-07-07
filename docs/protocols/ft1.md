@@ -1,6 +1,6 @@
 # FT1 — chat-speed weak-signal HF
 
-*A new digital protocol by Seth McCallister, KD9TAW. This page is the approachable
+*A new digital protocol by KD9TAW. This page is the approachable
 story; for the full DSP and math, see [FT1-Protocol.md](../FT1-Protocol.md).*
 
 > **Read this first.** FT1 is **experimental and in open beta.** Every sensitivity

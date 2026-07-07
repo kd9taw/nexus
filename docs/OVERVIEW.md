@@ -327,5 +327,5 @@ the supported package; the code builds on Linux.
 
 ---
 
-*Nexus is developed by Seth McCallister, KD9TAW. GPLv3. Not affiliated with ARRL, the WSJT
+*Nexus is developed by KD9TAW. GPLv3. Not affiliated with ARRL, the WSJT
 Development Group, N3FJP, N1MM, QRZ.com, ClubLog, or eQSL — deep respect to all of them.*

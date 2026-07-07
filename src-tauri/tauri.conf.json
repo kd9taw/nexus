@@ -33,8 +33,8 @@
     "active": true,
     "targets": "all",
     "category": "Utility",
-    "publisher": "Seth McCallister (KD9TAW)",
-    "copyright": "Copyright (C) 2026 Seth McCallister (KD9TAW). GPL-3.0-or-later.",
+    "publisher": "KD9TAW",
+    "copyright": "Copyright (C) 2026 KD9TAW. GPL-3.0-or-later.",
     "shortDescription": "Unified ham digital-ops nerve center (FT8/FT4 + Tempo)",
     "longDescription": "Nexus is a unified, native ham digital-operations nerve center — FT8/FT4 decode, waterfall, spots, map, propagation, logbook, and awards in one app, plus Tempo two-way free-text calling. It keeps the technical data a ham operator expects — SNR, audio offset, dT, dial freq/band/sideband, mode/tier, T/R + slot timing — as first-class information, and makes station setup and propagation intelligence automatic.",
     "icon": [

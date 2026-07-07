@@ -54,4 +54,4 @@ Bug reports and FT1/DX1 on-air decode reports are the most valuable thing you
 can send during the beta: open a ticket at <https://sourceforge.net/p/nexus-ham-radio/tickets/>.
 
 *GPL-3.0-or-later. Not affiliated with ARRL, the WSJT project, or any rig
-manufacturer. Built by Seth McCallister, KD9TAW.*
+manufacturer. Built by KD9TAW.*

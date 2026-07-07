@@ -141,4 +141,4 @@ Settings, since they don't leave the origin machine's keychain.
 
 ---
 
-*Nexus is GPL-3.0-or-later. Built by Seth McCallister, KD9TAW.*
+*Nexus is GPL-3.0-or-later. Built by KD9TAW.*

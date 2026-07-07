@@ -214,7 +214,7 @@ This is **experimental amateur-radio software**. You are responsible for operati
 license privileges and local regulations. Nexus never transmits on launch; ARRL Field Day
 prohibits fully-automated contacts, and Nexus's Field Day workflow is operator-initiated by design.
 
-**Author:** Seth McCallister (**KD9TAW**) · kd9taw@protonmail.com ·
+**Author:** **KD9TAW** · kd9taw@protonmail.com ·
 contributions welcome — see **[CONTRIBUTING.md](CONTRIBUTING.md)** and the
 [Code of Conduct](CODE_OF_CONDUCT.md).
 

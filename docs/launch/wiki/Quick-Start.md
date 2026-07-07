@@ -136,4 +136,4 @@ on GitHub covers CAT failures, drivers, port conflicts, and audio.
 ---
 
 *Nexus is GPL-3.0-or-later. Not affiliated with ARRL, the WSJT project, or any
-rig manufacturer. Built by Seth McCallister, KD9TAW.*
+rig manufacturer. Built by KD9TAW.*

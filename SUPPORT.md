@@ -34,6 +34,6 @@ Reports go to the **[SourceForge ticket tracker](https://sourceforge.net/p/nexus
 
 ## 4. Reach the maintainer
 
-Seth McCallister (**KD9TAW**) · kd9taw@protonmail.com
+**KD9TAW** · kd9taw@protonmail.com
 
 Please keep all interactions within the [Code of Conduct](CODE_OF_CONDUCT.md).

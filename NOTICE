@@ -1,7 +1,7 @@
 # Nexus — Attribution and License Heritage
 
 Nexus
-Copyright (C) 2026 Seth McCallister (KD9TAW) <kd9taw@protonmail.com>
+Copyright (C) 2026 KD9TAW <kd9taw@protonmail.com>
 https://github.com/kd9taw/nexus
 
 Nexus is free software: you can redistribute it and/or modify it under the
@@ -48,7 +48,7 @@ Nexus treats WSJT-X as the reference standard for FT8/FT4 on-air behavior. It
 is an independent application and is **not affiliated with or endorsed by** the
 WSJT project.
 
-### FT1 waveform — Seth McCallister (KD9TAW)
+### FT1 waveform — KD9TAW
 License: **GPL-3.0-or-later** (part of Nexus / `libft1`).
 
 The FT1 waveform (the 4-CPM coherent turbo modem with IR-HARQ used by the

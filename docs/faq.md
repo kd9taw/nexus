@@ -169,5 +169,5 @@ the SHA-256 of each new download) to update manually.
 **More:** [protocol overview](protocols/index.md) · [FT1](protocols/ft1.md) ·
 [DX1](protocols/dx1.md) · [interop and companion setup](interop.md)
 
-*License: GPL-3.0 · by Seth McCallister, KD9TAW · Repository:
+*License: GPL-3.0 · by KD9TAW · Repository:
 <https://github.com/kd9taw/nexus>*

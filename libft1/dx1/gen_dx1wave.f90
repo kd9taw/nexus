@@ -1,5 +1,5 @@
 ! DX1 - Non-coherent weak-signal HF digital mode (DX1-S baseline)
-! Copyright (C) 2026 Seth McCall, KD9TAW
+! Copyright (C) 2026 KD9TAW
 !
 ! This file is part of libft1 / Tempo.  GPLv3 (see dx1_params.f90 header).
 !

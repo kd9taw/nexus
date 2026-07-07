@@ -99,4 +99,4 @@ Found something out of date, or have an on-air result to share? Open a ticket at
 
 ---
 
-*Nexus is GPL-3.0-or-later. Built by Seth McCallister, KD9TAW.*
+*Nexus is GPL-3.0-or-later. Built by KD9TAW.*

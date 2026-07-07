@@ -170,5 +170,5 @@ the SHA-256 of each new download) to update manually.
 · [Documentation](Documentation) · the deep protocol docs on
 [GitHub](https://github.com/kd9taw/nexus/tree/main/docs/protocols).
 
-*License: GPL-3.0 · by Seth McCallister, KD9TAW · Repository:
+*License: GPL-3.0 · by KD9TAW · Repository:
 <https://github.com/kd9taw/nexus>*

@@ -4,7 +4,7 @@
   "version": "0.3.0",
   "type": "module",
   "description": "Nexus web UI — unified ham digital-ops nerve center",
-  "author": "Seth McCallister (KD9TAW) <kd9taw@protonmail.com>",
+  "author": "KD9TAW <kd9taw@protonmail.com>",
   "license": "GPL-3.0-or-later",
   "repository": {
     "type": "git",

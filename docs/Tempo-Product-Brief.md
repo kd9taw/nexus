@@ -32,7 +32,7 @@ And almost all of it is wrapped in interfaces that feel like test equipment: den
 
 **Tempo is Nexus's modern, chat-first HF text layer for the off-grid / preparedness ham community.** It looks and feels like a messaging app — presence, a live decode feed, a conversation thread — but it never hides the radio. Under that interface sit two purpose-built weak-signal waveforms and a one-tap toggle: **FT1 (Fast)** for conversation and **DX1 (Robust)** for reach. Both carry the same standard 77-bit messages, so Chat, auto-QSO, and Field Day work identically on either.
 
-It's free and open source (GPL-3.0), authored by **Seth McCallister, KD9TAW**, who also designed the FT1 and DX1 waveforms.
+It's free and open source (GPL-3.0), authored by **KD9TAW**, who also designed the FT1 and DX1 waveforms.
 
 > Tempo doesn't replace WSJT-X or JS8Call — it's a different tool for a different job. It runs *alongside* your existing setup, aimed at fast conversational text and fading-resilient reach for off-grid work.
 
@@ -129,4 +129,4 @@ The best feedback is a GitHub issue with your **rig, band, observed SNR, and dec
 
 ---
 
-*Nexus — © 2026 Seth McCallister, KD9TAW. Free and open source under GPL-3.0-or-later. github.com/kd9taw/nexus*
+*Nexus — © 2026 KD9TAW. Free and open source under GPL-3.0-or-later. github.com/kd9taw/nexus*

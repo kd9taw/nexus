@@ -81,4 +81,4 @@ call + grid, the other station's call + grid, band and dial frequency, tier
 ---
 
 *Nexus is GPL-3.0-or-later. Not affiliated with ARRL, the WSJT project, or any
-rig manufacturer. Built by Seth McCallister, KD9TAW.*
+rig manufacturer. Built by KD9TAW.*

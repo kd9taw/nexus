@@ -7,7 +7,7 @@ FT1/DX1 chat layer. Contributions of all kinds are welcome: code,
 documentation, bug reports, and especially **real on-air decode-rate data from
 the FT1/DX1 tiers** (more on that below).
 
-Nexus is maintained by Seth McCallister (KD9TAW)
+Nexus is maintained by KD9TAW
 &lt;kd9taw@protonmail.com&gt;. The canonical repo is
 <https://github.com/kd9taw/nexus>.
 

@@ -24,7 +24,7 @@ separate "stable" branch; fixes land on the 0.1.x line.
 **Please report security issues privately. Do not open a public GitHub issue
 for a suspected vulnerability.**
 
-Email: **kd9taw@protonmail.com** (Seth McCallister, KD9TAW)
+Email: **kd9taw@protonmail.com** (KD9TAW)
 
 If you would like to encrypt, say so in a first low-detail message and we can
 arrange a key out of band.
@@ -123,5 +123,5 @@ intent from a volunteer project, not a contractual guarantee.
 
 ---
 
-*Nexus — <https://github.com/kd9taw/nexus> — Seth McCallister (KD9TAW)
+*Nexus — <https://github.com/kd9taw/nexus> — KD9TAW
 &lt;kd9taw@protonmail.com&gt;*
