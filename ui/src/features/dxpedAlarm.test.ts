@@ -92,6 +92,14 @@ describe('windowStart', () => {
   it('null when no band reaches the threshold', () => {
     expect(windowStart(win('X', 0, 0), atUtc(12, 0))).toBeNull()
   })
+
+  it('anchors an all-open (24 h) profile to the current UTC day start, not the past', () => {
+    // Every hour open (close-in 20/17 m). The walk-back must NOT run a full day
+    // into the past (that span ends at the current hour boundary and the alarm
+    // gate skips it forever) — it anchors to 00:00Z today.
+    const start = windowStart(win('X', 0, 24), atUtc(12, 30))
+    expect(start).toBe(Math.floor(atUtc(0, 0) / 1000))
+  })
 })
 
 describe('checkDxpedAlarms', () => {
@@ -153,6 +161,23 @@ describe('checkDxpedAlarms', () => {
     expect(toasts).not.toHaveBeenCalled()
     // Real moment is THEIR 12:00Z start → fires at 11:45+.
     checkDxpedAlarms(windows, atUtc(11, 50))
+    expect(toasts).toHaveBeenCalledTimes(1)
+    expect(toasts.mock.calls[0][0]).toContain('1200Z')
+    resetAlarms()
+  })
+
+  it('fires for an all-open (24 h) profile at the on-air start (never-fires regression)', () => {
+    toggleAlarm('3B7X') // default 15 min lead
+    // Top band open all 24 h; they come on the air today at 12:00Z. Before the
+    // fix the modelled span was all in the past, so the late-bound gate skipped
+    // every tick and the alarm never fired.
+    const startUnix = Math.floor(atUtc(12) / 1000)
+    const dates = { startUnix, endUnix: startUnix + 7 * 86_400 }
+    const windows = new Map([['3B7X', win('3B7X', 0, 24, dates)]])
+    // 15-min lead against THEIR 12:00Z start → fires at 11:45+.
+    checkDxpedAlarms(windows, atUtc(11, 40)) // before the lead: silent
+    expect(toasts).not.toHaveBeenCalled()
+    checkDxpedAlarms(windows, atUtc(11, 50)) // inside the lead: fires
     expect(toasts).toHaveBeenCalledTimes(1)
     expect(toasts.mock.calls[0][0]).toContain('1200Z')
     resetAlarms()

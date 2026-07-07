@@ -1460,6 +1460,10 @@ impl Engine {
         let Some(resolve) = self.dxcc_resolve.take() else {
             return;
         };
+        // Pull in any records a second instance appended BEFORE the full-log
+        // rewrite below, so backfill can't silently drop them (the M18 data-loss
+        // class). Doing it before the loop also backfills the recovered records.
+        self.recover_external_appends();
         let mut changed = false;
         for r in self.logbook.records_mut() {
             if r.country.is_none() {
@@ -1724,6 +1728,27 @@ impl Engine {
         }
     }
 
+    /// Before any full-log rewrite ([`Logbook::save`]), pull back any records that
+    /// another writer — a second Nexus instance sharing this `log.adi`, since there
+    /// is no single-instance guard — appended to the file after we loaded it. Our
+    /// in-memory copy is otherwise stale, and `save` would `rename()` a truncated
+    /// log over the file, silently discarding those QSOs.
+    ///
+    /// `import_adif` dedups by call+band+mode+UTC-day, so it only ever ADDS records
+    /// we lack (appended to the end, leaving existing indices valid) — it never
+    /// resurrects a record we just edited or deleted, PROVIDED callers run this
+    /// BEFORE their mutation, while our copy still holds the record being changed.
+    /// No-op without a log path or on a read error.
+    fn recover_external_appends(&mut self) {
+        let Some(path) = self.log_path.clone() else {
+            return;
+        };
+        let disk = std::fs::read_to_string(&path).unwrap_or_default();
+        if !disk.is_empty() {
+            self.logbook.import_adif(&disk);
+        }
+    }
+
     /// Edit an existing logbook entry (a correction — busted call, wrong band, etc).
     /// Sync-derived state is preserved by `Logbook::update_record`. Persists by
     /// rewriting the whole ADIF (an edit can't be an append). Returns false if
@@ -1735,6 +1760,10 @@ impl Engine {
                 rec.country = resolve(&rec.call);
             }
         }
+        // Recover another instance's appends BEFORE applying the edit, so the
+        // full-log rewrite below can't drop them (and so the pre-edit record is
+        // still present to dedup against — no stale copy is re-added).
+        self.recover_external_appends();
         let ok = self.logbook.update_record(index, rec);
         if ok {
             if let Some(path) = &self.log_path {
@@ -1752,6 +1781,7 @@ impl Engine {
     /// — never touches confirmation state. Persists by rewriting the ADIF. Returns
     /// false if `index` is out of range.
     pub fn mark_qsl_sent(&mut self, index: usize, via: tempo_core::logbook::QslVia) -> bool {
+        self.recover_external_appends();
         let ok = self.logbook.mark_qsl_sent(index, via, now_unix_secs());
         if ok {
             if let Some(path) = &self.log_path {
@@ -1767,6 +1797,10 @@ impl Engine {
     /// ADIF. Returns false if `index` is out of range. Shifts later indices — the
     /// caller must reload the log afterward.
     pub fn delete_qso(&mut self, index: usize) -> bool {
+        // Recover another instance's appends BEFORE the delete, so the rewrite
+        // drops only THIS record (the deleted key is absent from our copy at save
+        // time, so recovery can't re-add it) and keeps the other writer's QSOs.
+        self.recover_external_appends();
         let ok = self.logbook.delete(index);
         if ok {
             if let Some(path) = &self.log_path {
@@ -1819,6 +1853,7 @@ impl Engine {
     /// (which a plain dedup-import would skip and lose), rewrite the ADIF file, and
     /// return the reconcile summary (newly confirmed/credited + unmatched orphans).
     pub fn merge_lotw_report(&mut self, text: &str) -> tempo_core::reconcile::ReconcileSummary {
+        self.recover_external_appends();
         let summary = self.logbook.merge_report(text);
         self.last_lotw_reconcile = Some(summary.clone());
         if let Some(path) = &self.log_path {
@@ -1835,6 +1870,7 @@ impl Engine {
     /// partner" (R2) and clears false "never uploaded" (R1) for out-of-band uploads.
     /// Persists the log on any change. Returns the count newly promoted.
     pub fn merge_lotw_own_echo(&mut self, text: &str, when_unix: i64) -> usize {
+        self.recover_external_appends();
         let promoted = self.logbook.merge_own_echo(text, when_unix);
         if promoted > 0 {
             if let Some(path) = &self.log_path {
@@ -1868,6 +1904,7 @@ impl Engine {
             when_unix,
             detail,
         };
+        self.recover_external_appends();
         let changed = self.logbook.stamp_qrz_upload(pushed, status);
         if changed {
             if let Some(path) = &self.log_path {
@@ -1893,6 +1930,7 @@ impl Engine {
             when_unix,
             detail,
         };
+        self.recover_external_appends();
         let changed = self.logbook.stamp_clublog_upload(pushed, status);
         if changed {
             if let Some(path) = &self.log_path {
@@ -1918,6 +1956,7 @@ impl Engine {
             when_unix,
             detail,
         };
+        self.recover_external_appends();
         let changed = self.logbook.stamp_eqsl_upload(pushed, status);
         if changed {
             if let Some(path) = &self.log_path {
@@ -1934,6 +1973,7 @@ impl Engine {
     /// ADIF (eQSL carries `EQSL_QSL_RCVD`, not `QSL_RCVD`/`LOTW_QSL_RCVD`), so an
     /// eQSL confirmation lands `confirmed` but NOT `award_confirmed` by construction.
     pub fn merge_eqsl_report(&mut self, text: &str) -> tempo_core::reconcile::ReconcileSummary {
+        self.recover_external_appends();
         let summary = self.logbook.merge_report(text);
         self.last_eqsl_reconcile = Some(summary.clone());
         if let Some(path) = &self.log_path {
@@ -2010,6 +2050,10 @@ impl Engine {
         when_unix: i64,
         detail: Option<String>,
     ) {
+        // Recover another instance's appends before the full-log rewrite; the
+        // recovered records land at the end, so `indices` still address the same
+        // rows.
+        self.recover_external_appends();
         for &i in indices {
             if let Some(r) = self.logbook.records_mut().get_mut(i) {
                 r.upload.lotw = Some(tempo_core::logbook::UploadStatus {
@@ -4408,6 +4452,28 @@ impl Engine {
         }
     }
 
+    /// Serialize the in-progress Field Day contest log as ADIF for a durable
+    /// flush-on-exit. Returns `None` when not in Field Day mode, or when the log
+    /// is empty (nothing to persist).
+    ///
+    /// The FD contest log lives ONLY in memory inside [`Mode::FieldDay`] — there
+    /// is no periodic save, and the sole exit hook persists conversation threads.
+    /// So a normal quit (or a crash / SIGTERM) drops the whole session's
+    /// class/section exchange log, which a solo entrant with no club logger has
+    /// no other copy of. The shell's `ExitRequested` handler must call this and
+    /// write the result to disk alongside `persist_conversations`. ADIF (not
+    /// Cabrillo) because it carries the class/section exchange and is
+    /// self-contained — it needs no operating-frequency argument.
+    pub fn field_day_log_adif(&self) -> Option<String> {
+        let Mode::FieldDay { station, .. } = &self.mode else {
+            return None;
+        };
+        if station.log.qso_count() == 0 {
+            return None;
+        }
+        Some(station.log.adif())
+    }
+
     /// Export the **general** logbook (Chat/QSO contacts, any mode) as ADIF or
     /// CSV. Independent of Field Day's contest log ([`Engine::export_log`]).
     pub fn export_logbook(&self, format: &str) -> String {
@@ -6379,6 +6445,162 @@ mod tests {
         assert_eq!(snap.upload_tick, t0 + 1, "note bumps the tick");
         assert_eq!(snap.upload_note.as_deref(), Some("Uploaded N0CALL to QRZ"));
         assert!(snap.upload_ok);
+    }
+
+    /// A concise `QsoRecord` builder for the logbook tests (the struct has no
+    /// `Default`; only call+band vary here).
+    fn qrec(call: &str, band: &str) -> QsoRecord {
+        QsoRecord {
+            call: call.into(),
+            grid: None,
+            country: None,
+            state: None,
+            band: band.into(),
+            freq_mhz: 14.074,
+            mode: "FT8".into(),
+            rst_sent: None,
+            rst_rcvd: None,
+            name: None,
+            qth: None,
+            comment: None,
+            notes: None,
+            tx_power: None,
+            when_unix: 0,
+            time_off_unix: None,
+            confirmed: false,
+            award_confirmed: false,
+            qsl_rcvd: Default::default(),
+            qsl_sent: Default::default(),
+            credit_granted: vec![],
+            credit_submitted: vec![],
+            upload: Default::default(),
+            ota: Default::default(),
+        }
+    }
+
+    /// M15: the Field Day contest log is memory-only, so the shell needs a way to
+    /// serialize it for a flush-on-exit. `field_day_log_adif` yields the whole
+    /// log — with the class/section exchange — as ADIF, and is `None` when there
+    /// is nothing to persist.
+    #[test]
+    fn field_day_log_flush_accessor_serializes_the_contest_log() {
+        let mut e = Engine::new("W9XYZ", "EN61", 0);
+        // Outside Field Day there is no contest log to flush.
+        assert!(
+            e.field_day_log_adif().is_none(),
+            "no FD log outside FD mode"
+        );
+
+        {
+            let mut s = e.settings().clone();
+            s.fd_class = "3A".into();
+            s.fd_section = "WI".into();
+            e.apply_settings(s);
+        }
+        e.set_mode("fieldday-run").unwrap();
+        // In FD mode but empty → still nothing to persist.
+        assert!(
+            e.field_day_log_adif().is_none(),
+            "empty FD log flushes nothing"
+        );
+
+        assert!(e.fd_log_manual("K1ABC", "2A", "EMA", "CW").unwrap());
+        assert!(e.fd_log_manual("W1AW", "1D", "CT", "PH").unwrap());
+
+        let adif = e
+            .field_day_log_adif()
+            .expect("FD log serializes for the exit flush");
+        assert!(
+            adif.contains("K1ABC") && adif.contains("W1AW"),
+            "both worked stations are in the flush"
+        );
+        assert!(
+            adif.contains("ARRL_SECT") && adif.contains("CLASS"),
+            "the flush carries the FD exchange (class/section), unlike the plain QSO log"
+        );
+    }
+
+    /// M18: a full-log ADIF rewrite from a stale in-memory copy must not silently
+    /// drop QSOs that another Nexus instance (sharing the same file) appended.
+    #[test]
+    fn full_log_rewrite_preserves_another_instances_appends() {
+        let path =
+            std::env::temp_dir().join(format!("nexus_concurrent_mark_{}.adi", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+
+        // Instance B loads the log and records two base contacts (append-only).
+        let mut b = Engine::new("K2DEF", "FN31", 0);
+        b.set_log_path(path.clone());
+        b.log_qso(qrec("W1AAA", "20m"));
+        b.log_qso(qrec("W2BBB", "20m"));
+        assert_eq!(b.get_log().len(), 2);
+
+        // Instance A (a second process on the same file) appends two more QSOs
+        // that B never sees in memory.
+        Logbook::append(&path, &qrec("W3CCC", "40m")).unwrap();
+        Logbook::append(&path, &qrec("W4DDD", "15m")).unwrap();
+        assert_eq!(Logbook::load(&path).len(), 4, "the file holds A's appends");
+
+        // B does a full-log-rewrite action (mark QSL-sent) on its stale 2-record copy.
+        assert!(b.mark_qsl_sent(0, tempo_core::logbook::QslVia::Direct));
+
+        let on_disk = Logbook::load(&path);
+        assert_eq!(
+            on_disk.len(),
+            4,
+            "the rewrite from a stale copy must not drop another instance's appends"
+        );
+        let calls: Vec<&str> = on_disk.records().iter().map(|r| r.call.as_str()).collect();
+        assert!(
+            calls.contains(&"W3CCC") && calls.contains(&"W4DDD"),
+            "A's appended QSOs survive B's full rewrite"
+        );
+        // B's own edit still landed.
+        assert!(
+            on_disk
+                .records()
+                .iter()
+                .any(|r| r.call == "W1AAA" && r.qsl_sent.sent),
+            "B's QSL-sent mark persisted"
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// M18: a delete must still remove the targeted record (and not resurrect it)
+    /// while preserving another instance's appends — the recover-before-mutation
+    /// ordering that makes the reconcile safe for removals.
+    #[test]
+    fn delete_still_removes_target_and_keeps_other_instances_appends() {
+        let path = std::env::temp_dir().join(format!(
+            "nexus_concurrent_delete_{}.adi",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+
+        let mut b = Engine::new("K2DEF", "FN31", 0);
+        b.set_log_path(path.clone());
+        b.log_qso(qrec("W1AAA", "20m"));
+        b.log_qso(qrec("W2BBB", "20m"));
+
+        // Another instance appends a QSO B does not know about.
+        Logbook::append(&path, &qrec("W3CCC", "40m")).unwrap();
+
+        // B deletes its index 0 (W1AAA) on the stale copy.
+        assert!(b.delete_qso(0));
+
+        let on_disk = Logbook::load(&path);
+        let calls: Vec<&str> = on_disk.records().iter().map(|r| r.call.as_str()).collect();
+        assert!(
+            !calls.contains(&"W1AAA"),
+            "the deleted record is gone (not resurrected by the reconcile)"
+        );
+        assert!(
+            calls.contains(&"W2BBB") && calls.contains(&"W3CCC"),
+            "the survivor and the other instance's append both remain"
+        );
+
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

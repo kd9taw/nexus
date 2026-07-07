@@ -102,10 +102,16 @@ pub fn handle_command(line: &str, backend: &dyn RigBackend) -> Handled {
             let mut p = line.split_whitespace();
             let reply = match p.next() {
                 Some("f") => format!("{}\n", backend.freq_hz()),
+                // Hamlib sends freq as printf %lf ("F 14074000.000000"), so parse
+                // as f64 and round to Hz — a u64 parse rejects every real client.
                 Some("F") => rprt(
                     p.next()
-                        .and_then(|s| s.parse::<u64>().ok())
-                        .map(|hz| backend.set_freq(hz))
+                        .and_then(|s| s.parse::<f64>().ok())
+                        // Reject NaN/±inf and absurd magnitudes: `f.round() as u64`
+                        // saturates inf/huge to u64::MAX (a garbage dial with a
+                        // false RPRT 0). Cap at 1 THz — far above any ham band.
+                        .filter(|f| f.is_finite() && (0.0..=1e12).contains(f))
+                        .map(|f| backend.set_freq(f.round() as u64))
                         .unwrap_or(false),
                 ),
                 Some("m") => {
@@ -120,7 +126,15 @@ pub fn handle_command(line: &str, backend: &dyn RigBackend) -> Handled {
                 Some("v") => format!("{}\n", backend.vfo()),
                 Some("V") => rprt(p.next().map(|v| backend.set_vfo(v)).unwrap_or(false)),
                 Some("t") => format!("{}\n", backend.ptt() as u8),
-                Some("T") => rprt(p.next().map(|s| backend.set_ptt(s == "1")).unwrap_or(false)),
+                // RIG_PTT_ON=1, RIG_PTT_ON_MIC=2, RIG_PTT_ON_DATA=3 are all key-down;
+                // only 0 (RIG_PTT_OFF) is key-up. WSJT-X with a Rear/Data audio source
+                // sends `T 3`, so keying on `s == "1"` would silently never TX.
+                Some("T") => rprt(
+                    p.next()
+                        .and_then(|s| s.parse::<i32>().ok())
+                        .map(|v| backend.set_ptt(v != 0))
+                        .unwrap_or(false),
+                ),
                 Some("s") => format!("{}\n{}\n", backend.split() as u8, backend.vfo()),
                 // Unknown command → Hamlib's "not implemented".
                 _ => "RPRT -11\n".into(),
@@ -252,6 +266,51 @@ mod tests {
         assert_eq!(reply("F notanumber", &b), "RPRT -1\n");
         assert_eq!(reply("Z", &b), "RPRT -11\n");
         assert!(matches!(handle_command("q", &b), Handled::Close));
+    }
+
+    #[test]
+    fn set_freq_accepts_hamlib_float_wire_form() {
+        // Hamlib's netrigctl sends freq as printf %lf, e.g. `F 14074000.000000`.
+        // A u64 parse rejected this and every real client's band change failed.
+        let b = MockRig::default();
+        assert_eq!(reply("F 14074000.000000", &b), "RPRT 0\n");
+        assert_eq!(*b.freq.lock().unwrap(), 14_074_000);
+        // Fractional Hz rounds to nearest.
+        assert_eq!(reply("F 7035000.6", &b), "RPRT 0\n");
+        assert_eq!(*b.freq.lock().unwrap(), 7_035_001);
+        // Integer form (loggers that send it) and negatives/garbage still handled.
+        assert_eq!(reply("F 21074000", &b), "RPRT 0\n");
+        assert_eq!(*b.freq.lock().unwrap(), 21_074_000);
+        assert_eq!(reply("F -1", &b), "RPRT -1\n");
+        assert_eq!(reply("F notanumber", &b), "RPRT -1\n");
+        // inf / NaN / absurd magnitudes must be rejected, not saturate the cast
+        // to u64::MAX and set a garbage dial with a false RPRT 0.
+        let last = *b.freq.lock().unwrap();
+        assert_eq!(reply("F inf", &b), "RPRT -1\n");
+        assert_eq!(reply("F 1e30", &b), "RPRT -1\n");
+        assert_eq!(reply("F NaN", &b), "RPRT -1\n");
+        assert_eq!(
+            *b.freq.lock().unwrap(),
+            last,
+            "a rejected F must not move the dial"
+        );
+    }
+
+    #[test]
+    fn set_ptt_keys_on_any_nonzero_state() {
+        // RIG_PTT_ON_MIC(2)/RIG_PTT_ON_DATA(3) are key-down; WSJT-X with a Rear/Data
+        // audio source sends `T 3`. Keying only on "1" left the rig un-keyed on TX.
+        let b = MockRig::default();
+        assert_eq!(reply("T 3", &b), "RPRT 0\n");
+        assert!(*b.ptt.lock().unwrap(), "T 3 (ON_DATA) must key the rig");
+        assert_eq!(reply("T 0", &b), "RPRT 0\n");
+        assert!(!*b.ptt.lock().unwrap(), "T 0 (OFF) must un-key");
+        assert_eq!(reply("T 2", &b), "RPRT 0\n");
+        assert!(*b.ptt.lock().unwrap(), "T 2 (ON_MIC) must key the rig");
+        assert_eq!(reply("T 1", &b), "RPRT 0\n");
+        assert!(*b.ptt.lock().unwrap(), "T 1 (ON) must key the rig");
+        // Malformed PTT arg → error, no key change.
+        assert_eq!(reply("T x", &b), "RPRT -1\n");
     }
 
     #[test]

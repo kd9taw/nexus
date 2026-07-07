@@ -21,6 +21,14 @@ pub fn wpm_cmd(wpm: u32) -> [u8; 2] {
     [0x02, wpm.clamp(5, 99) as u8]
 }
 
+/// The byte sequence for a safe shutdown of the keyer: **Clear Buffer** (`0A`) first to
+/// abort any CW still keying out of WK's send buffer, then **Host Close** (`00 03`) to
+/// return to standalone. Host Close alone hands back to standalone with the buffer
+/// intact, so a half-sent message keeps keying on the air after Nexus is gone.
+pub fn shutdown_seq() -> [u8; 3] {
+    [CLEAR_BUFFER[0], HOST_CLOSE[0], HOST_CLOSE[1]]
+}
+
 /// The ASCII bytes to send for `text` to be keyed: uppercased, restricted to characters
 /// WinKeyer keys (letters, digits, and common CW punctuation/prosign glyphs).
 pub fn encode_text(text: &str) -> Vec<u8> {
@@ -35,7 +43,7 @@ pub use imp::WinKeyer;
 
 #[cfg(feature = "serial")]
 mod imp {
-    use super::{encode_text, wpm_cmd, CLEAR_BUFFER, HOST_CLOSE, HOST_OPEN};
+    use super::{encode_text, shutdown_seq, wpm_cmd, CLEAR_BUFFER, HOST_OPEN};
     use serialport::SerialPort;
     use std::io::Read;
     use std::time::Duration;
@@ -86,9 +94,13 @@ mod imp {
             Ok(())
         }
 
-        /// Return the keyer to standalone mode (best-effort).
+        /// Abort any buffered keying, then return the keyer to standalone mode (best-effort).
+        ///
+        /// Sends **Clear Buffer** before **Host Close** so a message still keying out of
+        /// WK's buffer is stopped and flushed — never left to finish transmitting on the
+        /// air after Nexus quits. Call this on shutdown; drop falls back to it too.
         pub fn close(&mut self) {
-            let _ = self.port.write_all(&HOST_CLOSE);
+            let _ = self.port.write_all(&shutdown_seq());
             let _ = self.port.flush();
         }
     }
@@ -118,6 +130,17 @@ mod tests {
         assert_eq!(HOST_OPEN, [0x00, 0x02]);
         assert_eq!(HOST_CLOSE, [0x00, 0x03]);
         assert_eq!(CLEAR_BUFFER, [0x0A]);
+    }
+
+    #[test]
+    fn shutdown_clears_the_buffer_before_returning_to_standalone() {
+        // Regression: quitting mid-message must ABORT buffered CW, not let it keep
+        // keying on the air. The shutdown sequence sends Clear Buffer (0A) *first*,
+        // then Host Close (00 03) — Host Close alone leaves WK's buffer to finish
+        // transmitting after we're gone.
+        assert_eq!(shutdown_seq(), [0x0A, 0x00, 0x03]);
+        assert_eq!(shutdown_seq()[0], CLEAR_BUFFER[0], "Clear Buffer must lead");
+        assert_eq!(&shutdown_seq()[1..], &HOST_CLOSE, "then Host Close");
     }
 
     #[test]

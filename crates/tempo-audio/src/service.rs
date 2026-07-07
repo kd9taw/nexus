@@ -234,6 +234,15 @@ pub fn run_radio(engine: Arc<Mutex<Engine>>, cfg: RadioConfig) -> Result<(), Str
         if SHUTDOWN.load(std::sync::atomic::Ordering::Relaxed) {
             backend.flush_output();
             let _ = rig.ptt(false);
+            // Cut any in-progress CW too: stop a CAT `send_morse` and flush a
+            // WinKeyer's hardware buffer NOW, deterministically, rather than
+            // relying on Drop running before the process is killed (a half-sent
+            // WinKeyer message would otherwise keep keying on the air).
+            let _ = rig.stop_morse();
+            #[cfg(feature = "serial")]
+            if let Some((_, wk)) = state.winkeyer.as_mut() {
+                let _ = wk.clear();
+            }
             SHUTDOWN_DONE.store(true, std::sync::atomic::Ordering::Relaxed);
             return Ok(());
         }
@@ -528,6 +537,29 @@ impl RadioLoop {
             }
             let mut audio_rebuilt = false;
             if want.audio_differs(&self.applied) {
+                // The queued TX audio for a live over lives ENTIRELY in the old
+                // backend's output ring — replacing the backend discards it. If
+                // we're mid-transmission (a slot over, a tune carrier, or manual
+                // PTT), end the over cleanly FIRST: flush, unkey, drop the hold,
+                // halt the engine's TX. Otherwise the rig would sit KEYED on a
+                // dead, unmodulated carrier for the rest of the slot while the
+                // modem samples are already gone — and the sequencer would count
+                // that silent over as sent and wait for a reply that never comes.
+                // Mirrors the rig-rebuild path above.
+                if rig.keyed
+                    || self.tx_until_ms.is_some()
+                    || self.tuning_keyed
+                    || self.manual_ptt_applied
+                {
+                    backend.flush_output();
+                    let _ = rig.ptt(false);
+                    self.tx_until_ms = None;
+                    self.tuning_keyed = false;
+                    self.manual_ptt_applied = false;
+                    if let Ok(mut eng) = engine.lock() {
+                        eng.halt_tx();
+                    }
+                }
                 match reopen_audio(&want) {
                     Ok(b) => {
                         *backend = b;
@@ -753,21 +785,45 @@ impl RadioLoop {
                 && now - self.last_rig_poll >= RIG_POLL_MS
             {
                 self.last_rig_poll = now;
-                if let Ok(hz) = rig.read_freq() {
-                    if hz != self.last_dial {
-                        self.last_dial = hz;
-                        if let Ok(mut eng) = engine.lock() {
-                            eng.observe_rig_freq(hz);
+                match rig.read_freq() {
+                    Ok(hz) => {
+                        if hz != self.last_dial {
+                            self.last_dial = hz;
+                            if let Ok(mut eng) = engine.lock() {
+                                eng.observe_rig_freq(hz);
+                            }
+                        }
+                        // RF-power read-back: mirror the knob so the UI slider shows
+                        // the RIG's real level, not a guessed 100%. Kept separate
+                        // from the commanded value in the engine (observe never
+                        // fights a pending set_rf_power — see observe_rig_power).
+                        // Only AFTER the dial probe answered, so a half-open link
+                        // can't eat a SECOND 2.5 s timeout on the same dead poll.
+                        if let Ok(frac) = rig.read_level("RFPOWER") {
+                            if let Ok(mut eng) = engine.lock() {
+                                eng.observe_rig_power(frac);
+                            }
                         }
                     }
-                }
-                // RF-power read-back: mirror the knob so the UI slider shows the
-                // RIG's real level, not a guessed 100%. Kept separate from the
-                // commanded value in the engine (observe never fights a pending
-                // set_rf_power — see Engine::observe_rig_power).
-                if let Ok(frac) = rig.read_level("RFPOWER") {
-                    if let Ok(mut eng) = engine.lock() {
-                        eng.observe_rig_power(frac);
+                    // The dial probe is the CAT health check. On a REAL CAT rig a
+                    // failure/timeout here means the link went half-open (writes
+                    // succeed, replies never arrive) — trip the circuit breaker so
+                    // the `cat_ok != Some(false)` guard above stops polling and the
+                    // slot loop no longer blocks ~2.5 s every cycle, keying overs
+                    // seconds late. Recovers on the next successful retune
+                    // (set_freq/set_mode) or a Test-CAT reprobe. A VOX/serial rig
+                    // has no control channel — its read_freq errors instantly and
+                    // means nothing, so it must NOT trip the breaker.
+                    Err(e) => {
+                        if rig.has_control() {
+                            self.cat_ok = Some(false);
+                            if let Ok(mut eng) = engine.lock() {
+                                eng.set_cat_status(
+                                    Some(false),
+                                    format!("CAT read-back stopped — rig not answering ({e})"),
+                                );
+                            }
+                        }
                     }
                 }
             }
@@ -1510,9 +1566,15 @@ impl RadioLoop {
             let did_rx = action.did_rx;
             let tx_this_slot = action.tx_this_slot;
 
+            // Snapshot once for BOTH the WSJT-X/PSK emission and the club-network
+            // Field Day push below. The club push has to run on every slot boundary
+            // an FD session is live — whether or not the WSJT-X/PSK sinks are on —
+            // so `field_day.is_some()` joins the gate. It used to be trapped INSIDE
+            // that gate, silently starving N3FJP/N1MM whenever both sinks were their
+            // default-off (the club master log simply never received the QSOs).
+            let snap = eng.snapshot();
             // --- network emission (WSJT-X UDP API + PSK Reporter) ---
-            if sinks.wsjtx.is_some() || sinks.psk.is_some() {
-                let snap = eng.snapshot();
+            if sinks.wsjtx.is_some() || sinks.psk.is_some() || snap.field_day.is_some() {
                 let tier = tier_mode(snap.link.tier);
                 let _ms_mid = (now as u64 % 86_400_000) as u32;
                 let now_secs = (now / 1000.0) as i64;
@@ -1687,8 +1749,11 @@ impl RadioLoop {
                         }
                     }
                 }
-                self.last_fd_qsos = snap.field_day.as_ref().map(|f| f.qso_count).unwrap_or(0);
             }
+            // Advance the FD cursor on EVERY boundary (independent of the sinks
+            // above) — so it also RESETS to 0 when a session ends, and a stale
+            // count can never later flood the club log after FD is re-armed.
+            self.last_fd_qsos = snap.field_day.as_ref().map(|f| f.qso_count).unwrap_or(0);
         }
         drop(eng); // release before the PSK flush re-locks the engine
 
@@ -2959,6 +3024,165 @@ mod tests {
             backend.voice_mic_calls,
             vec![Some("USB Mic".to_string()), None],
             "opened on the rising edge, closed on the falling edge"
+        );
+    }
+
+    #[test]
+    fn audio_rebuild_mid_over_cuts_the_over_instead_of_holding_a_dead_carrier() {
+        // Mid-transmission (PTT keyed, hold deadline far in the future) the operator
+        // changes the audio device and saves. The backend rebuild discards the
+        // queued modem samples; if it left PTT keyed with tx_until_ms still set, the
+        // rig would hold a DEAD unmodulated carrier for the rest of the over while
+        // the sequencer counted it as sent. The rebuild must end the over cleanly
+        // first: unkey and clear the hold. (Mirrors the rig-rebuild path.)
+        let engine = Arc::new(Mutex::new(Engine::new("W9XYZ", "EN37", 0)));
+        let mut backend = MockBackend::new();
+        let mut rig = Rig::vox();
+        let _ = rig.ptt(true); // pretend we are mid-over
+        let mut state = loop_state();
+        state.tx_until_ms = Some(9_999_999.0); // long hold — would NOT expire on its own
+
+        // The operator picks a different output device → audio_differs → rebuild.
+        // (Rig fields stay at the defaults, so this is an audio-only change and does
+        // NOT go down the already-guarded rig-rebuild path.)
+        engine.lock().unwrap().apply_settings(Settings {
+            audio_out: "Different Speakers".to_string(),
+            ..Settings::default()
+        });
+        let (sinks, mut ra, mut rr) = (no_sinks(), mock_reopen_audio(), mock_reopen_rig());
+
+        state
+            .step(
+                &engine,
+                &mut backend,
+                &mut rig,
+                &sinks,
+                100.0,
+                &mut ra,
+                &mut rr,
+            )
+            .unwrap();
+
+        assert!(
+            !rig.keyed,
+            "the over was cut before the backend swap — no keyed dead carrier"
+        );
+        assert!(
+            state.tx_until_ms.is_none(),
+            "the TX hold was cleared so the loop no longer thinks it's transmitting"
+        );
+    }
+
+    #[test]
+    fn poll_read_freq_failure_trips_the_cat_circuit_breaker() {
+        // A half-open CAT link (writes succeed, replies never arrive) makes every
+        // read_freq block to the 2.5 s deadline and error. Without a runtime trip
+        // the poll guard (cat_ok != Some(false)) never fires and the slot loop
+        // blocks ~2.5 s every cycle, keying overs seconds late. A read_freq failure
+        // on a REAL CAT rig must set cat_ok = Some(false) so the guard disables
+        // further blocking polls until a successful command / reprobe.
+        let engine = Arc::new(Mutex::new(Engine::new("W9XYZ", "EN37", 0)));
+        let mut backend = MockBackend::new();
+        // A CAT rig pointed at a definitely-closed port: has_control() is true but
+        // every command errors (connection refused) — standing in for a mute link.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let dead_port = listener.local_addr().unwrap().port();
+        drop(listener); // free the port so a connect is refused
+        let mut rig = Rig::rigctld(&format!("127.0.0.1:{dead_port}"));
+        let mut state = loop_state();
+        state.last_rig_poll = -1000.0; // due for a read-back poll at now = 0
+        assert_ne!(
+            state.cat_ok,
+            Some(false),
+            "precondition: the breaker has not tripped yet"
+        );
+        let (sinks, mut ra, mut rr) = (no_sinks(), mock_reopen_audio(), mock_reopen_rig());
+
+        state
+            .step(
+                &engine,
+                &mut backend,
+                &mut rig,
+                &sinks,
+                0.0,
+                &mut ra,
+                &mut rr,
+            )
+            .unwrap();
+
+        assert_eq!(
+            state.cat_ok,
+            Some(false),
+            "a failed dial read-back on a CAT rig trips the breaker so the loop \
+             stops blocking on a dead read every cycle"
+        );
+    }
+
+    #[test]
+    fn field_day_club_push_fires_without_wsjtx_or_psk_sinks() {
+        // Field Day club logging (N3FJP) with WSJT-X UDP and PSK Reporter both OFF
+        // (the shipped defaults). A completed FD QSO must still reach the club
+        // master log — the push used to be nested UNDER the WSJT-X/PSK gate, so it
+        // never ran when both sinks were off. Stand up a listener as the N3FJP box
+        // and prove the spawned push connects to it.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let engine = Arc::new(Mutex::new(Engine::new("W9XYZ", "EN37", 0)));
+        {
+            let mut eng = engine.lock().unwrap();
+            eng.apply_settings(Settings {
+                fd_class: "1D".to_string(),
+                fd_section: "WI".to_string(),
+                n3fjp_host: "127.0.0.1".to_string(),
+                n3fjp_port: port,
+                ..Settings::default()
+            });
+            eng.set_mode("fieldday-run").unwrap();
+            assert!(eng.fd_log_manual("K1ABC", "2A", "EMA", "CW").unwrap());
+        }
+
+        let mut backend = MockBackend::new();
+        let mut rig = Rig::vox();
+        let mut state = loop_state();
+        // Sinks OFF — the pre-fix bug means the club push is never reached.
+        let (sinks, mut ra, mut rr) = (no_sinks(), mock_reopen_audio(), mock_reopen_rig());
+
+        state
+            .step(
+                &engine,
+                &mut backend,
+                &mut rig,
+                &sinks,
+                0.0,
+                &mut ra,
+                &mut rr,
+            )
+            .unwrap();
+
+        // The push runs on a detached thread; wait (bounded) for it to connect.
+        listener.set_nonblocking(true).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        let mut connected = false;
+        while std::time::Instant::now() < deadline {
+            match listener.accept() {
+                Ok(_) => {
+                    connected = true;
+                    break;
+                }
+                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+                Err(_) => break,
+            }
+        }
+        assert!(
+            connected,
+            "the N3FJP club push fired with WSJT-X and PSK sinks both off"
+        );
+        assert_eq!(
+            state.last_fd_qsos, 1,
+            "the FD cursor advanced past the pushed QSO"
         );
     }
 }

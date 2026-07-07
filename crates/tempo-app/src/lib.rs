@@ -40,6 +40,16 @@ const IDLE_WINDOW: u64 = 16;
 /// station that never rogers doesn't resend forever — the resend-loop backstop).
 const MAX_SEND_ATTEMPTS: u32 = 8;
 
+/// Conversation caps — bound both the IN-MEMORY hot state and the on-disk file so an
+/// always-on station can't grow without limit. The in-memory threads are deep-cloned in
+/// full on every ~300 ms snapshot poll, so the hot path needs the same bound the
+/// persistence path has always had: at most [`MAX_THREAD_MSGS`] messages per thread (keep
+/// the most-recent tail) and at most [`MAX_THREADS`] directed threads (most-recently-active
+/// win). Shared so what's in memory is exactly what gets persisted (see
+/// [`AppState::bound_conversations`] / [`AppState::export_conversations`]).
+const MAX_THREAD_MSGS: usize = 200;
+const MAX_THREADS: usize = 200;
+
 /// If `msg` is a directed roger (RR73 / RRR) addressed to `mycall`, return the SENDER's
 /// call — a delivery ACK for a message we queued to them (Tempo-to-Tempo chat).
 fn ack_sender_for(msg: &str, mycall: &str) -> Option<String> {
@@ -125,14 +135,13 @@ impl AppState {
 
     /// Snapshot the conversation threads for on-disk persistence — BOUNDED two ways
     /// so the file can't grow without limit on an always-on station: at most
-    /// `MAX_PERSIST_MSGS` messages per thread, and at most `MAX_PERSIST_THREADS`
-    /// directed threads (the most-recently-active win) plus the `*` band feed. Pairs
-    /// with [`AppState::load_conversations`].
+    /// [`MAX_THREAD_MSGS`] messages per thread, and at most [`MAX_THREADS`] directed
+    /// threads (the most-recently-active win) plus the `*` band feed. The in-memory
+    /// state is already held to these same caps by [`AppState::bound_conversations`],
+    /// so this is a stable projection. Pairs with [`AppState::load_conversations`].
     pub fn export_conversations(&self) -> Vec<Conversation> {
-        const MAX_PERSIST_MSGS: usize = 200;
-        const MAX_PERSIST_THREADS: usize = 200;
         let trim = |c: &Conversation| {
-            let start = c.messages.len().saturating_sub(MAX_PERSIST_MSGS);
+            let start = c.messages.len().saturating_sub(MAX_THREAD_MSGS);
             Conversation {
                 peer: c.peer.clone(),
                 messages: c.messages[start..].to_vec(),
@@ -150,7 +159,7 @@ impl AppState {
             .filter(|c| c.peer != "*")
             .collect();
         directed.sort_by_key(|c| std::cmp::Reverse(c.messages.last().map(|m| m.slot).unwrap_or(0)));
-        out.extend(directed.into_iter().take(MAX_PERSIST_THREADS).map(trim));
+        out.extend(directed.into_iter().take(MAX_THREADS).map(trim));
         out
     }
 
@@ -453,6 +462,9 @@ impl AppState {
         } else {
             self.drained = self.inbox.messages.len();
         }
+        // Keep the in-memory threads bounded so the hot state (deep-cloned in full on
+        // every ~300 ms snapshot poll) can't grow without limit over a long session.
+        self.bound_conversations();
     }
 
     /// Drain the id-bearing ACKs we owe. The engine sends one `"<sender> <me> RR73 <id>"`
@@ -511,6 +523,43 @@ impl AppState {
                 ack_id: None, // inbound — no outbound id to confirm
             };
             self.conversation_mut(&peer).messages.push(msg);
+        }
+    }
+
+    /// Hold the in-memory conversation threads to a constant size so the hot state —
+    /// deep-cloned in full on every ~300 ms snapshot poll — can't grow without bound on
+    /// an always-on station. Trims each thread to the most-recent [`MAX_THREAD_MSGS`]
+    /// messages and evicts the least-recently-active directed threads past
+    /// [`MAX_THREADS`]. The `*` band feed and the active peer's thread are always kept.
+    /// Called each slot from [`AppState::observe`]; mirrors [`AppState::export_conversations`].
+    fn bound_conversations(&mut self) {
+        // Trim each thread to a rolling tail of its most-recent messages.
+        for conv in self.conversations.values_mut() {
+            let len = conv.messages.len();
+            if len > MAX_THREAD_MSGS {
+                conv.messages.drain(0..len - MAX_THREAD_MSGS);
+            }
+        }
+        // Evict least-recently-active directed threads past the cap. The `*` band feed
+        // and the active peer's thread are protected (never counted, never removed).
+        let active = self.active_peer.clone();
+        let mut directed: Vec<(String, u64)> = self
+            .conversations
+            .iter()
+            .filter(|(peer, _)| peer.as_str() != "*" && active.as_deref() != Some(peer.as_str()))
+            .map(|(peer, conv)| {
+                (
+                    peer.clone(),
+                    conv.messages.last().map(|m| m.slot).unwrap_or(0),
+                )
+            })
+            .collect();
+        if directed.len() > MAX_THREADS {
+            // Most-recently-active first; drop everything past the cap.
+            directed.sort_by_key(|(_, slot)| std::cmp::Reverse(*slot));
+            for (peer, _) in directed.into_iter().skip(MAX_THREADS) {
+                self.conversations.remove(&peer);
+            }
         }
     }
 
@@ -764,6 +813,66 @@ mod tests {
         assert!(
             saved.iter().any(|c| c.peer == "*"),
             "band feed is always kept"
+        );
+    }
+
+    #[test]
+    fn observe_bounds_in_memory_thread_message_count() {
+        // Regression: the in-memory thread is deep-cloned in full on every snapshot
+        // poll, so an always-on station's messages must stay bounded (keeping the
+        // most-recent tail) — not just the on-disk copy. Overfill one thread, then let
+        // a quiet slot tick trim it.
+        let mut app = AppState::new("K2DEF", "FN31");
+        for i in 0..(MAX_THREAD_MSGS + 50) {
+            app.send_message("W9XYZ", &format!("MSG {i}"));
+        }
+        assert!(
+            app.conversation("W9XYZ").unwrap().messages.len() > MAX_THREAD_MSGS,
+            "precondition: thread overfilled before a slot tick trims it"
+        );
+
+        app.observe(&[], 1); // a quiet slot tick runs the in-memory bound
+
+        let conv = app.conversation("W9XYZ").unwrap();
+        assert_eq!(
+            conv.messages.len(),
+            MAX_THREAD_MSGS,
+            "in-memory thread trimmed to the rolling cap"
+        );
+        assert_eq!(
+            conv.messages.last().unwrap().text,
+            format!("MSG {}", MAX_THREAD_MSGS + 50 - 1),
+            "the most-recent message is retained (tail, not head)"
+        );
+    }
+
+    #[test]
+    fn observe_bounds_in_memory_thread_count_keeping_band_and_active_peer() {
+        // Regression: the number of in-memory directed threads must also stay bounded,
+        // while the `*` band feed and the operator's currently-selected peer are never
+        // evicted.
+        let mut app = AppState::new("K2DEF", "FN31");
+        app.note_broadcast("CQ"); // the `*` band feed
+        for i in 0..(MAX_THREADS + 50) {
+            app.send_message(&format!("W{i}AA"), "HI");
+        }
+        app.select_peer("W5AA"); // protect one thread as the active peer
+
+        app.observe(&[], 1); // a quiet slot tick runs the in-memory bound
+
+        let directed = app
+            .conversations
+            .keys()
+            .filter(|k| k.as_str() != "*")
+            .count();
+        assert!(
+            directed <= MAX_THREADS + 1,
+            "directed threads bounded (cap + protected active peer), got {directed}"
+        );
+        assert!(app.conversation("*").is_some(), "band feed always kept");
+        assert!(
+            app.conversation("W5AA").is_some(),
+            "active peer's thread is never evicted"
         );
     }
 

@@ -105,9 +105,16 @@ fn is_time_token(t: &str) -> bool {
 /// `DX de <spotter>:   <freq_khz>  <dx_call>  <comment…>   [HHMMZ]`
 pub fn parse_dx_spot(line: &str) -> Option<ClusterSpot> {
     let line = line.trim();
-    // The `DX de ` prefix marks a spot line; it's ASCII so byte-slicing is safe.
+    // The `DX de ` prefix marks a spot line. Use `str::get` (not a range slice):
+    // the PREFIX is ASCII but the incoming `line` is not — a non-ASCII byte
+    // straddling index 6 (a decorative UTF-8 banner, an accented node name, a
+    // comment like "AAAAAé") would panic on a char boundary with a range slice.
+    // `get` returns None (too short OR non-boundary) instead of panicking.
     const PREFIX: &str = "DX de ";
-    if line.len() < PREFIX.len() || !line[..PREFIX.len()].eq_ignore_ascii_case(PREFIX) {
+    if !line
+        .get(..PREFIX.len())
+        .is_some_and(|p| p.eq_ignore_ascii_case(PREFIX))
+    {
         return None;
     }
     let after = line[PREFIX.len()..].trim_start();
@@ -521,6 +528,24 @@ mod tests {
         assert!(parse_dx_spot("WWV de W0MU <14>:   SFI=120, A=8, K=2").is_none());
         assert!(parse_dx_spot("To ALL de W1ABC: good morning").is_none());
         assert!(parse_dx_spot("").is_none());
+    }
+
+    #[test]
+    fn multibyte_line_near_prefix_does_not_panic() {
+        // A non-ASCII byte straddling index 6 used to panic the prefix range-slice
+        // ("byte index 6 is not a char boundary"), killing the feed thread. These
+        // must all just return None (not a spot).
+        assert!(
+            parse_dx_spot("AAAAAé").is_none(),
+            "'é' straddles byte 6 — must not panic"
+        );
+        assert!(parse_dx_spot("┌─────┐ RBN welcome banner").is_none());
+        assert!(parse_dx_spot("héllo node").is_none());
+        // The same lines flowing through the incremental session must be safe too,
+        // since every complete socket line (incl. pre-login banners) is parsed.
+        let mut s = ClusterSession::new("W9XYZ");
+        let acts = s.feed("AAAAAé\r\n┌─── welcome ───┐\r\n");
+        assert!(acts.is_empty(), "banner lines emit no spots, no panic");
     }
 
     #[test]

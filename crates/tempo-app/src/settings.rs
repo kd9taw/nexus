@@ -816,13 +816,20 @@ impl Settings {
         s
     }
 
-    /// Persist settings to `path` (creating parent directories).
+    /// Persist settings to `path` (creating parent directories). Writes a sibling
+    /// `.tmp` file then renames it into place (the [`Logbook::save`] pattern), so a
+    /// crash / power loss mid-write can't truncate `settings.json`. A torn write of the
+    /// live file would silently collapse to [`Settings::default`] on the next load —
+    /// blanking the operator's identity/rig config and resetting `license_class` to
+    /// `Open`, which drops the Part 97 TX lockout. The rename makes a save all-or-nothing.
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
         }
         let json = serde_json::to_string_pretty(self).map_err(std::io::Error::other)?;
-        std::fs::write(path, json)
+        let tmp = path.with_extension("json.tmp");
+        std::fs::write(&tmp, json)?;
+        std::fs::rename(&tmp, path)
     }
 
     /// Dial frequency in Hz (for the rig / PSK Reporter).
@@ -1070,6 +1077,72 @@ mod tests {
         assert_eq!(back.serial_port, "/dev/ttyUSB0");
         assert_eq!(back.ptt_method, "cat");
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn save_persists_via_temp_rename_leaving_no_tmp() {
+        // save() writes a sibling `.tmp` then renames it onto the target, so a save is
+        // all-or-nothing (a crash mid-write can't truncate the live file). After a
+        // successful save the temp file must be gone (renamed into place).
+        let dir = std::env::temp_dir().join("tempo_settings_atomic");
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("settings.json");
+        let s = Settings {
+            mycall: "W9XYZ".into(),
+            ..Settings::default()
+        };
+        s.save(&path).unwrap();
+        assert!(path.exists(), "settings.json written");
+        assert!(
+            !path.with_extension("json.tmp").exists(),
+            "temp file renamed away, none left behind"
+        );
+        assert_eq!(Settings::load(&path).mycall, "W9XYZ");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn failed_save_preserves_prior_good_settings() {
+        // A save that fails mid-write must NOT clobber the previously-saved good file.
+        // Because we write-tmp then rename, a failing tmp write returns Err before the
+        // rename, so settings.json is untouched — the operator's callsign, license_class
+        // (the Part 97 TX lockout), and rig config survive instead of collapsing to
+        // Settings::default() (license = Open → lockout removed) on the next load.
+        let dir = std::env::temp_dir().join("tempo_settings_torn");
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("settings.json");
+        let good = Settings {
+            mycall: "W9XYZ".into(),
+            license_class: LicenseClass::Technician,
+            serial_port: "/dev/ttyUSB0".into(),
+            ..Settings::default()
+        };
+        good.save(&path).unwrap();
+        // Block the sibling temp path (a directory can't be overwritten by write()), a
+        // stand-in for a torn write / full disk / power loss at the write-tmp step.
+        let tmp = path.with_extension("json.tmp");
+        std::fs::create_dir_all(&tmp).unwrap();
+        let doomed = Settings {
+            mycall: "OTHER".into(),
+            ..Settings::default()
+        };
+        assert!(
+            doomed.save(&path).is_err(),
+            "save whose tmp write fails returns Err"
+        );
+        // The prior good config is intact — never overwritten, never reset to defaults.
+        let back = Settings::load(&path);
+        assert_eq!(
+            back.mycall, "W9XYZ",
+            "callsign preserved after a failed save"
+        );
+        assert_eq!(
+            back.license_class,
+            LicenseClass::Technician,
+            "TX lockout (license class) preserved, not reset to Open"
+        );
+        assert_eq!(back.serial_port, "/dev/ttyUSB0", "rig config preserved");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -757,6 +757,31 @@ fn persist_conversations(engine: &SharedEngine) {
     }
 }
 
+/// Flush the in-memory Field Day contest log to disk as ADIF. The FD log lives
+/// only in `Mode::FieldDay` and is otherwise lost on quit (a solo entrant with
+/// no club logger has no other copy), so back it up on exit next to settings.
+/// No-op when not in Field Day or the log is empty.
+fn persist_field_day_log(engine: &SharedEngine) {
+    let adif = engine
+        .lock()
+        .map(|e| e.field_day_log_adif())
+        .unwrap_or_else(|e| e.into_inner().field_day_log_adif());
+    if let Some(text) = adif {
+        let path = settings_path()
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("fieldday_backup.adi");
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let tmp = path.with_extension("adi.tmp");
+        if std::fs::write(&tmp, text).is_ok() {
+            let _ = std::fs::rename(&tmp, &path);
+        }
+    }
+}
+
 /// Directory for phone voice-keyer recordings: `<settings dir>/voice` (12 kHz mono WAVs).
 fn voice_dir() -> PathBuf {
     settings_path()
@@ -962,12 +987,20 @@ async fn get_propagation(
                 *g = Some(std::time::Instant::now());
             }
             // Live PSK Reporter MQTT spots since the last rebuild, merged with the
-            // rate-limited XML query. Refetch (blocking HTTP).
+            // rate-limited XML query. Refetch (blocking HTTP) — run on the blocking
+            // pool so its stacked seconds-long reqwest timeouts never tie up a tokio
+            // runtime worker (get_snapshot, the decode/waterfall heartbeat, shares this
+            // multi-threaded runtime). Same pattern as get_path_outlook/get_band_outlook.
             let extra = live_paths
                 .lock()
                 .map(|b| b.recent(now, 1800))
                 .unwrap_or_default();
-            propagation::live::snapshot_with_spots(&mycall, &mygrid, 1800, &needs, &extra)
+            let (mc, mg) = (mycall.clone(), mygrid.clone());
+            tauri::async_runtime::spawn_blocking(move || {
+                propagation::live::snapshot_with_spots(&mc, &mg, 1800, &needs, &extra)
+            })
+            .await
+            .map_err(|e| e.to_string())?
         };
 
         match live {
@@ -1148,7 +1181,11 @@ async fn get_propagation(
         // Refresh the real-time solar wind on the same (rate-limited) cadence — the LEADING
         // geomagnetic indicator (Bz/speed lead Kp by hours). Best-effort: a failed fetch
         // keeps the last-good value for the cache-hit polls in between.
-        if let Ok(sw) = propagation::live::solar_wind::fetch_solar_wind() {
+        // Blocking HTTP → blocking pool (never a runtime worker), same as above.
+        if let Ok(Ok(sw)) =
+            tauri::async_runtime::spawn_blocking(propagation::live::solar_wind::fetch_solar_wind)
+                .await
+        {
             if let Ok(mut g) = LAST_SOLAR_WIND.lock() {
                 *g = Some(sw);
             }
@@ -1156,7 +1193,11 @@ async fn get_propagation(
         // The month's predicted smoothed SSN (R12) for the p533 engine — same
         // best-effort contract: keep the last-good value between successes.
         let (yy, mm) = propagation::solar_cycle::year_month(now);
-        if let Ok(ssn) = propagation::live::solar_cycle::fetch_predicted_ssn(yy, mm) {
+        if let Ok(Ok(ssn)) = tauri::async_runtime::spawn_blocking(move || {
+            propagation::live::solar_cycle::fetch_predicted_ssn(yy, mm)
+        })
+        .await
+        {
             if let Ok(mut g) = LAST_SSN.lock() {
                 *g = Some(ssn);
             }
@@ -5186,6 +5227,17 @@ const EQSL_RCVD_MARGIN_SECS: i64 = 86_400;
 /// cursor — but only if the response carried a new high-water (an empty
 /// incremental response has none, so the cursor is preserved, not wiped). The
 /// password-bearing request URL is never logged or surfaced.
+/// True iff a LoTW report body is structurally **complete** — it carries the
+/// documented `<APP_LoTW_EOF>` end-of-file trailer (case-insensitive). LoTW appends
+/// this marker to every report (the same one Cloudlog validates); a body that
+/// HTTP-200s but was cut off mid-stream (partial server-side generation, an
+/// EOF-delimited/proxied response that "completes" cleanly at the transport layer)
+/// lacks it. Mirrors `tempo_core::eqsl::is_complete_eqsl_body`: a truncated download
+/// must not let the sync cursor advance over records it never received.
+fn is_complete_lotw_body(body: &str) -> bool {
+    body.to_ascii_lowercase().contains("<app_lotw_eof>")
+}
+
 #[tauri::command]
 fn download_lotw_report(state: State<'_, SharedEngine>) -> Result<LotwSyncResult, String> {
     conn_logged(
@@ -5247,13 +5299,21 @@ fn download_lotw_report_impl(state: State<'_, SharedEngine>) -> Result<LotwSyncR
         let mut eng = state.lock().map_err(|e| e.to_string())?;
         let summary: LotwSyncResult = eng.merge_lotw_report(&body).into();
         if let Some(high_water) = tempo_core::lotw::extract_last_qsl(&body) {
-            // Only advance the cursor if the username is still the one this download
-            // used. If `set_settings` changed it during the (lock-free) fetch, it
-            // already reset the cursor to a full pull for the new identity — this
-            // high-water belongs to the old query, so binding it would risk skipping
-            // records on the next incremental pull. Persist via a narrow setter so the
-            // sync never disturbs live operation (no mode reset / TX-queue clear).
-            if eng.settings().lotw_username.trim() == used_username.trim() {
+            // Advance the cursor ONLY if (a) the download is structurally complete —
+            // a truncated-but-HTTP-200 body lacks the `<APP_LoTW_EOF>` trailer, and
+            // every confirmation cut off in its tail carries qsl-date <= LASTQSL, so
+            // advancing would make the next `qso_qslsince` pull skip them forever (the
+            // merge above already ran, so keeping the old cursor just re-fetches the
+            // tail — reconcile is idempotent) — AND (b) the username is still the one
+            // this download used. If `set_settings` changed it during the (lock-free)
+            // fetch, it already reset the cursor to a full pull for the new identity —
+            // this high-water belongs to the old query, so binding it would risk
+            // skipping records on the next incremental pull. Persist via a narrow
+            // setter so the sync never disturbs live operation (no mode reset /
+            // TX-queue clear).
+            if is_complete_lotw_body(&body)
+                && eng.settings().lotw_username.trim() == used_username.trim()
+            {
                 let updated = eng.set_lotw_cursor(high_water);
                 if let Err(e) = updated.save(&settings_path()) {
                     conn_log("LoTW", "error", format!("failed to persist the sync cursor: {e}"));
@@ -6934,6 +6994,48 @@ pub fn run() {
                     }
                 }
                 persist_conversations(app_handle.state::<SharedEngine>().inner());
+                persist_field_day_log(app_handle.state::<SharedEngine>().inner());
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_complete_lotw_body;
+
+    // A full report ends with the documented `<APP_LoTW_EOF>` trailer.
+    const COMPLETE_REPORT: &str = "ARRL Logbook of the World Status Report\n\
+<PROGRAMID:4>LoTW\n\
+<APP_LoTW_LASTQSL:19>2026-03-01 12:34:56\n\
+<APP_LoTW_NUMREC:1>1\n\
+<eoh>\n\
+<CALL:5>W1AW/4 <BAND:3>20m <MODE:3>FT8 <QSO_DATE:8>20260228 <QSL_RCVD:1>Y <eor>\n\
+<APP_LoTW_EOF>\n";
+
+    // The SAME report cut off mid-stream: HTTP-200'd but the `<APP_LoTW_EOF>` trailer
+    // (and the tail records before it) never arrived. Advancing the cursor here would
+    // skip every confirmation in the truncated-away tail forever — the data-loss bug.
+    const TRUNCATED_REPORT: &str = "ARRL Logbook of the World Status Report\n\
+<PROGRAMID:4>LoTW\n\
+<APP_LoTW_LASTQSL:19>2026-03-01 12:34:56\n\
+<APP_LoTW_NUMREC:2>2\n\
+<eoh>\n\
+<CALL:5>W1AW/4 <BAND:3>20m <MODE:3>FT8 <QSO_DATE:8>20260228 <QSL_RCVD:1>Y <eor>\n\
+<CALL:4>K1AB <BAND:3>40m <MOD";
+
+    #[test]
+    fn complete_lotw_body_has_eof_trailer() {
+        assert!(is_complete_lotw_body(COMPLETE_REPORT));
+    }
+
+    #[test]
+    fn truncated_lotw_body_is_incomplete_so_cursor_holds() {
+        // Regression: the cursor advance MUST be gated on this returning false.
+        assert!(!is_complete_lotw_body(TRUNCATED_REPORT));
+    }
+
+    #[test]
+    fn eof_trailer_match_is_case_insensitive() {
+        assert!(is_complete_lotw_body("...<eor>\n<app_lotw_eof>\n"));
+    }
 }

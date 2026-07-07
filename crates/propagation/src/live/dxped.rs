@@ -215,10 +215,24 @@ fn fetch_active(c: &reqwest::blocking::Client) -> Result<HashSet<String>, String
 }
 
 /// Suffix/prefix-tolerant expedition-call match ("3Y0J/MM" ⇔ "3Y0J") — shared by
-/// the active-overlay fork and the Needed board's DXpedition tagging.
+/// the active-overlay fork and the Needed board's DXpedition tagging. The shorter
+/// call must be a whole `/`-delimited token at the start or end of the longer one;
+/// a raw substring prefix does NOT count, or a bare-prefix plan call like "FO"
+/// would wrongly tag every unrelated station in that prefix (e.g. "FO4BM").
 pub fn call_matches(active: &str, plan_call: &str) -> bool {
     let (a, p) = (active.to_uppercase(), plan_call.to_uppercase());
-    a == p || a.starts_with(&p) || p.starts_with(&a)
+    if a == p {
+        return true;
+    }
+    let (long, short) = if a.len() >= p.len() { (a, p) } else { (p, a) };
+    if short.is_empty() {
+        return false;
+    }
+    // "3Y0J/MM" ⇔ "3Y0J" (base is the leading token), "OX/K1ABC" ⇔ "K1ABC"
+    // (base is the trailing token), "FO/F6BCW" ⇔ "FO" (portable prefix token).
+    long.strip_prefix(&short)
+        .is_some_and(|r| r.starts_with('/'))
+        || long.strip_suffix(&short).is_some_and(|r| r.ends_with('/'))
 }
 
 /// Parse the NG3K ADXO HTML table into plans (best-effort; tolerant of markup).
@@ -496,5 +510,24 @@ mod tests {
         assert!(parse_bands("80-6m").contains(&Band::B40));
         assert!(parse_bands("only 6m here").contains(&Band::B6));
         assert!(!parse_bands("12m only").contains(&Band::B2)); // "12m" is not 2m
+    }
+
+    #[test]
+    fn call_matches_requires_slash_boundary() {
+        // Legit portable variants match (base as leading/trailing token, or a
+        // portable prefix token), commutatively.
+        assert!(call_matches("3Y0J/MM", "3Y0J"));
+        assert!(call_matches("3Y0J", "3Y0J/MM"));
+        assert!(call_matches("OX/K1ABC", "K1ABC"));
+        assert!(call_matches("FO/F6BCW", "FO"));
+        assert!(call_matches("W1AW", "W1AW"));
+
+        // The bug: a bare-prefix plan call must NOT tag unrelated stations that
+        // merely start with (or extend) it — no '/' boundary, no match.
+        assert!(!call_matches("FO", "FO4BM"));
+        assert!(!call_matches("FO4BM", "FO"));
+        assert!(!call_matches("W1AW", "W1AWX"));
+        assert!(!call_matches("K", "K1ABC"));
+        assert!(!call_matches("", "FO"));
     }
 }

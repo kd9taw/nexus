@@ -132,6 +132,15 @@ export function windowSpan(w: DxpedWindow, nowMs: number): WindowSpan | null {
     // Inside a window — walk back to its opening edge (≤23 steps).
     let back = 0
     while (back < 24 && at(nowHour - back - 1)) back++
+    if (back === 24) {
+      // Every hour is open — one full-day window with no discrete edge. Anchor
+      // to the current UTC day start instead of walking a full day into the
+      // PAST (spanFrom(-24) ends at the current hour boundary, an all-past span
+      // the late-bound gate skips forever). Keys stay stable per day, so the
+      // fire-once-per-day semantics hold and the opStart clamp still truncates.
+      const dayStart = nowSecs - (nowSecs % 86_400)
+      return { start: dayStart, end: dayStart + 86_400 }
+    }
     return spanFrom(-back)
   }
   for (let ahead = 1; ahead <= 48; ahead++) {

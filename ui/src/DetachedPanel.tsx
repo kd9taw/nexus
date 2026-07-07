@@ -142,7 +142,9 @@ export function DetachedPanel({ panel }: { panel: string }) {
   }
   const onSelect = (call: string | null) => {
     // Drives the shared engine; `selected` then reflects it via the snapshot.
-    if (call) void selectPeer(call).catch(() => {})
+    // `null` is a real command — it clears the engine's active peer (deselect on
+    // empty-map click / ✕ / re-click a dot); swallowing it left selection stuck.
+    void selectPeer(call).catch(() => {})
   }
   const onWorkSpot = (t: SpotTarget) => {
     const mode = modeClassOf(t.mode).toLowerCase() as 'cw' | 'phone' | 'digital'
