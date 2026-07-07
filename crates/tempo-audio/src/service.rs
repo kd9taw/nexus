@@ -1000,6 +1000,14 @@ impl RadioLoop {
         if self.tx_until_ms.is_none() && eng.take_pending_tx_disable() {
             eng.set_tx_enabled(false);
         }
+        // Deferred WSJT-X-style CW ID: the final 73 has fully left the air —
+        // key MYCALL through the normal CW path (PTT + tone), like the CW
+        // cockpit does. Consumed only on TX-idle for the same reason as the
+        // deferred disable above.
+        if self.tx_until_ms.is_none() && eng.take_pending_cw_id() {
+            let mycall = eng.settings().mycall.clone();
+            eng.send_cw(&mycall);
+        }
         // Pick up the latest measured clock offset for the NEXT iteration's UTC
         // steering (the NTP probe thread writes it onto the engine).
         self.clock_offset_ms = eng.clock_offset_ms().unwrap_or(0);

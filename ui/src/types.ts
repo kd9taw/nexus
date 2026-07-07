@@ -1487,6 +1487,8 @@ export interface Settings {
   cqStallOvers?: number | null
   /** WSJT-X Settings ▸ Behavior parity. */
   disableTxAfter73?: boolean
+  /** WSJT-X "CW ID after 73" — key MYCALL in CW after the final over (default off). */
+  cwIdAfter73?: boolean
   clearDxAfterLog?: boolean
   doubleClickSetsTx?: boolean
   /** Tune carrier auto-release (seconds). */

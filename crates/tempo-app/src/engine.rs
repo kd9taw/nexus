@@ -233,6 +233,9 @@ pub struct Engine {
     /// radio loop consumes it AFTER tx_until expires; disabling immediately
     /// would trip the hard-stop path and cut the 73 itself mid-over.
     pending_tx_disable: bool,
+    /// Deferred WSJT-X-style CW ID (armed when the final 73 leaves; consumed
+    /// by the service on TX-idle so the ID never keys over the FT8 audio).
+    pending_cw_id: bool,
     /// JTAlert-style callsign highlights from UDP HighlightCallsign (type 13):
     /// uppercased call → (bg, fg) CSS hex. None/None entries are removed.
     highlights: std::collections::HashMap<String, (Option<String>, Option<String>)>,
@@ -484,6 +487,7 @@ impl Engine {
             decode_history: std::collections::VecDeque::new(),
             early_seen: None,
             pending_tx_disable: false,
+            pending_cw_id: false,
             highlights: std::collections::HashMap::new(),
             clear_tick: 0,
             pending_udp_clear: None,
@@ -1061,6 +1065,10 @@ impl Engine {
             || !self.tx_enabled
             || !self.tx_allowed()
             || self.manual_ptt
+            // A live tune carrier or an FT8 over in flight also owns the rig —
+            // granting a foreign key mid-transmission double-keys it (review).
+            || self.tuning
+            || self.app.radio.transmitting
         {
             return false;
         }
@@ -2692,6 +2700,7 @@ impl Engine {
         self.immediate_tx = false;
         // So does a deferred after-73 disable: TX is already off.
         self.pending_tx_disable = false;
+        self.pending_cw_id = false; // halt = silence; no parting CW ID either
         self.tx_queue.clear();
         self.broadcast_queue.clear();
         self.own_tx.clear();
@@ -3202,6 +3211,13 @@ impl Engine {
         std::mem::take(&mut self.pending_tx_disable)
     }
 
+    /// One-shot: the final 73 finished and the operator wants a CW ID — the
+    /// service consumes this on TX-idle and enqueues MYCALL through the normal
+    /// CW keying path.
+    pub fn take_pending_cw_id(&mut self) -> bool {
+        std::mem::take(&mut self.pending_cw_id)
+    }
+
     /// Reset the transmit-watchdog: clear the tripped flag and restart the wall-clock
     /// timer on the next over. Called on any operator-initiated action.
     fn reset_tx_watchdog(&mut self) {
@@ -3608,11 +3624,17 @@ impl Engine {
                         // Stock "Disable Tx after sending 73": the over leaving
                         // NOW is our final 73 (after_tx just cleared pending at
                         // Done). S&P only — a CQ run returns to CQ instead.
-                        if station.state == QsoState::Done
-                            && !self.cq_running
-                            && self.settings.disable_tx_after_73
-                        {
-                            self.pending_tx_disable = true;
+                        if station.state == QsoState::Done && !self.cq_running {
+                            if self.settings.disable_tx_after_73 {
+                                self.pending_tx_disable = true;
+                            }
+                            // WSJT-X "CW ID after 73": queue the ID for AFTER
+                            // this final over finishes (the service drains it
+                            // on TX-idle, same timing as the deferred disable —
+                            // keying CW mid-FT8-over would splatter both).
+                            if self.settings.cw_id_after_73 {
+                                self.pending_cw_id = true;
+                            }
                         }
                         // IR-HARQ off: always transmit RV0 (no redundancy escalation).
                         tx_rv = if self.settings.harq_enabled {
@@ -4970,6 +4992,50 @@ mod tests {
         let snap = e.snapshot();
         assert!(!snap.radio.tx_enabled);
         assert!(!snap.radio.transmitting);
+    }
+
+    #[test]
+    fn cw_id_after_73_arms_on_the_final_over_and_halt_clears_it() {
+        // Mirrors disable_tx_after_73_is_deferred_and_snp_only's drive exactly.
+        let mut e = Engine::new("K2DEF", "FN31", 0);
+        e.settings.cw_id_after_73 = true;
+        e.call_station("W9XYZ"); // S&P: we answer them
+        e.ingest_decodes_for_test(&[dec_snr("K2DEF W9XYZ -10", -7)], 1);
+        e.ingest_decodes_for_test(&[dec_snr("K2DEF W9XYZ RR73", -7)], 3);
+        assert!(!e.poll_tx(4).is_empty(), "the closing 73 transmits");
+        assert!(e.take_pending_cw_id(), "CW ID armed after the final 73");
+        assert!(!e.take_pending_cw_id(), "one-shot");
+        // Default-off: without the setting the flag never arms.
+        let mut d = Engine::new("K2DEF", "FN31", 0);
+        d.call_station("W9XYZ");
+        d.ingest_decodes_for_test(&[dec_snr("K2DEF W9XYZ -10", -7)], 1);
+        d.ingest_decodes_for_test(&[dec_snr("K2DEF W9XYZ RR73", -7)], 3);
+        let _ = d.poll_tx(4);
+        assert!(!d.take_pending_cw_id(), "stock default: no CW ID");
+        // Halt = silence: a queued ID dies with it.
+        e.settings.cw_id_after_73 = true;
+        e.call_station("W9XYZ");
+        e.ingest_decodes_for_test(&[dec_snr("K2DEF W9XYZ -10", -7)], 5);
+        e.ingest_decodes_for_test(&[dec_snr("K2DEF W9XYZ RR73", -7)], 7);
+        let _ = e.poll_tx(8);
+        e.halt_tx();
+        assert!(!e.take_pending_cw_id(), "halt clears a pending CW ID");
+    }
+
+    #[test]
+    fn broker_ptt_refused_mid_tune_and_mid_over() {
+        let mut e = Engine::new("K2DEF", "FN31", 0);
+        e.settings.cat_broker_ptt = true;
+        e.set_tx_enabled(true);
+        assert!(e.broker_ptt(true), "idle → foreign key granted");
+        assert!(e.broker_ptt(false));
+        e.set_tune(true); // live tune carrier owns the rig
+        assert!(!e.broker_ptt(true), "no foreign key mid-tune");
+        e.set_tune(false);
+        e.app.set_transmitting(true); // FT8 over in flight
+        assert!(!e.broker_ptt(true), "no foreign key mid-over");
+        e.app.set_transmitting(false);
+        assert!(e.broker_ptt(true), "granted again once idle");
     }
 
     #[test]

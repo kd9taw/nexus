@@ -2076,6 +2076,26 @@ export function SettingsPanel({
 
               <div className="settings-field">
                 <label className="settings-toggle">
+                  <span className="settings-label">CW ID after 73</span>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={form.cwIdAfter73 === true}
+                    className={`toggle${form.cwIdAfter73 === true ? ' on' : ''}`}
+                    onClick={() => updateBool('cwIdAfter73', form.cwIdAfter73 !== true)}
+                  >
+                    <span className="toggle-knob" />
+                  </button>
+                </label>
+                <span className="settings-hint">
+                  Keys your callsign in CW once the final 73 has fully left the air (stock
+                  WSJT-X option, default off). Uses the normal CW keying path — PTT + tone —
+                  after the FT8 over, never on top of it.
+                </span>
+              </div>
+
+              <div className="settings-field">
+                <label className="settings-toggle">
                   <span className="settings-label">Double-click arms TX</span>
                   <button
                     type="button"

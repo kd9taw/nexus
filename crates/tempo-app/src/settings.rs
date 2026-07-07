@@ -324,6 +324,11 @@ pub struct Settings {
     /// to CQ, stock Run behavior).
     #[serde(default = "default_on")]
     pub disable_tx_after_73: bool,
+    /// WSJT-X "CW ID after 73": key MYCALL in CW once the final 73/RR73 over
+    /// has finished transmitting (stock default off). Keys through the normal
+    /// CW path (PTT + tone), not appended inside the FT8 waveform.
+    #[serde(default)]
+    pub cw_id_after_73: bool,
     /// WSJT-X: "Clear DX call and grid after logging" (stock default off).
     /// Consumed by the UI's DX-target fields.
     #[serde(default)]
@@ -694,6 +699,7 @@ impl Default for Settings {
             cq_max_calls: None,
             cq_stall_overs: None,
             disable_tx_after_73: true,
+            cw_id_after_73: false,
             clear_dx_after_log: false,
             double_click_sets_tx: true,
             tune_timeout_secs: 12,
