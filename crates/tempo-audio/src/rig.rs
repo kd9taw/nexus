@@ -182,9 +182,32 @@ impl Rig {
     fn command(&mut self, line: &str) -> std::io::Result<String> {
         let stream = self.ensure_connected()?;
         stream.write_all(line.as_bytes())?;
+        // Read until a COMPLETE reply (newline-terminated), not one 500 ms
+        // gulp: a networked chain (rigctld → SmartSDR CAT → radio) can take
+        // longer than one read window and can split a reply across reads —
+        // the old single-read returned "" or a fragment, which upstream read
+        // as "rig did not return a frequency" / dropped commands (operator
+        // report on a real FLEX-6400M). The per-read timeout (500 ms) still
+        // bounds each wait; a 2.5 s overall deadline bounds the whole reply.
+        let deadline = std::time::Instant::now() + Duration::from_millis(2_500);
+        let mut out = Vec::with_capacity(64);
         let mut buf = [0u8; 256];
-        let n = stream.read(&mut buf).unwrap_or(0);
-        Ok(String::from_utf8_lossy(&buf[..n]).to_string())
+        loop {
+            match stream.read(&mut buf) {
+                Ok(0) => break, // connection closed — return what we have
+                Ok(n) => {
+                    out.extend_from_slice(&buf[..n]);
+                    if out.ends_with(b"\n") {
+                        break; // rigctld replies are newline-terminated
+                    }
+                }
+                Err(_) => {} // per-read timeout tick — keep waiting to the deadline
+            }
+            if std::time::Instant::now() >= deadline {
+                break;
+            }
+        }
+        Ok(String::from_utf8_lossy(&out).to_string())
     }
 
     /// Key (true) or unkey (false) the transmitter. No-op under VOX (and under CAT
@@ -577,6 +600,30 @@ mod tests {
                 "RPRT 0\n".to_string()
             }
         }
+    }
+
+    #[test]
+    fn slow_fragmented_reply_still_reads_whole_line() {
+        // SmartSDR CAT chains answer slower than a local rigctld and TCP can
+        // fragment: 700 ms in, byte-at-a-time. The old single-500ms-read
+        // returned "" here (operator report: green connect, dead control).
+        use std::io::Write as _;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let (mut sock, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 64];
+            use std::io::Read as _;
+            let _ = sock.read(&mut buf); // consume the "f\n"
+            std::thread::sleep(std::time::Duration::from_millis(700));
+            for b in b"14074000\n" {
+                let _ = sock.write_all(&[*b]);
+                let _ = sock.flush();
+                std::thread::sleep(std::time::Duration::from_millis(30));
+            }
+        });
+        let mut rig = Rig::rigctld(&addr.to_string());
+        assert_eq!(rig.read_freq().expect("whole reply assembled"), 14_074_000);
     }
 
     #[test]
