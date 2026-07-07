@@ -130,6 +130,7 @@ const STOCK_WORKING_FREQUENCIES: WorkingFrequency[] = [
   { band: '6m', mode: 'FT8', mhz: 50.313 },
   { band: '2m', mode: 'FT8', mhz: 144.174 },
   { band: '70cm', mode: 'FT8', mhz: 432.065 },
+  { band: '23cm', mode: 'FT8', mhz: 1296.174 },
   { band: '80m', mode: 'FT4', mhz: 3.575 },
   { band: '40m', mode: 'FT4', mhz: 7.0475 },
   { band: '30m', mode: 'FT4', mhz: 10.14 },
@@ -143,7 +144,7 @@ const STOCK_WORKING_FREQUENCIES: WorkingFrequency[] = [
 ]
 
 /** Bands/modes offered in the override editor (the stock table's coverage). */
-const FREQ_BANDS = ['160m', '80m', '60m', '40m', '30m', '20m', '17m', '15m', '12m', '10m', '6m', '2m', '70cm']
+const FREQ_BANDS = ['160m', '80m', '60m', '40m', '30m', '20m', '17m', '15m', '12m', '10m', '6m', '2m', '70cm', '23cm']
 const FREQ_MODES = ['FT8', 'FT4']
 
 /** Settings is split into tabbed sections: only the active one renders, so a

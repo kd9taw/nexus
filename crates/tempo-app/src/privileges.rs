@@ -41,6 +41,7 @@ const VHF: &[Seg] = &[
     s(144.1, 148.0, true, true, true),   // 2 m all-mode
     s(222.0, 225.0, true, true, true),   // 1.25 m all-mode
     s(420.0, 450.0, true, true, true),   // 70 cm all-mode
+    s(1240.0, 1300.0, true, true, true), // 23 cm all-mode (IC-9700's third band)
 ];
 
 // 60 m (General/Extra): the 5.3515–5.3665 subband + 4 retained legacy channel centers
@@ -193,6 +194,8 @@ mod tests {
     fn vhf_is_full_for_technician_incl_data_band_wide() {
         assert!(tx_allowed(Technician, 50.313, Digital)); // 6 m FT8 (in the all-mode segment)
         assert!(tx_allowed(Technician, 144.174, Digital)); // 2 m FT8
+        assert!(tx_allowed(Technician, 1296.174, Digital)); // 23 cm FT8 (IC-9700)
+        assert!(tx_allowed(Technician, 1296.100, Phone)); // 23 cm SSB
         assert!(tx_allowed(Technician, 146.520, Phone)); // 2 m phone
         assert!(!tx_allowed(Technician, 50.050, Digital)); // 6 m 50.0–50.1 is CW-only
         assert!(tx_allowed(Technician, 50.050, Cw)); // ...but CW is fine there

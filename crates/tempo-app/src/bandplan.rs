@@ -75,6 +75,7 @@ pub fn band_plan() -> Vec<BandChannel> {
         ch("1.25m", "VHF", 222.1300, "USB", "1.25 m · SSB/weak-signal", "alt: 222.10–222.15 weak-signal segment, above 222.100 call + FT8 222.065"),
         // --- 70 cm ---
         ch("70cm", "UHF", 432.4500, "USB", "70 cm · SSB/weak-signal", "in 432.40–433.00 mixed-mode; far from SSB call 432.100, sat 435–438, beacons 432.3–432.4"),
+        ch("23cm", "UHF", 1296.2000, "USB", "23 cm · SSB/weak-signal", "in the 1296.2 SSB segment; clear of the 1296.100 call, FT8 1296.174, beacons 1296.300+"),
         ch("70cm-fm", "UHF", 445.9500, "FM", "70 cm · FM simplex (HT)", "local-option only — 70 cm has no national digital segment; below 446.000 call. Check your coordinator"),
     ]
 }
@@ -98,6 +99,7 @@ pub fn ft8_band_plan() -> Vec<BandChannel> {
         ch("6m", "VHF", 50.313, "USB", "6 m · FT8", n),
         ch("2m", "VHF", 144.174, "USB", "2 m · FT8", n),
         ch("70cm", "UHF", 432.065, "USB", "70 cm · FT8", n),
+        ch("23cm", "UHF", 1296.174, "USB", "23 cm · FT8", n),
     ]
 }
 
@@ -149,6 +151,7 @@ pub fn cw_activity_mhz(band: &str) -> Option<f64> {
         "2m" => 144.050,
         "1.25m" => 222.050,
         "70cm" => 432.050,
+        "23cm" => 1296.050,
         _ => return None,
     })
 }
@@ -181,6 +184,7 @@ pub fn band_for_dial(dial_mhz: f64) -> Option<&'static str> {
         f if (144.0..148.0).contains(&f) => "2m",
         f if (222.0..225.0).contains(&f) => "1.25m",
         f if (420.0..450.0).contains(&f) => "70cm",
+        f if (1240.0..1300.0).contains(&f) => "23cm",
         _ => return None,
     };
     Some(b)
@@ -188,6 +192,18 @@ pub fn band_for_dial(dial_mhz: f64) -> Option<&'static str> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_23cm_band_exists_end_to_end() {
+        // IC-9700 support: dial→band, the FT8 channel at the verified 1296.174,
+        // and a CW dial — a band missing any of these is invisible to QSY/UI.
+        assert_eq!(super::band_for_dial(1296.174), Some("23cm"));
+        assert_eq!(super::cw_activity_mhz("23cm"), Some(1296.05));
+        let has_ft8_23 = super::ft8_band_plan()
+            .iter()
+            .any(|c| c.band == "23cm" && (c.dial_mhz - 1296.174).abs() < 1e-6);
+        assert!(has_ft8_23, "23cm FT8 channel at 1296.174");
+    }
+
     use super::*;
 
     #[test]
@@ -216,7 +232,7 @@ mod tests {
         assert!(plan.len() >= 14, "expect HF + VHF/UHF channels");
         for c in &plan {
             assert!(
-                c.dial_mhz > 1.0 && c.dial_mhz < 500.0,
+                c.dial_mhz > 1.0 && c.dial_mhz < 1400.0, // 23 cm tops the plan (1296)
                 "{} dial sane",
                 c.band
             );
@@ -260,8 +276,8 @@ mod tests {
             (ft1_20.dial_mhz - 14.0905).abs() < 1e-9,
             "FT1 20m stays native .0905"
         );
-        // The full standard set is present.
-        assert_eq!(ft8_band_plan().len(), 13);
+        // The full standard set is present (13 + 23 cm for the IC-9700 class).
+        assert_eq!(ft8_band_plan().len(), 14);
         assert!(ft8_band_plan().iter().all(|c| c.mode == "USB"));
     }
 }

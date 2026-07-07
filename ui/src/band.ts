@@ -26,6 +26,7 @@ const BAND_RANGES: BandRange[] = [
   { lo: 144.0, hi: 148.0, label: '2m' },
   { lo: 222.0, hi: 225.0, label: '1.25m' },
   { lo: 420.0, hi: 450.0, label: '70cm' },
+  { lo: 1240.0, hi: 1300.0, label: '23cm' },
 ]
 
 /**
