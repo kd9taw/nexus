@@ -5,7 +5,7 @@ Nexus is a free, GPLv3, all-mode amateur radio operations center: FT8/FT4 digita
 > **New here? Start with [Getting Started](Getting-Started.md).**
 >
 > Download the Windows installer and full release notes at
-> [github.com/kd9taw/nexus/releases](https://github.com/kd9taw/nexus/releases/latest).
+> [sourceforge.net/projects/nexus-ham](https://sourceforge.net/projects/nexus-ham/files/latest/download).
 
 ---
 

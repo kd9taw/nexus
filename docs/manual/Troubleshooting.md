@@ -7,7 +7,7 @@
 
 Work top-to-bottom; most problems are CAT/driver, audio device, time sync, or credentials. Open an issue at <https://github.com/kd9taw/nexus> with band, dial, mode, and what you saw vs. expected.
 
-> **First:** make sure you are on the latest release — several issues below are fixed in current builds. Download: <https://github.com/kd9taw/nexus/releases/latest>.
+> **First:** make sure you are on the latest release — several issues below are fixed in current builds. Download: <https://sourceforge.net/projects/nexus-ham/files/latest/download>.
 
 ---
 

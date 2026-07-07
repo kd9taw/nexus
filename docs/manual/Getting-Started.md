@@ -8,7 +8,7 @@ Nexus is an all-mode amateur-radio operations center (FT8/FT4, CW, Phone, and th
 
 Grab the latest installer from the Nexus releases page:
 
-**<https://github.com/kd9taw/nexus/releases/latest>**
+**<https://sourceforge.net/projects/nexus-ham/files/latest/download>**
 
 The file is a standard Windows `.exe` setup — per-user, no administrator rights required. The installer bundles everything offline:
 
