@@ -56,7 +56,7 @@ Windows x64. Per-user install, no admin. WebView2 and Hamlib are bundled.
 The installer is **unsigned** — SmartScreen will warn: "More info" → "Run
 anyway." Verify the SHA-256 published beside the download first.
 
-`SHA-256: b8dc66c75a46ea802c904d3394156d2c690fbcc412c81d3495943b929fd10186`
+`SHA-256: 1d8f20141b89680f862535a680be529ecbf186dbd73f850bef943b86834bebfb`
 
 ## Reporting
 
