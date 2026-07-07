@@ -82,6 +82,11 @@ as the FT1/DX1 chat layer inside it. Builds now ship as
 
 ### Fixed
 
+- PSK Reporter uploads declared the mode string under IPFIX enterprise field 7
+  (iMD — a PSK31 distortion metric) instead of field 10 (mode), so every spot
+  arrived modeless and pskreporter.info displayed its default, PSK31 — FT8
+  decodes showed up as "PSK31" on FT8 frequencies. Field id corrected to match
+  WSJT-X's PSKReporter.cpp; spots now carry FT8/FT4/FT1/DX1 correctly.
 - WSJT-X UDP message type numbers were shifted +1 for types ≥ 8 (a real JTAlert
   FreeText datagram parsed as HaltTx and killed TX) — now canonical and pinned.
 - FT4 transmitted at slot +0.0 s instead of the standard +0.5 s timing.
@@ -110,7 +115,7 @@ decode-rate-vs-SNR remains the open gate.
   30 s, freq tolerance +-10 Hz. A coherent CPM-Costas discriminator
   (`ft1_rv_detect`) identifies the RV (>99% accurate, <1% false to -11 dB),
   and the QSO sequencer drives RV escalation (0->1->2 on implicit NAK, reset on
-  implicit ACK). Measured: combiner **+1.3 dB** AWGN and **+3.2 dB** under
+  implicit ACK). Simulated (AWGN/fading sweeps): combiner **+1.3 dB** AWGN and **+3.2 dB** under
   1 Hz / 1 ms fading (3-TX); through the full live pipeline ~**+2.5 dB**
   threshold shift and ~**2x QSO completion** in the -11..-13 dB zone. UI adds a
   **HARQ.RVn decode badge**, a **HARQ on/off toggle** (default on), and a

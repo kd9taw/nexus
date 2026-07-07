@@ -4,7 +4,7 @@ Nexus surfaces live Parks On The Air and Summits On The Air activators, annotate
 
 ## Hunter-only stance
 
-Nexus is strictly a **hunter** tool. There is no activator workflow, no self-spotting button, no activation counter, and no MY_SIG/MY_SIG_INFO tagging path. If you are activating a park or summit, use a separate spotting tool.
+Nexus's UI is **hunter-only** — no activator screen and no self-spotting. Activator-side `MY_SIG`/`MY_SIG_INFO`/`MY_SOTA_REF` fields are stored and round-trip through ADIF (an engine activation-tagging path exists but is not yet exposed in the UI). If you are activating a park or summit, use a separate spotting tool.
 
 ## Spot feeds and poll cadence
 
@@ -102,11 +102,9 @@ These are the fields accepted by pota.app upload and the SOTA database import. N
 
 ## Needed-board integration
 
-When the hunter view has been opened at least once in the current session (populating the OTA spot cache), the **Needed board** automatically injects a **POTA** or **SOTA** chip onto any decode row whose callsign matches a live activator in the cache — provided the cache is no older than **10 minutes** (600 seconds).
+The **Needed board** automatically injects a **POTA** or **SOTA** chip onto any decode row whose callsign matches a live activator in the cache — provided the cache is no older than **10 minutes** (600 seconds). The activator cache is warmed by a background poller from app launch on a ~3-minute cadence (both POTA and SOTA), so the chips — and standalone park/summit chase rows — appear on the Needed board without opening this view first.
 
 The chip carries no priority bump: your award-tier need (ATNO, new band, etc.) still drives row color and ranking. The chip is informational, telling you that the station is currently active on a park or summit. Use the POTA/SOTA filter chips in the Needed board to isolate these rows.
-
-> **Note:** the Needed board POTA/SOTA chip does not appear if the hunter view has never been loaded in the current session. Open the POTA/SOTA view at least once to populate the cache.
 
 ## Journey achievement
 
@@ -114,15 +112,14 @@ Your **first logged POTA hunter contact** fires a Journey milestone. No equivale
 
 ## Limits / not yet
 
-- **Hunter only.** No activator UI, self-spotting, activation counter, or MY_SIG/MY_SIG_INFO tagging path.
+- **Hunter UI only.** No activator screen, self-spotting, or activation counter surfaced in the UI. The engine's activation-tagging path (MY_SIG/MY_SIG_INFO/MY_SOTA_REF) is not yet exposed, though those fields round-trip through ADIF import/export.
 - **SOTA 30-spot cap.** The SOTAwatch fetch is hard-coded to 30 spots. Busy summit days may omit older activators.
 - **No offline mode.** All fetches are live HTTP. A network outage returns an error toast and an empty list; there is no cached fallback.
 - **BAND OPEN requires recent TX.** Without an active PSK Reporter MQTT feed or recent transmission on the target band, the badge never fires.
 - **Spot age not displayed per-card.** The `spotTime` field is fetched but not parsed or shown; use the wall-clock last-updated timestamp as your freshness reference.
 - **No park-name search.** You cannot search by park name or reference to find a specific park and check whether it is currently active.
-- **Needed-board chip requires prior view load.** The OTA cache is only populated when you open the POTA/SOTA view; the chip does not appear if no fetch has occurred in the current session.
 - Desktop-only (Tauri v2); no mobile or web version.
 
 ---
 
-Related pages: [Needed Board](Operate-FT8-FT4.md) · [Logbook and Awards](Operate-FT8-FT4.md) · [Getting Started](Getting-Started.md) · [Rig and Audio Setup](Rig-and-Audio-Setup.md)
+Related pages: [Needed Board](Needed-and-Hunting.md) · [Logbook and Awards](Logbook-and-Awards.md) · [Getting Started](Getting-Started.md) · [Rig and Audio Setup](Rig-and-Audio-Setup.md)

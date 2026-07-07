@@ -139,7 +139,7 @@ Clicking a receiver row selects it on the map. Stations that heard you appear as
 
 ## Per-Path Outlook
 
-Clicking any station or spot opens a "Path to X" panel with a 24-hour band workability predictor. This uses the internal **HeuristicEngine**: a physics-lite model driven by MUF, D-layer absorption, greyline timing, and current SFI/Kp from the cached SWPC values. The UI badges the result as **"modelled"** — it is not measured propagation data and not VOACAP output (VOACAP is architected as a future drop-in but is not yet integrated).
+Clicking any station or spot opens a "Path to X" panel with a 24-hour band workability predictor. This honors the **Prediction engine** selected in Settings: the internal **HeuristicEngine** (the default) — a physics-lite model driven by MUF, D-layer absorption, greyline timing, and current SFI/Kp from the cached SWPC values — or the native **ITU-R P.533/P.372 engine**, a full standards-based point-to-point ionospheric prediction. The UI badges the result as **"modelled"** — it is a model output, not measured propagation data (the external VOACAP program is not integrated).
 
 ---
 
@@ -188,13 +188,14 @@ Two pills — **Cluster** and **PSKR** — distinguish five states:
 
 ## Live Feed Architecture
 
-Three feeds are merged into a single spot window before the advisor and opening detector run:
+Four feeds are merged into a single spot window before the advisor and opening detector run:
 
 | Feed | Default endpoint | Purpose |
 |---|---|---|
 | PSK Reporter MQTT firehose | `mqtt.pskreporter.info:1883` | Real-time own-call who-hears-me / who-I-hear; 20 000-spot ring buffer |
 | PSK Reporter HTTP | Rate-limited, 300 s nowcast TTL | Historical reception data |
-| DX cluster / RBN | `telnet.reversebeacon.net:7001` | Exact-frequency cluster spots with mode; 200-spot buffer (configurable) |
+| DX cluster (human spots) | `ve7cc.net:23` (fallback `dxc.wa9pie.net:8000`) | Exact-frequency human-posted spots including SSB/phone; 200-spot buffer; host configurable |
+| RBN CW/digital skimmers | `reversebeacon.net:7000` / `:7001` (auto-wired, not configurable) | Skimmer CW and digital spots |
 
 On VHF bands (6 m / 4 m / 2 m), only cluster spots from skimmers within 250 km of your QTH are admitted. A Florida RBN skimmer hearing a 6 m Es opening does not light up the band ladder for a Wisconsin operator.
 
@@ -207,7 +208,7 @@ A near-region MQTT feed (10 m / 6 m / 4 m / 2 m per-band global streams, 60 000-
 | Setting | Default |
 |---|---|
 | PSK Reporter | Enabled (requires valid callsign 3–10 chars) |
-| Cluster/RBN | Enabled, `telnet.reversebeacon.net:7001` |
+| Cluster/RBN | Enabled; cluster host `ve7cc.net:23` (fallback `dxc.wa9pie.net:8000`); RBN CW/digital feeds auto-wired |
 | Near-region MQTT feed | Enabled |
 | Propagation nowcast TTL | 300 s (5 min) |
 | Aurora oval cache | 600 s (10 min) |
@@ -225,7 +226,7 @@ A near-region MQTT feed (10 m / 6 m / 4 m / 2 m per-band global streams, 60 000-
 
 ## Limits / Not Yet
 
-- **VOACAP is not integrated.** The per-path outlook uses the internal heuristic engine (physics-lite MUF + D-layer model). Results are labeled "modelled" in the UI. VOACAP is designed as a future drop-in behind the same trait interface but is not yet wired.
+- **The external VOACAP program is not integrated.** The per-path outlook runs the engine selected in Settings behind the `PathPredictor` trait: the physics-lite heuristic (MUF + D-layer model, the default) or the native ITU-R P.533/P.372 engine. Results are labeled "modelled" in the UI.
 - **PSK Reporter MQTT SNR.** Band-level MQTT topics carry no per-spot SNR field; SNR-derived features in the opening detector (median SNR, SNR variance, aurora decode-quality signature) are noted as Phase 2 and not yet computed.
 - **Tropo confidence.** Capped at "Marginal" for geometry-only reasons; Tropo claims should not be treated as confirmed without SNR data.
 - **Aurora oval and MUF layers** require an internet connection. The basemap, graticule, range rings, and greyline all work offline.

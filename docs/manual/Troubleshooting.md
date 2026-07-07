@@ -1,4 +1,9 @@
-# Troubleshooting
+# Troubleshooting (deep reference)
+
+> The canonical, field-tested troubleshooting guide is
+> [docs/troubleshooting.md](../troubleshooting.md) — start there. This page keeps
+> the deep reference detail (TQSL exit codes, split-mode internals, UDP wire
+> facts) that the field guide links into.
 
 Work top-to-bottom; most problems are CAT/driver, audio device, time sync, or credentials. Open an issue at <https://github.com/kd9taw/nexus> with band, dial, mode, and what you saw vs. expected.
 
@@ -27,7 +32,7 @@ Seen on early builds where the embedded WebView2 runtime was missing.
 
 **Test CAT** (Settings → Rig/CAT) saves settings, restarts rigctld, waits 1300 ms, then reads the dial frequency. A failure means one of:
 
-1. **Wrong rig model** — confirm the Hamlib model number. Run `rigctl -l` in a terminal to find your exact model; the in-app list covers approximately 50 radios and is cross-referenced to Hamlib 4.7.1. You can type a model number directly if it is not in the list.
+1. **Wrong rig model** — confirm the Hamlib model number. The in-app list covers approximately 50 curated radios cross-referenced to Hamlib 4.7.1. For a rig that is not in the list, run an external `rigctld` for it and connect Nexus as **NET rigctl** (model 2).
 2. **Wrong COM port** — pick the correct serial port and hit **Refresh** to re-scan. Verify nothing else holds the port (WSJT-X, another logger, a leftover Nexus instance, a `rigctld.exe` from a previous session).
 3. **Wrong baud rate** — match the rig's CAT baud setting exactly. Common values: 9600, 19200, 38400, 57600. Default is 38400.
 4. **rigctld TCP port conflict** — Nexus binds rigctld on port `4532` by default. If another rigctld or the CAT broker is already on that port, change **rigctld Port** in Settings.
@@ -46,7 +51,7 @@ After installing the driver, hit **Refresh** in Settings to re-scan ports.
 
 ### Generic bridge cable — "select model manually"
 
-If your radio connects via a CH340/FTDI cable that only reports "USB Serial," Nexus identifies the bridge chip and driver need but cannot guess the Hamlib model. Select your rig from the dropdown or type the model number; use `rigctl -l` to find it.
+If your radio connects via a CH340/FTDI cable that only reports "USB Serial," Nexus identifies the bridge chip and driver need but cannot guess the Hamlib model. Select your rig from the dropdown; if it is not listed, use an external `rigctld` with NET rigctl (model 2).
 
 Native-USB rigs (IC-705, IC-7300, etc.) that embed their model name in the USB product string are matched automatically.
 
@@ -138,8 +143,8 @@ The Now-Bar shows two feed-liveness pills — **Cluster** and **PSKR** — with 
 
 "Connected but no data" is normal during a quiet band period — it is **not** a sign the feed is broken. A stuck **reconnecting** pill means the cluster host is unreachable:
 
-- Confirm the cluster host (default `telnet.reversebeacon.net:7001`) is reachable from your network.
-- Firewalls that block outbound TCP on port 7001 are common on corporate or hotel Wi-Fi. Try a different cluster host with port 23 (Telnet default).
+- Confirm the cluster host (default `ve7cc.net:23`, fallback `dxc.wa9pie.net:8000`) is reachable from your network. Do not enter a `reversebeacon.net` host here — RBN CW/digital feeds are auto-wired separately and carry no SSB spots; the app migrates that value away.
+- Firewalls that block outbound TCP on port 23 (Telnet) are common on corporate or hotel Wi-Fi. Switch to the fallback host `dxc.wa9pie.net:8000`, which uses a high port.
 - PSK Reporter MQTT (`mqtt.pskreporter.info:1883`) is blocked by some ISPs. Without MQTT, the app falls back to HTTP queries (rate-limited to every 5 minutes minimum).
 - Your callsign must be set (3–10 characters, at least one letter and one digit) for the PSK Reporter MQTT subscription to start.
 
@@ -200,9 +205,10 @@ Type numbers are pinned to the canonical WSJT-X 0–15 range (an earlier +1 offs
 
 If downstream apps receive nothing:
 
-1. Check that **WSJT-X UDP target** in Settings is `127.0.0.1:2237` (or the logger's actual IP if on another machine).
-2. Windows Defender / firewall sometimes blocks UDP on non-standard ports. Add an inbound rule for port 2237 UDP or temporarily disable the firewall to test.
-3. If another app (actual WSJT-X, JTDX) is already bound on port 2237, only one can receive datagrams sent to that port from outside. Use a multicast forwarder (e.g. `logger32bridge`) or point Nexus at a different port and configure the logger to match.
+1. Enable **WSJT-X UDP** in Settings (`wsjtx_udp`, off by default) — no datagrams are emitted until this master switch is on.
+2. Check that **WSJT-X UDP target** in Settings is `127.0.0.1:2237` (or the logger's actual IP if on another machine).
+3. Windows Defender / firewall sometimes blocks UDP on non-standard ports. Add an inbound rule for port 2237 UDP or temporarily disable the firewall to test.
+4. If another app (actual WSJT-X, JTDX) is already bound on port 2237, only one can receive datagrams sent to that port from outside. Use a multicast forwarder (e.g. `logger32bridge`) or point Nexus at a different port and configure the logger to match.
 
 ### N3FJP Field Day push not working
 
@@ -219,9 +225,9 @@ Use the **Test N3FJP** button in Settings to send the `<CMD><PROGRAM></CMD>` han
 
 - **Fox role** for DXpedition operations is not yet implemented; only Hound mode is available.
 - **SuperFox mode** is permanently removed — the QPC table license bars vendoring outside WSJT-X.
-- **VOACAP** is not integrated; per-path predictions use the heuristic engine (labeled "modelled" in Connect).
-- **FM mode** in the Phone cockpit is not yet implemented.
-- **WinKeyer** hardware keyer is not supported; only CAT and soundcard CW keyer back-ends are available.
+- **VOACAP itself** is not integrated; per-path predictions come from the native
+  ITU-R P.533 engine (the same standard class VOACAP implements) or the
+  statistical heuristic, both labeled "modelled" in Connect.
 - **COUNTY and IOTA** ADIF fields are not stored; contacts imported from other loggers lose these fields silently.
 - **LoTW background periodic sync** is not automatic — trigger downloads manually or on a schedule from Settings.
 - **Transmit-privilege lockout** models US FCC Part 97 / ITU Region 2 rules only. Non-US operators should set license class to **Open**.

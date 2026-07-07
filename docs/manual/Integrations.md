@@ -13,7 +13,8 @@ Shack-interop reference for every external protocol and online service Nexus spe
 | CAT broker (share rig) | TCP listen | `4532` (off by default) |
 | N3FJP Field Day API | TCP | `<host>:1100` |
 | N1MM+ contactinfo | UDP broadcast | `<host>:12060` |
-| DX cluster / RBN | Telnet | `telnet.reversebeacon.net:7001` |
+| DX cluster (human spots) | Telnet | `ve7cc.net:23` (fallback `dxc.wa9pie.net:8000`) |
+| RBN CW/digital skimmers | Telnet | `reversebeacon.net:7000` / `:7001` (auto-wired) |
 | PSK Reporter MQTT | TCP | `mqtt.pskreporter.info:1883` |
 
 ---
@@ -109,9 +110,9 @@ The datagram carries: `mycall`, `call`, `band`, `mode`, `timestamp`, `section`, 
 
 ## DX Cluster / RBN
 
-Nexus connects to a DX cluster or RBN skimmer via a standard telnet session.
+Nexus connects to a human DX-cluster node via a standard telnet session; the RBN CW and digital skimmer feeds are wired in automatically alongside it.
 
-**Default host: `telnet.reversebeacon.net:7001`** (the free public RBN read feed). Change it in **Settings › Connect › Cluster Host** to reach a private cluster or a regional node.
+**Default host: `ve7cc.net:23`** (the CC-Cluster community node, which carries human-posted spots including SSB/phone), with `dxc.wa9pie.net:8000` as a fallback. Change it in **Settings › Connect › Cluster Host** to reach a private cluster or a regional node. The RBN CW/digital skimmer feeds (`reversebeacon.net:7000` / `:7001`) are auto-wired separately and should **not** be entered as the Cluster Host — the RBN skimmer network carries no human SSB/phone spots, so pointing the Cluster Host at it empties the Phone rows of the Needed board.
 
 Spots admitted to the Needed board must be within 900 seconds old (15 minutes). The spot buffer holds 200 spots by default; high-activity periods can push older spots out faster than the admission window.
 

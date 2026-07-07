@@ -1,10 +1,10 @@
 blank_issues_enabled: false
 contact_links:
-  - name: 📖 Operator manual
-    url: https://github.com/kd9taw/tempo/tree/main/docs/manual
-    about: Getting Started, Operating Guide, Rig & Audio Setup, Frequency Plan, FAQ, and Troubleshooting — check here first.
+  - name: 📖 Documentation
+    url: https://github.com/kd9taw/nexus/tree/main/docs
+    about: Quick start, install, section guides, rig setup, protocols, FAQ, and troubleshooting — check here first.
   - name: 💬 Questions & general discussion
-    url: https://github.com/kd9taw/tempo/discussions
+    url: https://github.com/kd9taw/nexus/discussions
     about: For setup help, usage questions, and general discussion (including quick on-air chatter), please open a GitHub Discussion rather than an issue.
   - name: ✉️ Email the maintainer
     url: mailto:kd9taw@protonmail.com

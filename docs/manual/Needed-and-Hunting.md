@@ -6,12 +6,13 @@ The Needed board ranks every station currently on the air by what it is worth to
 
 ## What the Board Ranks
 
-Eight need types are recognized. Each carries a fixed numeric priority tier that determines row sort order and color:
+Nine need types are recognized. Each carries a fixed numeric priority tier that determines row sort order and color:
 
 | Need type | Priority |
 |-----------|----------|
 | ATNO — all-time new DXCC entity | 100 |
 | New CQ zone (WAZ) | 70 |
+| New grid (Maidenhead square) | 60 |
 | New band-slot | 50 |
 | New mode | 30 |
 | Confirmation opportunity | 10 |
@@ -19,7 +20,9 @@ Eight need types are recognized. Each carries a fixed numeric priority tier that
 | POTA activator chip | 0 (award tier drives ranking) |
 | SOTA activator chip | 0 (award tier drives ranking) |
 
-DXpedition, POTA, and SOTA are chips appended to a row that already has an award tier. The +15 DXpedition bump can never cross a tier boundary — the minimum gap between adjacent tiers is 20 points — so a confirmed DXpedition ATNO cannot outrank a plain unconfirmed new zone.
+DXpedition, POTA, and SOTA are chips appended to a row that already has an award tier; the chip itself is priority-neutral. The +15 DXpedition bump *can* cross a tier boundary where adjacent tiers sit only 10 points apart — a DXpedition-bumped New band (50 + 15 = 65) outranks a plain New grid (60).
+
+Beyond the chip, every live POTA/SOTA activator also generates its own standalone board row when it carries no award tier of its own, floored at priority 20 (above Confirmation, below New mode) as long as the activator cache is fresh and the spot is under an hour old.
 
 POTA and SOTA chips appear only when the activator-spot cache is no older than 10 minutes (600 seconds). An expired cache suppresses the chip; the underlying award tier row still appears if propagation evidence passes the admission gates.
 
@@ -68,7 +71,7 @@ The board is rebuilt from three independent sources:
 
 - **Own-radio decodes** — highest confidence, zero latency; your FT8/FT4 decoder is already copying the station.
 - **PSK Reporter** — the near-region feed retains spots where at least one endpoint is within 800 km of your grid (`REGION_RADIUS_KM`). Both the live-paths and region-paths feeds use a 900-second (15-minute) recency window.
-- **Cluster/RBN** — opt-in, requires a configured cluster host. Spot recency window for board admission is 900 seconds. The `SpotBuffer` holds a maximum of 200 spots; during high-activity events older spots may be pushed out before the 15-minute window expires.
+- **Cluster/RBN** — on by default: the VE7CC human node (`ve7cc.net:23`) is pre-configured with a `dxc.wa9pie.net:8000` fallback, and RBN CW/digital feeds are auto-wired separately, so CW and Phone rows appear without any setup. Spot recency window for board admission is 900 seconds. The `SpotBuffer` retains spots for 20 minutes on an age-based policy under an 8,000-entry memory ceiling, so the 15-minute admission window is never starved by buffer churn.
 
 The board refreshes every 30 seconds in the main window and every 15 seconds in a popped-out second-monitor window.
 
@@ -88,7 +91,7 @@ Three independent filter dimensions are ANDed together:
 
 Filter state is written to `localStorage` under the key `neededFilters` on every change and restored on load. A stale bucket name from an older build falls back to `all` rather than silently emptying the board.
 
-Note: **New Grid** is a filter chip that currently returns zero rows. The backend `NewGrid` need type has not yet been implemented; the chip is present in the UI for a future release.
+Note: **New Grid** is live. NewGrid rows appear when the spot source carries a grid — your own decodes and PSK Reporter spots — but never from cluster/RBN spots, which do not include a Maidenhead grid. Rare and ultra-rare grids receive a priority boost (+15 / +30) on top of the base New-grid tier.
 
 CW and Phone rows are suppressed entirely if those mode features are not enabled for your station — a digital-only operator's board never shows voice or CW rows even though the backend always emits them.
 
@@ -140,12 +143,10 @@ The Needed board can be detached into a standalone second-monitor window. The po
 ## Limits / Not Yet
 
 - **PSK Reporter and RBN require internet.** Offline, only own-radio decodes appear as evidence; the board will be mostly empty.
-- **Cluster/RBN is opt-in.** Without a configured cluster host, CW and Phone need rows do not appear — PSK Reporter does not carry CW or Phone spots.
-- **New Grid filter returns zero rows.** The backend `NewGrid` NeedTag is not yet implemented.
+- **CW and Phone rows come from cluster/RBN.** These feeds are on by default (VE7CC node pre-configured, RBN auto-wired), so CW and Phone rows appear without setup — but they require internet, since PSK Reporter does not carry CW or Phone spots.
 - **VHF gates require a correct grid in Settings.** Without a grid set, haversine distance is undefined and no VHF near-me filtering is applied.
-- **POTA/SOTA chips require a fresh activator cache.** If the hunter view has not been opened in the current session, or the cache is older than 10 minutes, the chips do not appear on board rows.
+- **POTA/SOTA chips require a fresh activator cache.** If the cache is older than 10 minutes, the chips do not appear on board rows.
 - **Pop-out window one-click work is partial.** The popped-out window QSYs band only; it does not navigate to the cockpit or prefill the callsign.
-- **SpotBuffer holds 200 cluster spots.** During a contest, high-rate DX activity may push older spots out of the buffer before the 15-minute admission window expires.
 - **Desktop-only** (Tauri v2); no mobile or web version.
 
 ---

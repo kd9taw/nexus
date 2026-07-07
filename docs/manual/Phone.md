@@ -1,6 +1,6 @@
 # Phone Cockpit
 
-The Phone cockpit gives you a live traditional rig panel for SSB voice operating — dial read-back, a fast colored bandscope, three PTT paths, a six-slot voice keyer with record/import/playback, crash-safe QSO recording, RF power control, and a full logging strip — all gated through the same CAT and privilege-enforcement infrastructure that the digital and CW cockpits use.
+The Phone cockpit gives you a live traditional rig panel for SSB and FM voice operating — dial read-back, a fast colored bandscope, three PTT paths, a six-slot voice keyer with record/import/playback, crash-safe QSO recording, RF power control, and a full logging strip — all gated through the same CAT and privilege-enforcement infrastructure that the digital and CW cockpits use.
 
 ## Entering Phone Mode
 
@@ -9,9 +9,19 @@ Navigate to Phone on the left rail. On entry, Nexus commands the rig to the corr
 - **Below 10 MHz** (160/80/40 m): LSB — conventional below-10-MHz SSB
 - **10 MHz and above** (20 m and up): USB
 
-You do not need to touch the rig's mode button. The sideband badge in the cockpit header is derived from the polled dial frequency (`dialMhz < 10 → LSB`), not read back from the rig, so if you change mode manually at the rig the badge may lag until you re-enter Phone or change band.
+You do not need to touch the rig's mode button. The mode badge in the cockpit header shows **FM** when the FM sub-mode is active, otherwise it is derived from the polled dial frequency (`dialMhz < 10 → LSB`, else USB). It is not read back from the rig, so if you change mode manually at the rig the badge may lag until you re-enter Phone or change band.
 
 If CAT is unavailable (rigctld unreachable, or PTT method set to VOX or serial RTS/DTR), a **no rig control** badge with a tooltip appears. PTT and log functions still work; frequency/mode commands do not.
+
+## FM Sub-Mode
+
+For VHF/UHF FM simplex and repeater work, set **Phone sub-mode** to FM (`phone_mode: fm`). On section entry Nexus commands the rig to `FM` and then applies the repeater configuration over CAT:
+
+- **Repeater shift** (`rptr_shift`) — `simplex` (no shift, default), `plus`, or `minus`, sent as Hamlib `R +` / `R -` / `R None`.
+- **Offset magnitude** — auto-derived from the dial band (standard offsets: 600 kHz on 2 m, 1.6 MHz on 1.25 m, 5 MHz on 70 cm), sent as Hamlib `O`. You do not enter it manually.
+- **CTCSS tone** (`ctcss_tone_hz`) — the subaudible PL tone in Hz for repeater access (e.g. `100.0`); `0.0` disables it. Sent as Hamlib `C`.
+
+When the FM sub-mode is active, the cockpit mode badge reads **FM** instead of the LSB/USB sideband.
 
 ## Dial Read-Back
 
@@ -113,7 +123,7 @@ Fill in the callsign, exchange, and RST received, then click Log. The entry writ
 
 ## Needed Board — Click-to-Work
 
-The [Needed board](Operate-FT8-FT4.md) surfaces stations worth working ranked by award priority. Clicking a row in the Needed board from Phone (or from any section when the spot is a voice mode):
+The [Needed board](Needed-and-Hunting.md) surfaces stations worth working ranked by award priority. Clicking a row in the Needed board from Phone (or from any section when the spot is a voice mode):
 
 1. QSYs the rig atomically — band, mode, and exact spot frequency in a single backend call.
 2. Navigates to the Phone cockpit.
@@ -134,10 +144,12 @@ You go from "there's a needed station on 20 m SSB" to "rig is there, call is in 
 | `cat_broker` | `false` | Enable to let WSJT-X/N1MM share the radio through Nexus |
 | `cat_broker_port` | `4532` | CAT broker listen port |
 | `voice_messages` | 6 empty slots | F1=CQ F2=My Call F3=Report F4=QRZ? F5=73 F6=Again |
+| `phone_mode` | `ssb` | `fm` selects FM voice (drives rig to FM + repeater shift/CTCSS) |
+| `rptr_shift` | `simplex` | FM repeater shift: `plus` / `minus` / `simplex` (no shift) |
+| `ctcss_tone_hz` | `0.0` | FM CTCSS/PL tone in Hz (e.g. `100.0`); `0.0` = off |
 
 ## Limits / Not Yet
 
-- **No FM.** Only USB and LSB are commanded. FM is noted for a future addition.
 - **No mic-through bridge.** Nexus does not route your PC microphone through to the rig's audio input. Connect your microphone to the rig's MIC jack directly as you would for any external logger. Import pre-recorded WAVs for voice keyer messages.
 - **Mode is not read back from the rig.** The sideband badge is computed from the polled dial MHz. If you change mode at the rig front panel without changing band, the badge will not reflect it until you re-enter Phone or change band.
 - **Dial polling is 750 ms.** Fast VFO spins can be missed between polls.
@@ -148,4 +160,4 @@ You go from "there's a needed station on 20 m SSB" to "rig is there, call is in 
 
 ---
 
-Related pages: [Rig and Audio Setup](Rig-and-Audio-Setup.md) | [CW Cockpit](CW.md) | [FT8/FT4 Operate](Operate-FT8-FT4.md) | [Needed Board](Operate-FT8-FT4.md) | [Getting Started](Getting-Started.md)
+Related pages: [Rig and Audio Setup](Rig-and-Audio-Setup.md) | [CW Cockpit](CW.md) | [FT8/FT4 Operate](Operate-FT8-FT4.md) | [Needed Board](Needed-and-Hunting.md) | [Getting Started](Getting-Started.md)

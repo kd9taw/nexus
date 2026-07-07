@@ -43,28 +43,28 @@ It's free and open source (GPL-3.0), authored by **Seth McCallister, KD9TAW**, w
 The core isn't the interface — it's the waveforms. Tempo gives you a two-tier system and lets you pick the right one for the path you're on, then keep talking. Both share the same 77-bit message and LDPC(174,91) error correction; only the modem and the clock change.
 
 **FT1 — the fast tier, built for conversation**
-- A **4-second cycle** (~3.5 s of waveform), in roughly **150 Hz** of bandwidth.
+- A **4-second cycle** (~3.5 s of waveform), designed to be narrow (est. **~42–67 Hz**).
 - A **coherent** 4-CPM waveform — wrings the most information out of every second of air time. That's the speed lever.
 - **Incremental-redundancy retransmission (IR-HARQ)** — live and on by default. A frame that fails standalone is buffered and joint-turbo-combined with its RV1/RV2 resends, accumulating coding gain across retransmits — unusual for amateur text modes. Measured ~+2.5 dB threshold shift and ~2× QSO completion in the −11…−13 dB zone through the full pipeline *(simulation-validated; not yet confirmed on the air)*.
 
 **DX1 — the robust tier, built to survive the path**
 - **Non-coherent 8-FSK**, ~50 Hz wide, 15-second cycle. Never relies on carrier phase, so it **rides through fading** that collapses coherent modes.
-- In simulation it loses only **~3.7 dB** under Rayleigh fading — where FT8-class coherent modes lose 10+ dB.
+- In simulation it loses only **~3.7 dB** under Rayleigh fading — where coherent modes (like FT1) can lose 10+ dB.
 
-> **An honest trade:** FT1 gives up roughly 3 dB of raw sensitivity versus FT8 (a *simulated* ~−15 dB threshold vs ~−18 to −21 dB) to buy that conversational cycle. You can't have one waveform that's both the fastest *and* the most sensitive — so Tempo ships both, and you choose.
+> **An honest trade:** FT1 gives up roughly 6 dB of raw single-shot sensitivity versus FT8 (a *simulated* ~−15 dB threshold vs ~−21 dB; ~2.5 dB versus FT4) to buy that conversational cycle. You can't have one waveform that's both the fastest *and* the most sensitive — so Tempo ships both, and you choose.
 
 |                          | **FT1 — Fast**                                  | **DX1 — Robust**                                       |
 |--------------------------|-------------------------------------------------|--------------------------------------------------------|
 | Modulation               | Coherent 4-CPM (h = 1/2, BT = 0.3)              | Non-coherent 8-FSK (Gray-coded)                        |
 | T/R cycle                | 4 s (~3.5 s of waveform)                         | 15 s                                                   |
-| Occupied bandwidth       | ~150 Hz                                          | ~50 Hz                                                 |
+| Occupied bandwidth       | not specified (est. ~42–67 Hz)                   | ~50 Hz                                                 |
 | Error correction         | LDPC(174,91) + turbo equalization, live IR-HARQ | LDPC(174,91), soft-decision                          |
 | Best for                 | Conversational pace on stable regional / national paths | Fading, disturbed, regional-to-national paths     |
 | Simulated AWGN threshold | ~−15 dB *(simulation only)*                      | ~−18.6 dB *(simulation only)*                          |
 
 *Both tiers carry the same 77-bit, WSJT-X-compatible messages — switching tiers changes the timing and waveform, never the message format or your workflow. The tier is never switched silently: the operator picks Fast or Robust, and the toggle stays visible.*
 
-**Why "faster" is the headline — transmit/turnaround cycle per over** *(context, not a sensitivity benchmark — shorter = a snappier back-and-forth):* FT8 round trip ≈ 30 s · JS8 Normal 15 s · JS8 Fast 10 s · JS8 Turbo 6 s · **Tempo FT1 4 s**.
+**Why "faster" is the headline — transmit/turnaround cycle per over** *(context, not a sensitivity benchmark — shorter = a snappier back-and-forth):* FT8 15 s · JS8 Normal 15 s · JS8 Fast 10 s · JS8 Turbo 6 s · **Tempo FT1 4 s**.
 
 For the full protocol deep-dive, see [FT1-Protocol.md](FT1-Protocol.md).
 
@@ -76,7 +76,7 @@ For the full protocol deep-dive, see [FT1-Protocol.md](FT1-Protocol.md).
 - **Live decode feed** — color-coded by what matters: directed-to-you, worked-before (B4), CQ, new. One-tap Call / Work buttons start a directed QSO.
 - **Three operating modes** — **Chat** (presence, auto-chunked free text, directed inbox, store-and-forward), **QSO** (Run / Search-&-Pounce auto-sequencer), and **Field Day** (native exchange, dupe-checked log, ADIF/Cabrillo export). Contacts are operator-initiated by design.
 - **Logbook + ecosystem interop** — ADIF logbook with auto-logging and B4 highlighting; ADIF/Cabrillo export; the WSJT-X UDP API (double-click-to-call from GridTracker/JTAlert) and PSK Reporter spotting.
-- **Rig control + clean band plan** — Hamlib rigctld (bundled, offline), serial RTS/DTR, or VOX; a 56-model rig dropdown and one-tap band selector. Tempo's calling frequencies sit clear of the FT8/JS8/WSPR watering holes and CW segments.
+- **Rig control + clean band plan** — Hamlib rigctld (bundled, offline), serial RTS/DTR, or VOX; a 57-model rig dropdown and one-tap band selector. Tempo's calling frequencies sit clear of the FT8/JS8/WSPR watering holes and CW segments.
 - **Coordinated QSY ("Roam")** — opt-in "move together" that hops channels with the station you're working to dodge interference, announced **in the clear**. Honestly: it's legal anti-QRM + casual obscurity, **not** encryption or privacy — a capable listener can still follow.
 - **Safe by default** — starts passive (hunt-and-pounce): listens and decodes but won't transmit until you act. The CQ beacon is opt-in and off by default; Monitor/Muted, Tune, and Stop TX give instant control, with a transmit watchdog as backstop.
 
@@ -94,11 +94,11 @@ For the full protocol deep-dive, see [FT1-Protocol.md](FT1-Protocol.md).
 
 We'd rather under-promise. Here's exactly where things stand:
 
-- **The app is feature-complete and runs on Windows.** The installer is a ~199 MB per-user, **unsigned, cross-compiled** build that bundles WebView2 and Hamlib offline — no admin rights, no internet needed. Expect a SmartScreen warning ("More info → Run anyway"), as with any unsigned beta. macOS / Linux desktop builds are Phase 2.
+- **The app is feature-complete and runs on Windows.** The installer is a ~210 MB per-user, **unsigned, cross-compiled** build that bundles WebView2 and Hamlib offline — no admin rights, no internet needed. Expect a SmartScreen warning ("More info → Run anyway"), as with any unsigned beta. macOS / Linux desktop builds are Phase 2.
 - **The waveforms are validated by simulation only** — AWGN and Rayleigh-fading sweeps in the test harness. They have **not yet been confirmed on the air.** The simulated thresholds (FT1 ~−15 dB, DX1 ~−18.6 dB) are bench numbers, not field results.
 - **On-air decode-rate-vs-SNR validation is the #1 remaining gate** — the single biggest reason the project needs operators.
 - **Shipped in v0.2.0 (beta):** **IR-HARQ** joint-turbo soft-combining is now live end-to-end and on by default; **DX1 full-passband acquisition** now decodes every signal across 200–2900 Hz per slot (the tuned RX offset is now just a waterfall marker / TX-pairing hint). The Windows cross-build is validated — modem self-tests, `tempo.exe`, and the NSIS installer all cross-build clean, with 5/5 Windows test exes passing. **Still simulation- and cross-build-validated only — not yet confirmed on the air.**
-- **Known limits:** the FT8/FT4 tier is Phase 2 (designed, not yet wired).
+- **Known limits:** Tempo chat conversations run on the FT1 tier only; FT8/FT4 operating is a separate, fully live mode.
 
 ---
 
@@ -107,7 +107,7 @@ We'd rather under-promise. Here's exactly where things stand:
 This is an open invitation to the club. If you have an HF station and a soundcard-mode workflow, you can move this project from "promising in simulation" to a real answer on the air.
 
 **You're a good fit if you:**
-- Run Windows and a CAT- or VOX-controllable HF rig (Hamlib's 56-model dropdown, serial RTS/DTR, or VOX).
+- Run Windows and a CAT- or VOX-controllable HF rig (Hamlib's 57-model dropdown, serial RTS/DTR, or VOX).
 - Are comfortable with WSJT-X / JS8Call-style soundcard operating.
 - Like being early, and don't mind a rough edge in exchange for shaping the result — including reporting the boring failures and the contacts that *didn't* decode.
 

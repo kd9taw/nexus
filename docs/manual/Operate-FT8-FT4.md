@@ -220,6 +220,10 @@ At startup Nexus reads compound calls (slashed calls such as `W1AW/7`) from your
 | `wsjtx_udp` | false | Must be set to true to enable UDP output to JTAlert/GridTracker/loggers |
 | `wsjtx_udp` target | 127.0.0.1:2237 | WSJT-X UDP ecosystem target (irrelevant unless `wsjtx_udp` is true) |
 | `psk_flush_secs` | 300 | PSK Reporter flush interval (hardcoded) |
+| `write_all_txt` | false | Append every decode to a WSJT-X-style ALL.TXT log |
+| `save_qso_wav` | false | Save a WAV recording of each completed QSO |
+
+**Config profiles**, ALL.TXT logging (`write_all_txt`), and per-QSO WAV capture (`save_qso_wav`) are all available; the two logging options default off.
 
 ---
 
@@ -227,7 +231,7 @@ At startup Nexus reads compound calls (slashed calls such as `W1AW/7`) from your
 
 - **Fox role** (running a DXpedition as the Fox) is not implemented; Hound only.
 - **SuperFox** is permanently removed — the QPC table license bars vendoring outside WSJT-X.
-- **Contest modes** (NA VHF, RTTY Roundup, WW Digi), ALL.TXT export, save-WAV per QSO, config profiles, frequency calibration, WSPR, Q65, and MSK144 are not implemented.
+- **Contest modes** (NA VHF, RTTY Roundup, WW Digi), frequency calibration, WSPR, Q65, and MSK144 are not implemented.
 - **F6 / Decode** is native-source only; silently a no-op in Companion mode.
 - **Early decode pass** runs only for FT8 and FT4 in native source mode. FT1, DX1, and Companion source decode at the period boundary only.
 - **Waterfall** is a compact horizontal strip (a spectrum glance tool), not a tall scrolling WSJT-X-style column.

@@ -1,6 +1,6 @@
 # Logbook and Awards
 
-Nexus keeps a persistent ADIF logbook that drives offline award tracking, per-source confirmation accounting, four outbound upload connectors, two inbound confirmation syncs, and a shipped gamification layer called Journey — all from a single QSO record that survives restarts and round-trips cleanly through standard ADIF.
+Nexus keeps a persistent ADIF logbook that drives offline award tracking, per-source confirmation accounting, five outbound upload connectors, two inbound confirmation syncs, and a shipped gamification layer called Journey — all from a single QSO record that survives restarts and round-trips cleanly through standard ADIF.
 
 ---
 
@@ -77,7 +77,7 @@ tqsl -d -u -x -a compliant -l <station_location> <adif_path>
 TQSL exit codes are classified: 0 or 9 → Pending, 8 → Duplicate (benign), 11 → None (no network stamp, retryable), 5 + cert/location error in stderr → AuthFail, anything else → Rejected.
 
 TQSL is auto-detected from OS default locations before falling back to `PATH`:
-- **Windows:** `%ProgramFiles%\TrustedQSL\tqsl.exe`
+- **Windows:** `%ProgramFiles(x86)%\TrustedQSL\tqsl.exe`, then `%ProgramFiles%\TrustedQSL\tqsl.exe`
 - **macOS:** `/Applications/TrustedQSL/…`
 - **Linux:** `/usr/bin/tqsl`, `/usr/local/bin/tqsl`, `/opt/tqsl/bin/tqsl`
 
@@ -129,9 +129,19 @@ Auto-push to eQSL on log is controlled by `eqsl_upload` (default: **off**).
 
 ---
 
+## HRDLog.net Integration
+
+HRDLog.net realtime push sends one QSO to the `NewEntry.aspx` robot endpoint after each log entry. Authentication uses your callsign plus an HRDLog upload code (not your account password), stored in the OS keychain.
+
+Responses are classified into the same Accepted / Duplicate / AuthFail / Rejected outcomes and written to the shared connection event log. Unlike the other connectors, HRDLog does not stamp a per-QSO ADIF upload-state field, so its push state is not carried in the exported ADIF.
+
+Auto-push to HRDLog on log is controlled by `hrdlog_upload` (default: **off**).
+
+---
+
 ## Keychain Credential Policy
 
-All connector credentials — LoTW, eQSL, QRZ XML password, QRZ Logbook API key, and ClubLog Application Password — are stored in the OS keychain:
+All connector credentials — LoTW, eQSL, QRZ XML password, QRZ Logbook API key, ClubLog Application Password, and the HRDLog upload code — are stored in the OS keychain:
 
 | Platform | Keychain |
 |---|---|
@@ -155,7 +165,7 @@ Every QSO record carries a per-source `UploadOutcome` stamped at upload time and
 | Rejected | Service refused the record; inspect the connection event log |
 | AuthFail | Credentials invalid; re-enter in Settings |
 
-The connection event log (accessible from Settings → Connectors) holds the last 200 events in a rolling buffer, covering every credential save, sync download, upload dispatch, and service rejection for all four connectors. Each event carries a timestamp, connector name, severity, and a sanitized message (absolute paths redacted to basenames, truncated to 200 characters).
+The connection event log (accessible from Settings → Connectors) holds the last 200 events in a rolling buffer, covering every credential save, sync download, upload dispatch, and service rejection for all five connectors. Each event carries a timestamp, connector name, severity, and a sanitized message (absolute paths redacted to basenames, truncated to 200 characters).
 
 A per-row push button (↥) in the Logbook table lets you re-push any individual QSO to QRZ on demand without re-syncing the entire log. ClubLog and eQSL have no per-row push button; re-uploading to those services requires triggering a full sync.
 

@@ -80,17 +80,19 @@ mode** can instead ride an upstream WSJT-X/JTDX decode stream over UDP :2237 —
 another app owns the rig. **Always-on decode** means there is no Monitor toggle to forget: the
 decoder runs every RX slot regardless of TX state.
 
-*Not yet:* Fox role, contest modes (NA VHF / RTTY RU / WW Digi), ALL.TXT, per-QSO WAV save,
-config profiles, WSPR, Q65/MSK144.
+*Not yet:* Fox role, contest modes (NA VHF / RTTY RU / WW Digi), WSPR-as-a-mode,
+Q65/MSK144. (Per-QSO WAV save has since shipped —
+Settings ▸ Operating ▸ Save received audio.)
 
 ## The CW cockpit
 
 A casual/ragchew CW station in software, deliberately scoped: no contest serials, no auto-ESM —
 the operator keys every message.
 
-Two keyer back-ends ship today: **CAT** (Hamlib `send_morse`; the rig generates Morse, speed
-pushed via KEYSPD) and **Soundcard** (Nexus synthesizes PARIS-timed, click-free Morse — 5 ms
-raised-cosine envelopes — through the TX audio path, for rigs without a CW keyer command).
+Three keyer back-ends ship today: **CAT** (Hamlib `send_morse`; the rig generates Morse, speed
+pushed via KEYSPD), **Soundcard** (Nexus synthesizes PARIS-timed, click-free Morse — 5 ms
+raised-cosine envelopes — through the TX audio path, for rigs without a CW keyer command), and
+**WinKeyer** (a K1EL WK1/2/3 hardware keyer over serial, port set via `winkeyer_port`).
 WPM runs 5–50 (default 25) with PgUp/PgDn on-the-fly nudge; Esc aborts instantly, clearing the
 queue and stopping the rig. Eight F-key macros (CQ, answer with RST+name, 73/SK, calls, AGN…)
 expand `{MYCALL}`, `{NAME}`, `{RST}` and his-call tokens, with 599 cut-numbered to 5NN. A narrow
@@ -100,7 +102,7 @@ license-class gate blocks keying out of segment — including the Technician CW-
 80/40/15 m. The log strip pre-fills CW/599, and a Needed-board click lands here with the
 callsign already typed.
 
-*Not yet:* WinKeyer hardware, paddle input, CW receive decoding, contest exchanges.
+*Not yet:* paddle/iambic input, contest exchanges.
 
 ## The Phone cockpit
 
@@ -118,8 +120,9 @@ a timestamped WAV on disk with crash-safe headers and a 2-hour auto-stop. Licens
 enforcement hard-blocks PTT out of segment, the log strip pre-fills 59/SSB, and during Field Day
 it routes to the event log with class/section.
 
-*Not yet:* FM mode, live mic-through-app audio bridge (use the rig's mic; Nexus handles canned
-messages, recording, scope, CAT/PTT).
+*Not yet:* live mic-through-app audio bridge (use the rig's mic; Nexus handles canned
+messages, recording, scope, CAT/PTT). FM voice — simplex and repeaters with shift and CTCSS
+tones — has shipped since this section was first written.
 
 ## The Needed board
 
@@ -240,9 +243,10 @@ plain-language reasoning ("12 EU stations hear you on 20m"), and the persistent 
 answers "is the band open / am I getting out / what do I need" from every section of the app,
 with feed-health pills that distinguish "connected but quiet" from "down."
 
-*Honest labels:* the per-path 24-hour outlook is a physics-lite in-house heuristic (MUF +
-D-layer), labeled "modelled" in the UI. VOACAP is not integrated. PSKR MQTT band topics carry no
-SNR, so SNR-derived features degrade gracefully where absent.
+*Honest labels:* the prediction engine is selectable — a physics-lite in-house heuristic (MUF +
+D-layer) or a native port of ITU-R P.533 (the VOACAP-class link-budget standard) with P.1240
+operational MUF; both labeled "modelled" in the UI. VOACAP itself is not integrated. PSKR MQTT
+band topics carry no SNR, so SNR-derived features degrade gracefully where absent.
 
 ## Zero-config setup and rig control
 
@@ -312,13 +316,14 @@ load while this layer earns its stripes.
 **Production-grade today:** FT8/FT4 operating, logbook/awards/connectors, Needed board,
 POTA/SOTA hunter, Field Day mode, Connect map, setup/CAT.
 
-**Casual-grade by design:** CW and Phone cockpits (no contests, no CW decode, no WinKeyer).
+**Casual-grade by design:** CW and Phone cockpits (no contests).
 
 **Beta pending on-air validation:** FT1/DX1 chat tiers.
 
-**Not yet:** Fox role, contest modes, WSPR/Q65/MSK144, CW receive decoding, FM phone, rotator
-control, VOACAP, mobile/web clients. The Windows installer is the supported package; the code
-builds on Linux.
+**Not yet:** Fox role, contest modes, WSPR-as-a-mode, Q65/MSK144, mobile/web clients. (Shipped since this list was first written: rotator control with
+satellite pass auto-track, the Satellites section, 23 cm/IC-9700 support, HRDLog.net, the
+headphone monitor, and the native ITU-R P.533 propagation engine.) The Windows installer is
+the supported package; the code builds on Linux.
 
 ---
 

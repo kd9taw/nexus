@@ -33,7 +33,10 @@ The app installs per-user. Settings are written to `%APPDATA%\tempo\settings.jso
 
 On the first launch Nexus shows a one-time setup wizard (stored under localStorage key `nexus.features.wizardSeen`). You can reopen it any time from Settings.
 
-The wizard is a single-screen dialog showing three sections simultaneously — goals, operating modes, and license class — with no separate steps or pages.
+The wizard is a three-step flow — **Station** (callsign + grid), **Rig**
+(detect-my-radio, connection, audio), then **Goals** (goal cards, operating
+modes, license class). Every step is skippable, and you can re-run the wizard
+any time from Settings ▸ Features ▸ "Re-run setup…".
 
 **Goals** — Five goal cards appear:
 
@@ -166,7 +169,7 @@ UI scale has four steps: **90%, 100%, 110%, 125%**. The default is **125%**, cho
 
 - The installer bundles Hamlib for **Windows only**. Linux and macOS users need `rigctld` on `PATH`.
 - Rig auto-detection requires the full `radio` Cargo feature (the headless/UI-dev build returns empty lists for ports, audio, and detected rigs).
-- The curated rig model table covers ~50 radios. For a rig not in the table, look up its Hamlib number with `rigctld -l` and type it in directly.
+- The curated rig model table covers ~50 radios. For a rig not in the table, run an external `rigctld` and select **NET rigctl** (model 2) in the dropdown.
 - Generic-cable rigs (CH340, FTDI dongle reporting only "USB Serial") get a driver hint and port fill but no model match — the operator must select the model manually.
 - Serial PTT (RTS/DTR) is not available in builds compiled without the `serial` Cargo feature.
 - Transmit privilege lockout enforces **US FCC Part 97 / ITU Region 2** rules only. Non-US operators should select **Open** to disable it; no other national band plans are modeled.

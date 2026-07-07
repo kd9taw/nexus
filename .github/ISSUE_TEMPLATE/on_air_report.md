@@ -1,13 +1,13 @@
 ---
 name: On-air report
-about: Report a real over-the-air result with Tempo — the data the project needs most
+about: Report a real over-the-air FT1/DX1 result — the data the project needs most
 title: "[on-air] "
 labels: ["on-air report"]
 assignees: []
 ---
 
 <!--
-On-air validation is Tempo's open gate: the FT1/DX1 waveforms are proven in
+On-air validation is the open gate for Nexus's new protocols: the FT1/DX1 waveforms are proven in
 simulation but NOT yet on the air. A real result — success OR failure — is the
 single most useful contribution. Fill in what you can; partial reports help too.
 (For quick or conversational reports, a GitHub Discussion is also welcome.)
@@ -16,7 +16,7 @@ single most useful contribution. Fill in what you can; partial reports help too.
 ## Station & setup
 
 - **Your callsign / grid:** <!-- e.g. KD9TAW / EN52 -->
-- **Tempo version:** <!-- 0.1.0, or git commit if built from source -->
+- **Nexus version:** <!-- 0.3.0, or git commit if built from source -->
 - **Rig + audio/PTT path:** <!-- e.g. IC-7300 USB CODEC + CAT; or sound card + serial RTS; or VOX -->
 - **Antenna + power:** <!-- e.g. 40 m dipole @ 10 m, 25 W -->
 
@@ -35,7 +35,7 @@ single most useful contribution. Fill in what you can; partial reports help too.
 - **Reported SNR (dB) and dT (s):** <!-- e.g. -14 dB, dT +0.1 -->
 - **Decode rate:** <!-- e.g. ~8 of 10 slots; or "1 of many" -->
 - **Round trip completed?** <!-- e.g. full QSO / one-way copy only / Field Day exchange / store-and-forward -->
-- **Compared to FT8/JS8 on the same path (if you tried):** <!-- how did Tempo compare? -->
+- **Compared to FT8/JS8 on the same path (if you tried):** <!-- how did FT1/DX1 compare? -->
 
 ## What worked / what didn't
 

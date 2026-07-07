@@ -35,7 +35,7 @@ Yes. Nexus outputs the standard WSJT-X UDP datagram set on `127.0.0.1:2237` (Dec
 Yes, via two paths:
 
 - **UDP QsoLogged datagrams** go to `127.0.0.1:2237` just like WSJT-X. N1MM+, HRD, and Log4OM can receive these and log the contact on their side.
-- **CAT broker**: Nexus can serve a rigctld-compatible TCP broker (off by default; enable in Settings > Rig/CAT) so WSJT-X, N1MM+, and other loggers share the radio through Nexus. The broker handles `f/F`, `m/M`, `t/T`, `v/V`, `s`, `\dump_state`, and `\chk_vfo`. Advanced Hamlib commands beyond those return `RPRT -11`.
+- **CAT broker**: Nexus can serve a rigctld-compatible TCP broker (off by default; enable in Settings > Rig/CAT) so WSJT-X, N1MM+, and other loggers share the radio through Nexus. The broker handles `f/F`, `m/M`, `t/T`, `v/V`, `s`, `\dump_state`, `\chk_vfo`, `\get_powerstat`, and `q`. Genuinely unimplemented Hamlib commands (e.g. `L RFPOWER`) return `RPRT -11`.
 
 For Field Day specifically, Nexus pushes each contact to N3FJP over TCP (ADDDIRECT + CHECKLOG, default port 1100) and broadcasts N1MM+ contactinfo UDP datagrams (default port 12060). See [Field Day](Field-Day.md).
 
@@ -45,7 +45,7 @@ For Field Day specifically, Nexus pushes each contact to N3FJP over TCP (ADDDIRE
 
 **On Windows, no.** The installer bundles `rigctld.exe` plus the required DLLs (`libhamlib-4.dll`, `libusb-1.0.dll`, and the MinGW runtime). Nexus spawns and manages rigctld internally on port 4532 — you never run it manually. On Linux and macOS you must have `rigctld` on PATH (or build with the bundled resources manually) because those platform installers do not include it yet.
 
-The bundled Hamlib model table covers approximately 50 radios (Icom, Yaesu, Kenwood, Elecraft, FlexRadio, Xiegu, QRP Labs, and others), verified against Hamlib 4.7.1. For a radio not on that list, look up its model number with `rigctl -l` and type it in directly.
+The bundled Hamlib model table covers approximately 50 radios (Icom, Yaesu, Kenwood, Elecraft, FlexRadio, Xiegu, QRP Labs, and others), verified against Hamlib 4.7.1. For a radio not on that list, run an external `rigctld` for it and connect Nexus as **NET rigctl** (model 2, in the dropdown).
 
 ---
 
@@ -107,7 +107,7 @@ Other contest modes (NA VHF, RTTY Roundup, WW Digi, ARRL Sweepstakes, etc.) are 
 
 ### Can Nexus decode CW (receive Morse)?
 
-No. The CW cockpit is transmit-only. The narrow AF scope (300–1100 Hz) lets you zero-beat a received signal against the configured pitch hairline, but the app does not decode incoming Morse. Two keyer back-ends are available for transmit: CAT (Hamlib `send_morse`, rig in CW mode) and Soundcard (generated audio with 5 ms raised-cosine element shaping). WinKeyer hardware and paddle/iambic input are not yet supported. See [CW](CW.md).
+Yes — a live single-signal decoder follows the station at your marker pitch and shows the decoded text and WPM, with a sensitivity slider (it is not a full-band skimmer). The narrow AF scope (300–1100 Hz) zero-beats a signal against the pitch hairline. Three keyer back-ends are available for transmit: CAT (Hamlib `send_morse`), Soundcard (generated audio, 5 ms raised-cosine shaping), and a K1EL WinKeyer. Paddle/iambic input through the app is not supported — connect paddles to the rig or the WinKeyer directly. See [CW](CW.md).
 
 ---
 

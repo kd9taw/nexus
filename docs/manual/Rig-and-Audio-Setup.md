@@ -99,6 +99,7 @@ Nexus enforces rig mode via CAT on every section entry. The mode is re-asserted 
 |---|---|
 | **Digital (FT8/FT4/FT1/DX1)** | `PKTUSB` / `PKTLSB` (Hamlib DATA submode — Yaesu DATA-U, Icom USB-D, Kenwood DATA) |
 | **Phone (SSB)** | `USB` if dial ≥ 10 MHz; `LSB` if dial < 10 MHz |
+| **Phone (FM sub-mode)** | `FM` commanded, then repeater shift (R/O) and CTCSS (C) applied after mode set |
 | **CW — CAT keyer** | `CW` |
 | **CW — Soundcard keyer** | `USB` if dial ≥ 10 MHz; `LSB` if dial < 10 MHz |
 
@@ -175,7 +176,7 @@ Frequency is polled continuously — a manual VFO knob turn is reflected in the 
 | Setting | Default | Notes |
 |---|---|---|
 | `pttMethod` | `vox` | Change to `cat`, `rts`, or `dtr` |
-| `rigModel` | `0` (none) | Select from dropdown or type Hamlib model number |
+| `rigModel` | `0` (none) | Select from the curated dropdown (unlisted rigs: NET rigctl, model 2) |
 | `baud` | `38400` | Match your rig's CAT baud setting |
 | `rigctldPort` | `4532` | Local TCP port; Hamlib NET rigctl default |
 | `serialPort` | `''` (empty) | Fill via Detect or manually |
@@ -204,7 +205,6 @@ Frequency is polled continuously — a manual VFO knob turn is reflected in the 
 - **Mode is not read back from the rig over CAT.** The sideband badge in the cockpit is computed from dial MHz. A rig left in the wrong mode by another application is not detected until the next section-entry mode command.
 - **Test CAT waits a hard-coded 1300 ms** for rigctld to spawn. On a slow machine or heavily loaded COM port this timeout may be insufficient; retry the test if it fails once.
 - **The CAT broker handles only the WSJT-X command subset.** All commands not in the handled set (`f`/`F`, `m`/`M`, `t`/`T`, `v`/`V`, `s`, `\dump_state`, `\chk_vfo`, `\get_powerstat`, `q`) return `RPRT -11`, including `L RFPOWER` and `L KEYSPD`.
-- **FM mode is not yet commanded** in the Phone section — only USB/LSB are sent via CAT. FM is noted as a future addition.
 - **Theme and UI scale are stored in `localStorage`, not in `settings.json`.** They do not roam with a copied or synced settings file.
 - **Transmit-privilege lockout enforces FCC Part 97, ITU Region 2 rules only.** Non-US operators should select `Open` to disable the lockout; no other national band plans are modeled.
 

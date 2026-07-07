@@ -1,12 +1,12 @@
 # CW Cockpit
 
-Nexus ships a complete casual/ragchew CW operating surface: two keyer back-ends, eight F-key macros with live token expansion, a narrow AF scope for zero-beating, and privilege-gated transmit — all wired into the same CAT/PTT infrastructure the digital and phone modes share.
+Nexus ships a complete casual/ragchew CW operating surface: three keyer back-ends, eight F-key macros with live token expansion, a narrow AF scope for zero-beating, and privilege-gated transmit — all wired into the same CAT/PTT infrastructure the digital and phone modes share.
 
 ---
 
 ## Choosing a Keyer Back-End
 
-Nexus offers two keyer back-ends. Select between them in **Settings → CW**.
+Nexus offers three keyer back-ends. Select between them in **Settings → CW**.
 
 ### CAT (default)
 
@@ -20,6 +20,12 @@ Nexus generates PCM Morse audio at 12 kHz sample rate following PARIS timing (di
 
 **When to use:** your rig does not support CAT keying, you are operating into a dummy load or audio interface, or you need provably click-free keying generated in software.
 
+### K1EL WinKeyer
+
+A K1EL WinKeyer (WK1/WK2/WK3) generates the Morse timing in hardware and keys the rig directly. Nexus opens the keyer over serial (1200 baud 8N2, host mode) on the port set in `winkeyer_port` (e.g. `COM6`) and streams the character text to it; WPM changes are pushed to the keyer (clamped to the WK range 5–99).
+
+**When to use:** you already run a WinKeyer in the shack, or you want hardware-timed keying independent of CAT and soundcard latency.
+
 The back-end is switchable live mid-session; no restart is required.
 
 ---
@@ -28,7 +34,7 @@ The back-end is switchable live mid-session; no restart is required.
 
 Entering the CW section commands the rig via CAT before any transmit:
 
-- **CAT back-end** → rig mode set to `CW`.
+- **CAT and WinKeyer back-ends** → rig mode set to `CW`.
 - **Soundcard back-end** → rig mode set to `USB` (≥10 MHz) or `LSB` (<10 MHz).
 
 The mode is re-asserted on section entry even if the frequency has not changed. You do not need a separate mode button. TX is armed automatically on CW section entry (`tx_enabled = true`), consistent with a live-key rig. The FT8 auto-sequencer never applies to CW.
@@ -45,7 +51,7 @@ The mode is re-asserted on section entry even if the frequency has not changed. 
 | `Shift`+`PgUp` | +4 WPM |
 | `Shift`+`PgDn` | −4 WPM |
 
-Speed changes are applied immediately to the next character queued. On the CAT back-end, the new WPM value is also pushed to the rig via `KEYSPD`.
+Speed changes are applied immediately to the next character queued. On the CAT back-end, the new WPM value is also pushed to the rig via `KEYSPD`; on the WinKeyer back-end it is pushed to the keyer's Set-Speed command.
 
 ---
 
@@ -105,6 +111,7 @@ Press `Esc` or click the **Abort** button at any time to:
 1. Clear the entire CW send queue immediately.
 2. On **CAT back-end**: send Hamlib `\stop_morse` to halt the rig's keyer in place.
 3. On **Soundcard back-end**: flush the audio output ring and release PTT (250 ms TX tail remains, not configurable).
+4. On **WinKeyer back-end**: send the WK Clear-Buffer command, which stops keying immediately and flushes the keyer's send buffer.
 
 The abort flag is consumed exactly once; a subsequent send starts cleanly.
 
@@ -157,7 +164,8 @@ If the rig has a split TX frequency set (`splitTxMhz` in the radio snapshot), a 
 
 | Setting | Default | Notes |
 |---|---|---|
-| `cw_keyer` | `cat` | `cat` or `soundcard` |
+| `cw_keyer` | `cat` | `cat`, `soundcard`, or `winkeyer` |
+| `winkeyer_port` | *(empty)* | Serial port of the K1EL WinKeyer (e.g. `COM6`); used when `cw_keyer` is `winkeyer` |
 | `cw_wpm` | `25` | Range 5–50; WPM_MIN=5, WPM_MAX=50 |
 | `cw_pitch_hz` | `600.0` | Range 300–1200, step 10; used as scope hairline and soundcard tone |
 | `op_name` | *(empty)* | Expands `{NAME}` in macros; set in **Settings → Station** |
@@ -167,10 +175,9 @@ If the rig has a split TX frequency set (`splitTxMhz` in the radio snapshot), a 
 
 ## Limits / Not Yet
 
-- **WinKeyer** (hardware serial keyer): not shipped. Only CAT and Soundcard back-ends exist. The settings code notes "WinKeyer comes later."
 - **No ESM auto-sequencer:** CW is manual-only. The FT8 seven-state sequencer is explicitly excluded from CW.
-- **No paddle/iambic input:** the only input paths are F-key macros and typed text. Live paddle feel requires an external hardware keyer connected to the rig directly.
-- **No CW decode/skimmer:** the scope shows the AF spectrum for zero-beating, but received CW is not decoded. The cockpit is TX-only in terms of automation.
+- **No paddle/iambic input through the app:** the only input paths are F-key macros and typed text. For live paddle feel, connect paddles to the rig or to the WinKeyer directly.
+- **Single-signal decoder, not a skimmer:** the live decoder follows one station at your marker pitch; it does not decode the whole passband at once.
 - **Macros not user-editable:** the 8 slots and their text are compiled in; no UI for custom macro text in this version.
 - **No contest exchange:** RST is hardcoded to 599, no serial-number field exists. This cockpit is casual/ragchew only.
 - **CAT abort reliability:** `\stop_morse` varies by Hamlib version and rig manufacturer; older builds and some rigs may not halt mid-element.

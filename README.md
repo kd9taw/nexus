@@ -69,7 +69,8 @@ WSJT-X muscle memory just works, inside a UI built this decade.
   descriptors, matches the rig model, pairs the audio CODEC, and links the one driver you need if
   it's missing. Hamlib ships inside the installer. A goal-driven first-run wizard (“what do you
   want to do?”) shapes the app to you, and your declared license class becomes a real Part 97
-  transmit lockout — the rig physically won't key outside your privileges.
+  transmit lockout — Nexus refuses to key outside your privileges, a software guard in every
+  TX path.
 - **💬 Novel weak-signal chat tiers.** The original Tempo layer: **FT1** (4-second conversational
   cycle) and **DX1** (fading-resilient non-coherent 8-FSK) with IR-HARQ retransmission combining
   and presence-gated store-and-forward — simulation-validated, seeking on-air reports.
@@ -137,15 +138,18 @@ New here? Start with **[Getting Started](docs/manual/Getting-Started.md)**.
 - The **FT8/FT4 tier is the production core**: operational parity with stock WSJT-X, verified
   against a 207-row behavior matrix and exercised on the air daily.
 - **CW and Phone cockpits** are casual/ragchew-grade by design: macros, voice keyer, scope, full
-  logging — no contest exchanges, no CW receive decoding, no WinKeyer hardware yet.
+  logging — macros, voice keyer, live single-signal CW decoder, WinKeyer support, full
+  logging — no contest exchanges yet.
 - The **FT1/DX1 chat tiers are simulation-validated, not yet proven on the air** — AWGN and fading
   sweeps say they work; on-air decode-rate reports are the remaining gate and the single most
   useful contribution you can make.
 - **Windows installer** is the supported package today; the codebase is cross-platform Rust/Tauri
   and builds on Linux.
 - Not implemented (yet): Fox role (running a DXpedition end), contest modes (NA VHF / RTTY RU /
-  WW Digi), WSPR, Q65/MSK144, CW receive decoding, rotator control, VOACAP integration (the path
-  predictor is an in-house heuristic model, and it's labeled as such in the UI).
+  WW Digi), WSPR-as-a-mode, Q65/MSK144.
+  (Shipped since earlier revisions of this list: rotator control with satellite auto-track,
+  the amateur-satellite section, 23 cm band support, per-QSO WAV save, HRDLog.net, a headphone
+  monitor, and a native ITU-R P.533 propagation engine selectable beside the heuristic model.)
 
 ## Architecture
 
