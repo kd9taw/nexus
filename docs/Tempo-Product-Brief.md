@@ -119,7 +119,7 @@ This is an open invitation to the club. If you have an HF station and a soundcar
 
 ### Get involved
 
-- **Download for Windows (latest release):** https://sourceforge.net/projects/nexus-ham/files/latest/download
+- **Download for Windows (latest release):** https://sourceforge.net/projects/nexus-ham-radio/files/latest/download
 - **Source, issues & feedback:** https://github.com/kd9taw/nexus
 - **Direct contact:** kd9taw@protonmail.com — or grab Seth at the club meeting.
 

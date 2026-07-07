@@ -30,7 +30,7 @@ Hamlib, and the DSP stack so a bare PC works with no internet.
 
 The installer is `Nexus_<version>_x64-setup.exe`. Get it from:
 
-- **SourceForge (primary):** <https://sourceforge.net/projects/nexus-ham/files/latest/download>
+- **SourceForge (primary):** <https://sourceforge.net/projects/nexus-ham-radio/files/latest/download>
 - **SourceForge (mirror):** the Nexus project files section
 
 Both host the identical binary and its SHA-256 checksum. Use whichever is faster

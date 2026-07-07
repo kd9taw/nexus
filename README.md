@@ -6,11 +6,11 @@
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](COPYING)
 ![Platform](https://img.shields.io/badge/platform-Windows-0078D6)
-[![Release](https://img.shields.io/badge/release-v0.3.0--beta-blue)](https://sourceforge.net/projects/nexus-ham/files/)
-[![Downloads](https://img.shields.io/sourceforge/dt/nexus-ham?label=downloads)](https://sourceforge.net/projects/nexus-ham/files/)
+[![Release](https://img.shields.io/badge/release-v0.3.0--beta-blue)](https://sourceforge.net/projects/nexus-ham-radio/files/)
+[![Downloads](https://img.shields.io/sourceforge/dt/nexus-ham-radio?label=downloads)](https://sourceforge.net/projects/nexus-ham-radio/files/)
 ![Status](https://img.shields.io/badge/status-beta-orange)
 
-[![Download for Windows](https://img.shields.io/badge/⬇_Download_for_Windows-.exe-0078D6?style=for-the-badge&logo=windows)](https://sourceforge.net/projects/nexus-ham/files/latest/download)
+[![Download for Windows](https://img.shields.io/badge/⬇_Download_for_Windows-.exe-0078D6?style=for-the-badge&logo=windows)](https://sourceforge.net/projects/nexus-ham-radio/files/latest/download)
 [![Operator manual](https://img.shields.io/badge/📖_Operator_manual-docs-8957e5?style=for-the-badge)](docs/manual/)
 
 <sub>Offline installer — bundles WebView2 **and Hamlib**, per-user install, no admin rights. ·
@@ -119,7 +119,7 @@ logs, never shown back to the UI beyond “configured.”
 
 ## Quick start
 
-1. **[Download the Windows installer](https://sourceforge.net/projects/nexus-ham/files/latest/download)** — offline,
+1. **[Download the Windows installer](https://sourceforge.net/projects/nexus-ham-radio/files/latest/download)** — offline,
    bundles WebView2 and Hamlib, per-user, no admin needed.
 2. Plug in the radio, open **Settings ▸ Rig & Audio**, click **Detect my radio**.
 3. Answer the first-run wizard: callsign, grid, license class, and what you want to do.
@@ -130,7 +130,7 @@ New here? Start with **[Getting Started](docs/manual/Getting-Started.md)**.
 
 > The installer is **unsigned** (cross-compiled on Linux), so SmartScreen may warn — *More info →
 > Run anyway*. Verify the download against the `SHA-256` on the
-> [download page](https://sourceforge.net/projects/nexus-ham/files/).
+> [download page](https://sourceforge.net/projects/nexus-ham-radio/files/).
 
 ## Status — the honest version
 
@@ -220,7 +220,7 @@ contributions welcome — see **[CONTRIBUTING.md](CONTRIBUTING.md)** and the
 
 <div align="center"><sub>
 
-**[⬇ Download](https://sourceforge.net/projects/nexus-ham/files/latest/download)** ·
+**[⬇ Download](https://sourceforge.net/projects/nexus-ham-radio/files/latest/download)** ·
 **[📖 Manual](docs/manual/)** ·
 **[💬 Discussions](https://github.com/kd9taw/nexus/discussions)** ·
 **[⭐ Star](https://github.com/kd9taw/nexus)**

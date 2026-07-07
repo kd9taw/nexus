@@ -10,7 +10,7 @@ and [Integrations](manual/Integrations.md) guides go deeper on their own areas.
 
 > **First, be on the latest build.** Several issues below are already fixed in
 > current releases. Check the build hash in the Settings header against the
-> [latest release](https://sourceforge.net/projects/nexus-ham/files/latest/download), and grab a
+> [latest release](https://sourceforge.net/projects/nexus-ham-radio/files/latest/download), and grab a
 > newer installer if you're behind.
 
 ---
