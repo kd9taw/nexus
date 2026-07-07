@@ -19,6 +19,7 @@ pub mod cw_parse;
 pub mod diagnostics;
 pub mod eqsl;
 pub mod fieldday;
+pub mod hamqth;
 pub mod hrdlog;
 pub mod inbox;
 pub mod logbook;

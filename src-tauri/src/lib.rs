@@ -170,6 +170,17 @@ type SharedHealth = Arc<FeedHealthState>;
 /// logged in yet / expired.
 type SharedQrzSession = Arc<Mutex<Option<String>>>;
 
+/// Cached HamQTH XML session id (in-memory only — short-lived, re-derivable from
+/// the keychain password, never persisted). `None` = not logged in yet / expired.
+///
+/// A NEWTYPE, not a bare alias like `SharedQrzSession`: a `type` alias of the same
+/// `Arc<Mutex<Option<String>>>` shares QRZ's `TypeId`, so Tauri's TypeId-keyed
+/// managed-state DI could not tell the two session caches apart (and `.manage()`
+/// would collide). This is the same reason `SharedRegionPaths` is a newtype beside
+/// `SharedLivePaths`.
+#[derive(Default)]
+struct SharedHamQthSession(Arc<Mutex<Option<String>>>);
+
 /// A feed counts as "live" if it parsed an event within this window; older ⇒
 /// "idle" (a lull on a quiet band, or a feed problem — the UI tooltip says so).
 /// Generous so a normal band lull doesn't flip the pill.
@@ -4918,6 +4929,7 @@ const LOTW_KEYCHAIN_USER: &str = "lotw-password";
 const EQSL_KEYCHAIN_USER: &str = "eqsl-password";
 const QRZ_KEYCHAIN_USER: &str = "qrz-password";
 const QRZ_LOGBOOK_KEYCHAIN_USER: &str = "qrz-logbook-key";
+const HAMQTH_KEYCHAIN_USER: &str = "hamqth-password";
 const CLUBLOG_KEYCHAIN_USER: &str = "clublog-password";
 const HRDLOG_KEYCHAIN_USER: &str = "hrdlog-code";
 
@@ -5087,6 +5099,11 @@ fn qrz_logbook_keychain() -> Result<keyring::Entry, String> {
         .map_err(|e| format!("couldn't open the system keychain: {e}"))
 }
 
+fn hamqth_keychain() -> Result<keyring::Entry, String> {
+    keyring::Entry::new(LOTW_KEYCHAIN_SERVICE, HAMQTH_KEYCHAIN_USER)
+        .map_err(|e| format!("couldn't open the system keychain: {e}"))
+}
+
 fn clublog_keychain() -> Result<keyring::Entry, String> {
     keyring::Entry::new(LOTW_KEYCHAIN_SERVICE, CLUBLOG_KEYCHAIN_USER)
         .map_err(|e| format!("couldn't open the system keychain: {e}"))
@@ -5195,6 +5212,41 @@ fn clear_qrz_password() -> Result<(), String> {
     let r = clear_keychain_entry(&qrz_keychain()?);
     if r.is_ok() {
         conn_log("QRZ XML", "info", "password cleared from the OS keychain");
+    }
+    r
+}
+
+/// Store (or, if empty, clear) the HamQTH.com account password in the OS keychain.
+/// Write-only, like the QRZ counterpart — the free-fallback callbook password.
+#[tauri::command]
+fn set_hamqth_password(
+    password: String,
+    hamqth_session: State<'_, SharedHamQthSession>,
+) -> Result<(), String> {
+    // A credential change invalidates the cached XML session id — a stale id kept
+    // working under the OLD identity until it expired server-side.
+    if let Ok(mut g) = hamqth_session.0.lock() {
+        *g = None;
+    }
+    let entry = hamqth_keychain()?;
+    if password.is_empty() {
+        clear_keychain_entry(&entry)?;
+        conn_log("HamQTH", "info", "password cleared from the OS keychain");
+        return Ok(());
+    }
+    entry
+        .set_password(&password)
+        .map_err(|e| format!("couldn't save to the system keychain: {e}"))?;
+    conn_log("HamQTH", "ok", "password saved to the OS keychain");
+    Ok(())
+}
+
+/// Remove the stored HamQTH password from the OS keychain (idempotent).
+#[tauri::command]
+fn clear_hamqth_password() -> Result<(), String> {
+    let r = clear_keychain_entry(&hamqth_keychain()?);
+    if r.is_ok() {
+        conn_log("HamQTH", "info", "password cleared from the OS keychain");
     }
     r
 }
@@ -5604,13 +5656,14 @@ fn download_eqsl_report_impl(state: State<'_, SharedEngine>) -> Result<LotwSyncR
     Ok(summary)
 }
 
-// ----- QRZ.com callsign lookup (session-key XML API) ------------------------
+// ----- QRZ.com / HamQTH.com callsign lookup (session-key XML APIs) -----------
 
-/// Outcome of one lookup attempt with a given session key.
+/// Outcome of one lookup attempt with a given session key/id. Shared by QRZ and its
+/// HamQTH fallback — both flow into the same [`QrzLookupDto`](tempo_app::dto::QrzLookupDto).
 enum QrzOutcome {
     Found(tempo_app::dto::QrzLookupDto),
     NotFound,
-    NeedLogin, // the session key is expired/invalid → (re)login
+    NeedLogin, // the session key/id is expired/invalid → (re)login
 }
 
 /// One QRZ lookup with an existing session key (no login). Network only; holds no
@@ -5653,52 +5706,172 @@ fn qrz_login(username: &str, password: &str) -> Result<String, String> {
     })
 }
 
-/// Look up a callsign on QRZ, enriching with name / (subscriber) grid / QTH /
-/// state. Uses the cached session key if valid; on expiry logs in **once** and
-/// retries (bounded — never loops). Network runs without any lock held.
+/// One HamQTH lookup with an existing session id (no login). The HamQTH mirror of
+/// [`qrz_try_lookup`]. Network only; holds no lock; errors redacted by the transport.
+fn hamqth_try_lookup(session_id: &str, callsign: &str) -> Result<QrzOutcome, String> {
+    let url = tempo_core::hamqth::build_lookup_url(
+        session_id,
+        callsign,
+        tempo_core::hamqth::HAMQTH_PRG,
+    );
+    let body = propagation::live::hamqth::fetch(&url)?;
+    if !tempo_core::hamqth::is_hamqth_xml(&body) {
+        return Err("HamQTH returned an unexpected response.".to_string());
+    }
+    if tempo_core::hamqth::parse_session(&body).needs_login() {
+        return Ok(QrzOutcome::NeedLogin);
+    }
+    Ok(match tempo_core::hamqth::parse_callsign(&body) {
+        Some(rec) => QrzOutcome::Found(rec.into()),
+        None => QrzOutcome::NotFound,
+    })
+}
+
+/// Log in to HamQTH and return a fresh session id. The HamQTH mirror of [`qrz_login`];
+/// the URL carries the password but is local (dropped here); errors redacted by the
+/// transport. On a login response with no id, HamQTH's `<error>` says why.
+fn hamqth_login(username: &str, password: &str) -> Result<String, String> {
+    let url = tempo_core::hamqth::build_login_url(&tempo_core::hamqth::HamQthLogin {
+        username: username.to_string(),
+        password: password.to_string(),
+    });
+    let body = propagation::live::hamqth::fetch(&url)?;
+    if !tempo_core::hamqth::is_hamqth_xml(&body) {
+        return Err("HamQTH returned an unexpected response — check your credentials.".to_string());
+    }
+    let session = tempo_core::hamqth::parse_session(&body);
+    session.session_id.ok_or_else(|| {
+        // HamQTH's <error> on a bad login (e.g. "Wrong user name or password")
+        // carries no secret — surface it; else a generic message.
+        session
+            .error
+            .map(|e| format!("HamQTH login failed: {e}"))
+            .unwrap_or_else(|| "HamQTH login failed — check your username/password.".to_string())
+    })
+}
+
+/// One complete QRZ lookup pass: try the cached session key, and on expiry log in
+/// **once** and retry (bounded — never loops). `Ok(Some(dto))` = a hit; `Ok(None)` =
+/// QRZ has no record (so the caller can fall through to the HamQTH fallback); `Err` =
+/// a transport/login error. Network runs without any lock held.
+fn qrz_lookup_attempt(
+    call: &str,
+    username: &str,
+    password: &str,
+    qrz_session: &SharedQrzSession,
+) -> Result<Option<tempo_app::dto::QrzLookupDto>, String> {
+    // 1) Try the cached key, if any.
+    let cached = qrz_session.lock().ok().and_then(|g| g.clone());
+    if let Some(key) = cached {
+        match qrz_try_lookup(&key, call)? {
+            QrzOutcome::Found(dto) => return Ok(Some(dto)),
+            QrzOutcome::NotFound => return Ok(None), // authoritative miss — don't re-login
+            QrzOutcome::NeedLogin => {}              // fall through to a single re-login
+        }
+    }
+    // 2) Log in once, cache the new key, retry the lookup once (bounded).
+    let key = qrz_login(username, password)?;
+    if let Ok(mut g) = qrz_session.lock() {
+        *g = Some(key.clone());
+    }
+    match qrz_try_lookup(&key, call)? {
+        QrzOutcome::Found(dto) => Ok(Some(dto)),
+        QrzOutcome::NotFound => Ok(None),
+        // A fresh key still reporting expiry is anomalous — give up (→ HamQTH fallback).
+        QrzOutcome::NeedLogin => Ok(None),
+    }
+}
+
+/// One complete HamQTH lookup pass — the free fallback, structurally identical to
+/// [`qrz_lookup_attempt`]. `Ok(Some(dto))` = a hit; `Ok(None)` = no record; `Err` =
+/// a transport/login error. Bounded (one login, no loop); no lock held over network.
+fn hamqth_lookup_attempt(
+    call: &str,
+    username: &str,
+    password: &str,
+    hamqth_session: &SharedHamQthSession,
+) -> Result<Option<tempo_app::dto::QrzLookupDto>, String> {
+    // 1) Try the cached session id, if any.
+    let cached = hamqth_session.0.lock().ok().and_then(|g| g.clone());
+    if let Some(id) = cached {
+        match hamqth_try_lookup(&id, call)? {
+            QrzOutcome::Found(dto) => return Ok(Some(dto)),
+            QrzOutcome::NotFound => return Ok(None), // authoritative miss — don't re-login
+            QrzOutcome::NeedLogin => {}              // fall through to a single re-login
+        }
+    }
+    // 2) Log in once, cache the new session id, retry the lookup once (bounded).
+    let id = hamqth_login(username, password)?;
+    if let Ok(mut g) = hamqth_session.0.lock() {
+        *g = Some(id.clone());
+    }
+    match hamqth_try_lookup(&id, call)? {
+        QrzOutcome::Found(dto) => Ok(Some(dto)),
+        QrzOutcome::NotFound => Ok(None),
+        // A fresh id still reporting expiry is anomalous — give up.
+        QrzOutcome::NeedLogin => Ok(None),
+    }
+}
+
+/// Look up a callsign, enriching with name / grid / QTH / state. QRZ is tried first
+/// (its paid tier carries grid/state); when QRZ is **unconfigured** (no username or
+/// no stored password) or has **no match**, the lookup falls through to the FREE
+/// HamQTH fallback so it works without a QRZ subscription. Each path uses the same
+/// bounded cached-session → login-once → retry pattern; both produce the same DTO, so
+/// the command's return type and the whole UI are unchanged.
 #[tauri::command]
 async fn qrz_lookup(
     callsign: String,
     state: State<'_, SharedEngine>,
     qrz_session: State<'_, SharedQrzSession>,
+    hamqth_session: State<'_, SharedHamQthSession>,
 ) -> Result<tempo_app::dto::QrzLookupDto, String> {
     let call = callsign.trim().to_string();
     if call.is_empty() {
         return Err("Enter a callsign to look up.".to_string());
     }
-    let username = {
+    let (qrz_username, hamqth_username) = {
         let eng = state.lock().map_err(|e| e.to_string())?;
-        eng.settings().qrz_username.trim().to_string()
+        let s = eng.settings();
+        (
+            s.qrz_username.trim().to_string(),
+            s.hamqth_username.trim().to_string(),
+        )
     };
-    if username.is_empty() {
-        return Err("Set your QRZ username in Settings first.".to_string());
-    }
-    let password = qrz_keychain()?
-        .get_password()
-        .map_err(|_| "No QRZ password stored — set it in Settings.".to_string())?;
 
-    let not_found = || format!("{} is not in the QRZ database.", call.to_uppercase());
+    let not_found = || format!("{} is not in the callbook.", call.to_uppercase());
 
-    // 1) Try the cached key, if any.
-    let cached = qrz_session.lock().ok().and_then(|g| g.clone());
-    if let Some(key) = cached {
-        match qrz_try_lookup(&key, &call)? {
-            QrzOutcome::Found(dto) => return Ok(dto),
-            QrzOutcome::NotFound => return Err(not_found()),
-            QrzOutcome::NeedLogin => {} // fall through to a single re-login
+    // 1) QRZ first, when configured (username + stored password). A missing username,
+    //    a missing password, or a QRZ "not found" all fall through to HamQTH below.
+    if !qrz_username.is_empty() {
+        if let Ok(password) = qrz_keychain()?.get_password() {
+            if let Some(dto) =
+                qrz_lookup_attempt(&call, &qrz_username, &password, qrz_session.inner())?
+            {
+                return Ok(dto);
+            }
         }
     }
 
-    // 2) Log in once, cache the new key, retry the lookup once (bounded).
-    let key = qrz_login(&username, &password)?;
-    if let Ok(mut g) = qrz_session.lock() {
-        *g = Some(key.clone());
+    // 2) HamQTH fallback, when configured. A free HamQTH account returns
+    //    name/grid/us_state, so callsign lookup works without a QRZ subscription.
+    if !hamqth_username.is_empty() {
+        if let Ok(password) = hamqth_keychain()?.get_password() {
+            if let Some(dto) =
+                hamqth_lookup_attempt(&call, &hamqth_username, &password, hamqth_session.inner())?
+            {
+                return Ok(dto);
+            }
+            // HamQTH was queried and answered — a genuine miss.
+            return Err(not_found());
+        }
     }
-    match qrz_try_lookup(&key, &call)? {
-        QrzOutcome::Found(dto) => Ok(dto),
-        QrzOutcome::NotFound => Err(not_found()),
-        // A fresh key still reporting expiry is anomalous — fail without looping.
-        QrzOutcome::NeedLogin => Err("QRZ session error — please try again.".to_string()),
+
+    // Neither callbook produced a record.
+    if qrz_username.is_empty() && hamqth_username.is_empty() {
+        Err("Set your QRZ or HamQTH username in Settings first.".to_string())
+    } else {
+        Err(not_found())
     }
 }
 
@@ -6875,6 +7048,7 @@ pub fn run() {
         .manage(SharedOpeningTracker::default())
         .manage(SharedWxHistory::default())
         .manage(SharedQrzSession::default())
+        .manage(SharedHamQthSession::default())
         .invoke_handler(tauri::generate_handler![
             get_snapshot,
             send_message,
@@ -6983,6 +7157,8 @@ pub fn run() {
             download_eqsl_report,
             set_qrz_password,
             clear_qrz_password,
+            set_hamqth_password,
+            clear_hamqth_password,
             qrz_lookup,
             set_qrz_logbook_key,
             clear_qrz_logbook_key,

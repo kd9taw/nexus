@@ -3,6 +3,7 @@ import type { AudioDevices, BandChannel, CatTestResult, DetectedRig, RadioStatus
 import {
   clearClublogPassword,
   clearEqslPassword,
+  clearHamqthPassword,
   clearHrdlogCode,
   clearLotwPassword,
   clearQrzLogbookKey,
@@ -18,6 +19,7 @@ import {
   getSettings,
   setClublogPassword,
   setEqslPassword,
+  setHamqthPassword,
   setHrdlogCode,
   setLotwPassword,
   setQrzLogbookKey,
@@ -283,6 +285,7 @@ export function SettingsPanel({
   const [eqslSyncing, setEqslSyncing] = useState(false)
   const [qrzPw, setQrzPw] = useState('')
   const [qrzKey, setQrzKey] = useState('')
+  const [hamqthPw, setHamqthPw] = useState('')
   const [clublogPw, setClublogPw] = useState('')
   const [hrdlogCode, setHrdlogCodeField] = useState('')
   const [tab, setTab] = useState<SettingsTab>('station')
@@ -747,6 +750,29 @@ export function SettingsPanel({
     if (ok) {
       setQrzPw('')
       pushToast('QRZ password cleared from the keychain', 'success')
+    }
+  }
+
+  const onSaveHamqthPassword = async () => {
+    if (!hamqthPw) return
+    const ok = await withErrorToast(async () => {
+      await setHamqthPassword(hamqthPw)
+      return true
+    }, 'Could not save the HamQTH password')
+    if (ok) {
+      setHamqthPw('')
+      pushToast('HamQTH password saved to the system keychain', 'success')
+    }
+  }
+
+  const onForgetHamqthPassword = async () => {
+    const ok = await withErrorToast(async () => {
+      await clearHamqthPassword()
+      return true
+    }, 'Could not clear the HamQTH password')
+    if (ok) {
+      setHamqthPw('')
+      pushToast('HamQTH password cleared from the keychain', 'success')
     }
   }
 
@@ -3347,6 +3373,58 @@ export function SettingsPanel({
                 <span className="settings-hint">
                   Stored in the OS keychain, never on disk. <strong>Grid &amp; state require a QRZ XML
                   subscription</strong> — free accounts return only name/address/country.
+                </span>
+              </label>
+
+              <label className="settings-field">
+                <span className="settings-label">HamQTH username</span>
+                <input
+                  className="settings-input"
+                  type="text"
+                  value={form.hamqthUsername}
+                  placeholder="your HamQTH.com account login"
+                  onChange={(e) => update('hamqthUsername', e.target.value)}
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                <span className="settings-hint">
+                  A <strong>free</strong> callbook used as a fallback when QRZ isn't configured or has
+                  no match — a HamQTH account returns name, grid &amp; US state at no charge. Save
+                  settings to apply.
+                </span>
+              </label>
+
+              <label className="settings-field">
+                <span className="settings-label">HamQTH password</span>
+                <div className="settings-input-row">
+                  <input
+                    className="settings-input"
+                    type="password"
+                    value={hamqthPw}
+                    placeholder="HamQTH.com account password"
+                    onChange={(e) => setHamqthPw(e.target.value)}
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                  <button
+                    type="button"
+                    className="settings-refresh"
+                    onClick={onSaveHamqthPassword}
+                    disabled={!hamqthPw}
+                  >
+                    Set
+                  </button>
+                  <button
+                    type="button"
+                    className="settings-refresh"
+                    onClick={onForgetHamqthPassword}
+                    title="Remove the stored password from the system keychain"
+                  >
+                    Forget
+                  </button>
+                </div>
+                <span className="settings-hint">
+                  Stored in the OS keychain, never on disk.
                 </span>
               </label>
 

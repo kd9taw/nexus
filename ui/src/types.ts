@@ -1565,6 +1565,10 @@ export interface Settings {
   /** QRZ.com account username for callsign lookup. Password is in the OS keychain
    *  (set via setQrzPassword); the session key is cached in memory only. */
   qrzUsername: string
+  /** HamQTH.com account username — the FREE fallback for callsign lookup, used when
+   *  QRZ isn't configured or has no match. Password is in the OS keychain (set via
+   *  setHamqthPassword); the session id is cached in memory only. */
+  hamqthUsername: string
   /** Auto-upload each logged QSO to the QRZ.com logbook. Needs the QRZ Logbook API
    *  key in the keychain (distinct from the lookup password). */
   qrzLogbookUpload: boolean

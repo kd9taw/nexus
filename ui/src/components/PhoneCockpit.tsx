@@ -9,6 +9,9 @@ import { LogEntry } from './LogEntry'
 import { setPtt, setRfPower, startQsoRecording, stopQsoRecording } from '../api'
 import { pushToast } from '../toast'
 import { RotorStrip } from './RotorStrip'
+import { MemoryBank } from './MemoryBank'
+import { setFrequency, getSettings, setSettings } from '../api'
+import { bandLabelForMhz } from '../band'
 
 interface Props {
   snap: AppSnapshot
@@ -175,6 +178,26 @@ export function PhoneCockpit({ snap, theme, pendingWork, onConsumeWork, onSnap, 
           <span className="ph-power-val">{power}%</span>
         </label>
         <span className="ph-spacer" />
+        <MemoryBank
+          dialMhz={snap.radio.dialMhz}
+          mode={sideband}
+          onRecall={(freqMhz, mode) => {
+            // The Phone rig-mode policy derives the commanded mode from the
+            // phone sub-mode (fm vs ssb→band-sideband), NOT from the sideband
+            // arg — so a saved FM (or SSB) channel only round-trips if we first
+            // switch phone_mode to match, otherwise the rig lands on the wrong
+            // mode. Flip phone_mode only when it actually differs, then retune.
+            void (async () => {
+              const wantFm = mode.toUpperCase() === 'FM'
+              if (wantFm !== (phoneMode?.toLowerCase() === 'fm')) {
+                const s = await getSettings()
+                await setSettings({ ...s, phoneMode: wantFm ? 'fm' : 'ssb' })
+              }
+              const snap = await setFrequency(freqMhz, bandLabelForMhz(freqMhz), mode)
+              onSnap?.(snap)
+            })()
+          }}
+        />
         <RotorStrip />
         <button
           type="button"

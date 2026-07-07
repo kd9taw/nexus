@@ -481,6 +481,17 @@ export async function clearQrzPassword(): Promise<void> {
   await invoke<void>('clear_qrz_password')
 }
 
+/** Store the HamQTH password in the OS keychain (write-only; empty clears it).
+ *  HamQTH is the free fallback used when QRZ isn't configured or has no match. */
+export async function setHamqthPassword(password: string): Promise<void> {
+  await invoke<void>('set_hamqth_password', { password })
+}
+
+/** Remove the stored HamQTH password from the OS keychain (idempotent). */
+export async function clearHamqthPassword(): Promise<void> {
+  await invoke<void>('clear_hamqth_password')
+}
+
 /** Look up a callsign on QRZ.com (uses the stored username + keychain password;
  *  session key cached server-side in memory). */
 export async function qrzLookup(callsign: string): Promise<QrzLookup> {

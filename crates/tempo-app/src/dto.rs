@@ -1074,6 +1074,26 @@ impl From<tempo_core::qrz::QrzLookup> for QrzLookupDto {
     }
 }
 
+/// The free HamQTH fallback flows into the SAME DTO — its [`HamQthLookup`] has
+/// identical fields, so QRZ and HamQTH results are interchangeable to the UI.
+///
+/// [`HamQthLookup`]: tempo_core::hamqth::HamQthLookup
+impl From<tempo_core::hamqth::HamQthLookup> for QrzLookupDto {
+    fn from(r: tempo_core::hamqth::HamQthLookup) -> Self {
+        QrzLookupDto {
+            call: r.call,
+            name: r.name,
+            qth: r.qth,
+            grid: r.grid,
+            state: r.state,
+            country: r.country,
+            dxcc: r.dxcc,
+            cq_zone: r.cq_zone,
+            itu_zone: r.itu_zone,
+        }
+    }
+}
+
 /// Result of a QRZ Logbook push (one-QSO INSERT). `result` is a camelCase tag the
 /// UI switches on; a `duplicate` is the benign "already in your QRZ logbook".
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

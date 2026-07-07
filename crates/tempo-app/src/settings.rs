@@ -447,6 +447,12 @@ pub struct Settings {
     /// keychain (set via `set_qrz_password`), never here; the session key is cached
     /// in memory only. Empty = QRZ lookup not configured.
     pub qrz_username: String,
+    /// HamQTH.com account username — the FREE fallback for callsign lookup, used when
+    /// QRZ isn't configured or has no match. The password lives in the OS keychain
+    /// (set via `set_hamqth_password`), never here; the session id is cached in memory
+    /// only. Empty = HamQTH lookup not configured.
+    #[serde(default)]
+    pub hamqth_username: String,
     /// Auto-upload each logged QSO to the QRZ.com logbook (push). Needs the QRZ
     /// Logbook **API key** in the keychain (distinct from the lookup password).
     /// Off by default.
@@ -760,6 +766,7 @@ impl Default for Settings {
             eqsl_username: String::new(),
             eqsl_last_sync: String::new(),
             qrz_username: String::new(),
+            hamqth_username: String::new(),
             qrz_logbook_upload: false,
             clublog_email: String::new(),
             clublog_callsign: String::new(),

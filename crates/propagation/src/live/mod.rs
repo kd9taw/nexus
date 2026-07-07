@@ -9,6 +9,7 @@ pub mod aurora;
 pub mod clublog;
 pub mod dxped;
 pub mod eqsl;
+pub mod hamqth;
 pub mod hrdlog;
 pub mod kc2g;
 pub mod lotw;
