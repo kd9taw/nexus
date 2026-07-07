@@ -179,7 +179,7 @@ def render(width, height, with_url):
     # Footer line — sits above the spectrum floor.
     footer = "HF · VHF/UHF  weak-signal text   ·   GPLv3"
     if with_url:
-        footer = "github.com/kd9taw/tempo   ·   HF · VHF/UHF weak-signal text · GPLv3"
+        footer = "github.com/kd9taw/nexus   ·   HF · VHF/UHF weak-signal text · GPLv3"
     fbb = d.textbbox((0, 0), footer, font=foot)
     d.text((cx - (fbb[2] - fbb[0]) // 2, int(h * 0.73)), footer, font=foot, fill=(126, 144, 164))
 

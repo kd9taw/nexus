@@ -1,20 +1,21 @@
-# Tempo — Attribution and License Heritage
+# Nexus — Attribution and License Heritage
 
-Tempo
+Nexus
 Copyright (C) 2026 Seth McCallister (KD9TAW) <kd9taw@protonmail.com>
-https://github.com/kd9taw/tempo
+https://github.com/kd9taw/nexus
 
-Tempo is free software: you can redistribute it and/or modify it under the
+Nexus is free software: you can redistribute it and/or modify it under the
 terms of the **GNU General Public License, version 3 or any later version**
 (SPDX: `GPL-3.0-or-later`). The full license text is in the file `COPYING` at
 the repository root.
 
-Because Tempo incorporates and links GPLv3 code (most significantly the
-WSJT-X-derived modem internals it reuses), Tempo *as a whole* is licensed
+Because Nexus incorporates and links GPLv3 code (most significantly the
+WSJT-X-derived modem internals it reuses), Nexus *as a whole* is licensed
 under GPLv3-or-later. This NOTICE documents the upstream lineage and the
-third-party components that Tempo bundles, links, or depends on, along with
-their licenses and what is used from each. Where a license cannot be confirmed
-from this repository, this file says so rather than asserting it.
+third-party components that Nexus bundles, links, depends on, or queries at
+runtime, along with their licenses and what is used from each. Where a license
+cannot be confirmed from this repository, this file says so rather than
+asserting it.
 
 ---
 
@@ -23,7 +24,7 @@ from this repository, this file says so rather than asserting it.
 ### WSJT-X — Joe Taylor (K1JT) and the WSJT Development Group
 License: **GNU GPL, version 3** (GPLv3).
 
-Tempo's modem library, `libft1/`, is derived from WSJT-X. The WSJT-X
+Nexus's modem library, `libft1/`, is derived from WSJT-X. The WSJT-X
 reference source is **referenced read-only at build time** (its `lib/`
 sources are compiled into `libft1` from an external checkout) and is **not
 redistributed in this repository**. From WSJT-X, `libft1` reuses:
@@ -43,8 +44,12 @@ Uwe Risse (DG2YCB), Brian Moran (N9ADG), and others. See the upstream project
 for the authoritative copyright and contributor list:
 https://sourceforge.net/projects/wsjt/
 
+Nexus treats WSJT-X as the reference standard for FT8/FT4 on-air behavior. It
+is an independent application and is **not affiliated with or endorsed by** the
+WSJT project.
+
 ### FT1 waveform — Seth McCallister (KD9TAW)
-License: **GPL-3.0-or-later** (part of Tempo / `libft1`).
+License: **GPL-3.0-or-later** (part of Nexus / `libft1`).
 
 The FT1 waveform (the 4-CPM coherent turbo modem with IR-HARQ used by the
 "Fast" tier) is original work by KD9TAW. The DX1 mode (`libft1/dx1/` — the
@@ -52,27 +57,37 @@ non-coherent 8-FSK + soft LDPC(174,91) "Robust" tier) is likewise authored by
 KD9TAW. Both are GPLv3 by virtue of the shared WSJT-X-derived code they build
 on.
 
-> Validation status: FT1 and DX1 are **simulation-validated only** (AWGN, with
-> a fading penalty modeled). They have **not** been validated on the air.
-> FT8/FT4 support is **Phase 2** — internals are compiled into `libft1` but no
-> decode pipeline is wired up. Published Windows binaries are cross-compiled
-> beta builds.
+> Validation status: **FT8/FT4** is the production digital core — operational
+> parity with stock WSJT-X behavior, wire formats pinned, field-verified.
+> **FT1 and DX1** are the new native waveforms and are **simulation-validated
+> only** (AWGN, with a fading penalty modeled); they have **not** yet been
+> validated on the air. Published Windows binaries are cross-compiled beta
+> builds.
 
 ---
 
 ## Bundled components (shipped in the Windows installer)
 
 ### Hamlib (rigctld)
-License: **GPL / LGPL** — see upstream project. Hamlib ships its own license
-texts with the binaries; the staging script
+License: **GPL-2.0 / LGPL-2.1** — see upstream project. Hamlib ships its own
+license texts with the binaries; the staging script
 (`scripts/fetch-hamlib.sh`) places them, along with `rigctld.exe`,
 `rigctl.exe`, and the required DLLs, under
 `src-tauri/resources/hamlib/`, which the Tauri bundle then includes
-(`tauri.conf.json` → `bundle.resources`). Tempo launches the bundled
+(`tauri.conf.json` → `bundle.resources`). Nexus launches the bundled
 `rigctld` for offline CAT rig control. The Hamlib binaries are **not committed
 to this repository** — `scripts/fetch-hamlib.sh` reproduces them from the
 official Hamlib release. Refer to the license files shipped under
 `resources/hamlib/` (and the Hamlib project) for exact terms.
+
+### DXCC country file (cty.dat) — Jim Reisert, AD1C
+`crates/propagation/data/cty.dat` is the AD1C "Country Files" (the big-CTY
+`cty.dat` database) by Jim Reisert, **AD1C** (<https://www.country-files.com/>),
+embedded verbatim (via `include_str!`, see `crates/propagation/src/dxcc.rs`).
+It resolves callsigns to DXCC entities and CQ/ITU zones and underpins the
+DXCC / WAS / WAZ awards engine, map spot labels, and Needed-board hints. It is
+distributed under the **MIT License**. © 1994– Jim Reisert AD1C. See
+`crates/propagation/data/cty.dat_copyright.txt`.
 
 ### ITU-R / CCIR propagation coefficient data
 The HF path-prediction engine embeds the CCIR ionospheric numerical-map
@@ -92,16 +107,21 @@ the published Recommendation methods; no ITU code is included.
 Natural Earth 1:10m land polygons (via the `world-atlas` package), which are
 **public domain**. Regenerate with `scripts/gen-grid-rarity.mjs`.
 
+### WAS grid-square → US-state table (grid_state.bin)
+`crates/propagation/data/grid_state.bin` (32,400 bytes, embedded via
+`include_bytes!`) maps each 4-character Maidenhead grid to a US state for the
+Worked-All-States "New State" need hint. It is generated
+(`scripts/gen-grid-state.mjs`) by point-in-polygon sampling of the
+**`us-atlas`** `states-10m` TopoJSON
+(<https://github.com/topojson/us-atlas>, ISC-licensed package), whose geometry
+derives from **US Census Bureau** cartographic boundary files (a work of the
+US government, **public domain**). Regenerate with
+`node scripts/gen-grid-state.mjs`.
+
 ### CQ zone boundaries
 `ui/src/data/cqzones.geojson` is from HB9HIL's hamradio-zones-geojson
 (<https://github.com/HB9HIL/hamradio-zones-geojson>), **MIT** (© 2024 HB9HIL);
 the license text ships beside it (`cqzones.LICENSE.txt`).
-
-### WSPR reception data (runtime service)
-The optional "getting out" beacon evidence queries **wspr.live** (the
-community mirror of wsprnet.org) at runtime under its free-non-commercial
-terms; no WSPR data is redistributed with the app. Data courtesy of
-wspr.live / wsprnet.org contributors.
 
 ### World Magnetic Model coefficients (WMM2025)
 `crates/propagation/data/WMM_2025.COF` is the official WMM2025 coefficient
@@ -115,11 +135,11 @@ implementation validated against the official WMM2025 test-value table.
 ## Linked native libraries
 
 ### FFTW (FFTW3, single precision)
-License: **GPL** (the version Tempo builds and links — `libfftw3f`). See the
-FFTW upstream project for terms. Used by `libft1` for the FFT routines
-(`four2a` and related DSP). On the Linux/WSL2 cross build it is statically
-linked from a MinGW-built `libfftw3f.a`; on native MSYS2 builds it is located
-via `pkg-config`.
+License: **GPL-2.0-or-later** (the version Nexus builds and links —
+`libfftw3f`). See the FFTW upstream project for terms. Used by `libft1` for the
+FFT routines (`four2a` and related DSP). On the Linux/WSL2 cross build it is
+statically linked from a MinGW-built `libfftw3f.a`; on native MSYS2 builds it
+is located via `pkg-config`.
 
 ### Boost (header-only CRC)
 License: **Boost Software License 1.0** (SPDX: `BSL-1.0`). Only the
@@ -130,15 +150,23 @@ compiled Boost library is linked.
 
 ## Rust dependencies
 
-Tempo's Rust workspace (`crates/ft1-sys`, `crates/ft1`, `crates/tempo-core`,
-`crates/tempo-app`, `crates/tempo-audio`, `crates/tempo-net`) and the
-standalone Tauri shell (`src-tauri/`) depend on the crates below. Pull in the
-full transitive license set with `cargo about` / `cargo deny` against
-`Cargo.lock`; the principal third-party components are:
+Nexus's Rust workspace (`crates/ft1-sys`, `crates/ft1`, `crates/tempo-core`,
+`crates/tempo-app`, `crates/tempo-audio`, `crates/tempo-net`,
+`crates/propagation`) and the standalone Tauri shell (`src-tauri/`) depend on
+the crates below. Pull in the full transitive license set with `cargo about` /
+`cargo deny` against `Cargo.lock`; the principal third-party components are:
 
 - **Tauri** (v2 desktop shell) — MIT OR Apache-2.0.
 - **cpal** (sound-card audio transport) — MIT OR Apache-2.0.
 - **serialport** (serial CAT / RTS-DTR keying) — MPL-2.0.
+- **sgp4** (SGP4/SDP4 orbital propagation for satellite geometry) — MIT.
+- **keyring** (OS-native credential vault for LoTW / QRZ / ClubLog / eQSL
+  secrets) — MIT OR Apache-2.0.
+- **reqwest** / **quick-xml** (live-feed HTTP + XML/RSS parsing) —
+  MIT OR Apache-2.0 / MIT.
+- **hound** (voice-keyer WAV read/write) — Apache-2.0 OR MIT OR Zlib.
+- **socket2** (shared-UDP socket options for radio sharing) — MIT OR Apache-2.0.
+- **serde** / **serde_json** (serialization) — MIT OR Apache-2.0.
 
 `crates/tempo-net` (the WSJT-X-compatible UDP API and PSK Reporter spotting)
 is pure `std` Rust with no extra third-party crates of its own.
@@ -148,20 +176,79 @@ is pure `std` Rust with no extra third-party crates of its own.
 The web UI (`ui/`, Vite + React + TypeScript) depends on:
 
 - **React** / **react-dom** — MIT.
-- **Vite**, **TypeScript**, **@vitejs/plugin-react**, and React type
-  definitions (dev dependencies) — MIT. See each package for its terms.
+- **TypeScript** — **Apache-2.0**.
+- **Vite**, **@vitejs/plugin-react**, and React type definitions (dev
+  dependencies) — MIT. See each package for its terms.
+- **d3-geo** (map projection + point-in-polygon `geoContains`) and
+  **topojson-client** (TopoJSON decoding) — **ISC**, © Mike Bostock / the D3
+  authors.
+- **world-atlas** (offline basemap package; ISC) — its `countries-50m` /
+  `countries-110m` geometry derives from **Natural Earth** (**public domain**).
+  No map tiles or network map services are used.
+- **us-atlas** (build-time source for `grid_state.bin`; ISC) — see the WAS
+  grid-state note above.
+- **Lucide** icons via `lucide-react` — **ISC** (© Lucide contributors; based
+  on Feather Icons, MIT).
+- **Radix UI** primitives `@radix-ui/react-dialog`, `-dropdown-menu`, `-toast`,
+  and `-tooltip` — **MIT** (© WorkOS / Radix).
+
+---
+
+## Runtime data services (courtesy)
+
+When the relevant features are enabled, Nexus queries the external services
+below at runtime. **None of their data is redistributed with the app**, and
+each is used under its own terms of service. These acknowledgments are given as
+a courtesy to the operators and communities who provide them:
+
+- **SatNOGS DB** (<https://db.satnogs.org>) — which amateur satellites and
+  transponders are active, for the Satellites feature. SatNOGS DB data is
+  provided by the SatNOGS / Libre Space Foundation community under
+  **CC BY-SA 4.0**. Data courtesy of the SatNOGS project and its contributors.
+- **CelesTrak** (<https://celestrak.org>, T.S. Kelso) — amateur-satellite
+  TLE / GP orbital elements.
+- **wspr.live** (the community mirror of wsprnet.org) — WSPR beacon reception
+  evidence for the "getting out" check; free non-commercial terms. Data
+  courtesy of wspr.live / wsprnet.org contributors.
+- **PSK Reporter** (Philip Gladstone) — reception-report retrieval and
+  outbound spotting.
+- **Reverse Beacon Network** — CW/digital skimmer spots.
+- **NOAA SWPC** (services.swpc.noaa.gov) — solar flux, K-index, X-ray/proton
+  flux, aurora, solar-wind, and alert feeds (US government, **public domain**).
+- **prop.kc2g.com** (Andrew Rodland, KC2G) — real-time MUF map.
+- **WA7BNM Contest Calendar** (<https://www.contestcalendar.com/>, Bruce Horn
+  WA7BNM) — the upcoming-contests pane.
+- **NG3K Announced DX Operations** (Bill Feidt, NG3K) — DXpedition calendar.
+- **Parks on the Air (POTA)** and **Summits on the Air (SOTA)** — activator
+  spot APIs.
+- **HamQTH** (<https://www.hamqth.com/>, Petr Hlozek OK2CQR) — callsign lookup
+  and QSO auto-fill fallback.
+- **ARRL Logbook of the World (LoTW)**, **ClubLog** (Michael Wells, G7VJR),
+  **QRZ.com**, **eQSL.cc**, and **HRDLog** — callsign lookup and QSL / log
+  synchronization for the connectors the operator opts into.
 
 ---
 
 ## License compatibility
 
-All bundled and linked components above are GPLv3-compatible:
+The bundled and linked components combine into the GPLv3-or-later whole:
 
-- GPLv3 / LGPL (WSJT-X, Hamlib, FFTW) combine into the GPLv3-or-later whole.
+- GPLv3 / LGPL / GPLv2-or-later (WSJT-X, Hamlib, FFTW) combine into the
+  GPLv3-or-later whole.
 - Permissive licenses (BSL-1.0 for Boost; MIT / Apache-2.0 for Tauri, cpal,
-  React, Vite, TypeScript) are compatible with redistribution under GPLv3.
+  sgp4, keyring, reqwest, hound, socket2, serde, React, TypeScript, Vite,
+  Radix; ISC for d3-geo, topojson-client, world-atlas, us-atlas, lucide-react;
+  MIT for cty.dat and the CQ-zone data; public domain for the WMM, Natural
+  Earth, and Census-derived data) are compatible with redistribution under
+  GPLv3.
 - MPL-2.0 (serialport) is GPL-compatible; its source-disclosure obligations
   apply per-file to that component.
+
+Runtime data services (the "Runtime data services" section above) are **not
+bundled or linked** — the app merely queries them over the network — so their
+terms do not affect the license of the distributed binary; they are
+acknowledged as a courtesy. The single share-alike source, SatNOGS DB
+(CC BY-SA 4.0), is queried live and never redistributed.
 
 For the complete and authoritative GPL terms, see **`COPYING`**. For any
 component whose exact license is not stated above, consult the upstream

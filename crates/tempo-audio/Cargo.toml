@@ -5,7 +5,7 @@ version = "0.2.0"
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "Tempo real-radio transport: sound-card audio (cpal) + PTT/CAT via rigctld, on the FT1 slot clock"
+description = "Nexus real-radio transport: sound-card audio (cpal) + PTT/CAT via rigctld, on the FT1 slot clock"
 
 [features]
 # Pure logic (rig over TCP, RX ring, slot-clock runtime) builds with no extra
