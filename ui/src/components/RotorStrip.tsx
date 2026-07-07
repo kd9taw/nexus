@@ -5,7 +5,7 @@
 // needle with no daemon behind it would be an ornament. Optional targetCall +
 // onPointAt adds a "→ CALL" one-click slew for the cockpit's selected station.
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
-import { getDeclination, getSatTrackStatus, readRotator, stopRotator, stopSatTrack } from '../api'
+import { getDeclination, getSatTrackStatus, getSettings, readRotator, stopRotator, stopSatTrack } from '../api'
 import type { SatTrackStatus } from '../types'
 import { magneticDeg } from '../grid'
 import { pushToast } from '../toast'
@@ -46,11 +46,22 @@ export function RotorStrip({ active = true, targetCall, onPointAt }: RotorStripP
   // Shown so the operator knows WHY the needle is moving on its own — and so
   // the ■ button stops the LOOP, not just one slew it would immediately redo.
   const [satTrack, setSatTrack] = useState<SatTrackStatus | null>(null)
+  // Rotor CONFIGURED in settings (model-launched rotctld or external host) —
+  // splits "no rotor in this station" (render nothing) from "configured but
+  // not answering" (render a dim, honest placeholder: a configured rotor that
+  // silently vanishes reads as a missing feature — operator report from the
+  // FT cockpit).
+  const [configured, setConfigured] = useState(false)
   const alive = useRef(true)
 
   useEffect(() => {
     if (!active) return
     alive.current = true
+    getSettings()
+      .then((st) => {
+        if (alive.current) setConfigured((st.rotatorModel ?? 0) > 0 || st.rotatorHost.trim() !== '')
+      })
+      .catch(() => {})
     const load = () => {
       readRotator()
         .then((v) => alive.current && setAz(v))
@@ -70,7 +81,29 @@ export function RotorStrip({ active = true, targetCall, onPointAt }: RotorStripP
     }
   }, [active])
 
-  if (az == null) return null // no rotator answering — honesty: hidden, never faked
+  // No rotor configured at all → nothing to show (most stations).
+  if (az == null && !configured) return null
+  // Configured but silent → an honest dim placeholder, never a fake readout.
+  if (az == null) {
+    return (
+      <span
+        aria-label="Rotator not answering"
+        title="A rotator is configured but not answering — check Settings ▸ Rig Control ▸ Rotator (model/port) or the external rotctld, and the Connections log"
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: '0.3rem',
+          opacity: 0.45,
+          color: 'inherit',
+        }}
+      >
+        <span style={{ fontSize: '0.65em', letterSpacing: '0.08em', fontWeight: 600 }} aria-hidden>
+          ROTOR
+        </span>
+        <span className="mono" style={{ fontSize: '0.9em' }}>—</span>
+      </span>
+    )
+  }
 
   const deg = Math.round(az)
   const mag = magneticDeg(az, declination)
