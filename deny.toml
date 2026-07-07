@@ -27,12 +27,27 @@ allow = [
     "Unicode-3.0",
     "CDLA-Permissive-2.0",
     "Unlicense",
+    # serialport (the CAT/serial layer). Weak FILE-level copyleft: MPL-2.0 is
+    # explicitly GPL-compatible (MPL §13/GPL-compat clause) and imposes nothing
+    # on this GPLv3 app beyond sharing changes to serialport's own files.
+    "MPL-2.0",
 ]
+
+# unescaper declares the DEPRECATED slash expression "GPL-3.0/MIT", which the
+# SPDX parser rejects outright. Clarified to the modern equivalent; MIT (an
+# allowed branch of the OR) satisfies the policy.
+[[licenses.clarify]]
+crate = "unescaper"
+expression = "GPL-3.0-only OR MIT"
+license-files = []
 
 [bans]
 # Duplicate transitive versions are common and noisy — surface, don't fail (yet).
 multiple-versions = "warn"
 wildcards = "deny"
+# In-workspace `{ path = ... }` deps carry no version by design — they are not
+# the supply-chain wildcard this gate exists to catch.
+allow-wildcard-paths = true
 
 [sources]
 unknown-registry = "deny"
