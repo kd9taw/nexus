@@ -57,6 +57,10 @@ const MAX_QSO_REC_MS: f64 = 2.0 * 60.0 * 60.0 * 1000.0;
 /// How often to poll the rig's live dial/mode over CAT (each is a blocking TCP round-trip,
 /// so we throttle well below the loop rate) — fast enough to track a manual VFO knob turn.
 const RIG_POLL_MS: f64 = 750.0;
+/// Hamlib func tokens for the Expert DSP toggles, in the engine's `[nb, nr, notch, comp, vox]`
+/// order. `ANF` (auto-notch) is the notch we expose — it works as a bare on/off toggle, unlike
+/// `MN` (manual notch) which needs a separate NOTCHF frequency level.
+const RIG_FUNCS: [&str; 5] = ["NB", "NR", "ANF", "COMP", "VOX"];
 /// Max consecutive `set_mode` retries for one target mode before giving up (so a rig
 /// that rejects a submode doesn't get an `M` command every loop). Sized to ride out a
 /// rig/rigctld that's still settling (a failing CAT round-trip can block up to the
@@ -362,6 +366,26 @@ struct RadioLoop {
     /// Last known CAT health (from connect/Test-CAT): `Some(false)` = configured but failing,
     /// so we skip the read-back poll to avoid blocking the loop on a dead read every cycle.
     cat_ok: Option<bool>,
+    /// Lazy S-meter capability: `None` = not yet probed, `Some(true)` = rig reports
+    /// STRENGTH (keep polling it), `Some(false)` = rig answered the dial but not
+    /// STRENGTH (no CAT S-meter — stop polling it so we don't burn a round-trip every
+    /// cycle). Reset to `None` when CAT re-confirms so a rig swap re-probes.
+    smeter_supported: Option<bool>,
+    /// Consecutive STRENGTH read misses while the dial poll is succeeding, so a single
+    /// transient timeout doesn't wrongly declare a capable rig's S-meter unsupported.
+    smeter_misses: u8,
+    /// Monotonic RX-poll counter, used to sub-cadence the slower CAT reads (mode) and to
+    /// periodically re-probe a rig whose S-meter was found unsupported.
+    rig_poll_ticks: u32,
+    /// Per-func DSP capability ([nb, nr, notch, comp, vox], same as [`RIG_FUNCS`]), mirroring
+    /// `smeter_supported`: `None` = unprobed, `Some(true)` = rig reports the func, `Some(false)`
+    /// = confirmed absent (stop polling → toggle hidden). Reset on CAT re-confirm / breaker trip.
+    func_supported: [Option<bool>; 5],
+    /// Consecutive get-miss counters per func — the same miss-tolerance as `smeter_misses`.
+    func_misses: [u8; 5],
+    /// Last-known func states, mirrored to the engine each sub-cadence poll; a read miss on a
+    /// supported func keeps the last value so the toggle never flickers.
+    func_state: [Option<bool>; 5],
     /// Whether we last surfaced the "monitor refused — would transmit into the TX
     /// device" note on the audio-error line, so we clear only our OWN message.
     /// The monitor block currently OWNS the audio-error line (it wrote either
@@ -418,6 +442,12 @@ impl RadioLoop {
             last_psk_flush: now_unix_ms(),
             last_rig_poll: now_unix_ms(),
             cat_ok: None,
+            smeter_supported: None,
+            smeter_misses: 0,
+            rig_poll_ticks: 0,
+            func_supported: [None; 5],
+            func_misses: [0; 5],
+            func_state: [None; 5],
 
             last_fd_qsos: 0,
             clock_offset_ms: 0,
@@ -479,7 +509,7 @@ impl RadioLoop {
                 (
                     Transport::from_settings(eng.settings()),
                     eng.settings().dial_hz(),
-                    eng.settings().rig_mode(), // DATA submode (PKTUSB/…) when data_mode is on
+                    eng.rig_mode_effective(), // operator Phone mode override, else band-derived policy
                     eng.take_cat_reprobe(),
                     if can_retune {
                         eng.take_immediate_retune()
@@ -760,11 +790,17 @@ impl RadioLoop {
             //  - skip while transmitting/tuning;
             //  - skip when CAT is known-failing, so a connected-but-mute rig doesn't block the
             //    slot loop on the read timeout every cycle.
-            //  (Mode is NOT read back: in Phone/CW the policy commands it and the cockpit's
-            //   band-aware badge already shows it; reading it risks corrupting the canonical
-            //   sideband — see the App-side invariant.)
+            //  (Mode read-back is DISPLAY-ONLY — mirrored into a separate snapshot field for
+            //   the mismatch tag; it never overwrites the canonical commanded sideband.)
             if retuned {
                 self.last_rig_poll = now;
+                // The app just commanded a new dial/mode — drop the stale read-back mode + passband
+                // width so a band/mode change can't flash a false "rig: X" mismatch or show the
+                // prior mode's filter width before the next poll reads the rig's true state.
+                if let Ok(mut eng) = engine.lock() {
+                    eng.clear_rig_mode();
+                    eng.clear_rig_passband();
+                }
                 // A CAT command (set_freq/set_mode) just SUCCEEDED, so CAT is alive — clear
                 // a stale `cat_ok=Some(false)` (e.g. a transient read_freq failure at the
                 // initial probe). Otherwise the dial read-back stays disabled even though
@@ -772,6 +808,13 @@ impl RadioLoop {
                 // clear the matching "no rig control" UI warning, once, on the flip.
                 if self.cat_ok != Some(true) {
                     self.cat_ok = Some(true);
+                    // Re-probe rig capabilities (S-meter + DSP funcs) on a fresh CAT confirmation,
+                    // so swapping to a different rig doesn't inherit the old one's verdict.
+                    self.smeter_supported = None;
+                    self.smeter_misses = 0;
+                    self.func_supported = [None; 5];
+                    self.func_misses = [0; 5];
+                    self.func_state = [None; 5];
                     if let Ok(mut eng) = engine.lock() {
                         eng.set_cat_status(
                             Some(true),
@@ -781,10 +824,27 @@ impl RadioLoop {
                 }
             } else if self.tx_until_ms.is_none()
                 && !self.tuning_keyed
+                && !self.manual_ptt_applied
                 && self.cat_ok != Some(false)
                 && now - self.last_rig_poll >= RIG_POLL_MS
             {
                 self.last_rig_poll = now;
+                self.rig_poll_ticks = self.rig_poll_ticks.wrapping_add(1);
+                // Periodically re-probe a rig whose S-meter was found unsupported — a few
+                // STRENGTH misses can be a transient hiccup, not a real lack of support — so it
+                // recovers without needing a full CAT drop + reconfirm.
+                if self.smeter_supported == Some(false) && self.rig_poll_ticks % 40 == 0 {
+                    self.smeter_supported = None;
+                    self.smeter_misses = 0;
+                }
+                if self.rig_poll_ticks % 40 == 0 {
+                    for i in 0..RIG_FUNCS.len() {
+                        if self.func_supported[i] == Some(false) {
+                            self.func_supported[i] = None; // give a given-up func one retry
+                            self.func_misses[i] = 0;
+                        }
+                    }
+                }
                 match rig.read_freq() {
                     Ok(hz) => {
                         if hz != self.last_dial {
@@ -804,6 +864,125 @@ impl RadioLoop {
                                 eng.observe_rig_power(frac);
                             }
                         }
+                        // Real CAT S-meter (STRENGTH, dB rel S9), mirrored to the UI as a
+                        // calibrated S-unit bar. RX-only (this whole block is gated on
+                        // `tx_until_ms.is_none()`), so it never reads a meaningless TX value.
+                        // Lazy capability: the dial read above just succeeded, so the link is
+                        // alive — if STRENGTH still returns nothing the rig has no CAT S-meter,
+                        // so stop polling it (don't burn a round-trip every cycle) and leave the
+                        // UI meter empty rather than faking one.
+                        if self.smeter_supported != Some(false) {
+                            match rig.read_smeter_db() {
+                                Some(db) => {
+                                    self.smeter_supported = Some(true);
+                                    self.smeter_misses = 0;
+                                    if let Ok(mut eng) = engine.lock() {
+                                        eng.observe_rig_smeter(db);
+                                    }
+                                }
+                                // Only give up after several consecutive misses — one
+                                // transient timeout on a capable rig must not permanently
+                                // kill its S-meter.
+                                None => {
+                                    self.smeter_misses = self.smeter_misses.saturating_add(1);
+                                    if self.smeter_misses >= 3 {
+                                        self.smeter_supported = Some(false);
+                                        // Don't leave the last good reading frozen on the UI.
+                                        if let Ok(mut eng) = engine.lock() {
+                                            eng.clear_rig_smeter();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        // Display-only mode read-back: mirror the rig's actual mode into a
+                        // SEPARATE snapshot field so the cockpit can flag when the operator's
+                        // mode knob disagrees with the app's commanded mode. Never overwrites
+                        // the canonical commanded sideband (App-side invariant). `m` can be a
+                        // touch stale on some backends — fine for a display-only hint.
+                        // Mode changes rarely — read it on a slower sub-cadence (every 4th
+                        // poll) to keep the fast dial/health check tight on slow serial links.
+                        if self.rig_poll_ticks % 4 == 0 {
+                            // One `m` read gives BOTH the mode (mirror) and the RX passband width.
+                            let (m, pb) = rig.read_mode_passband();
+                            if let Ok(mut eng) = engine.lock() {
+                                if let Some(ref mm) = m {
+                                    eng.observe_rig_mode(mm.clone());
+                                }
+                                eng.observe_rig_passband(pb); // None (a split read) keeps the last width
+                            }
+                            // Apply a pending RX filter-width change (Hamlib carries width as the
+                            // 2nd arg of set_mode). Only drain the request when we KNOW the mode to
+                            // set it against, and re-queue on a failed/rejected set — so a CAT
+                            // hiccup or a split `m` read never silently swallows the operator's click.
+                            if let Some(ref mode) = m {
+                                let width_req =
+                                    engine.lock().ok().and_then(|mut e| e.take_passband_request());
+                                if let Some(hz) = width_req {
+                                    if rig.set_passband(mode, hz).is_ok() {
+                                        if let Ok(mut eng) = engine.lock() {
+                                            eng.observe_rig_passband(Some(hz)); // optimistic; next read confirms
+                                        }
+                                    } else if let Ok(mut eng) = engine.lock() {
+                                        eng.request_filter_width(hz); // re-queue for the next cycle
+                                    }
+                                }
+                            }
+                        }
+                        // Apply any pending DSP-func toggle from the UI promptly — the dial read
+                        // proved the link is alive. Drain under the lock, RELEASE it, then do the
+                        // set_func TCP round-trip so the UI thread never blocks on the socket.
+                        let func_reqs = engine.lock().ok().map(|mut e| e.take_func_requests());
+                        if let Some(reqs) = func_reqs {
+                            let mut changed = false;
+                            for i in 0..RIG_FUNCS.len() {
+                                if let Some(on) = reqs[i] {
+                                    if rig.set_func(RIG_FUNCS[i], on).is_ok() {
+                                        self.func_state[i] = Some(on); // optimistic; a GET confirms
+                                        changed = true;
+                                    }
+                                }
+                            }
+                            if changed {
+                                if let Ok(mut eng) = engine.lock() {
+                                    eng.observe_rig_funcs(self.func_state);
+                                }
+                            }
+                        }
+                        // DSP funcs (NB/NR/notch=ANF/COMP/VOX): one GET per still-supported func on
+                        // the slow sub-cadence, mirroring the S-meter's lazy-capability + miss-
+                        // tolerance. A GET miss on this proven-alive link means the rig lacks the
+                        // func (hide it); a read failure on a supported func keeps the last state.
+                        // Read ONE DSP func per cycle, round-robin — NOT all five at once, and on a
+                        // different sub-tick than the mode read above. A func GET on a rig that
+                        // doesn't cleanly reject an unsupported func blocks to the ~2.5 s CAT
+                        // deadline; reading all five on one tick could stall the poll loop (and the
+                        // S-meter / scope it feeds) for many seconds every fourth poll — the
+                        // "runs 4 s, hangs a few, repeats" symptom. One-at-a-time bounds a tick's
+                        // worst case to a single timeout. SET (immediate, optimistic) is unchanged,
+                        // so slower GET confirmation costs no responsiveness.
+                        if self.rig_poll_ticks % 4 == 2 {
+                            let i = ((self.rig_poll_ticks / 4) as usize) % RIG_FUNCS.len();
+                            if self.func_supported[i] != Some(false) {
+                                match rig.read_func(RIG_FUNCS[i]) {
+                                    Some(on) => {
+                                        self.func_supported[i] = Some(true);
+                                        self.func_misses[i] = 0;
+                                        self.func_state[i] = Some(on);
+                                    }
+                                    None => {
+                                        self.func_misses[i] = self.func_misses[i].saturating_add(1);
+                                        if self.func_misses[i] >= 3 {
+                                            self.func_supported[i] = Some(false);
+                                            self.func_state[i] = None; // hide the toggle
+                                        }
+                                    }
+                                }
+                                if let Ok(mut eng) = engine.lock() {
+                                    eng.observe_rig_funcs(self.func_state);
+                                }
+                            }
+                        }
                     }
                     // The dial probe is the CAT health check. On a REAL CAT rig a
                     // failure/timeout here means the link went half-open (writes
@@ -817,7 +996,17 @@ impl RadioLoop {
                     Err(e) => {
                         if rig.has_control() {
                             self.cat_ok = Some(false);
+                            // Re-probe funcs on recovery; don't leave stale toggle states shown.
+                            self.func_supported = [None; 5];
+                            self.func_misses = [0; 5];
+                            self.func_state = [None; 5];
                             if let Ok(mut eng) = engine.lock() {
+                                // Clear the read-backs so a dead link doesn't freeze the
+                                // S-meter needle or flash a stale mode-mismatch tag.
+                                eng.clear_rig_smeter();
+                                eng.clear_rig_mode();
+                                eng.clear_rig_funcs();
+                                eng.clear_rig_passband();
                                 eng.set_cat_status(
                                     Some(false),
                                     format!("CAT read-back stopped — rig not answering ({e})"),

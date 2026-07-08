@@ -23,6 +23,7 @@ const BAND_RANGES: BandRange[] = [
   { lo: 24.89, hi: 24.99, label: '12m' },
   { lo: 28.0, hi: 29.7, label: '10m' },
   { lo: 50.0, hi: 54.0, label: '6m' },
+  { lo: 70.0, hi: 70.5, label: '4m' }, // EU allocation — the backend band plan has it
   { lo: 144.0, hi: 148.0, label: '2m' },
   { lo: 222.0, hi: 225.0, label: '1.25m' },
   { lo: 420.0, hi: 450.0, label: '70cm' },
@@ -39,4 +40,11 @@ export function bandLabelForMhz(mhz: number): string {
     if (mhz >= r.lo && mhz <= r.hi) return r.label
   }
   return ''
+}
+
+/** The [lo, hi] MHz edges of a band label (e.g. "20m" → {lo: 14.0, hi: 14.35}), or null for an
+ * unknown label. Used by the band-strip to lay spots + the dial marker on a proportional scale. */
+export function bandRangeForLabel(label: string): { lo: number; hi: number } | null {
+  const r = BAND_RANGES.find((b) => b.label === label)
+  return r ? { lo: r.lo, hi: r.hi } : null
 }

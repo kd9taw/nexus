@@ -174,6 +174,10 @@ pub struct Engine {
     work_tick: u64,
     /// The mode of the last worked spot ("digital" | "phone" | "cw").
     work_view: Option<String>,
+    /// Callsign of the last worked spot — carried in the snapshot so a click in a pop-out
+    /// window (band map / board) can prefill the MAIN window's log Call field. Cleared on a
+    /// call-less work so a stale call never prefills.
+    work_call: Option<String>,
     /// DXCC entities already worked (from the logbook) — for new-entity decode
     /// highlighting. Rebuilt on log load + each log mutation.
     worked_entities: HashSet<String>,
@@ -268,6 +272,11 @@ pub struct Engine {
     split_tx_mhz: Option<f64>,
     /// One-shot "apply the split state now" flag for the radio loop.
     split_dirty: bool,
+    /// Transient operator mode override for Phone (`"USB"`/`"LSB"`/`"FM"`), or `None` = AUTO
+    /// (the band-derived sideband policy). NOT persisted — the cockpit mode picker sets it; a
+    /// band change clears it so QSY re-asserts the auto sideband. FM as a persistent default
+    /// still lives in `settings.phone_mode`.
+    sideband_override: Option<String>,
     /// CW transmit queue (CAT keyer path): expanded CW text the radio loop drains and
     /// keys via `rig.send_morse`. Operator-initiated; gated by `tx_enabled` (Monitor).
     cw_queue: VecDeque<String>,
@@ -292,6 +301,24 @@ pub struct Engine {
     /// the commanded `rf_power` so a 750 ms poll can never clobber a just-issued
     /// set that the radio loop hasn't applied yet.
     rig_rf_power: Option<f32>,
+    /// Rig CAT S-meter (dB relative to S9) from the radio-loop poll; `None` when the
+    /// rig doesn't report STRENGTH. Observed-only, RX-only.
+    rig_smeter_db: Option<i32>,
+    /// Rig's actual mode read back over CAT (Hamlib name, e.g. "USB"/"LSB"/"FM").
+    /// DISPLAY-ONLY — the cockpit flags a mismatch with the commanded mode, but this
+    /// never overwrites the canonical commanded sideband (App-side invariant).
+    rig_mode: Option<String>,
+    /// Rig CAT DSP-function states, per `[nb, nr, notch(ANF), comp, vox]`, from the radio-loop
+    /// poll. `None` = the rig doesn't support that func (hide the toggle); `Some(bool)` =
+    /// supported + current on/off. Observed-only, same `None = can't do it` idiom as `rig_smeter_db`.
+    rig_funcs: [Option<bool>; 5],
+    /// Pending func toggles from the UI, per the same `[nb, nr, notch, comp, vox]` order; the
+    /// radio loop drains + applies them next cycle (mirrors the split-request seam). Off the TCP path.
+    pending_func: [Option<bool>; 5],
+    /// Rig RX passband width (Hz) from the poll; `None` = unknown / rig default. Observed-only.
+    rig_passband: Option<u32>,
+    /// Pending RX filter-width set (Hz) from the UI; the loop drains + applies it via set_mode.
+    pending_passband: Option<u32>,
     /// A foreign CAT-broker client is holding PTT (arbitrated in `broker_ptt`).
     broker_ptt: bool,
     /// Phone voice-keyer: pending 12 kHz mono samples to transmit. The radio loop drains
@@ -365,6 +392,19 @@ const QSO_WAV_WINDOW: usize = 720_000;
 /// Window of recent decode DT samples used for the time-sync health median.
 /// Snap a stored power multiplier to the LEGAL ARRL FD tiers {1, 2, 5} — a
 /// hand-edited settings file must never score with ×3/×4 (not real tiers).
+/// Map a UI DSP-func name to its `[nb, nr, notch, comp, vox]` slot index (the same order the
+/// radio loop uses for the `["NB","NR","ANF","COMP","VOX"]` Hamlib tokens). `None` = unknown name.
+fn func_index(func: &str) -> Option<usize> {
+    match func.to_ascii_lowercase().as_str() {
+        "nb" => Some(0),
+        "nr" => Some(1),
+        "notch" => Some(2),
+        "comp" => Some(3),
+        "vox" => Some(4),
+        _ => None,
+    }
+}
+
 fn legal_fd_power(v: u32) -> u32 {
     if v >= 5 {
         5
@@ -472,6 +512,7 @@ impl Engine {
             last_msg_tier: None,
             work_tick: 0,
             work_view: None,
+            work_call: None,
             worked_entities: HashSet::new(),
             worked_grids: HashSet::new(),
             worked_parks: HashSet::new(),
@@ -497,6 +538,7 @@ impl Engine {
             tx_dial_shift_hz: 0,
             split_tx_mhz: None,
             split_dirty: false,
+            sideband_override: None,
             cw_queue: VecDeque::new(),
             cw_sent: VecDeque::new(),
             cw_keyer_error: None,
@@ -505,6 +547,12 @@ impl Engine {
             manual_ptt: false,
             rf_power: None,
             rig_rf_power: None,
+            rig_smeter_db: None,
+            rig_mode: None,
+            rig_funcs: [None; 5],
+            pending_func: [None; 5],
+            rig_passband: None,
+            pending_passband: None,
             broker_ptt: false,
             voice_tx: None,
             voice_abort: false,
@@ -669,6 +717,11 @@ impl Engine {
             // click-a-needed → QSY → call flow is unaffected.
             self.halt_tx();
         }
+        // A band change drops the transient mode override, so a QSY re-asserts the auto sideband
+        // (LSB <10 MHz / USB above) — "manual mode, but don't impede band auto-select".
+        if !self.settings.band.eq_ignore_ascii_case(band) {
+            self.sideband_override = None;
+        }
         self.settings.dial_mhz = dial_mhz;
         self.settings.band = band.to_string();
         self.settings.sideband = mode.to_string();
@@ -690,6 +743,12 @@ impl Engine {
     /// sideband to the rig-mode policy (the radio loop still owns what it commands).
     pub fn observe_rig_freq(&mut self, hz: u64) {
         let mhz = hz as f64 / 1_000_000.0;
+        // A knob QSY returns the rig to simplex, exactly like an app-commanded retune
+        // (set_frequency): otherwise a manual split's TX VFO would be left on the OLD dial —
+        // transmitting off-frequency — and the SPLIT badge would lie about the offset.
+        if self.split_tx_mhz.take().is_some() {
+            self.split_dirty = true;
+        }
         self.settings.dial_mhz = mhz;
         if let Some(band) = crate::bandplan::band_for_dial(mhz) {
             // Knob QSY across bands invalidates the decode context + roster too —
@@ -699,6 +758,10 @@ impl Engine {
                 self.clear_decode_context();
                 self.app.clear_stations();
                 self.halt_tx();
+                // A knob QSY across bands drops the transient mode override too, exactly like an
+                // app-commanded band change (set_frequency) — so the tooltip's "until you change
+                // bands" holds however the QSY happened, and the auto sideband re-asserts.
+                self.sideband_override = None;
             }
             self.settings.band = band.to_string();
         }
@@ -872,6 +935,10 @@ impl Engine {
     ) {
         self.set_operating_mode(mode, false);
         self.set_frequency(freq_mhz, band, "USB"); // clears split + arms the retune
+        // Working a spot carries explicit mode intent — drop any manual override (even same-band)
+        // so the spot's band-auto sideband applies (10 m mixes FM + SSB, so a stale FM override
+        // must not key FM onto an SSB spot).
+        self.sideband_override = None;
         if let Some(up) = split_up_khz {
             self.split_tx_mhz = Some(freq_mhz + up / 1000.0);
             self.split_dirty = true;
@@ -882,6 +949,14 @@ impl Engine {
         // like clearTick/uploadTick).
         self.work_tick += 1;
         self.work_view = Some(mode.to_string());
+        self.work_call = None; // the command that has the call sets it via note_work_call
+    }
+
+    /// Record the callsign of the just-worked spot, right after [`work_spot_split`] (same lock).
+    /// This is the cross-window prefill hint: a click in a pop-out band map can't touch the main
+    /// window's log directly, so the call rides the snapshot and the main window prefills from it.
+    pub fn note_work_call(&mut self, call: Option<String>) {
+        self.work_call = call.filter(|c| !c.trim().is_empty());
     }
 
     /// Consume the one-shot split request: `Some(Some(tx))` = set split TX dial,
@@ -906,6 +981,41 @@ impl Engine {
     pub fn split_rejected(&mut self) {
         self.split_tx_mhz = None;
         self.split_dirty = false;
+    }
+
+    /// Set (`Some(tx_mhz)`) or clear (`None`) the DESIRED split TX dial from the operator/UI;
+    /// the radio loop applies it on the next cycle (same path the pile-up "UP n" uses). `None`
+    /// returns to simplex. Marks the request dirty so `take_split_request` picks it up.
+    pub fn request_split(&mut self, tx_mhz: Option<f64>) {
+        self.split_tx_mhz = tx_mhz;
+        self.split_dirty = true;
+    }
+
+    /// Set (`Some("USB"|"LSB"|"FM")`) or clear (`None` = AUTO) the transient Phone mode override
+    /// from the cockpit picker; the radio loop applies it next cycle via `rig_mode_effective`. A
+    /// band change clears it (see `set_frequency`), so a QSY re-asserts the band-auto sideband.
+    pub fn request_sideband_override(&mut self, mode: Option<&str>) {
+        // Whitelist the Phone voice modes — a broker/devtools caller can't smuggle "CW" etc. in.
+        self.sideband_override = mode
+            .map(|m| m.trim().to_ascii_uppercase())
+            .filter(|m| matches!(m.as_str(), "USB" | "LSB" | "FM"));
+        self.immediate_retune = true;
+    }
+
+    /// The mode the radio loop should COMMAND: the operator's transient Phone override when set,
+    /// else the band-derived policy (`settings.rig_mode`). Write-side canon for the rig `M` verb.
+    pub fn rig_mode_effective(&self) -> String {
+        if self.settings.operating_mode == crate::settings::OperatingMode::Phone {
+            if let Some(m) = &self.sideband_override {
+                return m.clone();
+            }
+        }
+        self.settings.rig_mode()
+    }
+
+    /// The active Phone mode override for the cockpit picker (`None` = AUTO / band-derived).
+    pub fn sideband_override(&self) -> Option<String> {
+        self.sideband_override.clone()
     }
 
     /// Set the operator's amateur license class (drives the TX-privilege lockout + the
@@ -1117,6 +1227,93 @@ impl Engine {
         if frac.is_finite() {
             self.rig_rf_power = Some(frac.clamp(0.0, 1.0));
         }
+    }
+
+    /// Adopt the rig's reported S-meter (dB relative to S9), from the radio-loop poll.
+    /// Observed-only; the UI renders it as a calibrated S-unit meter. The poll reads
+    /// STRENGTH only during RX, so this never carries a meaningless TX value.
+    pub fn observe_rig_smeter(&mut self, db: i32) {
+        self.rig_smeter_db = Some(db);
+    }
+
+    /// Adopt the rig's read-back mode (Hamlib name) for DISPLAY ONLY — the cockpit uses it
+    /// to flag when the operator's mode knob disagrees with the commanded mode. Never touches
+    /// the canonical commanded sideband.
+    pub fn observe_rig_mode(&mut self, mode: String) {
+        let m = mode.trim();
+        if !m.is_empty() {
+            self.rig_mode = Some(m.to_string());
+        }
+    }
+
+    /// Drop the last S-meter reading so the UI reverts to "—" — called when CAT goes
+    /// half-open (breaker trip) or the rig is found not to report STRENGTH, so a frozen
+    /// needle never implies a signal that is no longer being measured.
+    pub fn clear_rig_smeter(&mut self) {
+        self.rig_smeter_db = None;
+    }
+
+    /// Drop the rig's read-back mode so the mismatch tag hides — called on a breaker trip
+    /// and right after the app commands a retune, so a stale pre-change mode can't flash a
+    /// false "rig: X" mismatch until the next poll reads the rig's true mode.
+    pub fn clear_rig_mode(&mut self) {
+        self.rig_mode = None;
+    }
+
+    /// Adopt the rig's CAT DSP-function states `[nb, nr, notch, comp, vox]` from the radio-loop
+    /// poll. A `None` slot = the rig doesn't support that func (its toggle hides). Observed-only.
+    pub fn observe_rig_funcs(&mut self, funcs: [Option<bool>; 5]) {
+        self.rig_funcs = funcs;
+    }
+
+    /// Drop all rig func states (→ the toggles hide) — called on a breaker trip so a half-open
+    /// CAT link never freezes stale NB/NR/… states in the cockpit.
+    pub fn clear_rig_funcs(&mut self) {
+        self.rig_funcs = [None; 5];
+    }
+
+    /// Queue a func toggle from the UI (`func` = "nb"|"nr"|"notch"|"comp"|"vox"); the radio loop
+    /// applies it next cycle (off the TCP path). Also updates the observed state OPTIMISTICALLY so
+    /// the snapshot returned to the UI reflects the click at once — the loop's next GET reconciles
+    /// it (and reverts if the rig rejected the set). Unknown names are ignored.
+    pub fn request_rig_func(&mut self, func: &str, on: bool) {
+        if let Some(i) = func_index(func) {
+            self.pending_func[i] = Some(on);
+            self.rig_funcs[i] = Some(on);
+        }
+    }
+
+    /// Drain the pending func requests for the radio loop to apply — `[nb, nr, notch, comp, vox]`,
+    /// each `Some(on)` to apply then cleared. Mirrors `take_split_request`.
+    pub fn take_func_requests(&mut self) -> [Option<bool>; 5] {
+        std::mem::take(&mut self.pending_func)
+    }
+
+    /// Adopt the rig's RX passband width (Hz) from the poll. `None` (a split `m` read) keeps the
+    /// last known width so the display doesn't flicker; a real value updates it.
+    pub fn observe_rig_passband(&mut self, hz: Option<u32>) {
+        if hz.is_some() {
+            self.rig_passband = hz;
+        }
+    }
+
+    /// Drop the RX passband width (→ display shows unknown) on a breaker trip.
+    pub fn clear_rig_passband(&mut self) {
+        self.rig_passband = None;
+    }
+
+    /// Queue an RX filter-width change (Hz) from the UI; the radio loop applies it via set_mode
+    /// (Hamlib carries width as set_mode's 2nd arg). Off the TCP path. Also updates the observed
+    /// width OPTIMISTICALLY so the snapshot reflects the click at once — rapid ± steps accumulate
+    /// (rather than all reading the same stale value), and the loop's next read reconciles it.
+    pub fn request_filter_width(&mut self, hz: u32) {
+        self.pending_passband = Some(hz);
+        self.rig_passband = Some(hz);
+    }
+
+    /// Drain a pending filter-width request for the radio loop.
+    pub fn take_passband_request(&mut self) -> Option<u32> {
+        self.pending_passband.take()
     }
 
     // ----- Phone voice keyer — play recorded WAVs + record, via the radio loop -----
@@ -3398,6 +3595,22 @@ impl Engine {
         s.radio.tx_level = self.settings.tx_level;
         // Rig read-back wins (the knob's truth); else the last commanded value.
         s.radio.rf_power = self.rig_rf_power.or(self.rf_power);
+        s.radio.smeter_db = self.rig_smeter_db;
+        s.radio.rig_mode = self.rig_mode.clone();
+        s.radio.sideband_override = self.sideband_override.clone();
+        // Phone sub-band the operator may legally use on the CURRENT band + class — the band-strip
+        // shades it. None for no-phone-privilege / Open / off-plan bands (then the strip shows none).
+        let (plo, phi) = crate::privileges::phone_segment(self.settings.license_class, &self.settings.band)
+            .map_or((None, None), |(lo, hi)| (Some(lo), Some(hi)));
+        s.radio.phone_seg_lo = plo;
+        s.radio.phone_seg_hi = phi;
+        // Rig DSP-func states [nb, nr, notch, comp, vox]; None = unsupported → the toggle hides.
+        s.radio.nb = self.rig_funcs[0];
+        s.radio.nr = self.rig_funcs[1];
+        s.radio.notch = self.rig_funcs[2];
+        s.radio.comp = self.rig_funcs[3];
+        s.radio.vox = self.rig_funcs[4];
+        s.radio.filter_width_hz = self.rig_passband;
         s.radio.hold_tx_freq = self.hold_tx_freq;
         s.radio.clock_offset_ms = self.clock_offset_ms;
         s.radio.source = self.source_kind;
@@ -3575,6 +3788,7 @@ impl Engine {
         s.clear_tick = self.clear_tick;
         s.work_tick = self.work_tick;
         s.work_view = self.work_view.clone();
+        s.work_call = self.work_call.clone();
         s.hunt = self
             .hunt_target() // TTL-filtered: an expired pend never shows a chip
             .map(|(program, reference, call)| crate::dto::HuntDto {

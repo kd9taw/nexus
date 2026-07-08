@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { callHistory, entitySlots, isNewEntity } from './callHistory'
+import { callHistory, entitySlots, historySummary, isNewEntity } from './callHistory'
 import type { LoggedQso } from '../types'
 
 function qso(call: string, band: string, mode: string, whenUnix: number, confirmed = false): LoggedQso {
@@ -107,5 +107,26 @@ describe('entitySlots', () => {
     expect(s.bandsWorked.includes('20m'.trim().toUpperCase())).toBe(true)
     expect(s.bandsWorked.includes('15M')).toBe(false) // 15m was the blank-country row, not Japan
     expect(s.modesWorked.includes('ft8'.toUpperCase())).toBe(false) // FT8 was the USA row
+  })
+})
+
+describe('historySummary', () => {
+  it('first-contact cue when never worked', () => {
+    expect(historySummary(callHistory(LOG, 'DX0NEW', ''))).toBe('First contact — new station!')
+  })
+
+  it('count + most-recent band/mode/date, in UTC (not log order)', () => {
+    // W1AW: 3 QSOs; most recent is whenUnix=2000 → 20m FT8; 2000s = 1 Jan 1970 UTC.
+    expect(historySummary(callHistory(LOG, 'W1AW', ''))).toBe('3 QSOs — last on 20m FT8, 1 Jan 1970')
+  })
+
+  it('singular QSO with a real date', () => {
+    const log = [qso('N0P', '15m', 'SSB', Math.floor(Date.UTC(2026, 2, 14) / 1000))]
+    expect(historySummary(callHistory(log, 'N0P', ''))).toBe('1 QSO — last on 15m SSB, 14 Mar 2026')
+  })
+
+  it('omits band/mode when absent', () => {
+    const log = [qso('N0B', '', '', 1000)]
+    expect(historySummary(callHistory(log, 'N0B', ''))).toBe('1 QSO — last 1 Jan 1970')
   })
 })

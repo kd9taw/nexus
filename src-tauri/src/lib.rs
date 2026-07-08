@@ -3787,6 +3787,7 @@ fn work_spot(
     });
     let mut eng = state.lock().map_err(|e| e.to_string())?;
     eng.work_spot_split(&mode, freq_mhz, &band, split_up_khz);
+    eng.note_work_call(call); // cross-window prefill hint (pop-out band map → main window log)
     if let Err(e) = eng.settings().save(&settings_path()) {
         eprintln!("tempo: failed to persist worked spot: {e}");
     }
@@ -3833,6 +3834,48 @@ fn set_ptt(state: State<'_, SharedEngine>, on: bool) -> Result<AppSnapshot, Stri
 fn set_rf_power(state: State<'_, SharedEngine>, power: f32) -> Result<AppSnapshot, String> {
     let mut eng = state.lock().map_err(|e| e.to_string())?;
     eng.set_rf_power(power);
+    Ok(eng.snapshot())
+}
+
+/// Set (`Some`) or clear (`None`) the desired split TX dial (MHz); the radio loop applies it.
+/// `Some(tx)` = TX split to that dial (e.g. "up 5"), `None` = back to simplex.
+#[tauri::command]
+fn set_split(state: State<'_, SharedEngine>, tx_mhz: Option<f64>) -> Result<AppSnapshot, String> {
+    let mut eng = state.lock().map_err(|e| e.to_string())?;
+    eng.request_split(tx_mhz);
+    Ok(eng.snapshot())
+}
+
+/// Enable/disable a rig DSP function ("nb"|"nr"|"notch"|"comp"|"vox"); the radio loop applies it
+/// next cycle. The snapshot reflects the requested state optimistically (the loop's GET reconciles).
+#[tauri::command]
+fn set_rig_func(
+    state: State<'_, SharedEngine>,
+    func: String,
+    on: bool,
+) -> Result<AppSnapshot, String> {
+    let mut eng = state.lock().map_err(|e| e.to_string())?;
+    eng.request_rig_func(&func, on);
+    Ok(eng.snapshot())
+}
+
+/// Set (`Some("USB"|"LSB"|"FM")`) or clear (`None` = AUTO) the transient Phone mode override; the
+/// radio loop applies it next cycle, and a band change reverts to the band-auto sideband.
+#[tauri::command]
+fn set_sideband_override(
+    state: State<'_, SharedEngine>,
+    mode: Option<String>,
+) -> Result<AppSnapshot, String> {
+    let mut eng = state.lock().map_err(|e| e.to_string())?;
+    eng.request_sideband_override(mode.as_deref());
+    Ok(eng.snapshot())
+}
+
+/// Set the rig RX filter/passband width in Hz; the radio loop applies it via set_mode next cycle.
+#[tauri::command]
+fn set_filter_width(state: State<'_, SharedEngine>, hz: u32) -> Result<AppSnapshot, String> {
+    let mut eng = state.lock().map_err(|e| e.to_string())?;
+    eng.request_filter_width(hz);
     Ok(eng.snapshot())
 }
 
@@ -4215,12 +4258,16 @@ async fn open_panel_window(app: tauri::AppHandle, panel: String) -> Result<(), S
         "dxped" => "Nexus — DXpeditions".to_string(),
         "needed" => "Nexus — Needed".to_string(),
         "operate" => "Nexus — Operate".to_string(),
+        "bandmapPhone" => "Nexus — Band map (Phone)".to_string(),
+        "bandmapCw" => "Nexus — Band map (CW)".to_string(),
         other => format!("Nexus — {other}"),
     };
     // The Operate cockpit (waterfall + Band Activity + roster) needs more room than the
-    // narrower insight panels.
+    // narrower insight panels; the band map is tall + narrow (a vertical frequency axis).
     let (w, h) = if slug == "operate" {
         (1140.0, 760.0)
+    } else if slug == "bandmapPhone" || slug == "bandmapCw" {
+        (420.0, 780.0)
     } else {
         (760.0, 660.0)
     };
@@ -4438,6 +4485,19 @@ fn get_awards(state: State<'_, SharedEngine>) -> Result<propagation::AwardSummar
         );
     }
     Ok(awards.summary())
+}
+
+/// The geographic slice of the logbook — QSOs by WAC continent, by CQ zone, and a DX-vs-domestic
+/// split — the dimensions the frontend `StatsView` can't derive on its own (the stored record has
+/// no continent/zone; both re-resolve per callsign here via cty.dat, anchored on the operator's
+/// own call for the DX split). The rest of the Statistics dashboard (band/mode/year/hour/state/
+/// confirmations) is computed frontend-side from `get_log`. Pure/offline.
+#[tauri::command]
+fn get_log_stats(state: State<'_, SharedEngine>) -> Result<propagation::LogStats, String> {
+    let eng = state.lock().map_err(|e| e.to_string())?;
+    let my_call = eng.settings().mycall.clone();
+    let calls: Vec<String> = eng.get_log().into_iter().map(|q| q.call).collect();
+    Ok(propagation::compute_log_stats(&calls, &my_call))
 }
 
 /// The Journey snapshot — the in-app, beginner-first achievement layer (auto-detected
@@ -6780,6 +6840,82 @@ impl tempo_audio::rigctld_server::RigBackend for EngineRig {
     }
 }
 
+// ---- Self-update check (Phase 1: notify + open the download page) ---------------------------
+//
+// Fetches SourceForge's best_release.json, parses the latest Windows installer version, and
+// compares it to this build (env!("CARGO_PKG_VERSION")). The frontend throttles how often it
+// calls this (once/day) and remembers a dismissed version. Nothing is ever downloaded or run —
+// signed auto-update is a later phase.
+
+/// SourceForge `best_release.json` for the Nexus project — the machine-readable "latest release".
+const BEST_RELEASE_URL: &str =
+    "https://sourceforge.net/projects/nexus-ham-radio/best_release.json";
+/// The human download page the "Download" button opens (files listing; returns HTTP 200).
+const DOWNLOAD_PAGE_URL: &str = "https://sourceforge.net/projects/nexus-ham-radio/files/";
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateInfo {
+    /// The running build's version (this crate's CARGO_PKG_VERSION).
+    current: String,
+    /// Latest version parsed from best_release.json; null if it couldn't be read.
+    latest: Option<String>,
+    /// True only when `latest` is strictly newer than `current`.
+    update_available: bool,
+    /// The page the frontend opens for the operator to download the new build.
+    download_url: String,
+}
+
+/// Blocking GET of best_release.json — mirrors the propagation crate's reqwest usage (rustls,
+/// short timeout, a UA). Returns the raw body; call it via `spawn_blocking` from the command.
+fn fetch_best_release() -> Result<String, String> {
+    reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .user_agent(concat!("nexus/", env!("CARGO_PKG_VERSION"), " (+update-check)"))
+        .build()
+        .map_err(|e| e.to_string())?
+        .get(BEST_RELEASE_URL)
+        .send()
+        .map_err(|e| e.to_string())?
+        .error_for_status()
+        .map_err(|e| e.to_string())?
+        .text()
+        .map_err(|e| e.to_string())
+}
+
+/// Check SourceForge for a newer release. Returns the current/latest versions and whether an
+/// update exists; the frontend decides whether to show the dismissible prompt. Returns `Err`
+/// offline or on a fetch error — the frontend treats that as a silent no-op (offline honesty).
+#[tauri::command]
+async fn check_for_update(app: tauri::AppHandle) -> Result<UpdateInfo, String> {
+    let body = tauri::async_runtime::spawn_blocking(fetch_best_release)
+        .await
+        .map_err(|e| e.to_string())??;
+    // Compare against the version Tauri actually shipped (tauri.conf.json) — the SAME source the
+    // bundler derives the installer filename from — so the two can never drift into a false nag.
+    let current = app.package_info().version.to_string();
+    let latest = tempo_app::update::parse_latest_version(&body);
+    let update_available = latest
+        .as_deref()
+        .is_some_and(|l| tempo_app::update::version_is_newer(l, &current));
+    Ok(UpdateInfo {
+        current,
+        latest,
+        update_available,
+        download_url: DOWNLOAD_PAGE_URL.to_string(),
+    })
+}
+
+/// Open the SourceForge download page in the operator's default browser. Opened from Rust via the
+/// opener plugin, so no JS package or ACL capability entry is required.
+#[tauri::command]
+fn open_download_page(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    app.opener()
+        .open_url(DOWNLOAD_PAGE_URL, None::<&str>)
+        .map_err(|e| e.to_string())
+}
+
 /// Build and run the Tauri application.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -7106,6 +7242,7 @@ pub fn run() {
     let scales_cache: ScalesCache = Arc::new(Mutex::new(None));
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
         .manage(engine)
         .manage(prop_cache)
         .manage(aurora_cache)
@@ -7169,6 +7306,10 @@ pub fn run() {
             set_cw_keyer,
             set_ptt,
             set_rf_power,
+            set_split,
+            set_rig_func,
+            set_sideband_override,
+            set_filter_width,
             play_voice_message,
             stop_voice,
             start_voice_recording,
@@ -7217,6 +7358,7 @@ pub fn run() {
             purge_log,
             get_awards,
             get_journey,
+            get_log_stats,
             get_confirmation_diagnostics,
             import_adif,
             sync_lotw_report,
@@ -7232,6 +7374,8 @@ pub fn run() {
             set_hamqth_password,
             clear_hamqth_password,
             qrz_lookup,
+            check_for_update,
+            open_download_page,
             set_qrz_logbook_key,
             clear_qrz_logbook_key,
             qrz_push_qso,

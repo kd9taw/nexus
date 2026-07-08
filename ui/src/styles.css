@@ -1519,7 +1519,7 @@ button.nb-chip:hover {
   color: #38bdf8;
   border: 1px solid color-mix(in srgb, #38bdf8 50%, transparent);
 }
-".need-chip.need-wanted {
+.need-chip.need-wanted {
   background: color-mix(in srgb, var(--need-wanted) 22%, transparent);
   color: var(--need-wanted);
   border: 1px solid color-mix(in srgb, var(--need-wanted) 50%, transparent);
@@ -5626,56 +5626,6 @@ select optgroup {
   border-color: var(--accent, #4ea1ff);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent, #4ea1ff) 45%, transparent);
 }
-/* Wideband CW skimmer list — every signal on the band (freq · text · wpm). */
-.cw-skim {
-  display: flex;
-  gap: var(--space-2);
-  padding: var(--space-1) var(--space-2);
-  margin-bottom: var(--space-2);
-  background: var(--surface-2, rgba(0, 0, 0, 0.2));
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-}
-.cw-skim-list {
-  flex: 1;
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  /* Fixed height (~9–10 signals) so the skimmer NEVER pops in/out and shoves the log below
-     around — it stays put and scrolls when the band is busy. */
-  height: 158px;
-  overflow-y: auto;
-}
-.cw-skim-idle {
-  color: var(--text-faint);
-  font-style: italic;
-  font-size: 12px;
-}
-.cw-skim-row {
-  display: flex;
-  gap: var(--space-2);
-  font-family: var(--font-mono);
-  font-size: 12px;
-}
-.cw-skim-freq {
-  color: var(--text-dim);
-  font-variant-numeric: tabular-nums;
-  min-width: 56px;
-}
-.cw-skim-text {
-  flex: 1;
-  color: var(--text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.cw-skim-wpm {
-  color: var(--text-faint);
-  font-variant-numeric: tabular-nums;
-}
 .cw-macros {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
@@ -5749,6 +5699,23 @@ select optgroup {
   max-width: 80px;
   flex: 0 0 auto !important;
 }
+/* Persistent Sent/Rcvd captions on the two RST boxes — the placeholders were hidden behind the
+   default "59", so the send vs receive side was unlabeled. */
+.le-rst-field {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: text;
+}
+.le-rst-cap {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  user-select: none;
+}
 .le-qrz {
   flex: 0 0 auto;
   padding: var(--space-2) var(--space-3);
@@ -5793,36 +5760,171 @@ select optgroup {
   font-size: var(--fs-micro);
   color: var(--text-faint);
 }
-/* Prior-QSO panel: worked-before / dupe / last-contact summary above the row. */
-.le-prior {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  margin-bottom: var(--space-2);
-  padding: var(--space-1) var(--space-2);
+/* In-QSO recall panel — the prominent rag-chew "who is this + our history" card. */
+.recall-card {
+  margin-top: var(--space-3);
+  padding: var(--space-3);
   border-radius: var(--radius-sm);
   background: var(--bg);
   border: 1px solid var(--border);
+}
+.recall-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+.recall-avatar {
+  position: relative;
+  flex: none;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-weight: 800;
+  font-size: 20px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  overflow: hidden;
+}
+/* Callbook photo overlaid on the initials — if it loads it covers them; on error it hides
+ * itself (RecallPanel onError) and the initials show through. */
+.recall-avatar-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 50%;
+}
+.recall-id {
+  flex: 1;
+  min-width: 0;
+}
+.recall-name-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.recall-name {
+  font-size: var(--fs-title, 1.25rem);
+  font-weight: 800;
+  color: var(--text);
+  line-height: 1.1;
+}
+.recall-call {
+  color: var(--text-dim);
+  font-size: var(--fs-body);
+}
+.recall-where {
+  margin-top: 2px;
+  font-size: var(--fs-body);
+  color: var(--text);
+}
+.recall-where-empty {
+  color: var(--text-faint);
+  font-style: italic;
+  font-size: var(--fs-micro);
+}
+.recall-geo {
+  margin-top: 2px;
   font-size: var(--fs-micro);
   color: var(--text-dim);
+  letter-spacing: 0.02em;
 }
-.le-prior.dupe {
-  border-color: var(--state-weak, #e0a030);
-  color: var(--state-weak, #e0a030);
+.recall-badges {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-width: 42%;
 }
-.le-prior.new {
-  color: var(--text-faint);
+.recall-badge {
+  font-size: var(--fs-micro);
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
 }
-/* Stronger than plain "new": QRZ-resolved country is absent from the whole log —
-   an ATNO candidate, so it wears the app-wide new-entity magenta. */
-.le-prior.new-entity {
+.recall-badge.ok {
+  color: var(--ok, #2fbf71);
+  background: color-mix(in srgb, var(--ok, #2fbf71) 14%, transparent);
+}
+.recall-badge.need {
   color: var(--need-entity);
-  border-color: color-mix(in srgb, var(--need-entity) 70%, transparent);
-  background: color-mix(in srgb, var(--need-entity) 12%, transparent);
+  background: color-mix(in srgb, var(--need-entity) 14%, transparent);
+}
+.recall-badge.dupe {
+  color: var(--state-weak, #e0a030);
+  background: color-mix(in srgb, var(--state-weak, #e0a030) 14%, transparent);
+}
+.recall-hist {
+  margin-top: var(--space-2);
+  font-size: var(--fs-body);
+  color: var(--text-dim);
+}
+.recall-note {
+  margin-top: var(--space-1);
+  font-size: var(--fs-body);
+  color: var(--text);
+  font-style: italic;
+}
+.recall-log {
+  margin-top: var(--space-2);
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-2);
+}
+.recall-log-head {
+  font-size: var(--fs-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+  margin-bottom: var(--space-1);
+}
+.recall-log-count {
+  color: var(--text-dim);
   font-weight: 700;
 }
-.le-prior-text {
-  flex: 1;
+.recall-log-list {
+  max-height: 38vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.recall-log-row {
+  display: grid;
+  grid-template-columns: 5.5em 5.5em 4.5em 1fr;
+  gap: var(--space-2);
+  align-items: baseline;
+  padding: 3px var(--space-1);
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-micro);
+}
+.recall-log-row:nth-child(even) {
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+}
+.recall-log-date {
+  color: var(--text-dim);
+}
+.recall-log-bm {
+  color: var(--text);
+  font-weight: 600;
+}
+.recall-log-rst {
+  color: var(--text-dim);
+}
+.recall-log-cmt {
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ===========================================================================
@@ -5859,6 +5961,115 @@ select optgroup {
   border-radius: var(--radius-sm);
   padding: 3px 10px;
 }
+/* Phone mode picker (AUTO·USB·LSB·FM) — segmented; the active mode is filled. */
+.ph-mode-pick {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.ph-mode-btn {
+  padding: 3px var(--space-2);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.ph-mode-btn:not(:last-child) {
+  border-right: 1px solid var(--border);
+}
+.ph-mode-btn.active {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+.ph-mode-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+/* RX filter / passband width stepper. */
+.ph-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+.ph-filter-lbl {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: var(--text-dim);
+}
+.ph-filter-step {
+  min-width: 20px;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-dim);
+  font-weight: 700;
+  cursor: pointer;
+}
+.ph-filter-step:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.ph-filter-val {
+  min-width: 2.6em;
+  text-align: center;
+  font-size: 11px;
+  color: var(--text);
+}
+.ph-mode-mismatch {
+  font-weight: 700;
+  font-size: var(--fs-label);
+  letter-spacing: 0.04em;
+  color: var(--state-weak, #e0a030);
+  background: color-mix(in srgb, var(--state-weak, #e0a030) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--state-weak, #e0a030) 45%, transparent);
+  border-radius: var(--radius-sm);
+  padding: 3px var(--space-2);
+}
+.ph-split {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+.ph-split-toggle {
+  font-weight: 700;
+  font-size: var(--fs-label);
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 3px 10px;
+  cursor: pointer;
+}
+.ph-split.on .ph-split-toggle {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+}
+.ph-split-step {
+  min-width: 22px;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+}
+.ph-split-amt {
+  min-width: 3em;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.ph-split.on .ph-split-amt {
+  color: var(--text);
+}
 .ph-freq {
   color: var(--text);
   font-size: var(--fs-body);
@@ -5889,6 +6100,39 @@ select optgroup {
 .ph-tx.on {
   color: var(--state-weak);
   font-weight: 800;
+}
+/* DSP toggle row (NB/NR/Notch/COMP/VOX) — capability-gated, below the scope. */
+.ph-dsp {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: var(--space-2) 0;
+  flex-wrap: wrap;
+}
+.ph-dsp-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.ph-dsp-btn {
+  padding: 3px var(--space-3);
+  font-size: 11px;
+  font-weight: 700;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.ph-dsp-btn:hover {
+  border-color: var(--accent);
+}
+.ph-dsp-btn.on {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: var(--accent);
 }
 .ph-nocat {
   font-size: 10px;
@@ -6003,6 +6247,12 @@ select optgroup {
   font-size: 11px;
   font-weight: 800;
   color: var(--text-dim);
+}
+.ph-scope-smeter-value {
+  min-width: 3.4em;
+  text-align: right;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
 }
 .ph-scope-smeter-track {
   flex: 1;
@@ -6708,6 +6958,20 @@ select optgroup {
   color: var(--text-faint);
   font-family: var(--font-mono);
 }
+.settings-update-btn {
+  margin-left: var(--space-2);
+  font-size: 10px;
+  padding: 3px var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.settings-update-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
 .settings-form {
   flex: 1;
   min-height: 0;
@@ -7155,11 +7419,396 @@ select.settings-input {
   gap: var(--space-1);
   margin-bottom: var(--space-1);
 }
+.ph-scope-title {
+  margin-right: auto; /* push the Colors/palette controls to the right edge */
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
 .ph-scope-head-label {
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.02em;
   text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+/* Spot band-activity strip — proportional band scale with SSB cluster spots, licensed-phone
+   shading, and a "you are here" dial marker. The universal band-context view for any rig. */
+.bandstrip {
+  margin: var(--space-2) 0;
+  padding: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.bandstrip-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+.bandstrip-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.bandstrip-count {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.bandstrip-track {
+  position: relative;
+  height: 34px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-soft);
+  background: color-mix(in srgb, var(--text) 4%, var(--bg));
+}
+.bandstrip-shade {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: color-mix(in srgb, var(--ok, #2fbf71) 12%, transparent);
+  border-inline: 1px solid color-mix(in srgb, var(--ok, #2fbf71) 40%, transparent);
+  pointer-events: none;
+}
+.bandstrip-spot {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  width: 12px;
+  transform: translateX(-50%);
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+.bandstrip-tick {
+  position: absolute;
+  left: 50%;
+  top: 18%;
+  height: 64%;
+  width: 2px;
+  transform: translateX(-50%);
+  background: var(--accent);
+  border-radius: 1px;
+}
+.bandstrip-spot:hover .bandstrip-tick {
+  width: 3px;
+  background: var(--text);
+}
+.bandstrip-spot-call {
+  display: none;
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-bottom: 3px;
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+  background: var(--text);
+  color: var(--bg);
+  font-size: 11px;
+  white-space: nowrap;
+  z-index: 4;
+  pointer-events: none;
+}
+.bandstrip-spot:hover .bandstrip-spot-call {
+  display: block;
+}
+.bandstrip-dial {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+  transform: translateX(-50%);
+  background: var(--ok, #2fbf71);
+  z-index: 3;
+  pointer-events: none;
+}
+.bandstrip-dial::before {
+  content: '';
+  position: absolute;
+  top: -4px;
+  left: 50%;
+  transform: translateX(-50%);
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 5px solid var(--ok, #2fbf71);
+}
+.bandstrip-dial.blocked {
+  background: var(--danger, #e5484d);
+}
+.bandstrip-dial.blocked::before {
+  border-top-color: var(--danger, #e5484d);
+}
+.bandstrip-axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 3px;
+  font-size: 10px;
+  color: var(--text-faint);
+}
+
+/* "Pop out band map" button in the strip header — opens the vertical map in its own window. */
+.bandstrip-popout {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 9px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.bandstrip-popout:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+/* The vertical N1MM-style band map (its own torn-off window via open_panel_window) — flex-fills
+ * the detached window (flex, not a height:100% chain, per the .app.detached note above). */
+.bandmap {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-2);
+}
+.bandmap-track {
+  position: relative;
+  flex: 1;
+  min-height: 240px; /* measured at runtime for label de-collision; fills the pop-out window */
+  margin-top: var(--space-2);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-soft);
+  background: color-mix(in srgb, var(--text) 4%, var(--bg));
+  overflow: hidden;
+}
+/* Frequency gridline + its label (in the left gutter) — the scale that makes it read as a map. */
+.bandmap-grid {
+  position: absolute;
+  left: 54px;
+  right: 0;
+  border-top: 1px dashed color-mix(in srgb, var(--text) 13%, transparent);
+  pointer-events: none;
+}
+.bandmap-grid-lbl {
+  position: absolute;
+  left: -52px;
+  top: 0;
+  width: 46px;
+  transform: translateY(-50%);
+  text-align: right;
+  font-size: 10px;
+  color: var(--text-faint);
+}
+.bandmap-shade {
+  position: absolute;
+  left: 54px;
+  right: 0;
+  background: color-mix(in srgb, var(--ok, #2fbf71) 12%, transparent);
+  border-block: 1px solid color-mix(in srgb, var(--ok, #2fbf71) 40%, transparent);
+  pointer-events: none;
+}
+.bandmap-tick {
+  position: absolute;
+  left: 44px;
+  width: 14px;
+  height: 2px;
+  transform: translateY(-50%);
+  background: var(--need-color, var(--accent));
+  border-radius: 1px;
+  pointer-events: none;
+  z-index: 2;
+}
+.bandmap-spot {
+  position: absolute;
+  left: 60px;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  height: 15px;
+  padding: 0 6px;
+  background: transparent;
+  border: 0;
+  border-left: 3px solid var(--need-color, var(--border));
+  cursor: pointer;
+  z-index: 2;
+}
+.bandmap-spot:hover {
+  background: color-mix(in srgb, var(--text) 9%, transparent);
+  z-index: 4;
+}
+.bandmap-call {
+  font-size: 11px;
+  color: var(--text);
+  white-space: nowrap;
+}
+.bandmap-spot.worked .bandmap-call {
+  text-decoration: line-through;
+  color: var(--text-faint);
+}
+.bandmap-dial {
+  position: absolute;
+  left: 54px;
+  right: 0;
+  height: 2px;
+  transform: translateY(-50%);
+  background: var(--ok, #2fbf71);
+  z-index: 3;
+  pointer-events: none;
+}
+.bandmap-dial-lbl {
+  position: absolute;
+  right: 3px;
+  top: -13px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--ok, #2fbf71);
+}
+.bandmap-dial.blocked {
+  background: var(--danger, #e5484d);
+}
+.bandmap-dial.blocked .bandmap-dial-lbl {
+  color: var(--danger, #e5484d);
+}
+.bandmap-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-faint);
+  font-style: italic;
+  font-size: 12px;
+}
+
+/* Logbook statistics dashboard — CSS-bar breakdowns + an hour histogram (no chart lib). */
+.stats-view {
+  padding: var(--space-3);
+  overflow-y: auto;
+}
+.stats-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+.stats-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 90px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.stats-num {
+  font-size: 1.6rem;
+  font-weight: 800;
+  color: var(--accent);
+  line-height: 1.1;
+}
+.stats-lbl {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+}
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--space-3);
+}
+.stats-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+}
+.stats-card h3 {
+  margin: 0 0 var(--space-2);
+  font-size: var(--fs-label);
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.stats-bars {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.stats-bar-row {
+  display: grid;
+  grid-template-columns: 6.5em 1fr 3em;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--fs-body);
+}
+.stats-bar-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+}
+.stats-bar-track {
+  height: 10px;
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  border-radius: 5px;
+  overflow: hidden;
+}
+.stats-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 5px;
+  min-width: 2px;
+}
+.stats-bar-count {
+  text-align: right;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+.stats-hours {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 90px;
+}
+.stats-hour {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  height: 100%;
+}
+.stats-hour-fill {
+  width: 100%;
+  min-height: 1px;
+  background: var(--accent);
+  border-radius: 2px 2px 0 0;
+}
+.stats-hour-lbl {
+  font-size: 9px;
+  color: var(--text-faint);
+  margin-top: 2px;
+}
+.stats-empty {
+  color: var(--text-faint);
+  font-style: italic;
+}
+/* Secondary count (distinct entities) trailing the QSO count on a continent bar. */
+.stats-bar-sub {
+  color: var(--text-faint);
+  font-weight: 400;
+}
+/* Small honesty caption under a geo card (e.g. QSOs that couldn't be placed). */
+.stats-cap {
+  margin-top: var(--space-2);
+  font-size: 11px;
   color: var(--text-faint);
 }
 /* Gain/Zero contrast knobs next to the palette (double-click to recenter = auto). */

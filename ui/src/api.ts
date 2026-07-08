@@ -9,6 +9,7 @@ import type {
   AppSnapshot,
   AudioDevices,
   AwardSummary,
+  GeoLogStats,
   BandChannel,
   CatTestResult,
   CatProbeResult,
@@ -410,6 +411,11 @@ export async function getAwards(): Promise<AwardSummary> {
   return invoke<AwardSummary>('get_awards')
 }
 
+/** Geographic log stats — continent / CQ-zone / DX-vs-domestic (cty.dat-resolved per call). */
+export async function getLogStats(): Promise<GeoLogStats> {
+  return invoke<GeoLogStats>('get_log_stats')
+}
+
 /** The Journey snapshot — the in-app, beginner-first achievement layer (firsts,
  * sub-award ladders, collections, feats, personal bests, XP/level, streak). */
 export async function getJourney(): Promise<JourneySummary> {
@@ -570,6 +576,17 @@ export async function getAllSpots(): Promise<import('./types').SpotRow[]> {
   return invoke<import('./types').SpotRow[]>('get_all_spots')
 }
 
+/** Check SourceForge for a newer Nexus release (Phase 1 update check). Rejects offline / on a
+ * fetch error — callers treat that as a silent no-op. */
+export async function checkForUpdate(): Promise<import('./types').UpdateInfo> {
+  return invoke<import('./types').UpdateInfo>('check_for_update')
+}
+
+/** Open the SourceForge download page in the operator's default browser. */
+export async function openDownloadPage(): Promise<void> {
+  return invoke('open_download_page')
+}
+
 /** Liveness of the background live feeds (cluster/RBN + PSK Reporter MQTT) for the
  *  Now-Bar connector pills. */
 export async function getFeedHealth(): Promise<FeedHealth> {
@@ -644,6 +661,32 @@ export async function workSpot(
   // `call` lets the backend look up the spot's pile-up split ("UP 2") and
   // configure rig split automatically — the N1MM behavior.
   return invoke<AppSnapshot>('work_spot', { mode, freqMhz, band, call: call ?? null })
+}
+
+/** Set (`txMhz`) or clear (`null`) manual rig split — the TX dial when working split
+ * (e.g. "up 5"). `null` returns to simplex. The radio loop applies it to the rig. */
+export async function setSplit(txMhz: number | null): Promise<AppSnapshot> {
+  return invoke<AppSnapshot>('set_split', { txMhz })
+}
+
+/** Set ('USB'|'LSB'|'FM') or clear (null = AUTO) the transient Phone mode override. The radio
+ * loop applies it next cycle; a band change reverts to the band-auto sideband. */
+export async function setSidebandOverride(mode: 'USB' | 'LSB' | 'FM' | null): Promise<AppSnapshot> {
+  return invoke<AppSnapshot>('set_sideband_override', { mode })
+}
+
+/** Set the rig RX filter / passband width (Hz); the radio loop applies it via set_mode. */
+export async function setFilterWidth(hz: number): Promise<AppSnapshot> {
+  return invoke<AppSnapshot>('set_filter_width', { hz })
+}
+
+/** Toggle a rig DSP function ('nb'|'nr'|'notch'|'comp'|'vox') on/off; the radio loop applies it.
+ * The returned snapshot reflects the request optimistically (the loop's read-back reconciles). */
+export async function setRigFunc(
+  func: 'nb' | 'nr' | 'notch' | 'comp' | 'vox',
+  on: boolean,
+): Promise<AppSnapshot> {
+  return invoke<AppSnapshot>('set_rig_func', { func, on })
 }
 
 /** Queue CW to transmit (CAT keyer). `text` is an F-key macro template or literal

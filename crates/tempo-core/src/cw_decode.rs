@@ -201,12 +201,20 @@ const CW_TRANSCRIPT_CAP: usize = 4000; // keep the tail; drop older text
 /// **Schmitt-trigger** key state (two thresholds → no chatter near the noise floor) →
 /// mark/space runs with **sub-dit spike rejection** → **adaptive dit unit** tracked from
 /// a rolling mark history (follows the sender's speed) → dit/dah + gap → Morse → char.
+/// Offsets (Hz) either side of the signal pitch at which to probe band noise for the true-SNR
+/// gates. Several spread probes + taking the QUIETEST (min) mean `off_noise` only inflates when
+/// EVERY probe lands on another signal — so a single adjacent QSO (or even a couple on a packed
+/// contest band) can't gate out the wanted signal, and no single "unlucky" offset dominates. The
+/// low-side probe is skipped when it would fall at/below ~DC (a low operator pitch).
+const OFF_NOISE_HZ: [f32; 4] = [250.0, 400.0, 600.0, 800.0];
+
 pub struct CwStreamDecoder {
     sr: f32,
     pitch: f32,
     hop: usize,
     carry: Vec<f32>, // audio not yet a full hop
-    noise: f32,      // slow-tracking noise-floor follower (AGC)
+    noise: f32,      // slow-tracking ON-PITCH floor follower (drives the Schmitt keying rails)
+    off_noise: f32,  // OFF-PITCH band-noise follower (drives the true-SNR presence/mark gates)
     peak: f32,       // fast-attack, slow-decay signal-peak follower (AGC)
     mark_peak: f32,  // peak power within the current key-down (per-mark SNR gate)
     lo_thresh: f32,  // Schmitt lower rail (leave mark below this)
@@ -238,6 +246,7 @@ impl CwStreamDecoder {
             hop,
             carry: Vec::new(),
             noise: 1e-9,
+            off_noise: 1e-9,
             peak: 0.0,
             mark_peak: 0.0,
             lo_thresh: 0.0,
@@ -354,14 +363,37 @@ impl CwStreamDecoder {
         self.carry.extend_from_slice(samples);
         let mut i = 0;
         while i + self.hop <= self.carry.len() {
-            let p = tone_power(&self.carry[i..i + self.hop], self.sr, self.pitch);
+            let hop_slice = &self.carry[i..i + self.hop];
+            let p = tone_power(hop_slice, self.sr, self.pitch);
+            // TRUE band-noise reference: the tone power just OFF the signal, taking the quieter of
+            // the two sides so an adjacent signal on one side doesn't inflate it. This — not the
+            // on-pitch floor — is what the SNR gates must measure against: between a real signal's
+            // own elements the on-pitch floor sits near silence, so a peak/on-pitch-floor ratio is
+            // enormous and the presence/mark-SNR gates (and the operator's sensitivity slider that
+            // scales them) saturate. Peak vs OFF-pitch noise is a real SNR the slider can move.
+            let mut off = f32::INFINITY;
+            for &d in &OFF_NOISE_HZ {
+                off = off.min(tone_power(hop_slice, self.sr, self.pitch + d));
+                if self.pitch - d >= 250.0 {
+                    // skip a low-side probe below the RX audio passband (rumble/hum region on a
+                    // low pitch) — it reads near-nothing and would drag the min to a false zero.
+                    off = off.min(tone_power(hop_slice, self.sr, self.pitch - d));
+                }
+            }
+            // The min over a WIDE spread only inflates if the whole neighbourhood is occupied
+            // (genuinely high band noise); a single strong neighbour can't. Fall back to the
+            // on-pitch floor if every probe was skipped (unreachable: the high side always runs).
+            let off = if off.is_finite() { off } else { self.noise };
             i += self.hop;
             // Threshold from the CURRENT followers (before updating them) so a signal onset
             // is judged against the PRIOR noise floor and detected on its first hop — no
             // warmup dead-zone (a percentile window can't flag a signal until it fills a
             // fifth of the window, which truncated the first character into a dit).
             let span = (self.peak - self.noise).max(0.0);
-            self.present = self.peak >= self.noise * self.present_mult() && span > 1e-9;
+            // Presence gates on the TRUE (off-pitch) SNR; the Schmitt rails still ride the on-pitch
+            // floor + span (they define keying WITHIN the signal's own envelope).
+            self.present =
+                self.peak >= self.noise.max(self.off_noise) * self.present_mult() && span > 1e-9;
             self.hi_thresh = self.noise + self.hi_frac() * span; // Schmitt upper rail
             self.lo_thresh = self.noise + self.lo_frac() * span; // Schmitt lower rail (hysteresis)
             self.step(p);
@@ -378,6 +410,10 @@ impl CwStreamDecoder {
             } else {
                 self.noise * 0.9995 + p * 0.0005
             };
+            // Off-pitch band noise tracks with a plain EMA — it holds through a signal's marks
+            // (leakage into the off bins is only a fraction of the on-pitch peak) and settles to
+            // the real floor in the gaps.
+            self.off_noise = self.off_noise * 0.98 + off * 0.02;
         }
         self.carry.drain(0..i);
     }
@@ -406,9 +442,13 @@ impl CwStreamDecoder {
     fn on_mark_end(&mut self) {
         let spike_min = (self.spike_frac() * self.dit_avg).max(1.0);
         // Reject a mark that is too SHORT (impulse) OR too WEAK (its peak barely clears the
-        // noise floor). The weak case kills the "E E E…" storm the decoder otherwise emits
-        // from band noise between signals — a real keyed element sits well above the floor.
-        if (self.run as f32) < spike_min || self.mark_peak < self.noise * self.snr_mult() {
+        // noise floor — whichever of the on-pitch and off-pitch estimates is larger). The weak
+        // case kills the "E E E…" storm the decoder otherwise emits from noise between signals:
+        // a real keyed element sits well above BOTH floors. Taking the max keeps the on-pitch
+        // storm gate alive when the off-pitch probes read near-zero (narrow filter / quiet band).
+        if (self.run as f32) < spike_min
+            || self.mark_peak < self.noise.max(self.off_noise) * self.snr_mult()
+        {
             // Not a keyed element — roll its hops into the surrounding gap so it doesn't
             // reset the character timing.
             self.space_run += self.run;
@@ -665,34 +705,90 @@ mod tests {
         assert_eq!(d.transcript().trim(), "CQ DX DE W1ABC");
     }
 
+    /// Deterministic broadband white noise (energy at every frequency, incl. the off-pitch probes)
+    /// — unlike `crash_storm`, which is on-pitch bursts the off-pitch SNR gate can't see.
+    fn white_noise(n: usize, amp: f32) -> Vec<f32> {
+        let mut seed = 0x9E3779B97F4A7C15u64;
+        let mut rnd = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            ((seed >> 33) as f32 / (1u32 << 31) as f32) - 1.0 // ~[-1, 1)
+        };
+        (0..n).map(|_| amp * rnd()).collect()
+    }
+
+    #[test]
+    fn off_pitch_snr_lets_the_slider_trade_copy_in_broadband_noise() {
+        // A WEAK tone buried in BROADBAND noise — the real-world case the off-pitch reference is
+        // for (the on-pitch floor sat near silence, so the SNR gates saturated and the slider did
+        // nothing here). With a true band-noise reference the looser end admits at least as much
+        // copy as the stricter end. `loose >= strict` is structurally guaranteed by the more-
+        // permissive gates, so it's a stable regression guard that this path actually engages.
+        let copy = |sens: f32| -> String {
+            let mut d = CwStreamDecoder::new(SR, PITCH);
+            d.set_sensitivity(sens);
+            let mut sig = morse_samples("PARIS PARIS PARIS PARIS", 18, PITCH, SR as u32);
+            for s in sig.iter_mut() {
+                *s *= 0.30; // weak
+            }
+            let noise = white_noise(sig.len(), 0.15);
+            let mixed: Vec<f32> = sig
+                .iter()
+                .zip(&noise)
+                .map(|(s, n)| (s + n).clamp(-1.0, 1.0))
+                .collect();
+            d.push(&mixed);
+            d.transcript().to_string()
+        };
+        let strict = copy(0.0);
+        let loose = copy(1.0);
+        let n = |t: &str| t.chars().filter(|c| !c.is_whitespace()).count();
+        // The loose end must produce REAL copy through the broadband noise — the off-pitch
+        // reference must not have inflated and killed the signal. (We assert copy exists and
+        // is monotonic, not a specific strict<loose margin: whether the slider actually TRADES
+        // more copy depends on where the noise puts marks vs. the gate, which is signal-specific.)
+        assert!(loose.contains("PARIS"), "loose lost real copy: {loose:?}");
+        assert!(n(&loose) > 0, "loose decoded nothing");
+        assert!(
+            n(&loose) >= n(&strict),
+            "loose must admit at least as much weak copy as strict: strict={strict:?} loose={loose:?}"
+        );
+    }
+
     #[test]
     fn stream_suppresses_near_noise_marks() {
-        // A gappy, LOW-contrast tone whose "on" segments sit only ~3× the floor in power —
-        // the kind of thing band noise makes the threshold chase. Without the per-mark SNR
-        // gate this decodes into an "E E E…" storm; with it (needs ≥4× the floor) the marks
-        // are rejected, so the transcript stays essentially empty. Clean full-amplitude
-        // signals (the other tests) are unaffected.
-        let mut d = CwStreamDecoder::new(SR, PITCH);
+        // Weak, regularly-keyed on-pitch blips buried in BROADBAND noise so each blip clears the
+        // true (off-pitch) floor by only ~3× in power — below the ~4× default SNR gate. Each blip
+        // is a 1-dit "on" with a 3-dit gap, so ANY blip the decoder wrongly accepts FLUSHES as an
+        // 'E'; a broken gate would decode a "EEEE…" storm. With the off-pitch SNR gate the blips
+        // are rejected, so the transcript stays essentially empty. (The off_pitch_snr test is the
+        // complement: it proves genuine copy DOES survive when the signal clears the floor.)
         let dit = (SR * 0.06) as usize; // ~20 wpm element
-        let tone = |amp: f32, len: usize| -> Vec<f32> {
-            (0..len)
-                .map(|i| amp * (2.0 * std::f32::consts::PI * PITCH * i as f32 / SR).sin())
-                .collect()
-        };
-        let mut buf: Vec<f32> = Vec::new();
+        let mut sig: Vec<f32> = Vec::new();
         for _ in 0..40 {
-            buf.extend(tone(0.09, dit)); // "on" ≈ 3.2× the "off" power — below the 4× gate
-            buf.extend(tone(0.05, dit)); // "off" = the noise floor
+            for k in 0..dit {
+                let n = sig.len() + k;
+                sig.push(0.10 * (2.0 * std::f32::consts::PI * PITCH * n as f32 / SR).sin());
+            }
+            sig.extend(std::iter::repeat(0.0).take(3 * dit)); // flushing gap
         }
-        d.push(&buf);
+        let noise = white_noise(sig.len(), 0.14);
+        let mixed: Vec<f32> = sig
+            .iter()
+            .zip(&noise)
+            .map(|(s, n)| (s + n).clamp(-1.0, 1.0))
+            .collect();
+        let mut d = CwStreamDecoder::new(SR, PITCH); // default sensitivity
+        d.push(&mixed);
         let junk = d
             .transcript()
             .chars()
             .filter(|c| !c.is_whitespace())
             .count();
         assert!(
-            junk <= 6,
-            "near-noise produced a storm: {:?}",
+            junk <= 8,
+            "near-noise produced a storm ({junk} chars): {:?}",
             d.transcript()
         );
     }

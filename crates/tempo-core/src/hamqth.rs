@@ -103,6 +103,8 @@ pub struct HamQthLookup {
     pub dxcc: Option<u32>,
     pub cq_zone: Option<u32>,
     pub itu_zone: Option<u32>,
+    /// Profile photo URL (HamQTH `<picture>`). Operator-supplied, so routinely `None`.
+    pub image: Option<String>,
 }
 
 /// Percent-encode a query value (RFC 3986 unreserved set). Same encoder as the
@@ -179,6 +181,7 @@ pub fn parse_callsign(xml: &str) -> Option<HamQthLookup> {
             .and_then(|d| d.parse().ok()),
         cq_zone: tag(xml, "cq").and_then(|d| d.parse().ok()),
         itu_zone: tag(xml, "itu").and_then(|d| d.parse().ok()),
+        image: tag(xml, "picture"),
     })
 }
 
@@ -275,7 +278,8 @@ mod tests {
 <country>United States</country><adif>291</adif><itu>8</itu><cq>5</cq><grid>FN31pr</grid>\
 <adr_name>ARRL Headquarters Operators Club</adr_name><adr_city>Newington</adr_city>\
 <adr_country>United States</adr_country><adr_adif>291</adr_adif>\
-<us_state>CT</us_state><us_county>Hartford</us_county></search>\n</HamQTH>";
+<us_state>CT</us_state><us_county>Hartford</us_county>\
+<picture>https://www.hamqth.com/userfiles/w/w1/w1aw/_profile/w1aw.jpg</picture></search>\n</HamQTH>";
 
     // A DX station with no postal name and no us_state — name falls back to <nick>.
     const LOOKUP_DX: &str = "<HamQTH version=\"2.7\"><search><callsign>ok7an</callsign>\
@@ -348,6 +352,10 @@ mod tests {
         assert_eq!(r.dxcc, Some(291)); // <adif>
         assert_eq!(r.cq_zone, Some(5));
         assert_eq!(r.itu_zone, Some(8));
+        assert_eq!(
+            r.image.as_deref(),
+            Some("https://www.hamqth.com/userfiles/w/w1/w1aw/_profile/w1aw.jpg")
+        );
     }
 
     #[test]

@@ -45,6 +45,7 @@ import { SCALE_STEPS } from '../useScale'
 import type { FeaturesApi } from '../useFeatures'
 import { FEATURES, featureById, type FeatureCategory, type FeatureDef, type FeatureId } from '../features/registry'
 import { PROFILE_LIST } from '../features/profiles'
+import { checkForUpdateManual } from '../features/updateCheck'
 
 interface Props {
   /** Called after a successful save so the shell can refresh its snapshot. */
@@ -955,6 +956,14 @@ export function SettingsPanel({
         <span className="settings-build" title="This install's build stamp — confirm a fresh install actually took">
           build {__BUILD_ID__}
         </span>
+        <button
+          type="button"
+          className="settings-update-btn"
+          onClick={() => void checkForUpdateManual()}
+          title="Check SourceForge for a newer Nexus release"
+        >
+          Check for updates
+        </button>
       </div>
 
       <form className="settings-form" onSubmit={handleSubmit}>

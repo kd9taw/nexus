@@ -95,6 +95,8 @@ pub struct QrzLookup {
     pub dxcc: Option<u32>,
     pub cq_zone: Option<u32>,
     pub itu_zone: Option<u32>,
+    /// Profile photo URL (QRZ `<image>`). Subscriber-only + operator-supplied, so routinely `None`.
+    pub image: Option<String>,
 }
 
 /// Percent-encode a query value (RFC 3986 unreserved set). Same encoder as the
@@ -171,6 +173,7 @@ pub fn parse_callsign(xml: &str) -> Option<QrzLookup> {
         dxcc: tag(xml, "dxcc").and_then(|d| d.parse().ok()),
         cq_zone: tag(xml, "cqzone").and_then(|d| d.parse().ok()),
         itu_zone: tag(xml, "ituzone").and_then(|d| d.parse().ok()),
+        image: tag(xml, "image"),
     })
 }
 
@@ -449,7 +452,7 @@ mod tests {
 <QRZDatabase version=\"1.34\" xmlns=\"http://xmldata.qrz.com\">\n\
 <Callsign><call>AA7BQ</call><fname>Fred</fname><name>Lloyd</name><addr2>Scottsdale</addr2>\
 <state>AZ</state><country>United States</country><grid>DM43bp</grid><dxcc>291</dxcc>\
-<cqzone>3</cqzone><ituzone>6</ituzone></Callsign>\n\
+<cqzone>3</cqzone><ituzone>6</ituzone><image>https://cdn-xml.qrz.com/q/aa7bq/aa7bq.jpg</image></Callsign>\n\
 <Session><Key>abc</Key><Count>13</Count></Session>\n</QRZDatabase>";
 
     // A free (non-subscriber) account: name/country only, NO grid/state.
@@ -499,6 +502,7 @@ mod tests {
         assert_eq!(r.dxcc, Some(291));
         assert_eq!(r.cq_zone, Some(3));
         assert_eq!(r.itu_zone, Some(6));
+        assert_eq!(r.image.as_deref(), Some("https://cdn-xml.qrz.com/q/aa7bq/aa7bq.jpg"));
     }
 
     #[test]

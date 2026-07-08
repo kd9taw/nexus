@@ -12,6 +12,7 @@ import {
   Trees,
   BookOpen,
   Trophy,
+  BarChart3,
   Zap,
   Settings,
 } from 'lucide-react'
@@ -105,6 +106,7 @@ const ITEMS: Item[] = [
   { id: 'sats', label: 'Satellites', icon: Satellite, title: 'Satellites — pass times over your grid, favorites, polar plots, and rotor tracking' },
   { id: 'logbook', label: 'Logbook', icon: BookOpen, title: 'Logbook — your ADIF contacts' },
   { id: 'awards', label: 'Awards', icon: Trophy, title: 'Awards — your Journey (firsts, ladders, milestones) + official DXCC/WAS/WAZ progress' },
+  { id: 'stats', label: 'Stats', icon: BarChart3, title: 'Statistics — your logbook sliced: QSOs by band/mode/year/hour, top DXCC entities, states, confirmations' },
   { id: 'fieldDay', label: 'Field Day', icon: Tent, title: 'Field Day — contest rate workspace' },
   { id: 'pota', label: 'POTA/SOTA', icon: Trees, title: 'POTA / SOTA — parks & summits: who\'s on now (hunt) + tag your activation' },
 ]

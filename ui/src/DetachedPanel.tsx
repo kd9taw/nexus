@@ -17,6 +17,7 @@ import type {
   PropagationSnapshot,
   Settings,
   SourceKind,
+  SpotRow,
   Tier,
 } from './types'
 import {
@@ -24,6 +25,8 @@ import {
   getNeedAlerts,
   getPropagation,
   getSettings,
+  getAllSpots,
+  getLog,
   selectPeer,
   setFrequency,
   workSpot,
@@ -48,6 +51,7 @@ import {
   setHoldTxFreq,
 } from './api'
 import { NeededPanel } from './components/NeededPanel'
+import { BandMap } from './components/BandMap'
 import { ConnectView } from './components/ConnectView'
 import { DxpeditionsView } from './components/DxpeditionsView'
 import { SatellitesView } from './components/SatellitesView'
@@ -88,6 +92,10 @@ export function DetachedPanel({ panel }: { panel: string }) {
   const [needAlerts, setNeedAlerts] = useState<NeedAlert[]>([])
   const [bandPlan, setBandPlan] = useState<BandChannel[]>([])
   const [operateLayout, setOperateLayout] = useState<OperateLayout>(loadOperateLayout)
+  // Band-map pop-out only: the live spot feed + which calls are in the log (worked).
+  const isBandMap = panel === 'bandmapPhone' || panel === 'bandmapCw'
+  const [allSpots, setAllSpots] = useState<SpotRow[]>([])
+  const [workedCalls, setWorkedCalls] = useState<Set<string>>(() => new Set())
   // Selection mirrors the shared engine (snap.activePeer), so a station picked in the main
   // window — or in this one — highlights consistently across every window.
   const selected = snap?.activePeer ?? null
@@ -127,6 +135,24 @@ export function DetachedPanel({ panel }: { panel: string }) {
       clearInterval(idS)
     }
   }, [])
+
+  // Band-map pop-out: poll the live spot feed + refresh the worked-set (log calls) alongside it.
+  useEffect(() => {
+    if (!isBandMap) return
+    let live = true
+    const load = () => {
+      getAllSpots().then((s) => live && setAllSpots(s)).catch(() => {})
+      getLog()
+        .then((log) => live && setWorkedCalls(new Set(log.map((q) => q.call.toUpperCase()))))
+        .catch(() => {})
+    }
+    load()
+    const id = setInterval(load, 15_000)
+    return () => {
+      live = false
+      clearInterval(id)
+    }
+  }, [isBandMap])
 
   // Drive a command then mirror the returned snapshot immediately (the 300 ms poll would
   // catch it anyway, but this keeps the cockpit snappy).
@@ -192,6 +218,30 @@ export function DetachedPanel({ panel }: { panel: string }) {
     }
     return m
   }, [gatedAlerts])
+
+  if (isBandMap) {
+    if (!snap) return <div className="app detached" />
+    const spotMode: 'CW' | 'Phone' = panel === 'bandmapCw' ? 'CW' : 'Phone'
+    return (
+      <div className="app detached">
+        <BandMap
+          band={snap.radio.band}
+          dialMhz={snap.radio.dialMhz}
+          txAllowed={snap.radio.txAllowed}
+          // Phone-segment shade is meaningless on the CW map (matches the inline CW strip).
+          phoneSegLo={spotMode === 'Phone' ? snap.radio.phoneSegLo : null}
+          phoneSegHi={spotMode === 'Phone' ? snap.radio.phoneSegHi : null}
+          spots={allSpots}
+          spotMode={spotMode}
+          needByCall={needByCall}
+          workedCalls={workedCalls}
+          onWorkSpot={(s) =>
+            onWorkSpot({ call: s.call, band: s.band, mode: s.mode, freqMhz: s.freqMhz })
+          }
+        />
+      </div>
+    )
+  }
 
   if (panel === 'needed') {
     return (

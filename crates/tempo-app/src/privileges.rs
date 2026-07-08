@@ -162,6 +162,33 @@ pub fn segment_start(class: LicenseClass, band: &str, mode: OperatingMode) -> Op
         .fold(None, |acc, lo| Some(acc.map_or(lo, |a: f64| a.min(lo))))
 }
 
+/// The PHONE (SSB/image) sub-band the operator may use on `band`, as an inclusive/exclusive
+/// `[lo, hi)` MHz span for the band-strip's "where you may talk" shading. `None` when the class
+/// has no phone privilege there, or for `Open` (non-US — no US sub-band model) and 60 m
+/// (channelized).
+///
+/// LEGAL-HONESTY INVARIANT: this unions all of a class's phone segments on the band into ONE
+/// span (lowest lo, highest hi). That is only honest while each band's phone privilege is a
+/// SINGLE contiguous segment — true for every current US band, enforced by the test
+/// `every_band_has_at_most_one_contiguous_phone_segment_per_class`. If a band is ever split into
+/// disjoint phone sub-bands, this would shade the no-phone gap between them as legal; then this
+/// must return a segment LIST and the strip must shade each separately.
+pub fn phone_segment(class: LicenseClass, band: &str) -> Option<(f64, f64)> {
+    if band == "60m" || matches!(class, LicenseClass::Open) {
+        return None;
+    }
+    let mut lo = f64::INFINITY;
+    let mut hi = f64::NEG_INFINITY;
+    for seg in segments(class)
+        .iter()
+        .filter(|seg| seg.phone && crate::bandplan::band_for_dial(seg.lo) == Some(band))
+    {
+        lo = lo.min(seg.lo);
+        hi = hi.max(seg.hi);
+    }
+    lo.is_finite().then_some((lo, hi))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -247,6 +274,50 @@ mod tests {
         assert_eq!(segment_start(Open, "20m", Phone), Some(14.150));
         // 60 m is channelized — never in the dropdown.
         assert_eq!(segment_start(General, "60m", Phone), None);
+    }
+
+    #[test]
+    fn phone_segment_span_for_the_band_strip_shade() {
+        assert_eq!(phone_segment(Extra, "20m"), Some((14.150, 14.350)));
+        assert_eq!(phone_segment(General, "20m"), Some((14.225, 14.350))); // General phone floor higher
+        assert_eq!(phone_segment(Technician, "20m"), None); // Tech has no 20 m
+        assert_eq!(phone_segment(Technician, "10m"), Some((28.300, 28.500))); // Tech 10 m phone cap
+        assert_eq!(phone_segment(General, "30m"), None); // 30 m: no phone, any class
+        assert_eq!(phone_segment(Open, "20m"), None); // non-US: the strip skips shading
+        assert_eq!(phone_segment(General, "60m"), None); // channelized
+    }
+
+    #[test]
+    fn every_band_has_at_most_one_contiguous_phone_segment_per_class() {
+        // Guards `phone_segment`'s union-into-one-span: if the tables ever split a band's phone
+        // privilege into DISJOINT segments, the strip would shade the no-phone gap as legal. This
+        // fails loudly at that point so the shading stays legally honest.
+        use std::collections::BTreeMap;
+        for class in [Technician, General, Extra] {
+            let mut by_band: BTreeMap<&'static str, Vec<(f64, f64)>> = BTreeMap::new();
+            for seg in segments(class).iter().filter(|s| s.phone) {
+                if let Some(b) = crate::bandplan::band_for_dial(seg.lo) {
+                    by_band.entry(b).or_default().push((seg.lo, seg.hi));
+                }
+            }
+            for (band, mut segs) in by_band {
+                // 60 m is channelized (5 discrete phone channels) — legitimately multi-segment,
+                // and `phone_segment` early-returns None for it, so the union never runs there.
+                if band == "60m" {
+                    continue;
+                }
+                segs.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+                for w in segs.windows(2) {
+                    assert!(
+                        w[0].1 >= w[1].0,
+                        "{class:?} {band}: disjoint phone segments {:?} and {:?} — phone_segment() \
+                         would bridge the gap; return a segment list and shade each instead",
+                        w[0],
+                        w[1]
+                    );
+                }
+            }
+        }
     }
 
     #[test]

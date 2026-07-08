@@ -11,6 +11,10 @@ interface Props {
   /** Hide the TX-control cluster (the FT cockpit shows its own consolidated
    * copy beside CQ/S&P — operator request; other sections keep it here). */
   hideTxControls?: boolean
+  /** Hide the top frequency/band control. The Phone + CW cockpits carry their OWN
+   * mode-appropriate band picker; the top one is fed the DIGITAL (FT8) band plan, so
+   * showing it there is a confusing second, wrong-dial band dropdown. */
+  hideFrequencyControl?: boolean
   mycall: string
   mygrid: string
   radio: RadioStatus
@@ -93,6 +97,7 @@ export function TopBar({
   theme,
   onThemeChange,
   hideTxControls,
+  hideFrequencyControl,
 }: Props) {
   const countdown = (radio.nextSlotMs / 1000).toFixed(1)
   return (
@@ -105,16 +110,18 @@ export function TopBar({
         </span>
       </div>
 
-      <div className="topbar-group radio-readout">
-        <FrequencyControl
-          channels={bandPlan}
-          dialMhz={radio.dialMhz}
-          band={radio.band}
-          mode={radio.sideband}
-          variant="compact"
-          onSet={onSetFrequency}
-        />
-      </div>
+      {!hideFrequencyControl && (
+        <div className="topbar-group radio-readout">
+          <FrequencyControl
+            channels={bandPlan}
+            dialMhz={radio.dialMhz}
+            band={radio.band}
+            mode={radio.sideband}
+            variant="compact"
+            onSet={onSetFrequency}
+          />
+        </div>
+      )}
 
       <div className="topbar-group txrx">
         <span className={`txrx-indicator ${radio.transmitting ? 'tx' : 'rx'}`}>

@@ -23,6 +23,7 @@ export type View =
   | 'fieldDay'
   | 'logbook'
   | 'awards'
+  | 'stats'
   | 'pota'
   | 'settings'
 
@@ -251,6 +252,21 @@ export const FEATURES: FeatureDef[] = [
     // the lean starter surface) so a beginner is invited to the Journey tab early.
     revealOn: 'qso-1',
     oneLine: 'Journey + official awards — firsts, sub-award ladders, DXCC/WAZ/WAS progress.',
+  },
+  {
+    id: 'stats',
+    label: 'Stats',
+    kind: 'section',
+    category: 'DX & Awards',
+    core: false,
+    dependsOn: ['logbook'],
+    intents: ['dx'],
+    view: 'stats',
+    // Global (no workspace): descriptive analytics over the whole log — QSOs by band/mode/year/
+    // hour, top DXCC entities, WAS states, confirmation rate. Complements Awards (official credit)
+    // + Journey (gamified goals) with a plain "here's my log, sliced" dashboard.
+    revealOn: 'qso-1',
+    oneLine: 'Your logbook, sliced — QSOs by band, mode, year, hour, entity, and confirmations.',
   },
   {
     id: 'pota',

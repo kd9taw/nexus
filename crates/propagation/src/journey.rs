@@ -39,7 +39,7 @@ const HF_BANDS: [Band; 9] = [
     Band::B12,
 ];
 /// The six WAC continents, in display order.
-const CONTINENTS: [&str; 6] = ["NA", "SA", "EU", "AS", "OC", "AF"];
+pub(crate) const CONTINENTS: [&str; 6] = ["NA", "SA", "EU", "AS", "OC", "AF"];
 /// Gray-line window: |solar elevation| within this of the horizon counts as on the
 /// terminator (civil-twilight band) — the twice-daily DX-enhancement zone.
 const GRAYLINE_DEG: f64 = 6.0;
@@ -50,7 +50,7 @@ const XP_BASE: u64 = 250;
 
 /// CQ zone → WAC continent. The official CQ zones 1–40 partition cleanly by
 /// continent; `None` for an unknown/zero zone.
-fn continent_of_zone(z: u8) -> Option<&'static str> {
+pub(crate) fn continent_of_zone(z: u8) -> Option<&'static str> {
     match z {
         1..=8 => Some("NA"),
         9..=13 => Some("SA"),

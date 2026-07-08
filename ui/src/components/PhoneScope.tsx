@@ -18,6 +18,9 @@ interface Props {
   /** Draw a hairline at this audio frequency (the CW pitch) — tune a signal onto
    * the marker and you're zero-beat. Omitted = no marker. */
   markerHz?: number | null
+  /** CAT S-meter reading (dB relative to S9). When present, drives a calibrated
+   * S-unit meter; `null`/absent = the rig doesn't report STRENGTH → meter shows "—". */
+  smeterDb?: number | null
 }
 
 /**
@@ -27,6 +30,26 @@ interface Props {
  * a snappy AGC, so a voice op gets the live, fast, colored scope they expect. Reuses the shared
  * AGC/LUT/colormap helpers; never touches the FT8 Operate waterfall.
  */
+/** Map a CAT S-meter reading (dB relative to S9) to a bar fraction + S-unit label.
+ * S1..S9 span -48..0 dB (6 dB/unit); above S9 is shown as +dB (the classic red zone). */
+function sMeterDisplay(db: number): { frac: number; label: string; zone: 'ok' | 'warn' | 'hot' } {
+  const frac = Math.max(0, Math.min(1, (db + 54) / 114)) // S0 (-54 dB) .. S9+60
+  let label: string
+  let zone: 'ok' | 'warn' | 'hot'
+  if (db >= 0) {
+    // Over S9 — show the EXACT amount; never round up (that would overstate strength).
+    const over = Math.round(db)
+    label = over > 0 ? `S9+${over}` : 'S9'
+    zone = 'hot'
+  } else {
+    const s = Math.max(0, Math.min(9, Math.round(9 + db / 6)))
+    label = `S${s}`
+    // Zone follows the displayed S-unit, so a given label always renders one color.
+    zone = s >= 9 ? 'hot' : s >= 7 ? 'warn' : 'ok'
+  }
+  return { frac, label, zone }
+}
+
 export function PhoneScope({
   transmitting,
   theme,
@@ -34,11 +57,11 @@ export function PhoneScope({
   viewLoHz = 200,
   viewHiHz = 2900,
   markerHz = null,
+  smeterDb = null,
 }: Props) {
   // Master palette shared with the FT8 waterfall + all scopes ('auto' = theme-driven).
   const [palette] = useWaterfallPalette()
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const meterRef = useRef<HTMLDivElement>(null)
   const rafRef = useRef<number | null>(null)
   const txRef = useRef(transmitting)
   const themeRef = useRef(theme)
@@ -174,7 +197,6 @@ export function PhoneScope({
       const mag = magBuf
       const lut = lutRef.current
       const nBins = row.length
-      let peak = 0
       // normalized magnitude per device column (shared by waterfall + trace), reused buffer
       // The captured row spans rowLo..rowHi (from the DTO); project the view window.
       const lo = Math.max(rowLo, viewLoHz)
@@ -186,7 +208,6 @@ export function PhoneScope({
         const b1 = Math.min(nBins - 1, b0 + 1)
         const frac = bin - b0
         const v = row[b0] * (1 - frac) + row[b1] * frac
-        if (v > peak) peak = v
         const t = normalize(v, agcFloor, agcCeil)
         mag[x] = t
         const li = (t >= 1 ? 255 : Math.round(t * 255)) * 4
@@ -239,13 +260,6 @@ export function PhoneScope({
         ctx.setLineDash([])
       }
 
-      // ---- Rapid colored S-meter (raw peak magnitude, 0..1) ----
-      if (meterRef.current) {
-        const p = Math.max(0, Math.min(1, peak))
-        meterRef.current.style.width = `${(p * 100).toFixed(0)}%`
-        meterRef.current.style.background =
-          p < 0.55 ? 'var(--ok, #2fbf71)' : p < 0.8 ? 'var(--state-weak, #e0a030)' : 'var(--danger, #e5484d)'
-      }
     }
 
     const loop = (now: number) => {
@@ -281,13 +295,37 @@ export function PhoneScope({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Real CAT S-meter (dB rel S9). Absent when the rig doesn't report STRENGTH, or during
+  // TX (STRENGTH is RX-only) → the meter reads "—" rather than faking a level.
+  const sm = smeterDb != null && !transmitting ? sMeterDisplay(smeterDb) : null
+  const smColor =
+    sm == null
+      ? undefined
+      : sm.zone === 'hot'
+        ? 'var(--danger, #e5484d)'
+        : sm.zone === 'warn'
+          ? 'var(--state-weak, #e0a030)'
+          : 'var(--ok, #2fbf71)'
   return (
     <div className="ph-scope">
-      <div className="ph-scope-smeter" title="Signal level (rapid)">
+      <div
+        className="ph-scope-smeter"
+        title={
+          sm
+            ? `S-meter ${sm.label} (${smeterDb} dB rel S9, via CAT)`
+            : transmitting
+              ? 'S-meter paused during transmit'
+              : 'No CAT S-meter reported by this rig'
+        }
+      >
         <span className="ph-scope-smeter-label">S</span>
         <div className="ph-scope-smeter-track">
-          <div ref={meterRef} className="ph-scope-smeter-fill" />
+          <div
+            className="ph-scope-smeter-fill"
+            style={{ width: sm ? `${Math.round(sm.frac * 100)}%` : '0%', background: smColor }}
+          />
         </div>
+        <span className="ph-scope-smeter-label ph-scope-smeter-value">{sm ? sm.label : '—'}</span>
       </div>
       <canvas ref={canvasRef} className="ph-scope-canvas" />
     </div>

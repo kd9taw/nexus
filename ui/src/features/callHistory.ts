@@ -110,3 +110,20 @@ export function callHistory(log: LoggedQso[], call: string, band: string): CallH
     modes,
   }
 }
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+/** One-line human-readable summary of prior contacts for the recall panel — the casual-first
+ * differentiator ("3 QSOs — last on 20m SSB, 14 Mar 2026"), or a first-contact cue. Dates are
+ * shown in UTC, the ham-log convention. */
+export function historySummary(hist: CallHistory): string {
+  if (!hist.workedBefore || hist.count === 0) return 'First contact — new station!'
+  const last = hist.qsos.reduce((a, b) => (b.whenUnix > a.whenUnix ? b : a))
+  const d = new Date(last.whenUnix * 1000)
+  const date = `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`
+  const where = [(last.band ?? '').trim(), (last.mode ?? '').trim()].filter(Boolean).join(' ')
+  const label = hist.count === 1 ? 'QSO' : 'QSOs'
+  return where
+    ? `${hist.count} ${label} — last on ${where}, ${date}`
+    : `${hist.count} ${label} — last ${date}`
+}

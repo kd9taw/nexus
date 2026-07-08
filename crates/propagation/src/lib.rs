@@ -43,6 +43,7 @@ pub mod solar_cycle;
 pub mod solar_wind;
 pub mod space_wx;
 pub mod spot;
+pub mod stats;
 pub mod swpc_scales;
 pub mod wmm;
 
@@ -102,4 +103,5 @@ pub use sat::{passes as sat_passes, subpoint as sat_subpoint, tle_age_days, Pass
 pub use solar_wind::SolarWind;
 pub use space_wx::{ScalarTrend, SpaceWxHistory, SpaceWxSample, TrendDir, WxTrend};
 pub use spot::Spot;
+pub use stats::{compute_log_stats, ContinentTally, LogStats, ZoneTally};
 pub use swpc_scales::{AlertView, NoaaScalesView};

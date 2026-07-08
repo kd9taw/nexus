@@ -61,6 +61,7 @@ import { AwardsJourney } from './components/AwardsJourney'
 import { CwCockpit } from './components/CwCockpit'
 import { PhoneCockpit } from './components/PhoneCockpit'
 import { PotaSotaView, type OtaSpotClickArg } from './components/PotaSotaView'
+import { StatsView } from './components/StatsView'
 import { DxpeditionsView } from './components/DxpeditionsView'
 import { SatellitesView } from './components/SatellitesView'
 import { ConnectView } from './components/ConnectView'
@@ -101,6 +102,7 @@ import { OnboardingBanner } from './components/OnboardingBanner'
 import { RevealNudge } from './components/RevealNudge'
 import { SetupWizard, type WizardDraft } from './components/SetupWizard'
 import { PROFILES, type ProfileId } from './features/profiles'
+import { maybeCheckForUpdate } from './features/updateCheck'
 
 const ONBOARD_KEY = 'tempo-onboarded'
 // First-run setup wizard: shown once on a fresh install, re-openable from Settings.
@@ -246,6 +248,12 @@ export default function App() {
     } catch {
       /* ignore persist failure */
     }
+  }, [])
+
+  // One-shot on launch: check SourceForge for a newer release (throttled to once/day + cached,
+  // silent when offline). Surfaces a dismissible "update available" toast; nothing auto-downloads.
+  useEffect(() => {
+    void maybeCheckForUpdate()
   }, [])
 
   // Operate MODE: 'dx' (FT8/FT4 structured cockpit) or 'msg' (Tempo two-way
@@ -532,6 +540,13 @@ export default function App() {
     // workSpot click just tuned (review-caught on the pop-out path).
     lastOpModeRef.current = target === 'operate' ? 'digital' : target
     setView(target)
+    // Prefill the log Call from a work action fired in ANOTHER window (e.g. the pop-out band
+    // map), matching the prefill an in-window click gets via handleWorkNeeded. Digital
+    // auto-sequences on a decode double-click, so it takes no prefill.
+    const wc = snap?.workCall
+    if (wc && target !== 'operate') {
+      setPendingWork({ call: wc, view: target, ts: Date.now() })
+    }
   }, [snap?.workTick, snap?.workView, cwEnabled, phoneEnabled])
   const visibleAlerts = useMemo(
     () => visibleNeeds(needAlerts, { cw: cwEnabled, phone: phoneEnabled }),
@@ -1445,6 +1460,10 @@ export default function App() {
       // Awards + Journey combined: one section, tabbed (Journey + Official Awards).
       workspace = <AwardsJourney showGamification={features.isOn('gamification')} />
       break
+    case 'stats':
+      // Descriptive logbook analytics — the log sliced by band/mode/year/hour/entity.
+      workspace = <StatsView />
+      break
     case 'cw':
       workspace = (
         <CwCockpit
@@ -1455,6 +1474,8 @@ export default function App() {
           onConsumeWork={() => setPendingWork(null)}
           onSnap={setSnap}
           fieldDay={snap.fieldDay}
+          spots={allSpots}
+          onWorkSpot={handleWorkSpot}
         />
       )
       break
@@ -1468,6 +1489,8 @@ export default function App() {
           onSnap={setSnap}
           fieldDay={snap.fieldDay}
           phoneMode={settings?.phoneMode}
+          spots={allSpots}
+          onWorkSpot={handleWorkSpot}
         />
       )
       break
@@ -1638,6 +1661,7 @@ export default function App() {
         onSetHoldTxFreq={handleSetHoldTxFreq}
         onStopRecording={handleStopRecording}
         hideTxControls={effectiveView === 'operate'}
+        hideFrequencyControl={effectiveView === 'phone' || effectiveView === 'cw'}
         wfLayout={wfLayout}
         onWfLayoutChange={setWfLayout}
         tier={tier}

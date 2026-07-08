@@ -604,6 +604,27 @@ export interface RadioStatus {
   /** RF output power 0.0–1.0: rig read-back when CAT reports it, else the last
    * commanded value; absent until either exists. */
   rfPower?: number | null
+  /** CAT S-meter in dB relative to S9 (S9 = 0, S1 ≈ -48, S9+20 = +20). Absent when
+   * the rig doesn't report STRENGTH over CAT (RX-only; not updated during TX). */
+  smeterDb?: number | null
+  /** The rig's actual mode read back over CAT (e.g. "USB"/"LSB"/"FM"); display-only,
+   * used to flag when the rig's mode knob disagrees with the commanded mode. */
+  rigMode?: string | null
+  /** Transient Phone mode override ("USB"/"LSB"/"FM"), or null/absent = AUTO (band-derived). */
+  sidebandOverride?: string | null
+  /** The operator's phone (SSB) sub-band on the current band as [lo, hi) MHz, per license class
+   * — the band-strip shades it. Both absent for no-phone-privilege / Open / off-plan bands. */
+  phoneSegLo?: number | null
+  phoneSegHi?: number | null
+  /** Rig DSP-function states over CAT; null/absent = the rig doesn't report it (hide the toggle).
+   * `notch` is the auto-notch (ANF). Same null=unsupported idiom as smeterDb. */
+  nb?: boolean | null
+  nr?: boolean | null
+  notch?: boolean | null
+  comp?: boolean | null
+  vox?: boolean | null
+  /** Rig RX passband / filter width in Hz over CAT; null/absent = unknown or the rig's default. */
+  filterWidthHz?: number | null
   rxLevel: number
   /** Whether transmit is enabled (Monitor on). Off = muted/listening only. */
   txEnabled: boolean
@@ -1086,6 +1107,8 @@ export interface QrzLookup {
   dxcc: number | null
   cqZone: number | null
   ituZone: number | null
+  /** Profile photo URL (QRZ image / HamQTH picture) — routinely null. */
+  image: string | null
 }
 
 /** Result of a QRZ Logbook push (one-QSO upload). `result` is the outcome tag;
@@ -1273,6 +1296,39 @@ export interface AwardSummary {
   bandTargets: EntityNeed[]
 }
 
+/** QSOs worked on one WAC continent, with the distinct-entity span. */
+export interface ContinentTally {
+  /** WAC code: NA / SA / EU / AS / OC / AF. */
+  continent: string
+  qsos: number
+  /** Distinct DXCC entities worked on this continent. */
+  entities: number
+}
+
+/** QSOs worked in one CQ zone (1–40). */
+export interface ZoneTally {
+  zone: number
+  qsos: number
+}
+
+/** The geographic slice of the logbook (from `get_log_stats`, cty.dat-resolved per callsign).
+ * Descriptive, not award credit — WAE/CQ-only entities count too. Named `GeoLogStats` to stay
+ * distinct from `features/logStats.ts`'s `LogStats` (the frontend-computed dashboard shape). */
+export interface GeoLogStats {
+  /** All QSOs scanned. */
+  total: number
+  /** QSOs whose callsign resolved to a DXCC entity (the base for every breakdown). */
+  resolved: number
+  /** Resolved QSOs with an entity different from the operator's own (DX). */
+  dx: number
+  /** Resolved QSOs with the operator's own entity (domestic). */
+  domestic: number
+  /** By WAC continent, canonical NA→AF order (empties omitted). */
+  byContinent: ContinentTally[]
+  /** By CQ zone, ascending; only zones with a QSO. */
+  byZone: ZoneTally[]
+}
+
 /** Result of importing an external ADIF logbook (deduped merge). */
 export interface ImportStats {
   added: number
@@ -1345,6 +1401,18 @@ export interface FieldDayStatus {
   bonusPoints?: number
   /** poweredPoints + bonusPoints. */
   totalScore?: number
+}
+
+/** Result of the SourceForge update check (Phase 1: notify + open the download page). */
+export interface UpdateInfo {
+  /** The running build's version. */
+  current: string
+  /** Latest version parsed from best_release.json, or null if it couldn't be read. */
+  latest: string | null
+  /** True only when `latest` is strictly newer than `current`. */
+  updateAvailable: boolean
+  /** The SourceForge download page to open. */
+  downloadUrl: string
 }
 
 /** Persistent operator + radio settings. */
@@ -1641,6 +1709,8 @@ export interface AppSnapshot {
   workTick?: number
   /** The last worked spot's mode: 'digital' | 'phone' | 'cw'. */
   workView?: string | null
+  /** The last worked spot's callsign — a pop-out window's click prefills the log Call from this. */
+  workCall?: string | null
   /** Pending one-click POTA/SOTA hunt (next QSO with this call auto-tags). */
   hunt?: { program: string; reference: string; call: string } | null
   /** Coordinated-QSY status — present only while the opt-in feature is enabled. */

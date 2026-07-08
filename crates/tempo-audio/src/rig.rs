@@ -102,10 +102,71 @@ pub fn level_line(name: &str, value: &str) -> String {
 pub fn morse_line(text: &str) -> String {
     format!("b {text}\n")
 }
+/// Parse the S-meter reading (dB relative to S9) from a rigctld `l STRENGTH` reply.
+/// Hamlib reports STRENGTH as a signed integer dB value where S9 = 0 dB (S1 ≈ -48 dB,
+/// S9+20 = +20 dB) — NOT the 0.0–1.0 fraction `read_level` expects. Returns `None` when
+/// the rig answered with no number (RPRT/empty) or an implausible out-of-range value.
+pub fn parse_smeter_db(reply: &str) -> Option<i32> {
+    reply
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty() && !l.starts_with("RPRT"))
+        .find_map(|l| l.parse::<f32>().ok())
+        .filter(|v| v.is_finite())
+        .map(|v| v.round() as i32)
+        // Real STRENGTH spans ~S0 (-54 dB) to S9+60; allow margin for noise-floor reads,
+        // reject only clearly-garbage magnitudes (e.g. an error sentinel that parsed).
+        .filter(|db| (-80..=100).contains(db))
+}
 
 /// True if a rigctld reply indicates success (`RPRT 0`).
 pub fn reply_ok(reply: &str) -> bool {
     reply.lines().any(|l| l.trim() == "RPRT 0")
+}
+
+/// Parse a rigctld `u <FUNC>` (get-function) reply. In the default protocol a SUCCESSFUL get
+/// returns the value ONLY — `0` or `1` on its own line, with NO `RPRT` — while an error returns
+/// `RPRT <negative>` (e.g. `-11` ENAVAIL = the rig doesn't have this func). So an `RPRT` line
+/// means unavailable/errored → `None`; otherwise the first `0`/`1` → `Some(off/on)`.
+pub fn parse_func_reply(reply: &str) -> Option<bool> {
+    for l in reply.lines() {
+        let l = l.trim();
+        if l.is_empty() {
+            continue;
+        }
+        if l.starts_with("RPRT") {
+            return None; // error / not available — the caller keeps the last known state
+        }
+        match l {
+            "0" => return Some(false),
+            "1" => return Some(true),
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Parse a rigctld `m` (get_mode) reply into (mode, passband_hz): the mode name on one line and
+/// the RX passband width (Hz) on the next. Either may be absent on a given read (a networked
+/// chain can split the two lines). Ignores `RPRT`/blank lines; a 0 width (rig's "default filter")
+/// is treated as no-value.
+pub fn parse_mode_passband(reply: &str) -> (Option<String>, Option<u32>) {
+    let mut mode = None;
+    let mut passband = None;
+    for l in reply
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty() && !l.starts_with("RPRT"))
+    {
+        if let Ok(hz) = l.parse::<u32>() {
+            if passband.is_none() && hz > 0 {
+                passband = Some(hz);
+            }
+        } else if mode.is_none() {
+            mode = Some(l.to_string());
+        }
+    }
+    (mode, passband)
 }
 
 /// A handle to the rig's keying + CAT tuning.
@@ -199,6 +260,20 @@ impl Rig {
 
     fn command_inner(&mut self, line: &str) -> std::io::Result<String> {
         let stream = self.ensure_connected()?;
+        // Discard any STALE bytes left in the socket by a prior MULTI-LINE reply — `m` (get_mode)
+        // returns the mode line AND a passband line, and on a networked chain the 2nd line can
+        // arrive AFTER we already returned the 1st. A lingering byte would be read as THIS
+        // command's answer and desync every command after it (the exact hazard the drop-on-failure
+        // guards, but a successful multi-line reply slips past that). Non-blocking → free when clean.
+        stream.set_nonblocking(true)?;
+        let mut scratch = [0u8; 256];
+        while let Ok(n) = stream.read(&mut scratch) {
+            if n == 0 {
+                break; // peer closed — the real read below surfaces it
+            }
+        }
+        stream.set_nonblocking(false)?;
+        stream.set_read_timeout(Some(Duration::from_millis(500)))?; // restore blocking-with-timeout
         stream.write_all(line.as_bytes())?;
         // Read until a COMPLETE reply (newline-terminated), not one 500 ms
         // gulp: a networked chain (rigctld → SmartSDR CAT → radio) can take
@@ -383,6 +458,40 @@ impl Rig {
             .ok_or_else(|| std::io::Error::other("no level in reply"))
     }
 
+    /// Read the rig's S-meter (dB relative to S9) via rigctld `l STRENGTH`. CAT-only;
+    /// `None` on VOX/serial or no numeric reply. Unlike [`Rig::read_level`], STRENGTH is a
+    /// signed dB value, not a 0.0–1.0 fraction (parsing/bounds live in [`parse_smeter_db`]).
+    pub fn read_smeter_db(&mut self) -> Option<i32> {
+        self.control.as_ref()?;
+        let reply = self.command("l STRENGTH\n").ok()?;
+        parse_smeter_db(&reply)
+    }
+
+    /// Read a rig CAT function state (e.g. "NB", "NR", "ANF", "COMP", "VOX") via rigctld
+    /// `u FUNC`. CAT-only; `None` on VOX/serial, an unsupported func, or a link hiccup — the
+    /// caller keeps the last known state rather than flickering the toggle.
+    pub fn read_func(&mut self, token: &str) -> Option<bool> {
+        self.control.as_ref()?;
+        let reply = self.command(&format!("u {token}\n")).ok()?;
+        parse_func_reply(&reply)
+    }
+
+    /// Enable/disable a rig CAT function via rigctld `U FUNC <0|1>`. CAT-only; `Ok(())` on
+    /// `RPRT 0`, else an error (unsupported func or link failure).
+    pub fn set_func(&mut self, token: &str, on: bool) -> std::io::Result<()> {
+        if self.control.is_none() {
+            return Err(std::io::Error::other("not a CAT rig"));
+        }
+        let reply = self.command(&format!("U {token} {}\n", u8::from(on)))?;
+        if reply_ok(&reply) {
+            Ok(())
+        } else {
+            Err(std::io::Error::other(format!(
+                "set_func {token} rejected: {reply:?}"
+            )))
+        }
+    }
+
     pub fn read_freq(&mut self) -> std::io::Result<u64> {
         if self.control.is_none() {
             return Err(std::io::Error::other("not a CAT rig"));
@@ -403,13 +512,28 @@ impl Rig {
     /// Read the rig's current mode (e.g. "USB"/"CW"). `None` if not a CAT rig or the
     /// rig didn't answer. The `m` reply is the mode on one line, passband on the next.
     pub fn read_mode(&mut self) -> Option<String> {
-        self.control.as_ref()?;
-        let reply = self.command("m\n").ok()?;
-        reply
-            .lines()
-            .map(|l| l.trim())
-            .find(|l| !l.is_empty() && !l.starts_with("RPRT") && l.parse::<i64>().is_err())
-            .map(|s| s.to_string())
+        self.read_mode_passband().0
+    }
+
+    /// Read the rig's mode + RX passband (Hz) from ONE `m` reply. CAT-only. The passband is
+    /// opportunistic: present when both reply lines arrive in one read (the common path); a
+    /// networked chain that splits them just surfaces the width on a later poll (the pre-command
+    /// drain flushes the stray line so it never poisons the next command).
+    pub fn read_mode_passband(&mut self) -> (Option<String>, Option<u32>) {
+        if self.control.is_none() {
+            return (None, None);
+        }
+        match self.command("m\n") {
+            Ok(reply) => parse_mode_passband(&reply),
+            Err(_) => (None, None),
+        }
+    }
+
+    /// Set the RX passband width (Hz) by re-issuing the current mode with the new width — Hamlib
+    /// carries filter width as the 2nd arg of set_mode (there is no portable bandwidth level).
+    /// CAT-only. The caller passes the current mode (the loop tracks it).
+    pub fn set_passband(&mut self, mode: &str, hz: u32) -> std::io::Result<()> {
+        self.set_mode(mode, hz)
     }
 
     /// Send a RAW CAT command string straight to the rig via rigctld's `w` (send_cmd) and
@@ -516,6 +640,37 @@ mod tests {
         assert_eq!(ctcss_line(100.0), "C 1000\n"); // Hamlib wants tenths of Hz
         assert_eq!(ctcss_line(0.0), "C 0\n"); // off
         assert_eq!(ctcss_line(88.5), "C 885\n");
+    }
+
+    #[test]
+    fn smeter_strength_parses_db_relative_to_s9() {
+        assert_eq!(parse_smeter_db("-54\n"), Some(-54)); // ~S0, no signal
+        assert_eq!(parse_smeter_db("-36\n"), Some(-36)); // ~S3
+        assert_eq!(parse_smeter_db("0\n"), Some(0)); // S9
+        assert_eq!(parse_smeter_db("20\n"), Some(20)); // S9+20
+        assert_eq!(parse_smeter_db("-5.0\n"), Some(-5)); // float form rounds to int dB
+        assert_eq!(parse_smeter_db("RPRT -1\n"), None); // error reply is not a reading
+        assert_eq!(parse_smeter_db(""), None); // rig didn't answer
+        assert_eq!(parse_smeter_db("9999\n"), None); // garbage magnitude → rejected
+    }
+
+    #[test]
+    fn func_get_reply_branches_on_value_vs_rprt() {
+        // Default protocol: a successful get is value-only (no RPRT); an error is RPRT<negative>.
+        assert_eq!(parse_func_reply("1\n"), Some(true));
+        assert_eq!(parse_func_reply("0\n"), Some(false));
+        assert_eq!(parse_func_reply("RPRT -11\n"), None); // ENAVAIL — rig lacks the func
+        assert_eq!(parse_func_reply("RPRT -5\n"), None); // transient — caller keeps last state
+        assert_eq!(parse_func_reply(""), None); // no answer
+    }
+
+    #[test]
+    fn mode_passband_parse_splits_the_m_reply() {
+        assert_eq!(parse_mode_passband("USB\n2400\n"), (Some("USB".into()), Some(2400)));
+        assert_eq!(parse_mode_passband("CW\n500\n"), (Some("CW".into()), Some(500)));
+        assert_eq!(parse_mode_passband("USB\n"), (Some("USB".into()), None)); // split → width later
+        assert_eq!(parse_mode_passband("USB\n0\n"), (Some("USB".into()), None)); // 0 = rig default
+        assert_eq!(parse_mode_passband("RPRT -1\n"), (None, None));
     }
 
     #[test]

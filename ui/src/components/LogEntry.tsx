@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { AppSnapshot, FieldDayStatus, LoggedQso } from '../types'
 import { fdLogManual, getLog, logQso, qrzLookup } from '../api'
 import { callHistory, entitySlots, isNewEntity } from '../features/callHistory'
+import { RecallPanel } from './RecallPanel'
 import { pushToast, withErrorToast } from '../toast'
 
 interface Props {
@@ -38,12 +39,6 @@ interface Props {
   fdMode?: 'CW' | 'PH'
 }
 
-function fmtUtc(whenUnix: number): string {
-  const d = new Date(whenUnix * 1000)
-  const p = (n: number) => String(n).padStart(2, '0')
-  return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())}`
-}
-
 /**
  * Shared rich log strip for the CW + Phone cockpits.
  *
@@ -67,7 +62,8 @@ export function LogEntry({
   const fdActive = fieldDay != null
 
   const [logCall, setLogCall] = useState('')
-  const [logRst, setLogRst] = useState(defaultRst)
+  const [logRstSent, setLogRstSent] = useState(defaultRst)
+  const [logRstRcvd, setLogRstRcvd] = useState(defaultRst)
   const [logName, setLogName] = useState('')
   const [logQth, setLogQth] = useState('')
   const [logComment, setLogComment] = useState('')
@@ -76,6 +72,8 @@ export function LogEntry({
   const [logGrid, setLogGrid] = useState('')
   const [logState, setLogState] = useState('')
   const [logCountry, setLogCountry] = useState('')
+  // Callbook profile photo (display-only, not written to the log). Cleared when the call changes.
+  const [logImage, setLogImage] = useState<string | null>(null)
   const [qrzBusy, setQrzBusy] = useState(false)
   const [allLog, setAllLog] = useState<LoggedQso[]>([])
   const rstRef = useRef<HTMLInputElement>(null)
@@ -108,6 +106,35 @@ export function LogEntry({
   const logCallRef = useRef(logCall)
   logCallRef.current = logCall
 
+  // Live busy flag the debounced auto-lookup timer reads at FIRE time — the `qrzBusy` state is
+  // captured stale in the timer's closure, so a blur/button lookup already in flight wouldn't be
+  // seen. Kept in sync with `qrzBusy` inside `lookup`.
+  const qrzBusyRef = useRef(false)
+  // True only when the LAST call change came from the operator TYPING (set in the call input's
+  // onChange), false for machine fills (CW decoder, click-to-work). The debounced auto-lookup
+  // fires on human edits only, so the shared CW cockpit never spams QRZ on decoder candidate flap.
+  const humanCallEditRef = useRef(false)
+
+  // The call whose identity (name/QTH/grid/state/country) the enrichment fields currently hold.
+  // Clear them when the call changes to a DIFFERENT one, so a previous callsign's data never
+  // bleeds onto another call's recall card — and so onCallBlur re-looks-up the new call.
+  const enrichedForRef = useRef('')
+  useEffect(() => {
+    const c = logCall.trim().toUpperCase()
+    if (enrichedForRef.current && c !== enrichedForRef.current) {
+      enrichedForRef.current = ''
+      setLogName('')
+      setLogQth('')
+      setLogGrid('')
+      setLogState('')
+      setLogCountry('')
+      setLogImage(null)
+      // The wiped name may have been the CW decoder's copy — un-latch so it can refill for the
+      // new call (declared below; the effect callback runs after render, so it's initialized).
+      cwNameFilled.current = false
+    }
+  }, [logCall])
+
   const refreshLog = () => void getLog().then(setAllLog).catch(() => {})
   useEffect(() => {
     // In FD mode we don't use the general logbook for dupe checking, so skip the fetch.
@@ -120,6 +147,7 @@ export function LogEntry({
   useEffect(() => {
     if (!pendingWork) return
     setLogCall(pendingWork.call.toUpperCase())
+    humanCallEditRef.current = false // a clicked spot is not a human keystroke — no auto-lookup
     rstRef.current?.focus()
     rstRef.current?.select()
     onConsumeWork?.()
@@ -146,13 +174,15 @@ export function LogEntry({
         logCallRef.current.toUpperCase() !== (cwFilledFor.current ?? '')
       if (!overridden) {
         setLogCall(up)
+        humanCallEditRef.current = false // decoder fill, not a keystroke — no auto-lookup
         cwFilledFor.current = up
         cwRstFilled.current = false
         cwNameFilled.current = false
       }
     }
     if (cwFilledFor.current && !cwRstFilled.current && rst) {
-      setLogRst((v) => (v.trim() === '' || v === defaultRst ? rst : v))
+      // The decoder's read of `rst` is the report we RECEIVED from them.
+      setLogRstRcvd((v) => (v.trim() === '' || v === defaultRst ? rst : v))
       cwRstFilled.current = true
     }
     if (cwFilledFor.current && !cwNameFilled.current && name) {
@@ -185,13 +215,15 @@ export function LogEntry({
   // explicit button toasts; the on-blur auto-lookup is silent on failure so an operator
   // without QRZ configured isn't nagged on every Tab.
   const lookup = async (silent: boolean) => {
-    if (qrzBusy) return
+    if (qrzBusyRef.current) return
     const call = logCall.trim()
     if (!call) return
+    qrzBusyRef.current = true
     setQrzBusy(true)
     const r = silent
       ? await qrzLookup(call).catch(() => null)
       : await withErrorToast(() => qrzLookup(call), 'QRZ lookup failed')
+    qrzBusyRef.current = false
     setQrzBusy(false)
     if (!r) return
     if (logCallRef.current.trim().toUpperCase() !== call.toUpperCase()) return
@@ -200,6 +232,8 @@ export function LogEntry({
     if (r.grid) setLogGrid((v) => (v.trim() ? v : r.grid ?? ''))
     if (r.state) setLogState((v) => (v.trim() ? v : r.state ?? ''))
     if (r.country) setLogCountry((v) => (v.trim() ? v : r.country ?? ''))
+    setLogImage(r.image ?? null) // display-only; no operator value to preserve
+    enrichedForRef.current = call.toUpperCase()
     if (!silent) {
       const detail = [r.name, r.grid && `grid ${r.grid}`, r.state].filter(Boolean).join(' · ')
       const note = r.grid ? '' : ' · grid/state need a QRZ subscription'
@@ -211,9 +245,26 @@ export function LogEntry({
     if (!fdActive && !qrzBusy && logCall.trim().length >= 3 && !logName.trim()) void lookup(true)
   }
 
+  // Auto-look-up name/QTH shortly after the operator stops typing a call (no Tab needed), so they
+  // can greet by name mid-ragchew. Debounced; skips FD, in-flight, and already-enriched calls.
+  useEffect(() => {
+    const c = logCall.trim()
+    const cu = c.toUpperCase()
+    // Human keystrokes only (not CW-decoder/click-to-work machine fills), and not already enriched.
+    if (fdActive || !humanCallEditRef.current || c.length < 3 || enrichedForRef.current === cu) return
+    const t = setTimeout(() => {
+      // Re-check at FIRE time via refs: an onCallBlur/QRZ-button lookup may have already enriched
+      // this call or still be in flight — either way, don't fire a duplicate QRZ request.
+      if (enrichedForRef.current !== cu && !qrzBusyRef.current) void lookup(true)
+    }, 700)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [logCall, fdActive])
+
   const reset = () => {
     setLogCall('')
-    setLogRst(defaultRst)
+    setLogRstSent(defaultRst)
+    setLogRstRcvd(defaultRst)
     setLogName('')
     setLogQth('')
     setLogComment('')
@@ -221,6 +272,7 @@ export function LogEntry({
     setLogGrid('')
     setLogState('')
     setLogCountry('')
+    setLogImage(null)
     // Keep fdClass/fdSection across resets for speed in FD runs.
   }
 
@@ -245,7 +297,8 @@ export function LogEntry({
     }
 
     // Standard logbook path.
-    const rst = logRst.trim() || defaultRst
+    const rstSent = logRstSent.trim() || defaultRst
+    const rstRcvd = logRstRcvd.trim() || defaultRst
     const rec: LoggedQso = {
       call,
       grid: logGrid.trim() || null,
@@ -254,8 +307,8 @@ export function LogEntry({
       band: snap.radio.band,
       freqMhz: snap.radio.dialMhz,
       mode,
-      rstSent: rst,
-      rstRcvd: rst,
+      rstSent,
+      rstRcvd,
       name: logName.trim() || null,
       qth: logQth.trim() || null,
       comment: logComment.trim() || null,
@@ -329,48 +382,14 @@ export function LogEntry({
     <div className="log-entry">
       <h2>Log this QSO</h2>
 
-      {logCall.trim().length >= 3 &&
-        (hist.workedBefore ? (
-          <div className={`le-prior${hist.dupeThisBand ? ' dupe' : ''}`}>
-            <span className="b4-chip" title="Worked before">
-              B4
-            </span>
-            <span className="le-prior-text">
-              {hist.dupeThisBand ? `Dupe on ${snap.radio.band} · ` : ''}
-              worked {hist.count}×{hist.lastUnix ? ` · last ${fmtUtc(hist.lastUnix)}` : ''}
-              {hist.bands.length ? ` · ${hist.bands.join('/')}` : ''}
-              {hist.confirmedCount ? ` · ${hist.confirmedCount} confirmed` : ''}
-            </span>
-          </div>
-        ) : newEntity ? (
-          <div className="le-prior new-entity">
-            <span className="le-prior-text">New DXCC — {logCountry.trim()}!</span>
-          </div>
-        ) : newBandSlot ? (
-          <div className="le-prior">
-            <span className="need-chip need-band">BAND</span>
-            <span className="le-prior-text">
-              New band for {logCountry.trim()} — first time on {snap.radio.band} in your log
-            </span>
-          </div>
-        ) : newModeSlot ? (
-          <div className="le-prior">
-            <span className="need-chip need-mode">MODE</span>
-            <span className="le-prior-text">
-              New mode for {logCountry.trim()} on {snap.radio.band} — first {mode} in your log
-            </span>
-          </div>
-        ) : (
-          <div className="le-prior new">
-            <span className="le-prior-text">New — not in your log</span>
-          </div>
-        ))}
-
       <div className="le-row">
         <input
           className="settings-input mono le-call"
           value={logCall}
-          onChange={(e) => setLogCall(e.target.value.toUpperCase())}
+          onChange={(e) => {
+            humanCallEditRef.current = true
+            setLogCall(e.target.value.toUpperCase())
+          }}
           onBlur={onCallBlur}
           onKeyDown={onEnter}
           placeholder="Call"
@@ -386,15 +405,29 @@ export function LogEntry({
         >
           {qrzBusy ? '…' : 'QRZ'}
         </button>
-        <input
-          ref={rstRef}
-          className="settings-input mono le-rst"
-          value={logRst}
-          onChange={(e) => setLogRst(e.target.value)}
-          onKeyDown={onEnter}
-          placeholder="RST"
-          autoComplete="off"
-        />
+        <label className="le-rst-field" title="Signal report you SENT them">
+          <span className="le-rst-cap">Sent</span>
+          <input
+            ref={rstRef}
+            className="settings-input mono le-rst"
+            value={logRstSent}
+            onChange={(e) => setLogRstSent(e.target.value)}
+            onKeyDown={onEnter}
+            placeholder="RST"
+            autoComplete="off"
+          />
+        </label>
+        <label className="le-rst-field" title="Signal report you RECEIVED from them">
+          <span className="le-rst-cap">Rcvd</span>
+          <input
+            className="settings-input mono le-rst"
+            value={logRstRcvd}
+            onChange={(e) => setLogRstRcvd(e.target.value)}
+            onKeyDown={onEnter}
+            placeholder="RST"
+            autoComplete="off"
+          />
+        </label>
         <input
           className="settings-input le-name"
           value={logName}
@@ -442,6 +475,21 @@ export function LogEntry({
         {logGrid ? ` · ${logGrid}` : ''}
         {logCountry ? ` · ${logCountry}` : ''}
       </span>
+
+      <RecallPanel
+        call={logCall}
+        band={snap.radio.band}
+        name={logName}
+        qth={logQth}
+        grid={logGrid}
+        country={logCountry}
+        image={logImage}
+        myGrid={snap.mygrid}
+        hist={hist}
+        newEntity={newEntity}
+        newBandSlot={newBandSlot}
+        newModeSlot={newModeSlot}
+      />
     </div>
   )
 }

@@ -9,7 +9,7 @@
 [package]
 publish = false
 name = "tempo"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 license = "GPL-3.0-or-later"
 authors = ["KD9TAW <kd9taw@protonmail.com>"]
@@ -38,8 +38,12 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Update-check fetch of SourceForge best_release.json. Matches the propagation crate's exact
+# reqwest spec (rustls-tls, NOT native-tls) so the MinGW cross-build never pulls in openssl.
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "json"] }
 # The application/domain logic. Built by the M3 UI task (#2). This shell only
 # locks its AppState behind a Mutex and forwards commands to it.
 tempo-app = { path = "../crates/tempo-app" }

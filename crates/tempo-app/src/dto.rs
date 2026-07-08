@@ -276,6 +276,44 @@ pub struct RadioStatus {
     /// it, else the last commanded value; `None` until either exists.
     #[serde(default)]
     pub rf_power: Option<f32>,
+    /// CAT S-meter reading in dB relative to S9 (S9 = 0 dB, S1 ≈ -48, S9+20 = +20).
+    /// `None` when the rig doesn't report STRENGTH over CAT, so the UI shows no meter
+    /// rather than a fake one. RX-only — not refreshed while transmitting.
+    #[serde(default)]
+    pub smeter_db: Option<i32>,
+    /// The rig's actual mode read back over CAT (Hamlib name, e.g. "USB"/"LSB"/"FM").
+    /// Display-only — the cockpit flags a mismatch with the commanded mode. `None` until
+    /// the rig reports it.
+    #[serde(default)]
+    pub rig_mode: Option<String>,
+    /// The operator's TRANSIENT Phone mode override ("USB"/"LSB"/"FM"), or `None` = AUTO
+    /// (band-derived). Drives the cockpit mode picker's active highlight; cleared on a band change.
+    #[serde(default)]
+    pub sideband_override: Option<String>,
+    /// The operator's PHONE (SSB/image) sub-band on the CURRENT band as an [lo, hi) MHz range,
+    /// per their license class — the phone band-strip shades it so they see "where I may talk".
+    /// `None` for a class with no phone privilege on the band, an Open (non-US) license, or an
+    /// off-plan band. Both are set together.
+    #[serde(default)]
+    pub phone_seg_lo: Option<f64>,
+    #[serde(default)]
+    pub phone_seg_hi: Option<f64>,
+    /// Rig DSP-function states over CAT. `None` = the rig doesn't report the func (hide its
+    /// toggle); `Some(bool)` = supported + current on/off. Same `None = can't do it` idiom as
+    /// `smeter_db`. `notch` is Hamlib's auto-notch (ANF), the one useful as a bare SSB toggle.
+    #[serde(default)]
+    pub nb: Option<bool>,
+    #[serde(default)]
+    pub nr: Option<bool>,
+    #[serde(default)]
+    pub notch: Option<bool>,
+    #[serde(default)]
+    pub comp: Option<bool>,
+    #[serde(default)]
+    pub vox: Option<bool>,
+    /// Rig RX passband / filter width in Hz from CAT; `None` = unknown or the rig's own default.
+    #[serde(default)]
+    pub filter_width_hz: Option<u32>,
     /// RX input audio level (0.0–1.0), a decaying peak meter for the UI.
     #[serde(default)]
     pub rx_level: f32,
@@ -1056,6 +1094,8 @@ pub struct QrzLookupDto {
     pub dxcc: Option<u32>,
     pub cq_zone: Option<u32>,
     pub itu_zone: Option<u32>,
+    /// Profile photo URL (QRZ `<image>` / HamQTH `<picture>`) — routinely `None`.
+    pub image: Option<String>,
 }
 
 impl From<tempo_core::qrz::QrzLookup> for QrzLookupDto {
@@ -1070,6 +1110,7 @@ impl From<tempo_core::qrz::QrzLookup> for QrzLookupDto {
             dxcc: r.dxcc,
             cq_zone: r.cq_zone,
             itu_zone: r.itu_zone,
+            image: r.image,
         }
     }
 }
@@ -1090,6 +1131,7 @@ impl From<tempo_core::hamqth::HamQthLookup> for QrzLookupDto {
             dxcc: r.dxcc,
             cq_zone: r.cq_zone,
             itu_zone: r.itu_zone,
+            image: r.image,
         }
     }
 }
@@ -1213,6 +1255,10 @@ pub struct AppSnapshot {
     /// The last worked spot's mode: "digital" | "phone" | "cw".
     #[serde(default)]
     pub work_view: Option<String>,
+    /// The last worked spot's callsign — a pop-out window's click prefills the MAIN
+    /// window's log Call from this (cleared on a call-less work).
+    #[serde(default)]
+    pub work_call: Option<String>,
     /// Bumped by an inbound UDP Clear — the UI erases its panes on change.
     #[serde(default)]
     pub clear_tick: u32,

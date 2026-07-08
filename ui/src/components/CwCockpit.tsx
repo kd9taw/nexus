@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
-import type { AppSnapshot, FieldDayStatus, SkimHit } from '../types'
+import type { AppSnapshot, FieldDayStatus, SpotRow } from '../types'
 import { PhoneScope } from './PhoneScope'
 import { PalettePicker } from './PalettePicker'
 import { BandPicker } from './BandPicker'
+import { BandStrip } from './BandStrip'
 import { LogEntry } from './LogEntry'
 import {
   sendCw,
@@ -11,10 +12,12 @@ import {
   stopCw,
   cwDecode,
   cwClear,
-  cwSkim,
   selectPeer,
   previewCw,
   pointRotatorAtCall,
+  setRigFunc,
+  setFilterWidth,
+  openPanelWindow,
 } from '../api'
 import { pushToast, withErrorToast } from '../toast'
 import { RotorStrip } from './RotorStrip'
@@ -33,6 +36,10 @@ interface Props {
   onSnap?: (snap: AppSnapshot) => void
   /** Field Day status — when non-null the log strip switches to FD mode. */
   fieldDay?: FieldDayStatus | null
+  /** Live cluster spots (all bands/modes); the band-strip filters to CW on the current band. */
+  spots?: SpotRow[]
+  /** Work a spotted station from the band-strip (QSY to its freq + prefill the log). */
+  onWorkSpot?: (s: SpotRow) => void
 }
 
 /** Default CASUAL/ragchew macro set (no contest serial/exchange). Standard CW QSO flow:
@@ -60,7 +67,38 @@ const WPM_MAX = 50
  * strip logs the QSO into the multi-mode logbook (RST 599). Entering the section forces
  * the rig to CW (the rig-mode policy, wired in App). No contest scoring — by design.
  */
-export function CwCockpit({ snap, theme, pitchHz = 600, pendingWork, onConsumeWork, onSnap, fieldDay }: Props) {
+/** DSP funcs relevant to CW — NB (impulse noise), NR (broadband hiss), Notch/ANF (carriers).
+ * COMP/VOX are voice-only, so they're deliberately absent here. Capability-gated like Phone. */
+const CW_DSP_FUNCS = [
+  { key: 'nb', label: 'NB', title: 'Noise Blanker — kills impulse/ignition noise (RX)' },
+  { key: 'nr', label: 'NR', title: 'Noise Reduction — pulls a tone out of broadband hiss (RX, DSP)' },
+  { key: 'notch', label: 'Notch', title: 'Auto-Notch (ANF) — nulls a competing carrier (RX, DSP)' },
+] as const
+
+export function CwCockpit({
+  snap,
+  theme,
+  pitchHz = 600,
+  pendingWork,
+  onConsumeWork,
+  onSnap,
+  fieldDay,
+  spots,
+  onWorkSpot,
+}: Props) {
+  const catOk = snap.radio.catOk === true
+  // RX filter width (CW wants a NARROW filter — default 500 Hz, 50-Hz steps, 50–2000 Hz span).
+  const filterHz = snap.radio.filterWidthHz ?? null
+  const bumpFilter = (deltaHz: number) => {
+    const base = filterHz ?? 500
+    const next = Math.min(2000, Math.max(50, base + deltaHz))
+    // Never let the clamp invert the direction — "wider" must not narrow (e.g. a stale Phone
+    // width above CW's 2 kHz cap right after switching modes, before the next `m` re-read).
+    if ((deltaHz > 0 && next <= base) || (deltaHz < 0 && next >= base)) return
+    void setFilterWidth(next)
+      .then((s) => onSnap?.(s))
+      .catch(() => pushToast('Could not set filter width', 'error'))
+  }
   // Source of truth = the engine's actual keyer speed (survives navigation; the
   // old hard-coded 25 silently re-keyed at the wrong speed after a nav round-trip).
   const [wpm, setWpm] = useState(() => snap.radio.cwWpm ?? 25)
@@ -72,8 +110,8 @@ export function CwCockpit({ snap, theme, pitchHz = 600, pendingWork, onConsumeWo
   const [decoded, setDecoded] = useState<{ text: string; wpm: number }>({ text: '', wpm: 0 })
   const decodeRef = useRef<HTMLDivElement>(null)
   // Operator decode sensitivity (0..1; 0.5 = original gates). Higher catches weaker/off-pitch
-  // marks the single-pitch decoder otherwise drops (the skimmer already scans wider). A ref
-  // feeds the fixed-deps poll loop without restarting the interval on every slider nudge.
+  // marks the single-pitch decoder otherwise drops. A ref feeds the fixed-deps poll loop without
+  // restarting the interval on every slider nudge.
   const [sensitivity, setSensitivity] = useState<number>(() => {
     const v = parseFloat(localStorage.getItem('nexus.cw.sensitivity') ?? '')
     return Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 0.5
@@ -148,12 +186,8 @@ export function CwCockpit({ snap, theme, pitchHz = 600, pendingWork, onConsumeWo
       alive = false
     }
   }, [guide.workedCall])
-  // Wideband skimmer: every CW signal across the band (refreshed a bit slower than the
-  // single decode — a full-band scan is heavier than one channel).
-  const [skim, setSkim] = useState<SkimHit[]>([])
   useEffect(() => {
     let alive = true
-    let n = 0
     const tick = () => {
       cwDecode(sensitivityRef.current)
         .then((d) => {
@@ -174,15 +208,6 @@ export function CwCockpit({ snap, theme, pitchHz = 600, pendingWork, onConsumeWo
           }
         })
         .catch(() => {})
-      // Skim every other tick (~1.4 s) — the full-band scan is the heavier call.
-      if (n % 2 === 0) {
-        cwSkim()
-          .then((s) => {
-            if (alive) setSkim(s)
-          })
-          .catch(() => {})
-      }
-      n += 1
     }
     tick()
     const id = window.setInterval(tick, 700)
@@ -247,6 +272,19 @@ export function CwCockpit({ snap, theme, pitchHz = 600, pendingWork, onConsumeWo
     // The log fills continuously from the confirmed worked station (see cwLive on LogEntry) —
     // call now, then RST + name as they're decoded through the QSO.
   }
+
+  // A click-to-work / spot-click handoff (pendingWork) must ARM the macro peer, or the `!` macros
+  // would key the previously-selected chip's call on the new station's frequency. Plain selectPeer
+  // (NOT workCall) — don't speed-match to the old decoded WPM (a different signal). The log prefill
+  // is handled separately by LogEntry.
+  useEffect(() => {
+    if (pendingWork?.call) {
+      void selectPeer(pendingWork.call)
+        .then((s) => s && onSnap?.(s))
+        .catch(() => {})
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingWork?.ts])
 
   // Keyboard: F1–F8 fire macros; Esc aborts; PgUp/PgDn nudge speed (±2, Shift ±4).
   // Live ref so the document listener (bound once) always reads current state.
@@ -343,6 +381,28 @@ export function CwCockpit({ snap, theme, pitchHz = 600, pendingWork, onConsumeWo
           />
         </label>
         <BandPicker snap={snap} mode="cw" onSnap={onSnap} />
+        {catOk && (
+          <div className="ph-filter" title="RX filter / passband width (CAT) — narrow to dig CW out of QRM">
+            <span className="ph-filter-lbl">BW</span>
+            <button
+              type="button"
+              className="ph-filter-step"
+              onClick={() => bumpFilter(-50)}
+              title="Narrower (−50 Hz)"
+            >
+              −
+            </button>
+            <span className="ph-filter-val mono">{filterHz ? `${filterHz}` : '—'}</span>
+            <button
+              type="button"
+              className="ph-filter-step"
+              onClick={() => bumpFilter(50)}
+              title="Wider (+50 Hz)"
+            >
+              +
+            </button>
+          </div>
+        )}
         <span className="cw-spacer" />
         <RotorStrip
           targetCall={guide.workedCall}
@@ -381,11 +441,55 @@ export function CwCockpit({ snap, theme, pitchHz = 600, pendingWork, onConsumeWo
         <PhoneScope
           transmitting={snap.radio.transmitting}
           theme={theme}
+          smeterDb={snap.radio.smeterDb}
           viewLoHz={300}
           viewHiHz={1100}
           markerHz={pitch}
         />
       </section>
+
+      {/* DSP toggles (NB/NR/Notch) — capability-gated; only funcs the rig reports render. */}
+      {(() => {
+        const supported = CW_DSP_FUNCS.filter((f) => snap.radio[f.key] != null)
+        if (supported.length === 0) return null
+        return (
+          <div className="ph-dsp" role="group" aria-label="Rig DSP functions">
+            <span className="ph-dsp-label">DSP</span>
+            {supported.map((f) => {
+              const on = snap.radio[f.key] === true
+              return (
+                <button
+                  key={f.key}
+                  type="button"
+                  className={`ph-dsp-btn${on ? ' on' : ''}`}
+                  aria-pressed={on}
+                  title={f.title}
+                  onClick={() =>
+                    void setRigFunc(f.key, !on)
+                      .then((s) => onSnap?.(s))
+                      .catch(() => pushToast(`Could not toggle ${f.label}`, 'error'))
+                  }
+                >
+                  {f.label}
+                </button>
+              )
+            })}
+          </div>
+        )
+      })()}
+
+      {/* CW spot band-activity strip; ⧉ pops the vertical band map into its own window. */}
+      {onWorkSpot && (
+        <BandStrip
+          band={snap.radio.band}
+          dialMhz={snap.radio.dialMhz}
+          txAllowed={snap.radio.txAllowed}
+          spots={spots ?? []}
+          spotMode="CW"
+          onWorkSpot={onWorkSpot}
+          onPopOut={() => void openPanelWindow('bandmapCw')}
+        />
+      )}
 
       {/* CW copilot — decoded-call chips + (Guided) the next-step prompt. Configurable for
           new hams (Guided: plain-English prompts + the next key highlighted) vs experienced
@@ -507,25 +611,6 @@ export function CwCockpit({ snap, theme, pitchHz = 600, pendingWork, onConsumeWo
           </div>
         </div>
       )}
-
-      {/* Always rendered at a fixed height so it never pops in/out and shoves the log
-          around; shows a scanning state when the band is quiet. Scrolls past ~9 signals. */}
-      <div className="cw-skim" title="Wideband CW skimmer — every signal across the band">
-        <span className="cw-decode-label">SKIM</span>
-        <ul className="cw-skim-list">
-          {skim.length > 0 ? (
-            skim.map((h) => (
-              <li key={h.pitchHz} className="cw-skim-row">
-                <span className="cw-skim-freq">{h.pitchHz} Hz</span>
-                <span className="cw-skim-text">{h.text}</span>
-                <span className="cw-skim-wpm">{h.wpm}</span>
-              </li>
-            ))
-          ) : (
-            <li className="cw-skim-idle">scanning the band…</li>
-          )}
-        </ul>
-      </div>
 
       <div className="cw-macros" role="group" aria-label="CW macros">
         {MACROS.map((m) => (
