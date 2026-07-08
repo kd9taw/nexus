@@ -66,5 +66,5 @@ decode reports are gold.
 
 ## License
 
-GPL-3.0-or-later. Source: https://github.com/kd9taw/nexus
+GPL-3.0-or-later. Source: https://sourceforge.net/p/nexus-ham-radio/code/ci/main/tree/
 Not affiliated with ARRL, the WSJT project, or any rig manufacturer.

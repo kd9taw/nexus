@@ -130,7 +130,7 @@ You're on the air. When you want to go deeper:
 - [FAQ](FAQ) — the common questions.
 - [Documentation](Documentation) — the full manual set: section guides, protocols, interop.
 
-Stuck? The [troubleshooting guide](https://github.com/kd9taw/nexus/blob/main/docs/troubleshooting.md)
+Stuck? The [troubleshooting guide](https://sourceforge.net/p/nexus-ham-radio/code/ci/main/tree/docs/troubleshooting.md)
 on GitHub covers CAT failures, drivers, port conflicts, and audio.
 
 ---

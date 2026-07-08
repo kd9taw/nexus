@@ -52,7 +52,7 @@ to CW. On the **soundcard keyer**, Nexus keeps the rig in USB/LSB and synthesize
 sidetone through the TX audio path — don't manually flip the rig to CW there, or
 the tone won't pass. Nexus sets the right mode on section entry.
 
-→ Full guide: <https://github.com/kd9taw/nexus/blob/main/docs/rigs/yaesu.md>
+→ Full guide: <https://sourceforge.net/p/nexus-ham-radio/code/ci/main/tree/docs/rigs/yaesu.md>
 
 ---
 
@@ -72,7 +72,7 @@ satellite station.
 nothing" — leave the rig's CI-V address at its default and let Hamlib's default
 match it.
 
-→ Full guide: <https://github.com/kd9taw/nexus/blob/main/docs/rigs/icom.md>
+→ Full guide: <https://sourceforge.net/p/nexus-ham-radio/code/ci/main/tree/docs/rigs/icom.md>
 
 ---
 
@@ -96,7 +96,7 @@ like WSJT-X's two-instance pattern.
 real hardware — nothing auto-picks it. Use the SmartSDR CAT path (model 2036 at
 `127.0.0.1:5002`), which is the one that works.
 
-→ Full guide: <https://github.com/kd9taw/nexus/blob/main/docs/rigs/flexradio.md>
+→ Full guide: <https://sourceforge.net/p/nexus-ham-radio/code/ci/main/tree/docs/rigs/flexradio.md>
 
 ---
 
@@ -115,7 +115,7 @@ cabling groups:
 **Field status:** supported via the Icom backend but **not yet bench-verified** —
 field reports genuinely valuable.
 
-→ Full guide: <https://github.com/kd9taw/nexus/blob/main/docs/rigs/xiegu.md>
+→ Full guide: <https://sourceforge.net/p/nexus-ham-radio/code/ci/main/tree/docs/rigs/xiegu.md>
 
 ---
 
@@ -138,7 +138,7 @@ an az-only rotator).
 
 **Field status:** dummy-verified; control of real az/el hardware is pending.
 
-→ Full guide: <https://github.com/kd9taw/nexus/blob/main/docs/rigs/rotators.md>
+→ Full guide: <https://sourceforge.net/p/nexus-ham-radio/code/ci/main/tree/docs/rigs/rotators.md>
 
 ---
 
@@ -160,7 +160,7 @@ picker also includes **Dummy** (model 1) for click-through testing and **FLRig**
 - [Install](Install) — download, verify, where data lives.
 - [FAQ](FAQ) — the common questions.
 - [Documentation](Documentation) — the full manual set on GitHub.
-- [Troubleshooting](https://github.com/kd9taw/nexus/blob/main/docs/troubleshooting.md)
+- [Troubleshooting](https://sourceforge.net/p/nexus-ham-radio/code/ci/main/tree/docs/troubleshooting.md)
   — CAT failures, drivers, port conflicts, audio.
 
 ---

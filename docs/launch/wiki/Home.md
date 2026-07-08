@@ -6,7 +6,7 @@ making their first FT8 contact to a DXCC Honor Roll chaser. Windows, GPL-3.0,
 built in Rust.
 
 [**⬇ Download the latest Windows installer**](https://sourceforge.net/projects/nexus-ham-radio/files/latest/download)
-&nbsp;·&nbsp; [Source & full docs on GitHub](https://github.com/kd9taw/nexus)
+&nbsp;·&nbsp; [Source & full docs on SourceForge](https://sourceforge.net/p/nexus-ham-radio/code/ci/main/tree/)
 &nbsp;·&nbsp; [hamradiotools.io](https://hamradiotools.io)
 
 > **Open beta.** The FT8/FT4 core is production-grade (800+ automated tests,

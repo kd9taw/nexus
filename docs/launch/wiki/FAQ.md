@@ -147,7 +147,7 @@ modes you already run.
 
 ### Where is the source code, and can I contribute?
 
-The repository is <https://github.com/kd9taw/nexus>. Contributions are welcome —
+The repository is <https://sourceforge.net/p/nexus-ham-radio/code/ci/main/tree/>. Contributions are welcome —
 issues, field reports, and pull requests all help. The most valuable contributions
 during beta are **on-air decode reports** for FT1 and DX1 and **rig confirmations**
 for radios beyond the two the author has bench-verified.
@@ -168,7 +168,7 @@ the SHA-256 of each new download) to update manually.
 
 **More:** [Quick Start](Quick-Start) · [Install](Install) · [Rig Setup](Rig-Setup)
 · [Documentation](Documentation) · the deep protocol docs on
-[GitHub](https://github.com/kd9taw/nexus/tree/main/docs/protocols).
+[SourceForge](https://sourceforge.net/p/nexus-ham-radio/code/ci/main/tree/docs/protocols).
 
 *License: GPL-3.0 · by KD9TAW · Repository:
-<https://github.com/kd9taw/nexus>*
+<https://sourceforge.net/p/nexus-ham-radio/code/ci/main/tree/>*

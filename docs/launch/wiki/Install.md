@@ -65,7 +65,7 @@ which is exactly why the SHA-256 check above is worth doing.
 Click **More info**, then **Run anyway**.
 
 If you'd rather avoid the prompt entirely, you can
-[build from source](https://github.com/kd9taw/nexus) instead.
+[build from source](https://sourceforge.net/p/nexus-ham-radio/code/ci/main/tree/) instead.
 
 **Where it installs:** Nexus installs **per-user** — no administrator rights, no
 system-wide changes. The program files land under your user profile
