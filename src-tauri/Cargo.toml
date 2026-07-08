@@ -1,0 +1,71 @@
+# Nexus desktop shell (Tauri v2).
+#
+# This crate is deliberately STANDALONE — note the empty `[workspace]` table
+# below. It is NOT a member of the root `../Cargo.toml` workspace. Keeping it
+# out of the workspace means the workspace (ft1-sys / ft1 / tempo-core) keeps
+# building on hosts that have no WebView toolchain (this dev box has no
+# webkit2gtk and no display, so Tauri cannot build here). The shell builds on a
+# machine that has the platform WebView runtime — see README.md.
+[package]
+publish = false
+name = "tempo"
+version = "0.3.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+authors = ["KD9TAW <kd9taw@protonmail.com>"]
+repository = "https://github.com/kd9taw/nexus"
+homepage = "https://github.com/kd9taw/nexus"
+description = "Nexus — all-mode ham radio operations center; Tauri v2 desktop shell"
+# Pin a modern-enough toolchain; Tauri v2 requires a recent stable Rust.
+rust-version = "1.77"
+
+# Empty workspace table => this Cargo.toml is its own workspace root, so it is
+# NOT pulled into ../Cargo.toml. Do not add members here.
+[workspace]
+
+[[bin]]
+name = "Nexus"
+path = "src/main.rs"
+
+[lib]
+# The Tauri app logic lives in the library so it can be unit-tested and
+# (on mobile) reused as the entry point. `main.rs` is a thin wrapper.
+name = "tempo_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# The application/domain logic. Built by the M3 UI task (#2). This shell only
+# locks its AppState behind a Mutex and forwards commands to it.
+tempo-app = { path = "../crates/tempo-app" }
+# Propagation & opening intelligence with LIVE feeds (NOAA SWPC + PSK Reporter).
+propagation = { path = "../crates/propagation", features = ["live"] }
+# DX-cluster / RBN spot feed for need-aware spotting.
+tempo-net = { path = "../crates/tempo-net" }
+# OS-native credential vault for the LoTW password (Windows Credential Manager /
+# macOS Keychain / Linux Secret Service). No external dep on Windows/macOS.
+keyring = { version = "3.6", features = [
+    "apple-native",
+    "windows-native",
+    "sync-secret-service",
+] }
+# tempo-core for the pure LoTW URL/validate/high-water helpers used by the
+# download command (the reconcile path is reached via tempo-app).
+tempo-core = { path = "../crates/tempo-core" }
+# Real sound-card + rig transport (optional; enabled by the `radio` feature).
+tempo-audio = { path = "../crates/tempo-audio", optional = true }
+
+[features]
+# This feature is used by the desktop binary. It allows configuring whether the
+# app uses the custom protocol assets or the dev server (handled by Tauri).
+custom-protocol = ["tauri/custom-protocol"]
+# Enable the live radio loop (sound card via cpal + PTT/CAT via rigctld). Needs
+# the platform audio dev libs at build time (ALSA/CoreAudio/WASAPI) and a sound
+# card (+ optional rigctld) at runtime. Without it the shell serves app state but
+# does not key the radio — useful for UI work.
+radio = ["dep:tempo-audio", "tempo-audio/device", "tempo-audio/serial"]

@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 📖 Documentation
+    url: https://github.com/kd9taw/nexus/tree/main/docs
+    about: Quick start, install, section guides, rig setup, protocols, FAQ, and troubleshooting — check here first.
+  - name: 💬 Questions & general discussion
+    url: https://github.com/kd9taw/nexus/discussions
+    about: For setup help, usage questions, and general discussion (including quick on-air chatter), please open a GitHub Discussion rather than an issue.
+  - name: ✉️ Email the maintainer
+    url: mailto:kd9taw@protonmail.com
+    about: For anything that does not fit a Discussion, contact KD9TAW directly.

@@ -1,0 +1,5 @@
+# Vendored Hamlib Windows runtime — fetched by scripts/fetch-hamlib.sh, not
+# committed (the DLLs are ~14 MB). Only this file + README.md are tracked.
+*.exe
+*.dll
+*.txt

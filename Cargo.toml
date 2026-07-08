@@ -1,0 +1,26 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/ft1-sys",
+    "crates/ft1",
+    "crates/ft8",
+    "crates/ft4",
+    "crates/modes",
+    "crates/propagation",
+    "crates/tempo-core",
+    "crates/tempo-app",
+    "crates/tempo-audio",
+    "crates/tempo-net",
+]
+
+[workspace.package]
+edition = "2021"
+# Minimum supported Rust — the real, verified floor (Cargo.lock is v4 → cargo
+# ≥1.78, and the code uses usize::is_multiple_of → Rust ≥1.87). Enforced by the
+# CI `msrv` job. A regression guard against accidental newer-API use, not a
+# promise of old-toolchain support.
+rust-version = "1.87"
+license = "GPL-3.0-or-later"
+authors = ["KD9TAW <kd9taw@protonmail.com>"]
+repository = "https://github.com/kd9taw/nexus"
+homepage = "https://github.com/kd9taw/nexus"

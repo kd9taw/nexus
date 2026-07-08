@@ -1,0 +1,101 @@
+---------------------------------------------------------------------------
+ International Telecommunications Union - Radiocommunication Sector (ITU-R)
+     ITURHFProp         Ver May 18 2024
+     HF Model (P533)    Ver 14.2
+     Noise Model (P372) Ver 14.3
+     Analysis Prepared  Sat May 18 13:43:24 2024
+
+---------------------------------------------------------------------------
+
+***************************** P533 Input Parameters ****************************
+
+	United Kingdom to Moscow
+	Year          : 2018
+	Month         : May
+	Hour          : 2 (hour UTC)
+	SSN (R12)     : 10
+	Distance      : 2562.104539 (km)
+	dmax          : 4000.000000 (km)
+	Tx power      : -10.000000
+	Tx Location     Moscow
+	Tx latitude   :  55.750000 N
+	Tx longitude  :  37.580000 E
+	Rx Location     Birmingham
+	Rx latitude   :  52.486200 N
+	Rx longitude  :   1.890400 W
+	local time Rx : 2 (hour UTC)
+	local time Tx : 4 (hour UTC)
+	Frequency     : 14.000000
+	Bandwidth     : 1.000000
+	Modulation : ANALOG
+	Required signal-to-noise ratio : 31.000000
+	Required % of month signal-to-noise ratio :  90
+	Required signal-to-interference ratio : 0.000000
+	Man-made noise : RESIDENTIAL
+	Antenna configuration : Transmitter main beam to receiver main beam
+	Path Direction : SHORTPATH
+	Transmit antenna               14 MHz Dipole at 10 m AAGL    
+	Transmit antenna bearing     : 278.500401
+	Transmit antenna gain offset : 0.000000
+	Receive antenna                14 MHz Dipole at 10 m AAGL    
+	Receive antenna bearing      : 66.073351
+	Receive antenna gain offset  : 0.000000
+
+************************ End P533 Input Parameters *****************************
+
+************************** ITURHFP Input Parameters *****************************
+
+	Upper left (North West) latitude   :  52.486200 N
+	Upper left (North West) longitude  :   1.890400 W
+	Lower right (South East) latitude  :  52.486200 N
+	Lower right (South East) longitude :   1.890400 W
+	Number of frequencies : 1
+	Number of hours       : 12
+	Number of months      : 1
+	Latitude increment    : 1.000000 (deg)
+	Longitude increment   : 1.000000 (deg)
+
+************************** ITURHFP Input Parameters *****************************
+
+******************************** Data Format ***********************************
+
+Column 01: Month
+Column 02: Hour
+Column 03: Frequency (MHz)
+Column 04: ele - Path minimum Rx elevation angle (deg)
+Column 05: Pr - Median receiver power (dB)
+Column 06: Grw - Receive Antenna Gain (dbi)
+Column 07: SNR - Median signal-to-noise ratio (dB)
+Column 08: BCR - Basic circuit reliability (%)
+Column 09: Dominant mode
+Column 10: Dominant mode - Elevation angle (deg)
+Column 11: Dominant mode - Delay (mS)
+Column 12: Dominant mode - Loss (dB)
+Column 13: Dominant mode - Propagation probability (%)
+Column 14: Dominant mode - Virtual height (km)
+Column 15: Dominant mode - Median received power (dB)
+Column 16: Dominant mode - Receiver Antenna Gain (dBi)
+Column 17: Dominant mode - Field Strength (dB(1uV/m))
+Column 18: Dominant mode - Basic MUF (MHz)
+Column 19: Short Path (<=7000 km) Field Strength (dB(1uV/m))
+Column 20: Long Path (>9000km) Field Strength (dB(1uV/m))
+
+************************** End Data Format ********************************
+
+************************ Calculated Parameters ****************************
+
+05, 02,   14.000,   8.08,-144.53,   0.09,  18.47,  12.18,  1F2 ,   8.08,   0.00, 166.54,   0.00, 486.47,-146.96,   0.09, -16.93,   8.94, -16.2561,-307.0000
+05, 04,   14.000,   7.65,-138.97,  -0.36,  24.03,  24.45,  1F2 ,   7.65,   0.00, 159.69,   0.01, 360.43,-141.02,  -0.36, -10.53,  10.89, -10.0293,-307.0000
+05, 06,   14.000,   7.34,-130.76,  -0.69,  32.21,  54.91,  1F2 ,   7.34,   0.00, 149.79,   0.35, 375.90,-131.76,  -0.69,  -0.95,  13.46,  -0.7384,-307.0000
+05, 08,   14.000,   7.42,-123.01,  -0.60,  39.90,  76.70,  1F2 ,   7.42,   0.00, 141.31,   0.66, 379.40,-123.12,  -0.60,   7.60,  14.63,   7.6275,-307.0000
+05, 10,   14.000,   7.40,-125.02,  -0.62,  37.81,  72.18,  1F2 ,   7.40,   0.00, 143.48,   0.72, 378.50,-125.32,  -0.62,   5.42,  15.04,   5.5097,-307.0000
+05, 12,   14.000,   7.41,-125.38,  -0.61,  37.34,  71.06,  1F2 ,   7.41,   0.00, 144.00,   0.66, 378.85,-125.83,  -0.61,   4.91,  14.58,   5.2381,-307.0000
+05, 14,   14.000,   7.41,-124.26,  -0.61,  38.33,  73.40,  1F2 ,   7.41,   0.00, 142.61,   0.55, 378.86,-124.43,  -0.61,   6.30,  14.14,   6.3512,-307.0000
+05, 16,   14.000,   7.07,-124.61,  -0.96,  37.83,  72.28,  1F2 ,   7.07,   0.00, 142.32,   0.74, 359.76,-124.84,  -0.96,   6.24,  14.90,   6.2886,-307.0000
+05, 18,   14.000,   6.80,-122.26,  -1.29,  40.20,  77.41,  1F2 ,   6.80,   0.00, 139.43,   0.87, 323.99,-122.61,  -1.29,   8.80,  15.90,   8.8650,-307.0000
+05, 20,   14.000,   6.88,-119.66,  -1.19,  42.99,  82.34,  1F2 ,   6.88,   0.00, 136.97,   0.77, 310.07,-119.95,  -1.19,  11.36,  15.42,  11.4146,-307.0000
+05, 22,   14.000,   7.23,-136.13,  -0.80,  26.68,  31.10,  1F2 ,   7.23,   0.00, 155.59,   0.06, 391.55,-137.80,  -0.80,  -6.87,  11.85,  -6.5068,-307.0000
+05, 24,   14.000,   7.82,-144.84,  -0.18,  18.10,  11.60,  1F2 ,   7.82,   0.00, 165.91,   0.00, 477.05,-146.87,  -0.18, -16.57,   9.29, -16.0496,-307.0000
+
+**************************End Calculated Parameters ***********************
+

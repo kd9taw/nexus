@@ -1,0 +1,3198 @@
+//! The real-radio service loop (feature `device`).
+//!
+//! Drives a shared [`Engine`] against the sound card + rig on the FT1 slot clock.
+//! Designed to run on a dedicated thread: the cpal backend (whose streams are
+//! not `Send`) is created here and never leaves this thread; only the
+//! `Arc<Mutex<Engine>>` is shared with the UI command handlers.
+//!
+//! Typical use from the desktop shell:
+//! ```ignore
+//! let engine = Arc::new(Mutex::new(Engine::new("KD9TAW", "EN52", 0)));
+//! let radio = engine.clone();
+//! std::thread::spawn(move || {
+//!     if let Err(e) = tempo_audio::service::run_radio(radio, RadioConfig::default()) {
+//!         eprintln!("radio loop stopped: {e}");
+//!     }
+//! });
+//! ```
+
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use tempo_app::engine::Engine;
+use tempo_core::ft1;
+use tempo_core::timing::{now_unix_ms, SlotClock};
+
+use crate::backend::AudioBackend;
+use crate::device::CpalBackend;
+use crate::frames::RxRing;
+use crate::rig::{PttMode, Rig, SerialLine};
+use crate::rigctld_proc::{spawn_rigctld, RigctldProc};
+
+use tempo_app::dto::Tier;
+use tempo_app::settings::Settings;
+use tempo_core::message::Msg;
+use tempo_net::pskreporter::{PskReporter, Spot};
+use tempo_net::server::WsjtxServer;
+use tempo_net::wsjtx::{
+    Decode as WsjtxDecode, Inbound as WsjtxInbound, QsoLogged as WsjtxQso, Status as WsjtxStatus,
+};
+
+/// Flush PSK Reporter spots at most this often (seconds) — its service rate-limits.
+const PSK_FLUSH_SECS: f64 = 300.0;
+
+/// Tune-carrier audio tone (Hz), the same f0 the FT1 modem centers on.
+const TUNE_FREQ_HZ: f32 = 1500.0;
+/// How many ms of tune carrier to queue per loop iteration (keeps the output
+/// ring fed across the loop's sleep without building a large backlog).
+const TUNE_CHUNK_MS: f32 = 40.0;
+/// Safety auto-release for the tune carrier: never hold PTT + carrier longer
+/// than this, in case a "tune off" click is lost.
+/// Default tune auto-release — now settings.tune_timeout_secs (same 12 s).
+#[allow(dead_code)]
+const MAX_TUNE_MS: f64 = 12_000.0;
+/// Safety auto-stop for a forgotten QSO recording: cap a single recording at 2 hours so a
+/// recording the operator forgot to stop can't fill the disk unbounded (~86 MB/hour).
+const MAX_QSO_REC_MS: f64 = 2.0 * 60.0 * 60.0 * 1000.0;
+/// How often to poll the rig's live dial/mode over CAT (each is a blocking TCP round-trip,
+/// so we throttle well below the loop rate) — fast enough to track a manual VFO knob turn.
+const RIG_POLL_MS: f64 = 750.0;
+/// Max consecutive `set_mode` retries for one target mode before giving up (so a rig
+/// that rejects a submode doesn't get an `M` command every loop). Sized to ride out a
+/// rig/rigctld that's still settling (a failing CAT round-trip can block up to the
+/// 500 ms read timeout, so even a couple dozen tries spans seconds), then we stop
+/// retrying THAT mode until the target changes.
+const MODE_SET_MAX_TRIES: u32 = 30;
+
+/// Station configuration for the radio loop.
+///
+/// Maps directly from `tempo_app::settings::Settings`: `ptt_method` selects how
+/// PTT is keyed, and for CAT the `rig_model` / `serial_port` / `baud` /
+/// `rigctld_port` describe the `rigctld` daemon Tempo launches itself.
+pub struct RadioConfig {
+    /// PTT method: `"cat"` (launch + use rigctld), `"rts"`, `"dtr"`, or `"vox"`.
+    pub ptt_method: String,
+    /// Hamlib rig model number for `rigctld -m` (0 = none / VOX).
+    pub rig_model: u32,
+    /// Serial port for CAT / serial PTT, e.g. `"COM5"` or `"/dev/ttyUSB0"`.
+    pub serial_port: String,
+    /// Serial baud for CAT.
+    pub baud: u32,
+    /// "network" → rigctld connects to `rig_addr` over TCP (Flex/SmartSDR); else serial.
+    pub rig_conn: String,
+    /// host:port for a network rig (when `rig_conn == "network"`).
+    pub rig_addr: String,
+    /// Local TCP port Tempo runs rigctld on (and connects to).
+    pub rigctld_port: u16,
+    /// The port our OWN CAT broker serves on (if enabled), so auto-coexist never
+    /// connects Nexus to itself. `None` = broker off.
+    pub broker_self_port: Option<u16>,
+    /// Dial frequency to set on the rig (Hz).
+    pub dial_hz: u64,
+    /// Operating mode to set on the rig (e.g. "USB", "FM"). FM repeater shift / offset /
+    /// CTCSS are read LIVE from the engine settings in the loop (not carried here).
+    pub mode: String,
+    /// Emit the WSJT-X-compatible UDP protocol (loggers / JTAlert / GridTracker).
+    pub wsjtx_udp: bool,
+    /// UDP target for WSJT-X messages (WSJT-X default 127.0.0.1:2237).
+    pub wsjtx_addr: String,
+    /// Upload heard stations to PSK Reporter.
+    pub pskreporter: bool,
+    /// Input (capture) device name. Empty = system default input.
+    pub audio_in: String,
+    /// Output (playback) device name. Empty = system default output.
+    pub audio_out: String,
+    /// Tx audio level (0.0–1.0) applied to outgoing samples.
+    pub tx_level: f32,
+}
+
+impl Default for RadioConfig {
+    fn default() -> Self {
+        Self {
+            ptt_method: "vox".to_string(),
+            rig_model: 0,
+            serial_port: String::new(),
+            baud: 38400,
+            rig_conn: "serial".to_string(),
+            rig_addr: String::new(),
+            rigctld_port: 4532,
+            broker_self_port: None,
+            dial_hz: 14_090_500,
+            mode: "USB".to_string(),
+            wsjtx_udp: false,
+            wsjtx_addr: "127.0.0.1:2237".to_string(),
+            pskreporter: false,
+            audio_in: String::new(),
+            audio_out: String::new(),
+            tx_level: 0.9,
+        }
+    }
+}
+
+/// Set on app shutdown so the radio loop unkeys the transmitter and exits
+/// (see the check at the top of the loop in [`run_radio`]). A stuck carrier on
+/// quit is a TX-safety hazard, so the exit path sets this and waits briefly.
+pub static SHUTDOWN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Set by the radio loop AFTER it has unkeyed the transmitter and is exiting.
+/// The shutdown path polls this so it returns the instant the un-key is flushed
+/// (~tens of ms in the common case) but still waits out a worst-case in-flight
+/// CAT command (a blocking read can hold the loop for up to 2.5 s) instead of a
+/// fixed sleep that could exit before the un-key ever runs.
+pub static SHUTDOWN_DONE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Run the radio slot loop until an unrecoverable error. Blocks — call on a
+/// dedicated thread. Opens the default sound devices, sets the rig, then each
+/// slot transmits the engine's `poll_tx` audio (holding PTT for the over) or
+/// decodes the captured frame into the engine.
+pub fn run_radio(engine: Arc<Mutex<Engine>>, cfg: RadioConfig) -> Result<(), String> {
+    let in_name = (!cfg.audio_in.is_empty()).then_some(cfg.audio_in.as_str());
+    let out_name = (!cfg.audio_out.is_empty()).then_some(cfg.audio_out.as_str());
+    let mut backend = match CpalBackend::open(in_name, out_name) {
+        Ok(b) => b,
+        Err(e) => {
+            // Surface a sound-card open failure to the UI (which would otherwise
+            // see only a silent, blank waterfall) before the loop bails out.
+            if let Ok(mut eng) = engine.lock() {
+                eng.set_audio_error(Some(format!("Sound card failed to open: {e}")));
+            }
+            return Err(e);
+        }
+    };
+    backend.set_tx_level(cfg.tx_level);
+
+    // Resolve the PTT method into a Rig and probe it. `open_rig` launches rigctld
+    // for CAT (its kill-on-drop handle lives as long as the rig) and reports the
+    // connection status so the UI shows green/red right away. The transport is
+    // rebuilt **live** below when the operator changes rig/PTT/audio settings, so
+    // CAT connects on Save without an app restart.
+    let applied = Transport::from_cfg(&cfg);
+    let (mut rig, rigctld_proc, init_ok, init_detail) = open_rig(&applied, cfg.dial_hz, &cfg.mode);
+    if let Ok(mut eng) = engine.lock() {
+        eng.set_cat_status(init_ok, init_detail);
+    }
+
+    // Background clock-offset probe (SNTP), on its own thread so a slow/failed
+    // network query never stalls the audio loop. Honors the `clock_check`
+    // setting and fails silently off-grid (publishes None → UI shows DT health).
+    {
+        let clk_engine = engine.clone();
+        std::thread::spawn(move || clock_probe_loop(clk_engine));
+    }
+
+    // Optional network outputs (WSJT-X UDP API + PSK Reporter), set up once.
+    let wsjtx = if cfg.wsjtx_udp {
+        match cfg.wsjtx_addr.parse::<std::net::SocketAddr>() {
+            // Bind loopback when the logger is local (the usual case) so the
+            // TX-arming inbound control socket isn't even reachable off-host;
+            // fall back to all-interfaces only for a logger on another machine.
+            Ok(target) => {
+                let bind = if target.ip().is_loopback() {
+                    "127.0.0.1:0"
+                } else {
+                    "0.0.0.0:0"
+                };
+                match WsjtxServer::new(bind.parse().unwrap(), target) {
+                    Ok(s) => {
+                        let _ = s.send_heartbeat(3, env!("CARGO_PKG_VERSION"), "Nexus");
+                        Some(s)
+                    }
+                    Err(e) => {
+                        eprintln!("tempo: WSJT-X UDP disabled: {e}");
+                        None
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("tempo: invalid wsjtxAddr {:?}: {e}", cfg.wsjtx_addr);
+                None
+            }
+        }
+    } else {
+        None
+    };
+    let psk = if cfg.pskreporter {
+        Some(PskReporter::new())
+    } else {
+        None
+    };
+    let sinks = Sinks {
+        wsjtx: wsjtx.as_ref(),
+        psk: psk.as_ref(),
+        cfg_dial_hz: cfg.dial_hz,
+    };
+
+    // The loop's persistent state lives in RadioLoop; one iteration is
+    // RadioLoop::step (generic over the AudioBackend, so a MockBackend can drive
+    // it in tests). The wrapper owns only the device edges (sound card + rigctld)
+    // and injects their re-open side-effects.
+    let mut state = RadioLoop::new(applied, rigctld_proc, &cfg);
+    loop {
+        // App shutdown: unkey the transmitter through the still-alive rig before
+        // the process exits. Without this, quitting while keyed (a TX slot or a
+        // tune carrier) leaves the radio transmitting until its own timeout.
+        if SHUTDOWN.load(std::sync::atomic::Ordering::Relaxed) {
+            backend.flush_output();
+            let _ = rig.ptt(false);
+            // Cut any in-progress CW too: stop a CAT `send_morse` and flush a
+            // WinKeyer's hardware buffer NOW, deterministically, rather than
+            // relying on Drop running before the process is killed (a half-sent
+            // WinKeyer message would otherwise keep keying on the air).
+            let _ = rig.stop_morse();
+            #[cfg(feature = "serial")]
+            if let Some((_, wk)) = state.winkeyer.as_mut() {
+                let _ = wk.clear();
+            }
+            SHUTDOWN_DONE.store(true, std::sync::atomic::Ordering::Relaxed);
+            return Ok(());
+        }
+        let now = now_unix_ms();
+        state.step(
+            &engine,
+            &mut backend,
+            &mut rig,
+            &sinks,
+            now,
+            &mut |t: &Transport| {
+                let inn = (!t.audio_in.is_empty()).then_some(t.audio_in.as_str());
+                let outn = (!t.audio_out.is_empty()).then_some(t.audio_out.as_str());
+                CpalBackend::open(inn, outn).map(|mut b| {
+                    b.set_tx_level(t.tx_level);
+                    b
+                })
+            },
+            &mut |t: &Transport, dial: u64, md: &str| open_rig(t, dial, md),
+        )?;
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// The network outputs the loop emits to, borrowed for the loop's lifetime.
+struct Sinks<'a> {
+    wsjtx: Option<&'a WsjtxServer>,
+    psk: Option<&'a PskReporter>,
+    /// Startup dial (Hz) reported as the QSO-logged TX frequency.
+    cfg_dial_hz: u64,
+}
+
+/// All persistent state of the radio loop. One iteration is [`RadioLoop::step`],
+/// generic over [`AudioBackend`] so a `MockBackend` (+ a `Rig::vox()` / mock
+/// rigctld) can drive the whole heartbeat in a test with no sound card.
+/// Owner of the single audio-error status line (see `err_owner`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ErrOwner {
+    None,
+    Device,
+    Monitor,
+    VoiceMic,
+}
+
+struct RadioLoop {
+    cur_tier: Tier,
+    clock: SlotClock,
+    rx: RxRing,
+    last_slot: Option<u64>,
+    /// Whether the slot we just finished was one we TRANSMITTED in. Gates the RX
+    /// decode: we decode the slot that just ended UNLESS we transmitted in it (the
+    /// capture ring then holds our own carrier). Tying the decode to the *previous*
+    /// slot — not whether we're about to TX in the new one — is what lets stations
+    /// in the RX slots BETWEEN our transmissions get decoded while calling CQ.
+    prev_slot_was_tx: bool,
+    tx_until_ms: Option<f64>,
+    tuning_keyed: bool,
+    tune_phase: f32,
+    tune_started_ms: Option<f64>,
+    applied: Transport,
+    rigctld_proc: Option<RigctldProc>,
+    last_dial: u64,
+    last_mode: String,
+    /// Consecutive failed `set_mode` attempts for the current target mode. Bounds the
+    /// retune retry so a rig that flatly rejects a mode (e.g. no DATA/PKT submode)
+    /// gets a budget of tries (covers a rig/rigctld still settling) then we give up
+    /// instead of spamming the CAT link every loop. Reset to 0 once a mode-set sticks.
+    mode_fail_count: u32,
+    /// The target mode we GAVE UP retrying (rig kept rejecting it). Suppresses further
+    /// `set_mode` of exactly this mode WITHOUT corrupting `last_mode` (which tracks the
+    /// last mode actually applied). Cleared on any successful set_mode, so a later
+    /// section change that re-selects this mode (after a different mode succeeded) tries
+    /// again. `None` = nothing suppressed.
+    mode_giveup: Option<String>,
+    /// Last CW keyer speed (WPM) pushed to the rig, so we only `set_keyspd` on change.
+    last_cw_wpm: u32,
+    /// Last FM repeater config (shift, offset Hz, CTCSS Hz) applied — so the shift/offset/
+    /// CTCSS commands only fire on change, not every loop. `None` when not in FM.
+    last_fm: Option<(String, i64, f32)>,
+    /// The open WinKeyer keyer (port + handle) when the CW backend is WinKeyer — opened
+    /// on demand, reopened if the configured port changes.
+    #[cfg(feature = "serial")]
+    winkeyer: Option<(String, crate::winkeyer::WinKeyer)>,
+    /// Last manual-PTT (live phone) state we applied to the rig — only key on change.
+    manual_ptt_applied: bool,
+    /// Last RF power fraction we pushed to the rig — only set on change.
+    last_rf_power: Option<f32>,
+    /// Open WAV sink while a QSO recording is streaming live RX capture to disk (audio
+    /// bridge). The loop owns the file handle so the audio never has to live in RAM.
+    qso_sink: Option<crate::voice::WavSink>,
+    /// When the in-progress QSO recording started (loop ms), for the max-duration auto-stop.
+    qso_started_ms: Option<f64>,
+    /// A transient voice-mic input stream is live and feeding the recorder (see
+    /// `voice_mic_device`). Toggled on the recording session's rising/falling edge.
+    voice_mic_open: bool,
+    /// Retry suppression for a failed mic open — cleared when the recording
+    /// ends so the NEXT recording tries the device again (not per-loop spam).
+    voice_mic_failed: bool,
+    /// Nudge: re-evaluate the monitor block next loop even without a settings
+    /// change (used when the voice-mic notice cleared a line the monitor may
+    /// still be entitled to — its guard/failure state gets re-surfaced).
+    monitor_reapply: bool,
+    /// We wrote the current audio-error line with a voice-mic open failure, so we clear
+    psk_spots: Vec<Spot>,
+    last_psk_flush: f64,
+    /// Slot index whose WSJT-X-style EARLY decode pass already ran (once per
+    /// RX slot; the boundary decode then ingests only the stragglers).
+    early_done_slot: Option<u64>,
+    /// Fake-It split moved the VFO for the playing over — restore THIS dial
+    /// (Hz) when the over ends (PTT drop / hard stop).
+    fake_it_restore: Option<u64>,
+    /// An audio Rig-mode split engaged VFO B for an over — tear the rig split
+    /// down once no over is pending (unless the cluster split owns VFO B).
+    audio_rig_split: bool,
+    /// Last time we polled the rig's live dial over CAT (ms), for throttling.
+    last_rig_poll: f64,
+    /// Last known CAT health (from connect/Test-CAT): `Some(false)` = configured but failing,
+    /// so we skip the read-back poll to avoid blocking the loop on a dead read every cycle.
+    cat_ok: Option<bool>,
+    /// Whether we last surfaced the "monitor refused — would transmit into the TX
+    /// device" note on the audio-error line, so we clear only our OWN message.
+    /// The monitor block currently OWNS the audio-error line (it wrote either
+    /// the guard refusal or an open failure there). A real device error takes
+    /// ownership back; only an owning monitor may clear the line on success.
+    /// WHO wrote the shared audio-error line. Three writers (real device
+    /// failures, the headphone monitor, the voice mic) previously juggled two
+    /// booleans and could stomp/erase each other's notices (review ×3). Rules:
+    /// Device is set only by the audio-reopen path and outranks everything;
+    /// Monitor/VoiceMic may write only over None or themselves, and clear only
+    /// what they own.
+    err_owner: ErrOwner,
+    last_fd_qsos: usize,
+    /// Latest measured PC-clock-vs-UTC offset (ms, `local − UTC`), read from the
+    /// engine each loop and SUBTRACTED from the system clock so TX/RX slots land
+    /// on the true UTC grid even when the OS clock is skewed. 0 until measured.
+    clock_offset_ms: i64,
+}
+
+impl RadioLoop {
+    fn new(applied: Transport, rigctld_proc: Option<RigctldProc>, cfg: &RadioConfig) -> Self {
+        Self {
+            cur_tier: Tier::Ft1,
+            clock: SlotClock::ft1(),
+            rx: RxRing::new(),
+            last_slot: None,
+            prev_slot_was_tx: false,
+            tx_until_ms: None,
+            tuning_keyed: false,
+            tune_phase: 0.0,
+            tune_started_ms: None,
+            applied,
+            rigctld_proc,
+            last_dial: cfg.dial_hz,
+            last_mode: cfg.mode.clone(),
+            mode_fail_count: 0,
+            mode_giveup: None,
+            last_cw_wpm: 0, // 0 = unset → first send pushes the speed
+            last_fm: None,
+            #[cfg(feature = "serial")]
+            winkeyer: None,
+            manual_ptt_applied: false,
+            last_rf_power: None,
+            qso_sink: None,
+            qso_started_ms: None,
+            voice_mic_open: false,
+            voice_mic_failed: false,
+            monitor_reapply: false,
+            err_owner: ErrOwner::None,
+            psk_spots: Vec::new(),
+            early_done_slot: None,
+            fake_it_restore: None,
+            audio_rig_split: false,
+            last_psk_flush: now_unix_ms(),
+            last_rig_poll: now_unix_ms(),
+            cat_ok: None,
+
+            last_fd_qsos: 0,
+            clock_offset_ms: 0,
+        }
+    }
+
+    /// One radio-loop iteration: fold captured audio in, apply live reconfig
+    /// (re-open the rig/sound card via the injected closures on a Settings
+    /// change), drop the TX tail, run the slot (TX keying / RX decode), emit
+    /// WSJT-X/PSK, and flush spots. Behavior-identical to the original
+    /// `run_radio` loop body; the device side-effects are injected.
+    #[allow(clippy::too_many_arguments)]
+    fn step<B: AudioBackend>(
+        &mut self,
+        engine: &Arc<Mutex<Engine>>,
+        backend: &mut B,
+        rig: &mut Rig,
+        sinks: &Sinks,
+        now: f64,
+        reopen_audio: &mut dyn FnMut(&Transport) -> Result<B, String>,
+        reopen_rig: &mut dyn FnMut(&Transport, u64, &str) -> RigOpen,
+    ) -> Result<(), String> {
+        // Steer the slot clock to TRUE UTC: subtract the measured PC-clock-vs-UTC
+        // offset (local − UTC) from the system clock, so TX keys and RX decode
+        // windows land on the real UTC grid (:00/:15/:30/:45 for FT8) even when the
+        // OS clock is skewed — the difference between "decodes only on a
+        // well-synced PC" and "decodes anywhere". Applied to ALL downstream `now`
+        // uses (slot index, next-slot countdown, TX-hold deadlines) consistently.
+        let now = now - self.clock_offset_ms as f64;
+
+        // Continuously fold captured audio into the rolling RX window.
+        let captured = backend.capture();
+        if !captured.is_empty() {
+            self.rx.push(&captured);
+        }
+
+        // --- Live rig/PTT/audio reconfiguration (operator hit Save) + Test-CAT
+        // re-probe. Read settings under a short lock, do the slow rig/audio
+        // re-open WITHOUT the lock, then publish status. Makes CAT connect on
+        // Save with no restart. ---
+        {
+            // Retune (set freq/mode) only while not actively transmitting a slot or tuning —
+            // rigs reject VFO/mode changes mid-TX. We deliberately DON'T gate on manual PTT:
+            // a section/mode change must always reach the rig (the proven behavior), and the
+            // read-back is gated separately, so gating retune on manual PTT here is what made
+            // "the VFO mirrors but modes won't switch" regress. Consume the one-shot "apply
+            // now" flag only when we can act, so a click during a slot-TX is honored after it.
+            let can_retune = self.tx_until_ms.is_none() && !self.tuning_keyed;
+            let (want, dial, md, reprobe_req, force_retune, split_req, fm) = {
+                let mut eng = engine.lock().map_err(|e| e.to_string())?;
+                // FM repeater config (shift, band-offset magnitude, CTCSS) — applied below
+                // only when the mode policy resolves to FM. Computed first (owned) so the
+                // mutable take_* calls that follow don't fight the settings borrow.
+                let fm = (
+                    eng.settings().rptr_shift.clone(),
+                    eng.settings().rptr_offset_hz(),
+                    eng.settings().ctcss_tone_hz,
+                );
+                (
+                    Transport::from_settings(eng.settings()),
+                    eng.settings().dial_hz(),
+                    eng.settings().rig_mode(), // DATA submode (PKTUSB/…) when data_mode is on
+                    eng.take_cat_reprobe(),
+                    if can_retune {
+                        eng.take_immediate_retune()
+                    } else {
+                        false
+                    },
+                    // Split is a retune-class command — same mid-TX guard, same
+                    // leave-it-pending semantics when keyed.
+                    if can_retune {
+                        eng.take_split_request()
+                    } else {
+                        None
+                    },
+                    fm,
+                )
+            };
+            if want.rig_differs(&self.applied) {
+                // Unkey through the STILL-ALIVE old rig/daemon before tearing it
+                // down. Dropping rigctld_proc and swapping *rig first would strand
+                // a keyed transmitter (or a tune carrier): the un-key command
+                // would go to a dead daemon. Order matters — flush, unkey, clear
+                // TX state, THEN drop the daemon.
+                if rig.keyed
+                    || self.tx_until_ms.is_some()
+                    || self.tuning_keyed
+                    || self.manual_ptt_applied
+                {
+                    backend.flush_output();
+                    let _ = rig.ptt(false);
+                    self.tx_until_ms = None;
+                    self.tuning_keyed = false;
+                    self.manual_ptt_applied = false;
+                    if let Ok(mut eng) = engine.lock() {
+                        eng.halt_tx();
+                    }
+                }
+                self.rigctld_proc = None; // drop kills the old daemon + frees the port
+                let (new_rig, proc, ok, detail) = reopen_rig(&want, dial, &md);
+                *rig = new_rig;
+                self.rigctld_proc = proc;
+                self.last_dial = dial;
+                self.last_mode = md.clone();
+                self.mode_fail_count = 0; // fresh rig — the retune retry budget resets
+                self.mode_giveup = None; // and a fresh rig may well accept what the old rejected
+                self.cat_ok = ok;
+                if let Ok(mut eng) = engine.lock() {
+                    eng.set_cat_status(ok, detail);
+                }
+            } else if reprobe_req {
+                let (ok, detail) = reprobe(rig, &want);
+                self.cat_ok = ok;
+                if let Ok(mut eng) = engine.lock() {
+                    eng.set_cat_status(ok, detail);
+                }
+            }
+            let mut audio_rebuilt = false;
+            if want.audio_differs(&self.applied) {
+                // The queued TX audio for a live over lives ENTIRELY in the old
+                // backend's output ring — replacing the backend discards it. If
+                // we're mid-transmission (a slot over, a tune carrier, or manual
+                // PTT), end the over cleanly FIRST: flush, unkey, drop the hold,
+                // halt the engine's TX. Otherwise the rig would sit KEYED on a
+                // dead, unmodulated carrier for the rest of the slot while the
+                // modem samples are already gone — and the sequencer would count
+                // that silent over as sent and wait for a reply that never comes.
+                // Mirrors the rig-rebuild path above.
+                if rig.keyed
+                    || self.tx_until_ms.is_some()
+                    || self.tuning_keyed
+                    || self.manual_ptt_applied
+                {
+                    backend.flush_output();
+                    let _ = rig.ptt(false);
+                    self.tx_until_ms = None;
+                    self.tuning_keyed = false;
+                    self.manual_ptt_applied = false;
+                    if let Ok(mut eng) = engine.lock() {
+                        eng.halt_tx();
+                    }
+                }
+                match reopen_audio(&want) {
+                    Ok(b) => {
+                        *backend = b;
+                        audio_rebuilt = true;
+                        if let Ok(mut eng) = engine.lock() {
+                            eng.set_audio_error(None);
+                        }
+                        self.err_owner = ErrOwner::None;
+                        // The fresh backend has NO mic stream — a stale-true flag
+                        // here fed the recorder empty audio for the rest of a
+                        // live recording, silently (review MAJOR). The rising
+                        // edge reopens the mic on the new backend next loop.
+                        self.voice_mic_open = false;
+                    }
+                    Err(e) => {
+                        if let Ok(mut eng) = engine.lock() {
+                            eng.set_audio_error(Some(format!("Audio device failed to open: {e}")));
+                        }
+                        // A REAL device error owns the line — monitor/voice-mic
+                        // notices may neither overwrite nor clear it.
+                        self.err_owner = ErrOwner::Device;
+                    }
+                }
+            } else if (want.tx_level - self.applied.tx_level).abs() > f32::EPSILON {
+                backend.set_tx_level(want.tx_level);
+            }
+
+            // Headphone monitor (DARK, off by default): reconfigure it IN PLACE on a
+            // monitor-setting change — or re-apply it to a freshly rebuilt backend,
+            // whose monitor starts off. This never rebuilds the capture/TX streams, so
+            // the decode path never restarts. Guard: refuse to open the monitor on the
+            // rig's TX output device, which would transmit the received band back out.
+            if audio_rebuilt
+                || want.monitor_differs(&self.applied)
+                || std::mem::take(&mut self.monitor_reapply)
+            {
+                // Resolve "system default" to its REAL device name first — an
+                // empty monitor_device against a named audio_out that happens to
+                // BE the OS default was a hole in the name-based guard (review
+                // catch: the monitor would mix the received band into the rig's
+                // TX stream). Resolution only runs when the monitor is on.
+                let (mon_dev, out_dev) = if want.monitor_enabled {
+                    (
+                        crate::monitor::resolve_output_name(&want.monitor_device),
+                        crate::monitor::resolve_output_name(&want.audio_out),
+                    )
+                } else {
+                    (want.monitor_device.clone(), want.audio_out.clone())
+                };
+                let guarded = crate::monitor::monitor_would_transmit(&mon_dev, &out_dev);
+                let effective = want.monitor_enabled && !guarded;
+                let outcome =
+                    backend.set_monitor(effective, &want.monitor_device, want.monitor_level);
+                if let Ok(mut eng) = engine.lock() {
+                    match outcome {
+                        Err(e) => {
+                            // Write only over None or our own prior notice — a
+                            // Device error outranks us; a VoiceMic notice is the
+                            // operator's more recent concern.
+                            if matches!(self.err_owner, ErrOwner::None | ErrOwner::Monitor) {
+                                eng.set_audio_error(Some(format!(
+                                    "Headphone monitor could not open: {e}"
+                                )));
+                                self.err_owner = ErrOwner::Monitor;
+                            }
+                        }
+                        Ok(()) if want.monitor_enabled && guarded => {
+                            if matches!(self.err_owner, ErrOwner::None | ErrOwner::Monitor) {
+                                eng.set_audio_error(Some(
+                                    "Headphone monitor is off: the chosen output is the rig's TX \
+                                     device — monitoring it would transmit the received band. Pick a \
+                                     separate headphone or speaker device."
+                                        .to_string(),
+                                ));
+                                self.err_owner = ErrOwner::Monitor;
+                            }
+                        }
+                        Ok(()) => {
+                            // Clear only a line the MONITOR wrote — never a real
+                            // device error, never the voice-mic's notice.
+                            if self.err_owner == ErrOwner::Monitor {
+                                eng.set_audio_error(None);
+                                self.err_owner = ErrOwner::None;
+                            }
+                        }
+                    }
+                }
+            }
+            if want != self.applied {
+                self.applied = want;
+            }
+
+            // Live dial / mode retune — only while not keyed (rigs reject VFO
+            // changes mid-TX); retried every loop until it sticks.
+            let mut retuned = false;
+            // A human-readable note about what we just commanded the rig to do, surfaced into
+            // the CAT status so the operator (and we) can SEE the mode the rig was told to use
+            // and whether it accepted it — turning "modes won't switch" from a guess into data.
+            let mut retune_note: Option<String> = None;
+            if can_retune {
+                if force_retune {
+                    // The operator just clicked a section / worked a Needed spot / QSY'd.
+                    // Apply the dial + mode RIGHT NOW, clearing any give-up so a single
+                    // click is never ignored — even on a mode a prior attempt abandoned
+                    // (the whole reason a re-click of e.g. CW used to do nothing). The MODE
+                    // is re-asserted unconditionally (picking CW while already on a CW freq
+                    // must still command the rig to CW). The DIAL is only pushed when it
+                    // actually changed: a mode-only click (CW preserves the dial) must NOT
+                    // re-slam a freq the operator may have just hand-tuned inside the up-to-
+                    // 750 ms read-back window — that would fight the VFO-knob mirroring.
+                    self.mode_giveup = None;
+                    self.mode_fail_count = 0;
+                    if dial != self.last_dial && rig.set_freq(dial).is_ok() {
+                        self.last_dial = dial;
+                        retuned = true;
+                    }
+                    if !md.trim().is_empty() {
+                        match rig.set_mode(&md, passband_for(&md)) {
+                            Ok(()) => {
+                                self.last_mode = md.clone();
+                                retuned = true;
+                                // Read the mode straight back FROM the rig to confirm it
+                                // actually applied — rigctld can answer RPRT 0 without the rig
+                                // changing, which is the only way to tell those apart.
+                                retune_note = Some(mode_set_note(rig, &md));
+                            }
+                            // `last_mode` is unchanged, so the steady-state path below re-tries
+                            // on later loops and re-gives-up past the budget — a non-supporting
+                            // rig is still never spammed forever.
+                            Err(e) => retune_note = Some(format!("rig rejected {md}: {e}")),
+                        }
+                    }
+                } else {
+                    if dial != self.last_dial && rig.set_freq(dial).is_ok() {
+                        self.last_dial = dial;
+                        retuned = true;
+                    }
+                    // Apply the section's mode — unless it's the one we already gave up on
+                    // (rig kept rejecting it). `last_mode` only ever holds a mode actually
+                    // applied, so a give-up never masquerades as success.
+                    if md != self.last_mode && self.mode_giveup.as_deref() != Some(md.as_str()) {
+                        match rig.set_mode(&md, passband_for(&md)) {
+                            Ok(()) => {
+                                self.last_mode = md.clone();
+                                self.mode_fail_count = 0;
+                                self.mode_giveup = None; // a success clears any prior give-up
+                                retuned = true;
+                                retune_note = Some(mode_set_note(rig, &md));
+                            }
+                            Err(e) => {
+                                // Retries cover a rig/rigctld still settling; past the budget the
+                                // rig is rejecting this mode (e.g. no DATA/PKT submode) — stop
+                                // retrying THIS mode so we don't spam the CAT link every loop. A
+                                // later section change to a different mode still tries (md flips),
+                                // and once any mode sticks the give-up is cleared.
+                                self.mode_fail_count += 1;
+                                retune_note = Some(format!(
+                                    "rig rejected {md} ({}/{MODE_SET_MAX_TRIES}): {e}",
+                                    self.mode_fail_count
+                                ));
+                                if self.mode_fail_count >= MODE_SET_MAX_TRIES {
+                                    eprintln!(
+                                        "tempo-audio: set_mode({md:?}) failed {} times — giving up \
+                                         (the rig may not support this mode).",
+                                        self.mode_fail_count
+                                    );
+                                    self.mode_giveup = Some(md.clone());
+                                    self.mode_fail_count = 0;
+                                    retune_note = Some(format!("rig has no {md} mode — gave up"));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // FM repeater: once the mode policy is FM, push the shift / offset / CTCSS —
+            // ON CHANGE only, so the CAT link isn't spammed every loop. Leaving FM clears
+            // the tracker so the next FM entry re-applies. Best-effort (a rig without
+            // repeater or CTCSS support no-ops the unsupported command). Same mid-TX guard
+            // as the retune above.
+            if can_retune && md == "FM" {
+                if self.last_fm.as_ref() != Some(&fm) {
+                    let _ = rig.set_fm_repeater(&fm.0, fm.1, fm.2);
+                    self.last_fm = Some(fm);
+                    retuned = true;
+                }
+            } else if md != "FM" {
+                self.last_fm = None;
+            }
+
+            // Live READ-BACK of the rig's actual dial, so a manual VFO knob turn (or another
+            // app on the CAT broker) is mirrored in the UI. CAT-only — read_freq no-ops
+            // (cheap) on VOX/serial. We adopt a reported change AND advance last_dial so the
+            // retune block above doesn't push it back. Guards:
+            //  - skip on any tick we just pushed an app change (the rig is still settling) and
+            //    defer the next poll a full interval, so a stale read can't revert the QSY;
+            //  - skip while transmitting/tuning;
+            //  - skip when CAT is known-failing, so a connected-but-mute rig doesn't block the
+            //    slot loop on the read timeout every cycle.
+            //  (Mode is NOT read back: in Phone/CW the policy commands it and the cockpit's
+            //   band-aware badge already shows it; reading it risks corrupting the canonical
+            //   sideband — see the App-side invariant.)
+            if retuned {
+                self.last_rig_poll = now;
+                // A CAT command (set_freq/set_mode) just SUCCEEDED, so CAT is alive — clear
+                // a stale `cat_ok=Some(false)` (e.g. a transient read_freq failure at the
+                // initial probe). Otherwise the dial read-back stays disabled even though
+                // mode-switching works, and the VFO knob never mirrors into the UI. Also
+                // clear the matching "no rig control" UI warning, once, on the flip.
+                if self.cat_ok != Some(true) {
+                    self.cat_ok = Some(true);
+                    if let Ok(mut eng) = engine.lock() {
+                        eng.set_cat_status(
+                            Some(true),
+                            "CAT confirmed — rig accepted a command".to_string(),
+                        );
+                    }
+                }
+            } else if self.tx_until_ms.is_none()
+                && !self.tuning_keyed
+                && self.cat_ok != Some(false)
+                && now - self.last_rig_poll >= RIG_POLL_MS
+            {
+                self.last_rig_poll = now;
+                match rig.read_freq() {
+                    Ok(hz) => {
+                        if hz != self.last_dial {
+                            self.last_dial = hz;
+                            if let Ok(mut eng) = engine.lock() {
+                                eng.observe_rig_freq(hz);
+                            }
+                        }
+                        // RF-power read-back: mirror the knob so the UI slider shows
+                        // the RIG's real level, not a guessed 100%. Kept separate
+                        // from the commanded value in the engine (observe never
+                        // fights a pending set_rf_power — see observe_rig_power).
+                        // Only AFTER the dial probe answered, so a half-open link
+                        // can't eat a SECOND 2.5 s timeout on the same dead poll.
+                        if let Ok(frac) = rig.read_level("RFPOWER") {
+                            if let Ok(mut eng) = engine.lock() {
+                                eng.observe_rig_power(frac);
+                            }
+                        }
+                    }
+                    // The dial probe is the CAT health check. On a REAL CAT rig a
+                    // failure/timeout here means the link went half-open (writes
+                    // succeed, replies never arrive) — trip the circuit breaker so
+                    // the `cat_ok != Some(false)` guard above stops polling and the
+                    // slot loop no longer blocks ~2.5 s every cycle, keying overs
+                    // seconds late. Recovers on the next successful retune
+                    // (set_freq/set_mode) or a Test-CAT reprobe. A VOX/serial rig
+                    // has no control channel — its read_freq errors instantly and
+                    // means nothing, so it must NOT trip the breaker.
+                    Err(e) => {
+                        if rig.has_control() {
+                            self.cat_ok = Some(false);
+                            if let Ok(mut eng) = engine.lock() {
+                                eng.set_cat_status(
+                                    Some(false),
+                                    format!("CAT read-back stopped — rig not answering ({e})"),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Apply a pending SPLIT request (after the dial/mode retune so the TX
+            // VFO programs against the fresh dial). Pile-up spots ("UP 2") set it;
+            // any plain QSY clears it back to simplex.
+            if can_retune {
+                if let Some(req) = split_req {
+                    match req {
+                        Some(tx_mhz) => {
+                            let tx_hz = (tx_mhz * 1_000_000.0).round() as u64;
+                            let ok = rig.set_split(true, "VFOB").is_ok()
+                                && rig.set_split_freq(tx_hz).is_ok();
+                            retune_note = Some(if ok {
+                                format!("split ON — TX {tx_mhz:.4} MHz (VFO B)")
+                            } else {
+                                // The desired state must not outlive the rejection —
+                                // a SPLIT badge claiming a split the rig isn't
+                                // running would burn the operator mid-pile-up.
+                                if let Ok(mut eng) = engine.lock() {
+                                    eng.split_rejected();
+                                }
+                                "rig rejected split — work the pile-up manually".to_string()
+                            });
+                        }
+                        None => {
+                            // Back to simplex — TX returns to the main/RX VFO.
+                            let _ = rig.set_split(false, "VFOA");
+                        }
+                    }
+                }
+            }
+
+            // Surface the mode-set outcome to the CAT status so the operator can SEE the mode
+            // the rig was commanded into (and any rejection) — emitted only on a real change
+            // or failure, so it never spams. A success implies CAT is alive (Some(true)).
+            if let Some(note) = retune_note {
+                let ok = if note.starts_with("rig set to") {
+                    Some(true)
+                } else {
+                    self.cat_ok
+                };
+                if let Ok(mut eng) = engine.lock() {
+                    eng.set_cat_status(ok, note);
+                }
+            }
+        }
+
+        // CW keying (CAT send_morse path): drain the engine's CW queue and key it via
+        // the rig. Honor a one-shot abort and push the keyer speed only when it changes.
+        // Operator-initiated; the engine gates `poll_cw` on `tx_enabled` (Monitor).
+        {
+            let (abort, wpm, items, soundcard, pitch, winkeyer_port) = {
+                let mut eng = engine.lock().map_err(|e| e.to_string())?;
+                (
+                    eng.take_cw_abort(),
+                    eng.cw_wpm(),
+                    eng.poll_cw(),
+                    eng.cw_soundcard(),
+                    eng.cw_pitch_hz(),
+                    eng.cw_winkeyer_port(),
+                )
+            };
+            #[cfg(not(feature = "serial"))]
+            let _ = &winkeyer_port; // only the serial build keys a WinKeyer
+                                    // Switched away from the WinKeyer backend → release its serial port.
+            #[cfg(feature = "serial")]
+            if winkeyer_port.is_none() {
+                self.winkeyer = None;
+            }
+            if abort {
+                let _ = rig.stop_morse(); // CAT keyer abort (rig CW buffer)
+                                          // WinKeyer abort: one Clear Buffer byte stops keying + flushes its queue.
+                #[cfg(feature = "serial")]
+                if let Some((_, wk)) = self.winkeyer.as_mut() {
+                    let _ = wk.clear();
+                }
+                if soundcard {
+                    // Soundcard abort: dump the queued tone audio + unkey now.
+                    backend.flush_output();
+                    let _ = rig.ptt(false);
+                    self.tx_until_ms = None;
+                }
+            }
+            if !items.is_empty() {
+                let mut handled = false;
+                // WinKeyer hardware keyer: open the serial port on demand (reopen if the
+                // configured port changed) and stream the text to it. On open failure,
+                // fall through to the CAT keyer so CW still goes out.
+                #[cfg(feature = "serial")]
+                if let Some(port) = &winkeyer_port {
+                    let reopen = self
+                        .winkeyer
+                        .as_ref()
+                        .map(|(p, _)| p != port)
+                        .unwrap_or(true);
+                    if reopen {
+                        self.winkeyer = crate::winkeyer::WinKeyer::open(port)
+                            .ok()
+                            .map(|(wk, _rev)| (port.clone(), wk));
+                    }
+                    if let Some((_, wk)) = self.winkeyer.as_mut() {
+                        if wpm != self.last_cw_wpm && wk.set_wpm(wpm).is_ok() {
+                            self.last_cw_wpm = wpm;
+                        }
+                        for text in &items {
+                            let _ = wk.send(text);
+                        }
+                        handled = true;
+                    }
+                }
+                if !handled {
+                    if soundcard {
+                        // Key a generated tone (rig in USB): PTT + play, drop PTT after.
+                        let mut buf: Vec<f32> = Vec::new();
+                        for text in &items {
+                            buf.extend(tempo_core::cw::morse_samples(
+                                text,
+                                wpm,
+                                pitch,
+                                ft1::SAMPLE_RATE as u32,
+                            ));
+                        }
+                        if !buf.is_empty() {
+                            let secs = buf.len() as f32 / ft1::SAMPLE_RATE;
+                            // Capture PTT: if the rig won't key, the tone still plays locally so
+                            // it LOOKS like it sent while nothing reaches the air — surface that
+                            // instead of the silent false-positive. (Audio-routing problems can't
+                            // be detected here — see the Soundcard control's caveat.)
+                            let ptt_err = rig.ptt(true).is_err();
+                            backend.play(&buf);
+                            let until = now + secs as f64 * 1000.0 + crate::slot::TX_TAIL_MS;
+                            self.tx_until_ms =
+                                Some(self.tx_until_ms.map_or(until, |t| t.max(until)));
+                            if let Ok(mut eng) = engine.lock() {
+                                eng.set_cw_keyer_error(ptt_err.then(|| {
+                                    "Soundcard keyer: the rig didn't accept PTT. Check your PTT \
+                                     method + that Nexus's audio output is routed to the rig \
+                                     (like FT8). If in doubt, use the WinKeyer or CAT keyer."
+                                        .to_string()
+                                }));
+                            }
+                        }
+                    } else {
+                        // CAT keyer: the rig generates CW from text via send_morse. Many
+                        // Hamlib backends accept freq/mode/PTT but NOT send_morse (`b`), so
+                        // capture the result and SURFACE a failure instead of keying into
+                        // the void — point the operator at the Soundcard keyer.
+                        if wpm != self.last_cw_wpm && rig.set_keyspd(wpm).is_ok() {
+                            self.last_cw_wpm = wpm;
+                        }
+                        let mut cw_err = false;
+                        for text in &items {
+                            if rig.send_morse(text).is_err() {
+                                cw_err = true;
+                            }
+                        }
+                        if let Ok(mut eng) = engine.lock() {
+                            eng.set_cw_keyer_error(cw_err.then(|| {
+                                "Your rig didn't accept CAT CW keying (Hamlib send_morse). \
+                                 Use the WinKeyer keyer, or the Soundcard keyer (which needs \
+                                 Nexus's audio routed to the rig)."
+                                    .to_string()
+                            }));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Voice keyer (phone): play a recorded message to the rig (PTT + 12 kHz mono
+        // samples, drop PTT when played out — same TX path as the soundcard CW keyer),
+        // and, while recording, accumulate the captured frame into the engine's buffer.
+        // One engine lock for both. Gated on `tx_enabled` (Monitor) inside the engine.
+        {
+            // Voice-mic recording source: while a VOICE-MESSAGE recording is in
+            // progress AND the operator configured a dedicated voice-mic device, capture
+            // the operator's voice from a SECOND transient input stream on that device —
+            // instead of the shared tap, which on a digital setup is the rig's RX codec
+            // (so recording a voice message would otherwise record the band). QSO
+            // recording is deliberately NOT mic-routed: its documented job is capturing
+            // the CONTACT (the received audio), which IS the shared tap. The mic
+            // open/close takes the cpal host lock, so it runs OUTSIDE the engine lock, and
+            // it never touches the main capture stream, so the decode path never restarts.
+            let recording_active = {
+                let eng = engine.lock().map_err(|e| e.to_string())?;
+                eng.is_recording()
+            };
+            let want_mic =
+                crate::backend::want_voice_mic(recording_active, &self.applied.voice_mic_device);
+            if want_mic && !self.voice_mic_open && !self.voice_mic_failed {
+                // Rising edge: open the mic once. A failed open surfaces why and falls back
+                // to the shared tap; `voice_mic_failed` blocks a per-loop retry until the
+                // recording ends (so we don't spam the device open every 20 ms).
+                match backend.set_voice_mic(Some(&self.applied.voice_mic_device)) {
+                    Ok(()) => self.voice_mic_open = true,
+                    Err(e) => {
+                        self.voice_mic_failed = true;
+                        // Notice only over None or our own line — a real device
+                        // error or a live monitor notice is not ours to stomp
+                        // (review: the mic failure erased both kinds).
+                        if matches!(self.err_owner, ErrOwner::None | ErrOwner::VoiceMic) {
+                            if let Ok(mut eng) = engine.lock() {
+                                eng.set_audio_error(Some(format!(
+                                    "Voice mic could not open: {e} — recording from the shared \
+                                     input instead"
+                                )));
+                            }
+                            self.err_owner = ErrOwner::VoiceMic;
+                        }
+                    }
+                }
+            } else if !want_mic && (self.voice_mic_open || self.voice_mic_failed) {
+                // Falling edge (recording ended / device cleared): close the mic stream,
+                // clear retry suppression, and clear only a notice WE own — then nudge
+                // the monitor block to re-surface its own guard/failure state if any
+                // (its notice may have predated ours).
+                if self.voice_mic_open {
+                    backend.set_voice_mic(None).ok();
+                    self.voice_mic_open = false;
+                }
+                self.voice_mic_failed = false;
+                if self.err_owner == ErrOwner::VoiceMic {
+                    if let Ok(mut eng) = engine.lock() {
+                        eng.set_audio_error(None);
+                    }
+                    self.err_owner = ErrOwner::None;
+                    self.monitor_reapply = true;
+                }
+            }
+            // The audio the recorder ingests this iteration: the mic when its stream is
+            // live, else the shared capture tap (today's behavior / the failed-open
+            // fallback). Only the recorder switches source — the decoder always reads the
+            // shared `captured` folded in at the top of the loop.
+            let mic_samples: Vec<f32> = if self.voice_mic_open {
+                backend.voice_capture()
+            } else {
+                Vec::new()
+            };
+            let rec_samples: &[f32] = if self.voice_mic_open {
+                &mic_samples
+            } else {
+                &captured
+            };
+
+            let (abort, samples, qso_rec, qso_path) = {
+                let mut eng = engine.lock().map_err(|e| e.to_string())?;
+                if eng.is_recording() {
+                    eng.push_record_samples(rec_samples);
+                }
+                (
+                    eng.take_voice_abort(),
+                    eng.poll_voice(),
+                    eng.is_qso_recording(),
+                    eng.qso_record_path(),
+                )
+            };
+            if abort {
+                backend.flush_output(); // dump queued message audio + unkey now
+                let _ = rig.ptt(false);
+                self.tx_until_ms = None;
+            }
+            if let Some(buf) = samples {
+                if !buf.is_empty() {
+                    let secs = buf.len() as f32 / ft1::SAMPLE_RATE;
+                    let _ = rig.ptt(true);
+                    backend.play(&buf);
+                    let until = now + secs as f64 * 1000.0 + crate::slot::TX_TAIL_MS;
+                    self.tx_until_ms = Some(self.tx_until_ms.map_or(until, |t| t.max(until)));
+                }
+            }
+            // QSO recording (audio bridge): stream the live RX capture straight to a WAV on
+            // disk — open the sink on start, append each captured frame (the sink checkpoints
+            // the header ~1×/s so an abnormal exit still leaves a readable file), finalize on
+            // stop. No RAM buffer, so a multi-hour QSO stays bounded.
+            match (qso_rec, self.qso_sink.is_some()) {
+                (true, false) => {
+                    if let Some(p) = qso_path {
+                        match crate::voice::WavSink::create(&p) {
+                            Ok(s) => {
+                                self.qso_sink = Some(s);
+                                self.qso_started_ms = Some(now);
+                            }
+                            // Don't spin re-trying every 20 ms: clear the engine flag (so the
+                            // REC badge stops lying) and surface why via the audio-error chip.
+                            Err(e) => {
+                                if let Ok(mut eng) = engine.lock() {
+                                    eng.stop_qso_recording();
+                                    eng.set_audio_error(Some(format!(
+                                        "Could not start QSO recording: {e}"
+                                    )));
+                                }
+                            }
+                        }
+                    }
+                }
+                (true, true) => {
+                    if let Some(s) = self.qso_sink.as_mut() {
+                        // Always the shared RX tap: the QSO recording is the
+                        // CONTACT, never the operator's mic (which may be live
+                        // for a simultaneous voice-message recording).
+                        let _ = s.write(&captured);
+                    }
+                    // Safety auto-stop for a forgotten recording (mirrors the tune-carrier
+                    // cap): the (false,true) arm next pass finalizes the file.
+                    if let Some(start) = self.qso_started_ms {
+                        if now - start > MAX_QSO_REC_MS {
+                            if let Ok(mut eng) = engine.lock() {
+                                eng.stop_qso_recording();
+                            }
+                        }
+                    }
+                }
+                (false, true) => {
+                    if let Some(s) = self.qso_sink.take() {
+                        let _ = s.finish();
+                    }
+                    self.qso_started_ms = None;
+                }
+                (false, false) => {}
+            }
+        }
+
+        // Manual PTT (live phone) + RF power — applied via the rig on change. Only the
+        // Phone section drives these (the FT8 TX path is idle there), so no PTT clash.
+        {
+            let (ptt, power) = {
+                let eng = engine.lock().map_err(|e| e.to_string())?;
+                (eng.manual_ptt(), eng.rf_power())
+            };
+            if ptt != self.manual_ptt_applied {
+                let _ = rig.ptt(ptt);
+                self.manual_ptt_applied = ptt;
+            }
+            if let Some(p) = power {
+                if Some(p) != self.last_rf_power && rig.set_power(p).is_ok() {
+                    self.last_rf_power = Some(p);
+                }
+            }
+        }
+
+        // Drop PTT once the transmitted audio has played out (+ a small tail). Do NOT
+        // unkey while the operator is holding live PTT — they own the key then, so a
+        // voice/CW message tail ending must not cut a live phone over (the manual-PTT
+        // applier handles unkeying when the operator actually releases).
+        if let Some(t) = self.tx_until_ms {
+            if now >= t {
+                if !self.manual_ptt_applied {
+                    let _ = rig.ptt(false);
+                }
+                self.tx_until_ms = None;
+                // Split restore happens in the catch-all below (single drain
+                // point — per-site restores leaked through HaltTx/tune paths).
+            }
+        }
+
+        let slot = self.clock.slot_index(now);
+        let mut eng = engine.lock().map_err(|e| e.to_string())?;
+        // Split-Operation teardown catch-all: the moment NO over is pending,
+        // restore a Fake-It-shifted VFO and drop an audio Rig-split. ONE drain
+        // point, deliberately not per-exit-path: expiry, hard stop, UDP HaltTx
+        // and a tune supersede all just clear tx_until_ms, and per-site
+        // restores provably leaked (review: stranded shifted dial = every
+        // subsequent decode/spot/log on a wrong frequency). Deferred while the
+        // operator holds live phone PTT — never move the VFO under a live over.
+        if self.tx_until_ms.is_none() && !self.manual_ptt_applied {
+            if let Some(hz) = self.fake_it_restore.take() {
+                let _ = rig.set_freq(hz);
+                // Settle the poll guards so the knob-QSY detector can't adopt
+                // a not-yet-restored read-back as an operator QSY.
+                self.last_dial = hz;
+                self.last_rig_poll = now;
+            }
+            if self.audio_rig_split {
+                self.audio_rig_split = false;
+                // The cluster SPLIT-on-Work owns VFO B when active — leave it.
+                if !eng.cluster_split_active() {
+                    let _ = rig.set_split(false, "VFOA");
+                }
+            }
+        }
+
+        // Operator hit Erase → mirror it to cooperating apps (UDP Clear).
+        if let Some(window) = eng.take_pending_udp_clear() {
+            if let Some(server) = sinks.wsjtx {
+                let _ = server.send_clear(window);
+            }
+        }
+
+        // Deferred "Disable Tx after sending 73": only once the final over has
+        // fully played out (tx_until cleared) — disabling mid-over would trip
+        // the hard-stop path above and cut the 73 itself.
+        if self.tx_until_ms.is_none() && eng.take_pending_tx_disable() {
+            eng.set_tx_enabled(false);
+        }
+        // Deferred WSJT-X-style CW ID: the final 73 has fully left the air —
+        // key MYCALL through the normal CW path (PTT + tone), like the CW
+        // cockpit does. Consumed only on TX-idle for the same reason as the
+        // deferred disable above.
+        if self.tx_until_ms.is_none() && eng.take_pending_cw_id() {
+            let mycall = eng.settings().mycall.clone();
+            eng.send_cw(&mycall);
+        }
+        // Pick up the latest measured clock offset for the NEXT iteration's UTC
+        // steering (the NTP probe thread writes it onto the engine).
+        self.clock_offset_ms = eng.clock_offset_ms().unwrap_or(0);
+        // Keep the TopBar's next-slot countdown live every iteration.
+        eng.set_slot_timing(self.clock.ms_to_next_slot(now) as u64);
+        // RX input meter + live waterfall audio (decoupled from the slot decoder).
+        eng.set_rx_level(backend.rx_level());
+        eng.set_spectrum_audio(&captured);
+
+        // --- Tune carrier: hold PTT + a steady f0 sine while the operator holds
+        // "tune", with a safety auto-release. Normal slot TX is suppressed. ---
+        let mut is_tuning = eng.tuning();
+        if is_tuning {
+            if let Some(start) = self.tune_started_ms {
+                // Operator-configurable auto-release (WSJT-X "Tune after t s");
+                // the old fixed MAX_TUNE_MS is the default value.
+                let max_ms = (eng.settings().tune_timeout_secs.max(1) as f64) * 1000.0;
+                if now - start > max_ms {
+                    eng.set_tune(false);
+                    is_tuning = false;
+                }
+            }
+        }
+        if is_tuning {
+            if !self.tuning_keyed {
+                let _ = rig.ptt(true);
+                self.tuning_keyed = true;
+                self.tune_started_ms = Some(now);
+                self.tx_until_ms = None; // a tune supersedes any pending slot TX tail
+            }
+            let n = (ft1::SAMPLE_RATE * (TUNE_CHUNK_MS / 1000.0)) as usize;
+            let chunk = tune_carrier(TUNE_FREQ_HZ, n, ft1::SAMPLE_RATE, &mut self.tune_phase);
+            backend.play(&chunk);
+            self.rx.clear(); // don't decode our own carrier
+            drop(eng);
+            return Ok(());
+        } else if self.tuning_keyed {
+            // Tuning just released: drop PTT and re-anchor to the slot grid.
+            let _ = rig.ptt(false);
+            self.tuning_keyed = false;
+            self.tune_started_ms = None;
+            self.last_slot = None;
+            self.prev_slot_was_tx = false;
+        }
+
+        // Hard Stop TX: if transmit was disabled mid-over (the UI "Stop TX" button
+        // calls engine.halt_tx, or a logger sent HaltTx), cut the CURRENT
+        // transmission immediately — drop PTT and discard the queued TX audio
+        // rather than letting the slot's audio play out to its deadline.
+        if self.tx_until_ms.is_some() && !eng.tx_enabled() {
+            let _ = rig.ptt(false);
+            backend.flush_output();
+            self.tx_until_ms = None;
+        }
+
+        // Inbound WSJT-X control (HaltTx / FreeText / Reply) from a logger / JTAlert.
+        if let Some(server) = sinks.wsjtx {
+            while let Ok(Some(inb)) = server.poll() {
+                match inb {
+                    WsjtxInbound::HaltTx { .. } => {
+                        eng.halt_tx();
+                        let _ = rig.ptt(false);
+                        backend.flush_output();
+                        self.tx_until_ms = None;
+                    }
+                    WsjtxInbound::Clear { .. } => {
+                        // Visual clear only — the engine's decode context (answer
+                        // parity / history) is not a window and stays intact.
+                        eng.apply_udp_clear();
+                    }
+                    WsjtxInbound::Replay { .. } => {
+                        // A consumer that just connected wants the WHOLE current
+                        // period back — `last_decodes` alone holds only the most
+                        // recent ingest (post-early-pass it's just the boundary
+                        // stragglers). NO PSK spots here: replays must never
+                        // double-spot.
+                        if let Some(server) = sinks.wsjtx {
+                            let tier = tier_mode(eng.tier());
+                            let ms_mid = (now as u64 % 86_400_000) as u32;
+                            for d in eng.current_period_decodes() {
+                                let _ = server.send_decode(&build_decode(
+                                    &d.message,
+                                    d.snr,
+                                    d.dt,
+                                    d.freq,
+                                    tier,
+                                    ms_mid,
+                                    d.qual < 0.17,
+                                ));
+                            }
+                        }
+                    }
+                    WsjtxInbound::Location { location, .. } => {
+                        eng.apply_udp_location(&location);
+                    }
+                    WsjtxInbound::HighlightCallsign { call, bg, fg, .. } => {
+                        eng.set_highlight(&call, bg, fg);
+                    }
+                    WsjtxInbound::FreeText { text, send, .. } => {
+                        let t = text.trim();
+                        if send && !t.is_empty() {
+                            eng.broadcast(t);
+                        }
+                    }
+                    WsjtxInbound::Reply {
+                        message,
+                        snr,
+                        delta_freq,
+                        ..
+                    } => {
+                        // The Reply datagram (a logger/JTAlert/companion double-click)
+                        // carries the exact clicked line, its SNR, and the DX's audio
+                        // offset — pass all three so the sequencer resumes from that
+                        // message (WSJT-X double-click semantics) AND moves our RX/TX
+                        // onto the DX's frequency, not always from the grid at band-center.
+                        let parsed = Msg::parse(&message);
+                        if let Some(sender) = parsed.sender() {
+                            eng.call_station_ctx(
+                                sender,
+                                None,
+                                Some(&message),
+                                Some(snr),
+                                Some(delta_freq as f32),
+                            );
+                            // Stock parity: "double-click sets Tx enable" governs
+                            // only OUR OWN UI clicks — an inbound UDP Reply
+                            // (JTAlert/GridTracker) always arms TX in WSJT-X.
+                            eng.set_tx_enabled(true);
+                        }
+                    }
+                    // Companion mode: WSJT-X logged a QSO. It emits BOTH LoggedAdif
+                    // (type 12, the full ADIF record) and QsoLogged (type 5, a
+                    // structured summary) for the same contact — route ONLY the
+                    // ADIF one through the dedup-safe import path, and ignore the
+                    // structured summary, so the contact reaches the logbook /
+                    // awards / Needed board exactly once (never double-logged).
+                    WsjtxInbound::LoggedAdif { adif, .. } => {
+                        eng.import_adif(&adif);
+                    }
+                    WsjtxInbound::QsoLogged { .. } => {} // handled via LoggedAdif above
+                    _ => {}
+                }
+            }
+        }
+
+        // Immediate first over: a just-armed directed call (double-click) keys on
+        // the CURRENT period if it's our TX parity AND the whole over still fits
+        // before the next boundary — instead of waiting a full T/R cycle for the
+        // next boundary (the "a few cycles go by" lag). If it doesn't fit / wrong
+        // parity, the normal boundary path transmits at the next valid period.
+        if self.tx_until_ms.is_none() && eng.peek_immediate_tx() {
+            let slot_now = self.clock.slot_index(now);
+            let on_our_parity = slot_now.is_multiple_of(2) == eng.tx_even();
+            let room_ms = self.clock.ms_to_next_slot(now);
+            // Fit on AUDIO length only — TX_TAIL is PTT hold after the audio ends
+            // and may bleed into the next slot (it does at boundary starts too).
+            // Counting it here inflated the deficit by up to 250 ms and trimmed
+            // silence we didn't need to, starting the signal early (dt shift).
+            let need_ms = eng.tx_over_secs() * 1000.0;
+            // Late start, the WSJT-X way: the transmission stays TIME-ALIGNED to
+            // the period grid — starting late just SKIPS the wave's leading
+            // samples (the 0.5 s silence lead-in first, then leading symbols).
+            // The remote decoder still syncs (dt ≈ 0, just fewer symbols), which
+            // is why stock fires the current period for clicks up to ~2 s in.
+            const LATE_START_MAX_MS: f64 = 2_000.0;
+            // FT8/FT4 only — their wave layout (lead-in + costas sync) is what
+            // makes a head-truncated over decodable; other tiers need a full fit.
+            let allowed_deficit = match eng.tier() {
+                tempo_app::dto::Tier::Ft8 | tempo_app::dto::Tier::Ft4 => LATE_START_MAX_MS,
+                _ => 0.0,
+            };
+            let deficit_ms = (need_ms - room_ms).max(0.0);
+            if on_our_parity && deficit_ms <= allowed_deficit {
+                // CONSUME the request only now that it actually fires — a click
+                // outside the window used to be swallowed here and then wait an
+                // EXTRA full cycle past the boundary it should have keyed at.
+                let _ = eng.take_immediate_tx();
+                let waves = eng.poll_tx(slot_now);
+                if !waves.is_empty() {
+                    let trim_samples = ((deficit_ms / 1000.0) * ft1::SAMPLE_RATE as f64) as usize;
+                    // Must leave a transmittable remainder (always true within
+                    // the 2 s window — FT8 keeps ≥ 10.6 s of signal).
+                    let trimmable = waves
+                        .first()
+                        .map(|w| trim_samples < w.len())
+                        .unwrap_or(false);
+                    if trimmable {
+                        // Split Operation: the engine reduced this over's audio —
+                        // move the TX dial before the carrier keys (same as the
+                        // boundary path).
+                        let split = crate::slot::apply_tx_dial_shift(&mut eng, rig);
+                        if split.fake_it_restore.is_some() {
+                            self.fake_it_restore = split.fake_it_restore;
+                        }
+                        if split.rig_split_engaged {
+                            self.audio_rig_split = true;
+                        }
+                        let _ = rig.ptt(true);
+                        let mut secs = 0.0f32;
+                        let last = waves.len() - 1;
+                        for (i, w) in waves.iter().enumerate() {
+                            let mut w2: &[f32] = if i == 0 && trim_samples > 0 {
+                                &w[trim_samples..]
+                            } else {
+                                w
+                            };
+                            // The generated buffer can carry TRAILING silence
+                            // (FT4: ~1.0 s of zero pad). On a LATE start the fit
+                            // math is airtime-based — playing that pad would
+                            // hold PTT past the boundary into the partner's
+                            // period. Strip it; it carries nothing.
+                            if i == last {
+                                let end = w2.iter().rposition(|&x| x != 0.0).map_or(0, |p| p + 1);
+                                w2 = &w2[..end];
+                            }
+                            secs += w2.len() as f32 / ft1::SAMPLE_RATE;
+                            backend.play(w2);
+                        }
+                        self.rx.clear(); // our just-started carrier must not be decoded
+                        self.tx_until_ms =
+                            Some(now + secs as f64 * 1000.0 + crate::slot::TX_TAIL_MS);
+                        self.last_slot = Some(slot_now); // slot handled; skip the boundary
+                        self.prev_slot_was_tx = true;
+                    }
+                }
+            }
+        }
+
+        // Rebuild the slot clock + capture ring if the operator switched tier.
+        let tier_now = eng.tier();
+        if tier_now != self.cur_tier {
+            self.cur_tier = tier_now;
+            self.clock = SlotClock::with_period_secs(eng.active_slot_secs());
+            self.rx = RxRing::with_capacity(eng.active_capture_samples());
+            self.last_slot = None;
+            self.prev_slot_was_tx = false;
+        }
+
+        // --- WSJT-X-style early decode (FT8/FT4): a few seconds before the
+        // boundary, decode the partial capture so callers appear while the
+        // period is still running (stock decodes ~3×/period from ~11.8 s; our
+        // single boundary pass made decodes land exactly as the operator's TX
+        // window opened — zero decision time). RX slots only: our own carrier
+        // (current TX or its boundary-crossing tail) must never reach the
+        // decoder. The boundary pass below stays authoritative and ingests only
+        // the stragglers this pass missed.
+        if self.tx_until_ms.is_none()
+            && !self.prev_slot_was_tx
+            && self.early_done_slot != Some(slot)
+            && !is_tuning
+        {
+            let early_at_ms = match tier_now {
+                Tier::Ft8 => Some(11_800.0),
+                Tier::Ft4 => Some(5_500.0),
+                _ => None,
+            };
+            if let Some(at) = early_at_ms {
+                let slot_ms = eng.active_slot_secs() * 1000.0;
+                let elapsed_ms = slot_ms - self.clock.ms_to_next_slot(now);
+                // `< slot_ms` guards the exact-boundary tick (ms_to_next_slot
+                // returns 0 there, which would read as a FULL slot elapsed and
+                // early-decode the PREVIOUS slot's audio under the wrong index).
+                if elapsed_ms >= at && elapsed_ms < slot_ms && !self.rx.is_empty() {
+                    self.early_done_slot = Some(slot);
+                    // Only THIS slot's audio, at its true position from the slot
+                    // start, tail-padded — a rolling tail of the previous slot
+                    // (or front-padding) would wreck the decoder's dt alignment.
+                    let n = ((elapsed_ms / 1000.0) * ft1::SAMPLE_RATE as f64) as usize;
+                    let frame = self.rx.frame_latest_padded(n);
+                    // Boundary-slot index (audio slot + 1): the parity/history
+                    // conventions match the boundary ingest exactly.
+                    if eng.ingest_early(&frame, slot + 1) > 0 {
+                        let cur_dial = eng.settings().dial_hz();
+                        emit_rx_decodes(sinks, &eng, &mut self.psk_spots, now, cur_dial);
+                    }
+                }
+            }
+        }
+
+        if Some(slot) != self.last_slot {
+            self.last_slot = Some(slot);
+            let cur_dial = eng.settings().dial_hz();
+            // Slot core (TX keying / RX decode), already unit-tested in slot.rs.
+            let action = crate::slot::run_slot(
+                &mut eng,
+                rig,
+                backend,
+                &mut self.rx,
+                slot,
+                now,
+                self.tx_until_ms.is_some(),
+                self.prev_slot_was_tx,
+            );
+            if let Some(t) = action.tx_until_ms {
+                self.tx_until_ms = Some(t);
+            }
+            if action.fake_it_restore.is_some() {
+                self.fake_it_restore = action.fake_it_restore;
+            }
+            if action.rig_split_engaged {
+                self.audio_rig_split = true;
+            }
+            // Remember whether THIS slot was a transmit slot so the next boundary
+            // knows not to decode our own carrier (and to decode it otherwise).
+            self.prev_slot_was_tx = action.tx_this_slot;
+            // Save the received period as a WAV when asked (WSJT-X's Save menu:
+            // "all" = every RX period, "decodes" = only periods that produced
+            // one). Best-effort — a full disk must never stall the radio loop.
+            if let Some(frame) = &action.rx_frame {
+                let mode = eng.settings().save_wav.clone();
+                let want = match mode.as_str() {
+                    "all" => true,
+                    // The WHOLE period's decode set (early pass + boundary
+                    // stragglers) — wire_decodes() alone is only the boundary
+                    // batch, which is empty when the early pass caught
+                    // everything (review catch: that skipped exactly the
+                    // cleanest, strongest-signal periods).
+                    "decodes" => !eng.current_period_decodes().is_empty(),
+                    _ => false,
+                };
+                if want {
+                    if let Some(dir) = eng.periods_dir() {
+                        let secs = (now / 1000.0) as i64;
+                        let (y, mo, d) = civil_from_days(secs.div_euclid(86_400));
+                        let (h, m, sec) = (
+                            secs.rem_euclid(86_400) / 3600,
+                            secs.rem_euclid(3600) / 60,
+                            secs.rem_euclid(60),
+                        );
+                        // WSJT-X-style stamp + the band for at-a-glance sorting.
+                        let name = format!(
+                            "{y:04}{mo:02}{d:02}_{h:02}{m:02}{sec:02}_{}.wav",
+                            eng.settings().band
+                        );
+                        let path = std::path::Path::new(&dir).join(name);
+                        if let Err(e) = crate::voice::write_wav_12k(&path, frame) {
+                            eng.set_audio_error(Some(format!("period WAV save failed: {e}")));
+                        }
+                    }
+                }
+            }
+            // The boundary owns the slot now — drain any still-pending immediate-TX
+            // request (it either just fired via the slot core's parity path, or its
+            // moment passed; leaving it set would key mid-slot LATER, off-cycle).
+            let _ = eng.take_immediate_tx();
+            let did_rx = action.did_rx;
+            let tx_this_slot = action.tx_this_slot;
+
+            // Snapshot once for BOTH the WSJT-X/PSK emission and the club-network
+            // Field Day push below. The club push has to run on every slot boundary
+            // an FD session is live — whether or not the WSJT-X/PSK sinks are on —
+            // so `field_day.is_some()` joins the gate. It used to be trapped INSIDE
+            // that gate, silently starving N3FJP/N1MM whenever both sinks were their
+            // default-off (the club master log simply never received the QSOs).
+            let snap = eng.snapshot();
+            // --- network emission (WSJT-X UDP API + PSK Reporter) ---
+            if sinks.wsjtx.is_some() || sinks.psk.is_some() || snap.field_day.is_some() {
+                let tier = tier_mode(snap.link.tier);
+                let _ms_mid = (now as u64 % 86_400_000) as u32;
+                let now_secs = (now / 1000.0) as i64;
+                if did_rx {
+                    emit_rx_decodes(sinks, &eng, &mut self.psk_spots, now, cur_dial);
+                }
+                if let Some(server) = sinks.wsjtx {
+                    let dx = snap
+                        .qso
+                        .as_ref()
+                        .and_then(|q| q.dxcall.clone())
+                        .unwrap_or_default();
+                    let _ = server.send_status(&WsjtxStatus {
+                        dial_freq: cur_dial,
+                        mode: tier,
+                        dx_call: &dx,
+                        report: "",
+                        tx_mode: tier,
+                        tx_enabled: false,
+                        transmitting: snap.radio.transmitting,
+                        // `decoding` and `transmitting` are disjoint phases in
+                        // WSJT-X: when we decode the prior RX slot AND transmit in
+                        // this one (calling CQ), report the transmit phase only.
+                        decoding: did_rx && !tx_this_slot,
+                        // REAL audio offsets (GridTracker/JTAlert show these) —
+                        // hardcoded 1500s confused every cooperating logger.
+                        rx_df: snap.radio.rx_offset_hz.max(0.0) as u32,
+                        tx_df: snap.radio.tx_offset_hz.max(0.0) as u32,
+                        de_call: &snap.mycall,
+                        de_grid: &snap.mygrid,
+                        dx_grid: "",
+                        tx_watchdog: false,
+                        sub_mode: "",
+                        fast_mode: false,
+                        // The LIVE mode wins: field_day is Some only while the
+                        // Field Day mode is actually RUNNING, whereas special_op
+                        // is a persistent setting an operator can forget to turn
+                        // off — a stale Hound flag must not misadvertise an
+                        // active FD session (review catch). 6=FOX stays unbuilt.
+                        special_op: if snap.field_day.is_some() {
+                            3
+                        } else if matches!(
+                            eng.settings().special_op,
+                            tempo_app::settings::SpecialOp::Hound
+                                | tempo_app::settings::SpecialOp::SuperHound
+                        ) {
+                            7
+                        } else {
+                            0
+                        },
+                        freq_tol: 0,
+                        // T/R period (s), mode-driven: FT1 = 4, FT4 ≈ 8, FT8/DX1 = 15.
+                        tr_period: eng.active_slot_secs().round() as u32,
+                        config_name: "Default",
+                        tx_message: "",
+                    });
+                    if let Some(fd) = snap.field_day.as_ref() {
+                        if fd.qso_count > self.last_fd_qsos {
+                            let sent = format!("{} {}", fd.my_class, fd.my_section);
+                            for q in &fd.log[self.last_fd_qsos.min(fd.log.len())..] {
+                                let recvd = format!("{} {}", q.class, q.section);
+                                let _ = server.send_qso_logged(&WsjtxQso {
+                                    time_off: now_secs,
+                                    dx_call: &q.call,
+                                    dx_grid: "",
+                                    tx_freq: sinks.cfg_dial_hz,
+                                    mode: tier,
+                                    report_sent: "",
+                                    report_recvd: "",
+                                    tx_power: "",
+                                    comments: "",
+                                    name: "",
+                                    time_on: now_secs,
+                                    op_call: &snap.mycall,
+                                    my_call: &snap.mycall,
+                                    my_grid: &snap.mygrid,
+                                    exchange_sent: &sent,
+                                    exchange_recvd: &recvd,
+                                    adif_propmode: "",
+                                });
+                            }
+                        }
+                    }
+                }
+                // Club-network push (independent of the WSJT-X sink): every NEW
+                // Field Day QSO goes to N3FJP (the club master log, TCP) and/or
+                // an N1MM-network dashboard (UDP <contactinfo>) when configured.
+                // Spawned: a parked N3FJP box must never stall the slot loop.
+                if let Some(fd) = snap.field_day.as_ref() {
+                    if fd.qso_count > self.last_fd_qsos {
+                        let st = eng.settings();
+                        let n3_host = st.n3fjp_host.trim().to_string();
+                        let n3_port = st.n3fjp_port;
+                        let n1_addr = st.n1mm_addr.trim().to_string();
+                        if !n3_host.is_empty() || !n1_addr.is_empty() {
+                            let new_qsos: Vec<_> =
+                                fd.log[self.last_fd_qsos.min(fd.log.len())..].to_vec();
+                            let mycall = snap.mycall.clone();
+                            let myexch = format!("{} {}", fd.my_class, fd.my_section);
+                            let contest = if fd.event == "wfd" {
+                                "WFD"
+                            } else {
+                                "ARRL-FIELD-DAY"
+                            };
+                            let dial_mhz = cur_dial as f64 / 1e6;
+                            let fallback_unix = (now / 1000.0) as u64;
+                            std::thread::spawn(move || {
+                                for (i, q) in new_qsos.iter().enumerate() {
+                                    let mode_str = match q.mode.as_str() {
+                                        "CW" => "CW",
+                                        "PH" => "SSB",
+                                        _ => "FT8",
+                                    };
+                                    // Per-QSO log time (a multi-contact batch must not
+                                    // collapse onto one wall-clock second).
+                                    let when = if q.when_unix > 0 {
+                                        q.when_unix
+                                    } else {
+                                        fallback_unix
+                                    };
+                                    if !n3_host.is_empty() {
+                                        let push = tempo_net::n3fjp::N3fjpQso {
+                                            call: q.call.clone(),
+                                            class: q.class.clone(),
+                                            section: q.section.clone(),
+                                            band_meters: band_for_interop(&q.band),
+                                            mode: mode_str.to_string(),
+                                            freq_mhz: dial_mhz,
+                                            when_unix: when,
+                                            operator: mycall.clone(),
+                                        };
+                                        if let Err(e) =
+                                            tempo_net::n3fjp::push_qso(&n3_host, n3_port, &push)
+                                        {
+                                            eprintln!("tempo: N3FJP push failed: {e}");
+                                        }
+                                    }
+                                    if !n1_addr.is_empty() {
+                                        let c = tempo_net::n1mm::N1mmContact {
+                                            mycall: mycall.clone(),
+                                            call: q.call.clone(),
+                                            band: band_for_interop(&q.band),
+                                            mode: mode_str.to_string(),
+                                            timestamp: {
+                                                let (d, t) = cabrillo_like_dt(when);
+                                                format!("{d} {t}")
+                                            },
+                                            section: q.section.clone(),
+                                            points: tempo_core::fieldday::qso_points_for_mode(
+                                                &q.mode,
+                                            ),
+                                            contestname: contest.to_string(),
+                                            freq_10hz: (dial_mhz * 1e5) as u64,
+                                            sent_exchange: myexch.clone(),
+                                            operator: mycall.clone(),
+                                            // 32-hex dedup id: time + index + call hash.
+                                            id: format!(
+                                                "{:016x}{:016x}",
+                                                when.wrapping_mul(31).wrapping_add(i as u64),
+                                                q.call.bytes().fold(0u64, |a, b| {
+                                                    a.wrapping_mul(131).wrapping_add(b as u64)
+                                                })
+                                            ),
+                                        };
+                                        if let Err(e) = tempo_net::n1mm::send_contact(&n1_addr, &c)
+                                        {
+                                            eprintln!("tempo: N1MM broadcast failed: {e}");
+                                        }
+                                    }
+                                }
+                            });
+                        }
+                    }
+                }
+            }
+            // Advance the FD cursor on EVERY boundary (independent of the sinks
+            // above) — so it also RESETS to 0 when a session ends, and a stale
+            // count can never later flood the club log after FD is re-armed.
+            self.last_fd_qsos = snap.field_day.as_ref().map(|f| f.qso_count).unwrap_or(0);
+        }
+        drop(eng); // release before the PSK flush re-locks the engine
+
+        // PSK Reporter: flush accumulated spots periodically (outside the lock).
+        if let Some(reporter) = sinks.psk {
+            if !self.psk_spots.is_empty() && now - self.last_psk_flush >= PSK_FLUSH_SECS * 1000.0 {
+                let (rx_call, rx_grid) = {
+                    let eng = engine.lock().map_err(|e| e.to_string())?;
+                    let s = eng.snapshot();
+                    (s.mycall.clone(), s.mygrid.clone())
+                };
+                let _ = reporter.send_spots(&rx_call, &rx_grid, "Tempo", &self.psk_spots);
+                self.psk_spots.clear();
+                self.last_psk_flush = now;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+// ---- network-emission builders (pure; unit-tested) -----------------------
+//
+// Extracted from the loop so the WSJT-X / PSK Reporter emission content is
+// provable without a sound card, rig, or live socket. The loop calls these and
+// sends the result; the math (audio-offset → RF frequency) and the
+// callsign-gating live here where they can be tested.
+
+/// The WSJT-X mode string for a link [`Tier`].
+/// Band label → the meter-string the club-log protocols expect ("20m" → "20").
+/// The centimeter bands need real values, not a blind alpha-strip ("70cm"
+/// would have read as SEVENTY METERS in N3FJP).
+fn band_for_interop(label: &str) -> String {
+    match label {
+        "70cm" => "0.7".to_string(),
+        "33cm" => "0.33".to_string(),
+        "23cm" => "0.23".to_string(),
+        other => other
+            .trim_end_matches(|c: char| c.is_alphabetic())
+            .to_string(),
+    }
+}
+
+/// Unix secs → ("YYYY-MM-DD", "HH:MM:SS") UTC for the N1MM timestamp.
+fn cabrillo_like_dt(unix: u64) -> (String, String) {
+    let secs_of_day = unix % 86_400;
+    let days = (unix / 86_400) as i64;
+    let (h, m, sec) = (
+        (secs_of_day / 3600) as u32,
+        ((secs_of_day % 3600) / 60) as u32,
+        (secs_of_day % 60) as u32,
+    );
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let mo = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    let y = if mo <= 2 { y + 1 } else { y };
+    (
+        format!("{y:04}-{mo:02}-{d:02}"),
+        format!("{h:02}:{m:02}:{sec:02}"),
+    )
+}
+
+fn tier_mode(tier: Tier) -> &'static str {
+    match tier {
+        Tier::Ft1 => "FT1",
+        Tier::Dx1 => "DX1",
+        Tier::Ft8 => "FT8",
+        Tier::Ft4 => "FT4",
+    }
+}
+
+/// Build the WSJT-X **Decode (type 2)** message for one decoded signal.
+/// Borrows `message`/`mode` for the lifetime of the returned struct.
+/// Forward the engine's `last_decodes` (the rows the ingest that just ran
+/// produced — boundary OR early pass) to the WSJT-X UDP server and the PSK
+/// Reporter spot queue. Shared so early decodes reach cooperating loggers and
+/// PSKR at the same moment they reach our own UI.
+/// Hinnant's civil-from-days (UTC): days since the epoch → (year, month, day).
+/// For the period-WAV filename stamp only.
+fn civil_from_days(z0: i64) -> (i64, u32, u32) {
+    let z = z0 + 719_468;
+    let era = (if z >= 0 { z } else { z - 146_096 }) / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = (if mp < 10 { mp + 3 } else { mp - 9 }) as u32;
+    (if m <= 2 { y + 1 } else { y }, m, d)
+}
+
+fn emit_rx_decodes(
+    sinks: &Sinks,
+    eng: &Engine,
+    psk_spots: &mut Vec<Spot>,
+    now: f64,
+    cur_dial: u64,
+) {
+    if sinks.wsjtx.is_none() && sinks.psk.is_none() {
+        return;
+    }
+    let tier = tier_mode(eng.tier());
+    let ms_mid = (now as u64 % 86_400_000) as u32;
+    let now_secs = (now / 1000.0) as u32;
+    // ON-AIR text only — never the hound-rewritten internal form.
+    for d in eng.wire_decodes() {
+        if let Some(server) = sinks.wsjtx {
+            let _ = server.send_decode(&build_decode(
+                &d.message,
+                d.snr,
+                d.dt,
+                d.freq,
+                tier,
+                ms_mid,
+                d.qual < 0.17, // the stock low-confidence line
+            ));
+        }
+        if sinks.psk.is_some() {
+            if let Some(spot) = build_spot(&d.message, d.snr, d.freq, tier, cur_dial, now_secs) {
+                psk_spots.push(spot);
+            }
+        }
+    }
+}
+
+fn build_decode<'a>(
+    message: &'a str,
+    snr: i32,
+    dt: f32,
+    freq: f32,
+    mode: &'a str,
+    time_ms: u32,
+    low_confidence: bool,
+) -> WsjtxDecode<'a> {
+    WsjtxDecode {
+        new: true,
+        time_ms,
+        snr,
+        delta_time: dt as f64,
+        delta_freq: freq as u32,
+        mode,
+        message,
+        low_confidence,
+        off_air: false,
+    }
+}
+
+/// Build a PSK Reporter [`Spot`] from a decode, or `None` if no sender callsign
+/// can be parsed (only stations we actually copied get reported). The spot
+/// frequency is the dial frequency plus the decode's audio offset.
+fn build_spot(
+    message: &str,
+    snr: i32,
+    freq: f32,
+    mode: &str,
+    cur_dial: u64,
+    now_secs: u32,
+) -> Option<Spot> {
+    Msg::parse(message).sender().map(|call| Spot {
+        call: call.to_string(),
+        freq_hz: cur_dial + freq as u64,
+        snr,
+        mode: mode.to_string(),
+        time_secs: now_secs,
+    })
+}
+
+/// Generate `n` samples of a unit-amplitude sine at `freq` Hz, continuing from
+/// `phase` (radians, advanced in place) so successive chunks join seamlessly.
+/// Tx-level scaling is applied later by the backend's `play`.
+fn tune_carrier(freq: f32, n: usize, sample_rate: f32, phase: &mut f32) -> Vec<f32> {
+    use std::f32::consts::TAU;
+    let step = TAU * freq / sample_rate;
+    let mut out = Vec::with_capacity(n);
+    for _ in 0..n {
+        out.push(phase.sin());
+        *phase += step;
+        if *phase >= TAU {
+            *phase -= TAU;
+        }
+    }
+    out
+}
+
+/// Periodically probe an NTP server to estimate the PC-clock-vs-UTC offset and
+/// publish it to the engine (for the UI clock chip). Runs on its own thread so a
+/// slow or failed query never stalls the audio loop; honors the `clock_check`
+/// setting and fails silently when off-grid (publishes `None`, so the UI falls
+/// back to the DT-derived sync health).
+fn clock_probe_loop(engine: Arc<Mutex<Engine>>) {
+    const SERVERS: [&str; 3] = [
+        "pool.ntp.org:123",
+        "time.nist.gov:123",
+        "time.google.com:123",
+    ];
+    loop {
+        let enabled = engine
+            .lock()
+            .map(|e| e.settings().clock_check)
+            .unwrap_or(false);
+        let offset = if enabled {
+            tempo_net::sntp::query_any(&SERVERS, Duration::from_secs(3)).ok()
+        } else {
+            None
+        };
+        if let Ok(mut e) = engine.lock() {
+            e.set_clock_offset_ms(offset);
+        }
+        std::thread::sleep(Duration::from_secs(600)); // ~10 min
+    }
+}
+
+/// The transport-affecting subset of the operator's settings: which rig/PTT and
+/// audio devices the radio loop is driving. The loop compares the live value
+/// (from the engine's settings) against the one it has `applied` and rebuilds
+/// the rig / re-opens the sound card when these change — so a Settings "Save"
+/// reconnects CAT without an app restart.
+#[derive(Clone, PartialEq)]
+struct Transport {
+    ptt_method: String,
+    rig_model: u32,
+    serial_port: String,
+    baud: u32,
+    /// "network" → rigctld talks to `rig_addr` over TCP (Flex/SmartSDR); else serial.
+    rig_conn: String,
+    /// host:port for a network rig (when `rig_conn == "network"`).
+    rig_addr: String,
+    rigctld_port: u16,
+    /// The port our OWN CAT broker is serving on (if enabled), so auto-coexist never
+    /// connects Nexus to itself. `None` = broker off.
+    broker_self_port: Option<u16>,
+    audio_in: String,
+    audio_out: String,
+    /// Dedicated voice-mic device for recordings ("" = record from the shared input).
+    /// Carried here so the recording block reads the live value; changing it never
+    /// rebuilds the capture/TX streams (it only affects the transient mic stream).
+    voice_mic_device: String,
+    tx_level: f32,
+    /// Dark headphone-monitor settings (off by default). Carried here so a change is
+    /// applied to the running backend IN PLACE — never as a capture-stream rebuild.
+    monitor_enabled: bool,
+    monitor_device: String,
+    monitor_level: f32,
+}
+
+impl Transport {
+    fn from_cfg(c: &RadioConfig) -> Self {
+        Self {
+            ptt_method: c.ptt_method.clone(),
+            rig_model: c.rig_model,
+            serial_port: c.serial_port.clone(),
+            baud: c.baud,
+            rig_conn: c.rig_conn.clone(),
+            rig_addr: c.rig_addr.clone(),
+            rigctld_port: c.rigctld_port,
+            broker_self_port: c.broker_self_port,
+            audio_in: c.audio_in.clone(),
+            audio_out: c.audio_out.clone(),
+            // The voice mic is not part of the startup seed — the initial applied state
+            // is "none", so the first recording reads it from the live engine settings.
+            voice_mic_device: String::new(),
+            tx_level: c.tx_level,
+            // The monitor is not part of the startup seed — the initial applied state
+            // is "off", so the first loop turns it on from the live engine settings.
+            monitor_enabled: false,
+            monitor_device: String::new(),
+            monitor_level: 0.5,
+        }
+    }
+
+    fn from_settings(s: &Settings) -> Self {
+        Self {
+            ptt_method: s.ptt_method.clone(),
+            rig_model: s.rig_model,
+            serial_port: s.serial_port.clone(),
+            baud: s.baud,
+            rig_conn: s.rig_conn.clone(),
+            rig_addr: s.rig_addr.clone(),
+            rigctld_port: s.rigctld_port,
+            broker_self_port: if s.cat_broker {
+                Some(s.cat_broker_port)
+            } else {
+                None
+            },
+            audio_in: s.audio_in.clone(),
+            audio_out: s.audio_out.clone(),
+            voice_mic_device: s.voice_mic_device.clone(),
+            tx_level: s.tx_level,
+            monitor_enabled: s.monitor_enabled,
+            monitor_device: s.monitor_device.clone(),
+            monitor_level: s.monitor_level,
+        }
+    }
+
+    /// True if a field that requires (re)launching rigctld / rebuilding the Rig
+    /// changed (PTT method, rig model, serial port, baud, rigctld TCP port).
+    fn rig_differs(&self, o: &Transport) -> bool {
+        self.ptt_method != o.ptt_method
+            || self.rig_model != o.rig_model
+            || self.serial_port != o.serial_port
+            || self.baud != o.baud
+            || self.rig_conn != o.rig_conn
+            || self.rig_addr != o.rig_addr
+            || self.rigctld_port != o.rigctld_port
+            || self.broker_self_port != o.broker_self_port
+    }
+
+    /// A networked rig (FlexRadio/SmartSDR or a remote rigctld): rigctld connects to
+    /// `rig_addr` over TCP instead of a serial port. Requires a non-empty address.
+    fn is_network(&self) -> bool {
+        self.rig_conn == "network" && !self.rig_addr.is_empty()
+    }
+
+    /// True if the selected sound-card input/output device changed.
+    fn audio_differs(&self, o: &Transport) -> bool {
+        self.audio_in != o.audio_in || self.audio_out != o.audio_out
+    }
+
+    /// True if a headphone-monitor setting changed (enable, device, or level). Drives
+    /// an in-place monitor reconfigure — NOT a capture-stream rebuild.
+    fn monitor_differs(&self, o: &Transport) -> bool {
+        self.monitor_enabled != o.monitor_enabled
+            || self.monitor_device != o.monitor_device
+            || (self.monitor_level - o.monitor_level).abs() > f32::EPSILON
+    }
+}
+
+/// The passband (Hz) to command alongside a rig mode. FT8/FT4 (the DATA submodes) need the
+/// FULL ~3 kHz audio passband — decodes span the whole band, and passband 0 ("normal") left
+/// some rigs on a narrow recalled DATA filter (e.g. 600 Hz on the FTDX10), clipping signals.
+/// For SSB / CW / FM we pass 0 so the rig keeps its own normal/recalled filter for that mode
+/// (the operator's chosen CW width, SSB filter, etc.).
+fn passband_for(md: &str) -> u32 {
+    match md.trim().to_ascii_uppercase().as_str() {
+        "PKTUSB" | "PKTLSB" => 3000,
+        _ => 0,
+    }
+}
+
+/// After commanding a mode, read it straight back from the rig and describe the outcome —
+/// the ONLY way to distinguish "rigctld answered RPRT 0 AND the rig actually changed" from
+/// "rigctld answered RPRT 0 but the rig is still in the old mode" (a Hamlib/rig no-op). The
+/// note is surfaced into the CAT status so the operator can see it on the rig.
+fn mode_set_note(rig: &mut Rig, md: &str) -> String {
+    // Read the rig's TRUE mode straight off the wire (raw Yaesu `MD0;` via rigctld send_cmd),
+    // bypassing Hamlib's mode cache — `read_mode` (`m`) can report the commanded mode even
+    // when the rig never moved (which fooled us once). The raw reply (e.g. "MD02;" = USB,
+    // "MD0C;" = DATA-U on Yaesu) is the ground truth of what the radio is actually in.
+    if let Some(raw) = rig.send_raw("MD0;") {
+        return format!("sent {md} → rig raw mode {raw}");
+    }
+    match rig.read_mode() {
+        Some(m) if m.eq_ignore_ascii_case(md) => format!("rig confirmed in {md}"),
+        Some(m) => format!("set {md} but rig reports {m}"),
+        None => format!("rig set to {md} (mode read-back unavailable)"),
+    }
+}
+
+/// The result of opening/probing a rig: `(rig, rigctld handle, cat_ok, detail)`.
+/// `cat_ok` is `Some(true/false)` for CAT/serial, `None` for VOX; the handle
+/// keeps the launched `rigctld` daemon alive (kill-on-drop).
+type RigOpen = (Rig, Option<RigctldProc>, Option<bool>, String);
+
+/// Build the [`Rig`] for a transport and report its connection status. For CAT,
+/// launches the bundled `rigctld`, sets the dial/mode, and probes by reading the
+/// frequency back; for serial PTT it opens the control line; for VOX `cat_ok` is
+/// `None` (not applicable). Mirrors WSJT-X's Test CAT.
+fn open_rig(t: &Transport, dial_hz: u64, mode: &str) -> RigOpen {
+    match t.ptt_method.as_str() {
+        // CAT PTT: control + keying both over rigctld.
+        "cat" if t.rig_model != 0 => open_cat(t, dial_hz, mode, PttMode::Cat),
+        "cat" => (
+            Rig::vox(),
+            None,
+            Some(false),
+            "CAT selected but no rig model is set — pick your rig in Settings.".to_string(),
+        ),
+        // Serial-line PTT (RTS/DTR). Keying owns the serial port directly, so we don't
+        // also launch rigctld on it (that would fight for the same port). A rig that
+        // needs CAT freq/mode control AND a serial PTT line should key via CAT or VOX.
+        "rts" => probe_serial(&t.serial_port, SerialLine::Rts),
+        "dtr" => probe_serial(&t.serial_port, SerialLine::Dtr),
+        // VOX: the rig is keyed by its own VOX. But if a CAT rig is configured we STILL
+        // open the control channel so freq/mode track the section — control is
+        // INDEPENDENT of keying (the WSJT-X model). THIS is the fix for "the rig doesn't
+        // change mode when I move between sections": before, a CAT rig keyed by VOX got
+        // no `M`/`F` command at all because CAT was fused to the PTT method. (Matched
+        // explicitly, not via the catch-all, so a typo'd/legacy ptt_method string
+        // degrades safely to pure VOX below rather than silently grabbing the port.)
+        "vox" if t.rig_model != 0 => open_cat(t, dial_hz, mode, PttMode::Vox),
+        _ => (
+            Rig::vox(),
+            None,
+            None,
+            "VOX — no CAT; the rig is keyed by transmit audio.".to_string(),
+        ),
+    }
+}
+
+/// Open a CAT control channel via the bundled `rigctld` (launching it, or sharing one
+/// already running), set the dial/mode, and probe it — layering `ptt_mode` on top so
+/// keying (CAT vs VOX) stays independent of control. Used for BOTH a CAT-PTT rig and a
+/// VOX-keyed rig that still has CAT freq/mode control.
+fn open_cat(t: &Transport, dial_hz: u64, mode: &str, ptt_mode: PttMode) -> RigOpen {
+    let addr = format!("127.0.0.1:{}", t.rigctld_port);
+    if t.broker_self_port == Some(t.rigctld_port) {
+        // Misconfig: our own CAT broker and the launched rigctld want the same port.
+        // Don't connect to ourselves, and don't try to spawn (it can't bind) — tell the
+        // operator to fix the ports.
+        return (
+            Rig::vox(),
+            None,
+            Some(false),
+            format!(
+                "CAT broker and rigctld are both on :{} — give them different ports, or turn the broker off.",
+                t.rigctld_port
+            ),
+        );
+    }
+    if crate::rigctld_server::probe_rigctld(&addr, Duration::from_millis(400)) {
+        // Auto-coexist: a rigctld is ALREADY here (e.g. WSJT-X launched one). Connect
+        // THROUGH it instead of fighting for the serial port.
+        let mut rig = Rig::with_control(Some(addr.clone()), ptt_mode);
+        let _ = rig.set_freq(dial_hz);
+        let _ = rig.set_mode(mode, passband_for(mode));
+        let (ok, detail) = probe_cat(&mut rig, t.rigctld_port);
+        return (
+            rig,
+            None, // we didn't spawn it — leave the existing daemon alone
+            ok,
+            format!(
+                "Sharing the rigctld already on :{} — {detail}",
+                t.rigctld_port
+            ),
+        );
+    }
+    // A network rig (Flex/SmartSDR or a remote rig) → point rigctld at host:port over TCP
+    // (no serial device, no baud); else the serial port + baud as before.
+    let (rig_target, network) = if t.is_network() {
+        (t.rig_addr.as_str(), true)
+    } else {
+        (t.serial_port.as_str(), false)
+    };
+    match spawn_rigctld(t.rig_model, rig_target, t.baud, t.rigctld_port, network) {
+        Ok(proc) => {
+            // Give the daemon a moment to bind its TCP port before connecting.
+            std::thread::sleep(Duration::from_millis(700));
+            let mut rig = Rig::with_control(Some(addr), ptt_mode);
+            let _ = rig.set_freq(dial_hz);
+            let _ = rig.set_mode(mode, passband_for(mode));
+            let (ok, detail) = probe_cat(&mut rig, t.rigctld_port);
+            (rig, Some(proc), ok, detail)
+        }
+        Err(e) => (
+            Rig::vox(),
+            None,
+            Some(false),
+            format!("Could not launch the bundled rigctld (Hamlib): {e}"),
+        ),
+    }
+}
+
+/// Probe a CAT rig by reading its frequency, mapping failures to a concrete,
+/// operator-actionable message (rigctld unreachable vs. rig not answering).
+fn probe_cat(rig: &mut Rig, port: u16) -> (Option<bool>, String) {
+    match rig.read_freq() {
+        Ok(hz) => (
+            Some(true),
+            format!("Connected — {:.3} MHz", hz as f64 / 1e6),
+        ),
+        Err(e) if e.kind() == std::io::ErrorKind::ConnectionRefused => (
+            Some(false),
+            format!("rigctld is not reachable on 127.0.0.1:{port}."),
+        ),
+        Err(e) => (Some(false), format!("CAT error: {e}")),
+    }
+}
+
+/// Build a serial-PTT rig and verify the control line opens (unkeyed = safe).
+fn probe_serial(port: &str, line: SerialLine) -> RigOpen {
+    let mut rig = Rig::serial(port, line);
+    let shown = if port.is_empty() {
+        "(no port set)"
+    } else {
+        port
+    };
+    let (ok, detail) = match rig.ptt(false) {
+        Ok(()) => (Some(true), format!("Serial {line:?} PTT on {shown}")),
+        Err(e) => (
+            Some(false),
+            format!("Could not open serial port {shown}: {e}"),
+        ),
+    };
+    (rig, None, ok, detail)
+}
+
+/// Re-probe the *current* rig (the Test-CAT button) without rebuilding it, so it
+/// doesn't fight the running rigctld for the serial port.
+fn reprobe(rig: &mut Rig, t: &Transport) -> (Option<bool>, String) {
+    match t.ptt_method.as_str() {
+        "cat" if t.rig_model != 0 => probe_cat_or_explain(rig, t.rigctld_port),
+        "cat" => (
+            Some(false),
+            "CAT selected but no rig model is set — pick your rig in Settings.".to_string(),
+        ),
+        "rts" | "dtr" => {
+            let shown = if t.serial_port.is_empty() {
+                "(no port set)"
+            } else {
+                &t.serial_port
+            };
+            match rig.ptt(false) {
+                Ok(()) => (Some(true), format!("Serial PTT on {shown}")),
+                Err(e) => (
+                    Some(false),
+                    format!("Could not open serial port {shown}: {e}"),
+                ),
+            }
+        }
+        // VOX with a CAT rig configured: keying is VOX, but CAT control is live, so the
+        // Test-CAT button must probe the (real) control channel — not report "no CAT".
+        "vox" if t.rig_model != 0 => probe_cat_or_explain(rig, t.rigctld_port),
+        _ => (None, "VOX — no CAT.".to_string()),
+    }
+}
+
+/// Probe the live rig's CAT channel — but if it has NO control channel (open_cat fell
+/// back to a control-less rig: serial-port conflict, or rigctld failed to launch),
+/// `read_freq` would return a misleading "not a CAT rig" error. Detect that up front
+/// and explain the real cause instead.
+fn probe_cat_or_explain(rig: &mut Rig, port: u16) -> (Option<bool>, String) {
+    if rig.has_control() {
+        probe_cat(rig, port)
+    } else {
+        (
+            Some(false),
+            "CAT rig configured, but the control channel didn't open — check the rig model, \
+             serial port, and that the bundled rigctld could start (or a port conflict)."
+                .to_string(),
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::backend::MockBackend;
+
+    #[test]
+    fn tier_mode_maps_each_tier() {
+        assert_eq!(tier_mode(Tier::Ft1), "FT1");
+        assert_eq!(tier_mode(Tier::Dx1), "DX1");
+        assert_eq!(tier_mode(Tier::Ft8), "FT8");
+        assert_eq!(tier_mode(Tier::Ft4), "FT4");
+    }
+
+    #[test]
+    fn build_decode_carries_decode_fields() {
+        let d = build_decode("CQ W1AW FN31", -7, 0.1, 1200.0, "FT8", 5000, false);
+        assert_eq!(d.message, "CQ W1AW FN31");
+        assert_eq!(d.snr, -7);
+        assert_eq!(d.mode, "FT8");
+        assert_eq!(d.delta_freq, 1200);
+        assert!((d.delta_time - 0.1).abs() < 1e-6);
+        assert_eq!(d.time_ms, 5000);
+        assert!(d.new && !d.off_air);
+    }
+
+    #[test]
+    fn build_spot_reports_sender_at_rf_frequency() {
+        // Audio offset adds onto the dial: 14.074 MHz + 1200 Hz audio.
+        let spot = build_spot("CQ W1AW FN31", -7, 1200.0, "FT8", 14_074_000, 1_700_000_000)
+            .expect("a CQ has a sender");
+        assert_eq!(spot.call, "W1AW");
+        assert_eq!(spot.freq_hz, 14_074_000 + 1200);
+        assert_eq!(spot.snr, -7);
+        assert_eq!(spot.mode, "FT8");
+        assert_eq!(spot.time_secs, 1_700_000_000);
+    }
+
+    #[test]
+    fn build_spot_skips_senderless_text() {
+        // Free text (no `de` callsign) is never reported to PSK Reporter.
+        assert!(build_spot("thanks for the qso", -7, 1200.0, "FT8", 14_074_000, 0).is_none());
+    }
+
+    fn test_settings() -> Settings {
+        Settings {
+            ptt_method: "cat".to_string(),
+            rig_model: 1035,
+            serial_port: "/dev/ttyUSB0".to_string(),
+            baud: 38400,
+            rigctld_port: 4532,
+            audio_in: "USB Audio CODEC".to_string(),
+            audio_out: "USB Audio CODEC".to_string(),
+            tx_level: 0.8,
+            ..Settings::default()
+        }
+    }
+
+    #[test]
+    fn transport_from_settings_maps_fields() {
+        let t = Transport::from_settings(&test_settings());
+        assert_eq!(t.ptt_method, "cat");
+        assert_eq!(t.rig_model, 1035);
+        assert_eq!(t.serial_port, "/dev/ttyUSB0");
+        assert_eq!(t.baud, 38400);
+        assert_eq!(t.rigctld_port, 4532);
+        assert_eq!(t.audio_in, "USB Audio CODEC");
+        assert_eq!(t.audio_out, "USB Audio CODEC");
+    }
+
+    #[test]
+    fn transport_rig_differs_on_cat_changes_not_audio() {
+        let base = Transport::from_settings(&test_settings());
+        // Identical → no rig rebuild.
+        assert!(!base.rig_differs(&base.clone()));
+
+        // Each CAT-affecting field triggers a rebuild ("CAT reconnects on Save").
+        let mutations: [fn(&mut Settings); 5] = [
+            |s| s.ptt_method = "vox".to_string(),
+            |s| s.rig_model = 311,
+            |s| s.serial_port = "/dev/ttyUSB1".to_string(),
+            |s| s.baud = 19200,
+            |s| s.rigctld_port = 4533,
+        ];
+        for mutate in mutations {
+            let mut s = test_settings();
+            mutate(&mut s);
+            assert!(
+                base.rig_differs(&Transport::from_settings(&s)),
+                "a CAT-affecting change should rebuild the rig"
+            );
+        }
+
+        // An audio-only change must NOT rebuild the rig.
+        let mut s = test_settings();
+        s.audio_in = "Other Card".to_string();
+        assert!(!base.rig_differs(&Transport::from_settings(&s)));
+    }
+
+    #[test]
+    fn transport_monitor_differs_on_monitor_settings_only() {
+        let base = Transport::from_settings(&test_settings());
+        assert!(!base.monitor_differs(&base.clone()));
+
+        // Each monitor field flags a change (drives an in-place reconfigure).
+        let mutations: [fn(&mut Settings); 3] = [
+            |s| s.monitor_enabled = true,
+            |s| s.monitor_device = "Headphones".to_string(),
+            |s| s.monitor_level = 0.9,
+        ];
+        for mutate in mutations {
+            let mut s = test_settings();
+            mutate(&mut s);
+            assert!(base.monitor_differs(&Transport::from_settings(&s)));
+        }
+
+        // A monitor change must NOT rebuild the rig OR re-open the capture streams
+        // (the decode path never restarts for a monitor toggle).
+        let mut s = test_settings();
+        s.monitor_enabled = true;
+        s.monitor_device = "Headphones".to_string();
+        let want = Transport::from_settings(&s);
+        assert!(
+            !base.rig_differs(&want),
+            "monitor change never rebuilds the rig"
+        );
+        assert!(
+            !base.audio_differs(&want),
+            "monitor change never re-opens the capture/TX streams"
+        );
+    }
+
+    #[test]
+    fn transport_audio_differs_on_device_change_only() {
+        let base = Transport::from_settings(&test_settings());
+        assert!(!base.audio_differs(&base.clone()));
+
+        let mut s = test_settings();
+        s.audio_out = "Speakers".to_string();
+        assert!(base.audio_differs(&Transport::from_settings(&s)));
+
+        // A rig-only change must NOT re-open the sound card.
+        let mut s = test_settings();
+        s.rig_model = 1;
+        assert!(!base.audio_differs(&Transport::from_settings(&s)));
+    }
+
+    // ---- the full loop core (RadioLoop::step), driven hardware-free ----
+
+    fn loop_state() -> RadioLoop {
+        RadioLoop::new(
+            Transport::from_cfg(&RadioConfig::default()),
+            None,
+            &RadioConfig::default(),
+        )
+    }
+    fn no_sinks() -> Sinks<'static> {
+        Sinks {
+            wsjtx: None,
+            psk: None,
+            cfg_dial_hz: 14_090_500,
+        }
+    }
+    fn mock_reopen_audio() -> impl FnMut(&Transport) -> Result<MockBackend, String> {
+        |_t: &Transport| Ok(MockBackend::new())
+    }
+    fn mock_reopen_rig() -> impl FnMut(&Transport, u64, &str) -> RigOpen {
+        |_t: &Transport, _d: u64, _m: &str| (Rig::vox(), None, None, String::new())
+    }
+
+    #[test]
+    fn step_keys_ptt_and_plays_on_a_tx_slot() {
+        let engine = Arc::new(Mutex::new(Engine::new("W9XYZ", "EN37", 0)));
+        engine.lock().unwrap().broadcast("CQ TEST W9XYZ EN37");
+        let mut backend = MockBackend::new();
+        let mut rig = Rig::vox();
+        let mut state = loop_state();
+        let (sinks, mut ra, mut rr) = (no_sinks(), mock_reopen_audio(), mock_reopen_rig());
+
+        // now = 0 → slot 0 (even); a tx_parity-0 engine transmits there.
+        state
+            .step(
+                &engine,
+                &mut backend,
+                &mut rig,
+                &sinks,
+                0.0,
+                &mut ra,
+                &mut rr,
+            )
+            .unwrap();
+
+        assert!(rig.keyed, "PTT keyed on the TX slot");
+        assert!(state.tx_until_ms.is_some(), "TX hold deadline set");
+        assert!(!backend.played.is_empty(), "TX audio played to the backend");
+    }
+
+    #[test]
+    fn step_drops_ptt_after_the_hold_deadline() {
+        let engine = Arc::new(Mutex::new(Engine::new("W9XYZ", "EN37", 0)));
+        let mut backend = MockBackend::new();
+        let mut rig = Rig::vox();
+        let _ = rig.ptt(true); // pretend we are mid-over
+        let mut state = loop_state();
+        state.tx_until_ms = Some(500.0);
+        let (sinks, mut ra, mut rr) = (no_sinks(), mock_reopen_audio(), mock_reopen_rig());
+
+        // now past the hold deadline → PTT released.
+        state
+            .step(
+                &engine,
+                &mut backend,
+                &mut rig,
+                &sinks,
+                1000.0,
+                &mut ra,
+                &mut rr,
+            )
+            .unwrap();
+
+        assert!(!rig.keyed, "PTT released after the hold deadline");
+        assert!(state.tx_until_ms.is_none());
+    }
+
+    #[test]
+    fn slot_clock_steers_to_utc_with_the_measured_offset() {
+        // The measured PC-clock-vs-UTC offset must actually steer the slot clock
+        // (not just be displayed), or TX/RX land off the UTC grid on a skewed PC.
+        let now = 101_000.0; // arbitrary; FT1 SlotClock has 4 s (4000 ms) slots
+        let next_ms = |offset_ms: i64| -> u64 {
+            let engine = Arc::new(Mutex::new(Engine::new("W9XYZ", "EN37", 0)));
+            engine.lock().unwrap().set_clock_offset_ms(Some(offset_ms));
+            let mut backend = MockBackend::new();
+            let mut rig = Rig::vox();
+            let mut state = loop_state();
+            let (sinks, mut ra, mut rr) = (no_sinks(), mock_reopen_audio(), mock_reopen_rig());
+            // First step picks the offset up off the engine; second applies it.
+            state
+                .step(
+                    &engine,
+                    &mut backend,
+                    &mut rig,
+                    &sinks,
+                    now,
+                    &mut ra,
+                    &mut rr,
+                )
+                .unwrap();
+            assert_eq!(state.clock_offset_ms, offset_ms, "offset read from engine");
+            state
+                .step(
+                    &engine,
+                    &mut backend,
+                    &mut rig,
+                    &sinks,
+                    now,
+                    &mut ra,
+                    &mut rr,
+                )
+                .unwrap();
+            // Bind out of the tail expression so the MutexGuard temporary drops
+            // before `engine` (the local) does — else the guard outlives its lock.
+            let next_slot_ms = engine.lock().unwrap().snapshot().radio.next_slot_ms;
+            next_slot_ms
+        };
+        // A 3 s clock skew shifts the next-slot countdown by 3 s (mod the 4 s slot)
+        // — proof the offset reaches the slot clock, not just the UI chip.
+        assert_ne!(
+            next_ms(0),
+            next_ms(3000),
+            "clock offset must move the slot grid"
+        );
+    }
+
+    #[test]
+    fn stop_tx_mid_over_hard_stops_immediately() {
+        // Mid-transmission (PTT keyed, hold deadline far in the future), the
+        // operator hits Stop TX (engine.halt_tx → tx disabled). The next loop
+        // iteration must cut it NOW: drop PTT, flush the queued audio, clear hold.
+        let engine = Arc::new(Mutex::new(Engine::new("W9XYZ", "EN37", 0)));
+        let mut backend = MockBackend::new();
+        let mut rig = Rig::vox();
+        let _ = rig.ptt(true);
+        let mut state = loop_state();
+        state.tx_until_ms = Some(9_999_999.0); // long hold — would NOT expire on its own
+        engine.lock().unwrap().halt_tx(); // operator hit Stop TX
+        let (sinks, mut ra, mut rr) = (no_sinks(), mock_reopen_audio(), mock_reopen_rig());
+
+        state
+            .step(
+                &engine,
+                &mut backend,
+                &mut rig,
+                &sinks,
+                100.0,
+                &mut ra,
+                &mut rr,
+            )
+            .unwrap();
+
+        assert!(!rig.keyed, "PTT dropped immediately on Stop TX");
+        assert!(state.tx_until_ms.is_none(), "TX hold cleared");
+        assert!(backend.flush_calls > 0, "queued TX audio was flushed");
+    }
+
+    #[test]
+    fn step_rebuilds_the_clock_on_a_tier_change() {
+        let engine = Arc::new(Mutex::new(Engine::new("W9XYZ", "EN37", 0)));
+        engine.lock().unwrap().set_tier(Tier::Ft8);
+        let mut backend = MockBackend::new();
+        let mut rig = Rig::vox();
+        let mut state = loop_state();
+        assert_eq!(state.cur_tier, Tier::Ft1);
+        let (sinks, mut ra, mut rr) = (no_sinks(), mock_reopen_audio(), mock_reopen_rig());
+
+        state
+            .step(
+                &engine,
+                &mut backend,
+                &mut rig,
+                &sinks,
+                0.0,
+                &mut ra,
+                &mut rr,
+            )
+            .unwrap();
+
+        assert_eq!(
+            state.cur_tier,
+            Tier::Ft8,
+            "loop followed the tier switch (clock + capture ring rebuilt)"
+        );
+    }
+
+    #[test]
+    fn step_tunes_carrier_and_skips_the_slot() {
+        let engine = Arc::new(Mutex::new(Engine::new("W9XYZ", "EN37", 0)));
+        engine.lock().unwrap().set_tune(true);
+        let mut backend = MockBackend::new();
+        let mut rig = Rig::vox();
+        let mut state = loop_state();
+        let (sinks, mut ra, mut rr) = (no_sinks(), mock_reopen_audio(), mock_reopen_rig());
+
+        state
+            .step(
+                &engine,
+                &mut backend,
+                &mut rig,
+                &sinks,
+                0.0,
+                &mut ra,
+                &mut rr,
+            )
+            .unwrap();
+
+        assert!(rig.keyed, "tune keys a steady carrier");
+        assert!(!backend.played.is_empty(), "carrier audio played");
+        assert!(state.tuning_keyed);
+        assert!(
+            state.last_slot.is_none(),
+            "slot decode skipped while tuning"
+        );
+    }
+
+    fn cat_transport(rigctld_port: u16, broker_self_port: Option<u16>) -> Transport {
+        Transport {
+            ptt_method: "cat".to_string(),
+            rig_model: 1035,
+            serial_port: "/dev/ttyUSB0".to_string(),
+            baud: 38400,
+            rig_conn: "serial".to_string(),
+            rig_addr: String::new(),
+            rigctld_port,
+            broker_self_port,
+            audio_in: String::new(),
+            audio_out: String::new(),
+            voice_mic_device: String::new(),
+            tx_level: 0.9,
+            monitor_enabled: false,
+            monitor_device: String::new(),
+            monitor_level: 0.5,
+        }
+    }
+
+    #[test]
+    fn open_rig_flags_broker_port_conflict() {
+        // CAT broker and the launched rigctld both on the same port → no self-connect,
+        // no doomed spawn; a clear message instead. Pure (no I/O before the guard).
+        let t = cat_transport(4532, Some(4532));
+        let (_rig, proc, ok, detail) = open_rig(&t, 14_074_000, "USB");
+        assert!(proc.is_none());
+        assert_eq!(ok, Some(false));
+        assert!(detail.contains("different ports"), "got: {detail}");
+    }
+
+    #[test]
+    fn open_rig_coexists_with_an_existing_rigctld() {
+        use crate::rigctld_server::RigBackend;
+        struct CoexistRig(std::sync::Mutex<u64>);
+        impl RigBackend for CoexistRig {
+            fn freq_hz(&self) -> u64 {
+                *self.0.lock().unwrap()
+            }
+            fn mode(&self) -> (String, u32) {
+                ("USB".into(), 2700)
+            }
+            fn ptt(&self) -> bool {
+                false
+            }
+            fn set_freq(&self, hz: u64) -> bool {
+                *self.0.lock().unwrap() = hz;
+                true
+            }
+            fn set_mode(&self, _m: &str, _p: u32) -> bool {
+                true
+            }
+            fn set_ptt(&self, _on: bool) -> bool {
+                true
+            }
+        }
+
+        // Stand up a broker that plays the role of an already-running (foreign)
+        // rigctld on some port.
+        let backend: Arc<dyn RigBackend> = Arc::new(CoexistRig(std::sync::Mutex::new(14_074_000)));
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || crate::rigctld_server::serve(listener, backend));
+
+        // open_rig must SHARE it (no spawn), not fight for the serial port.
+        let t = cat_transport(port, None);
+        let (_rig, proc, ok, detail) = open_rig(&t, 14_074_000, "USB");
+        assert!(
+            proc.is_none(),
+            "shared the existing rigctld — did not spawn one"
+        );
+        assert_eq!(ok, Some(true), "connected through it: {detail}");
+        assert!(detail.contains("Sharing"), "got: {detail}");
+    }
+
+    #[test]
+    fn step_reopens_rig_when_settings_change() {
+        let engine = Arc::new(Mutex::new(Engine::new("W9XYZ", "EN37", 0)));
+        engine.lock().unwrap().apply_settings(Settings {
+            ptt_method: "cat".to_string(),
+            rig_model: 1035,
+            ..Settings::default()
+        });
+        let mut backend = MockBackend::new();
+        let mut rig = Rig::vox();
+        let mut state = loop_state(); // applied = defaults (vox / model 0)
+        let sinks = no_sinks();
+        let reopened = std::cell::Cell::new(false);
+        let mut ra = mock_reopen_audio();
+        let mut rr = |_t: &Transport, _d: u64, _m: &str| {
+            reopened.set(true);
+            (Rig::vox(), None, None, "test".to_string())
+        };
+
+        state
+            .step(
+                &engine,
+                &mut backend,
+                &mut rig,
+                &sinks,
+                0.0,
+                &mut ra,
+                &mut rr,
+            )
+            .unwrap();
+
+        assert!(
+            reopened.get(),
+            "a rig-affecting Settings change triggers reopen_rig"
+        );
+    }
+
+    // ---- voice-mic recording source (the pure predicate is tested in backend.rs) ----
+
+    /// Helper: an engine with a configured voice mic and a voice-message recording started.
+    fn recording_engine(voice_mic_device: &str) -> Arc<Mutex<Engine>> {
+        let engine = Arc::new(Mutex::new(Engine::new("W9XYZ", "EN37", 0)));
+        {
+            let mut eng = engine.lock().unwrap();
+            eng.apply_settings(Settings {
+                voice_mic_device: voice_mic_device.to_string(),
+                ..Settings::default()
+            });
+            eng.start_recording();
+        }
+        engine
+    }
+
+    #[test]
+    fn recording_with_a_voice_mic_feeds_the_recorder_from_the_mic_not_the_band() {
+        let engine = recording_engine("USB Mic");
+        let mut backend = MockBackend::new();
+        backend.queue_capture(vec![0.9, 0.9, 0.9]); // shared input = the rig codec / the band
+        backend.queue_voice_capture(vec![0.1, 0.2, 0.3]); // the operator's actual mic
+        let mut rig = Rig::vox();
+        let mut state = loop_state();
+        let (sinks, mut ra, mut rr) = (no_sinks(), mock_reopen_audio(), mock_reopen_rig());
+
+        state
+            .step(
+                &engine,
+                &mut backend,
+                &mut rig,
+                &sinks,
+                0.0,
+                &mut ra,
+                &mut rr,
+            )
+            .unwrap();
+
+        assert_eq!(
+            backend.voice_mic_calls,
+            vec![Some("USB Mic".to_string())],
+            "opened the configured mic exactly once"
+        );
+        assert!(state.voice_mic_open);
+        let recorded = engine.lock().unwrap().stop_recording();
+        assert_eq!(
+            recorded,
+            vec![0.1, 0.2, 0.3],
+            "the recording captured the mic, never the shared band audio"
+        );
+    }
+
+    #[test]
+    fn audio_rebuild_mid_recording_reopens_the_mic_on_the_new_backend() {
+        // Review MAJOR: swapping the backend (audio_in/out change mid-recording)
+        // left voice_mic_open stale-true — the recorder then read the NEW
+        // backend's nonexistent mic and captured silence for the rest of the
+        // recording, with no error. The Ok arm now resets the flag so the
+        // rising edge re-opens the mic on the fresh backend.
+        let engine = recording_engine("USB Mic");
+        let mut backend = MockBackend::new();
+        backend.queue_voice_capture(vec![0.1, 0.2]);
+        let mut rig = Rig::vox();
+        let mut state = loop_state();
+        let (sinks, mut ra, mut rr) = (no_sinks(), mock_reopen_audio(), mock_reopen_rig());
+        state
+            .step(
+                &engine,
+                &mut backend,
+                &mut rig,
+                &sinks,
+                0.0,
+                &mut ra,
+                &mut rr,
+            )
+            .unwrap();
+        assert!(state.voice_mic_open, "mic live on the first backend");
+
+        // The operator changes the audio device mid-recording → rebuild.
+        engine.lock().unwrap().apply_settings(Settings {
+            voice_mic_device: "USB Mic".to_string(),
+            audio_in: "Different Device".to_string(),
+            ..Settings::default()
+        });
+        engine.lock().unwrap().start_recording(); // apply_settings reset the engine's flag? keep recording on
+        let mut fresh = MockBackend::new();
+        fresh.queue_voice_capture(vec![0.5, 0.6]);
+        let mut ra2 = {
+            let fresh = std::cell::RefCell::new(Some(fresh));
+            move |_t: &Transport| -> Result<MockBackend, String> {
+                Ok(fresh.borrow_mut().take().expect("one rebuild"))
+            }
+        };
+        state
+            .step(
+                &engine,
+                &mut backend,
+                &mut rig,
+                &sinks,
+                0.0,
+                &mut ra2,
+                &mut rr,
+            )
+            .unwrap();
+        assert!(
+            state.voice_mic_open,
+            "mic re-opened on the REBUILT backend (stale flag would fake this — check calls)"
+        );
+        assert_eq!(
+            backend.voice_mic_calls,
+            vec![Some("USB Mic".to_string())],
+            "the swapped-in backend saw its own mic open (not inherited state)"
+        );
+        let recorded = engine.lock().unwrap().stop_recording();
+        assert!(
+            !recorded.is_empty(),
+            "recording keeps receiving real audio across the rebuild — never silence"
+        );
+    }
+
+    #[test]
+    fn recording_without_a_voice_mic_records_from_the_shared_input() {
+        let engine = Arc::new(Mutex::new(Engine::new("W9XYZ", "EN37", 0)));
+        engine.lock().unwrap().start_recording(); // no voice_mic_device configured
+        let mut backend = MockBackend::new();
+        backend.queue_capture(vec![0.5, 0.6]);
+        backend.queue_voice_capture(vec![0.1]); // must be ignored — no mic stream
+        let mut rig = Rig::vox();
+        let mut state = loop_state();
+        let (sinks, mut ra, mut rr) = (no_sinks(), mock_reopen_audio(), mock_reopen_rig());
+
+        state
+            .step(
+                &engine,
+                &mut backend,
+                &mut rig,
+                &sinks,
+                0.0,
+                &mut ra,
+                &mut rr,
+            )
+            .unwrap();
+
+        assert!(
+            backend.voice_mic_calls.is_empty(),
+            "no configured mic → never opens a second input stream"
+        );
+        assert!(!state.voice_mic_open);
+        assert_eq!(engine.lock().unwrap().stop_recording(), vec![0.5, 0.6]);
+    }
+
+    #[test]
+    fn voice_mic_open_failure_falls_back_to_the_shared_input_and_surfaces_it() {
+        let engine = recording_engine("Missing Mic");
+        let mut backend = MockBackend::new();
+        backend.voice_mic_fail = true; // the configured mic can't open
+        backend.queue_capture(vec![0.9, 0.8, 0.7]); // the shared input (the fallback)
+        backend.queue_voice_capture(vec![0.1, 0.2]); // must NOT be used (mic never opened)
+        let mut rig = Rig::vox();
+        let mut state = loop_state();
+        let (sinks, mut ra, mut rr) = (no_sinks(), mock_reopen_audio(), mock_reopen_rig());
+
+        state
+            .step(
+                &engine,
+                &mut backend,
+                &mut rig,
+                &sinks,
+                0.0,
+                &mut ra,
+                &mut rr,
+            )
+            .unwrap();
+
+        assert!(!state.voice_mic_open, "a failed open is never marked live");
+        assert!(
+            state.voice_mic_failed,
+            "the failure is latched, which also suppresses a per-loop reopen storm"
+        );
+        assert!(
+            matches!(state.err_owner, super::ErrOwner::VoiceMic),
+            "the surfaced notice is owned by the voice-mic writer"
+        );
+        let recorded = engine.lock().unwrap().stop_recording();
+        assert_eq!(
+            recorded,
+            vec![0.9, 0.8, 0.7],
+            "a failed mic falls back to the shared input — never records silence"
+        );
+        let err = engine.lock().unwrap().snapshot().radio.audio_error;
+        assert!(
+            err.as_deref()
+                .unwrap_or("")
+                .contains("Voice mic could not open"),
+            "the failure is surfaced on the audio-status line, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn stopping_a_recording_closes_the_voice_mic_stream() {
+        let engine = recording_engine("USB Mic");
+        let mut backend = MockBackend::new();
+        backend.queue_capture(vec![0.9]);
+        backend.queue_voice_capture(vec![0.1]);
+        backend.queue_capture(vec![0.9]); // second step's shared frame
+        let mut rig = Rig::vox();
+        let mut state = loop_state();
+        let (sinks, mut ra, mut rr) = (no_sinks(), mock_reopen_audio(), mock_reopen_rig());
+
+        // Step 1: recording in progress → the mic opens.
+        state
+            .step(
+                &engine,
+                &mut backend,
+                &mut rig,
+                &sinks,
+                0.0,
+                &mut ra,
+                &mut rr,
+            )
+            .unwrap();
+        assert!(state.voice_mic_open);
+
+        // Operator stops recording; the next step tears the mic stream down.
+        let _ = engine.lock().unwrap().stop_recording();
+        state
+            .step(
+                &engine,
+                &mut backend,
+                &mut rig,
+                &sinks,
+                20.0,
+                &mut ra,
+                &mut rr,
+            )
+            .unwrap();
+
+        assert!(
+            !state.voice_mic_open,
+            "the mic stream closed once recording ended"
+        );
+        assert_eq!(
+            backend.voice_mic_calls,
+            vec![Some("USB Mic".to_string()), None],
+            "opened on the rising edge, closed on the falling edge"
+        );
+    }
+
+    #[test]
+    fn audio_rebuild_mid_over_cuts_the_over_instead_of_holding_a_dead_carrier() {
+        // Mid-transmission (PTT keyed, hold deadline far in the future) the operator
+        // changes the audio device and saves. The backend rebuild discards the
+        // queued modem samples; if it left PTT keyed with tx_until_ms still set, the
+        // rig would hold a DEAD unmodulated carrier for the rest of the over while
+        // the sequencer counted it as sent. The rebuild must end the over cleanly
+        // first: unkey and clear the hold. (Mirrors the rig-rebuild path.)
+        let engine = Arc::new(Mutex::new(Engine::new("W9XYZ", "EN37", 0)));
+        let mut backend = MockBackend::new();
+        let mut rig = Rig::vox();
+        let _ = rig.ptt(true); // pretend we are mid-over
+        let mut state = loop_state();
+        state.tx_until_ms = Some(9_999_999.0); // long hold — would NOT expire on its own
+
+        // The operator picks a different output device → audio_differs → rebuild.
+        // (Rig fields stay at the defaults, so this is an audio-only change and does
+        // NOT go down the already-guarded rig-rebuild path.)
+        engine.lock().unwrap().apply_settings(Settings {
+            audio_out: "Different Speakers".to_string(),
+            ..Settings::default()
+        });
+        let (sinks, mut ra, mut rr) = (no_sinks(), mock_reopen_audio(), mock_reopen_rig());
+
+        state
+            .step(
+                &engine,
+                &mut backend,
+                &mut rig,
+                &sinks,
+                100.0,
+                &mut ra,
+                &mut rr,
+            )
+            .unwrap();
+
+        assert!(
+            !rig.keyed,
+            "the over was cut before the backend swap — no keyed dead carrier"
+        );
+        assert!(
+            state.tx_until_ms.is_none(),
+            "the TX hold was cleared so the loop no longer thinks it's transmitting"
+        );
+    }
+
+    #[test]
+    fn poll_read_freq_failure_trips_the_cat_circuit_breaker() {
+        // A half-open CAT link (writes succeed, replies never arrive) makes every
+        // read_freq block to the 2.5 s deadline and error. Without a runtime trip
+        // the poll guard (cat_ok != Some(false)) never fires and the slot loop
+        // blocks ~2.5 s every cycle, keying overs seconds late. A read_freq failure
+        // on a REAL CAT rig must set cat_ok = Some(false) so the guard disables
+        // further blocking polls until a successful command / reprobe.
+        let engine = Arc::new(Mutex::new(Engine::new("W9XYZ", "EN37", 0)));
+        let mut backend = MockBackend::new();
+        // A CAT rig pointed at a definitely-closed port: has_control() is true but
+        // every command errors (connection refused) — standing in for a mute link.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let dead_port = listener.local_addr().unwrap().port();
+        drop(listener); // free the port so a connect is refused
+        let mut rig = Rig::rigctld(&format!("127.0.0.1:{dead_port}"));
+        let mut state = loop_state();
+        state.last_rig_poll = -1000.0; // due for a read-back poll at now = 0
+        assert_ne!(
+            state.cat_ok,
+            Some(false),
+            "precondition: the breaker has not tripped yet"
+        );
+        let (sinks, mut ra, mut rr) = (no_sinks(), mock_reopen_audio(), mock_reopen_rig());
+
+        state
+            .step(
+                &engine,
+                &mut backend,
+                &mut rig,
+                &sinks,
+                0.0,
+                &mut ra,
+                &mut rr,
+            )
+            .unwrap();
+
+        assert_eq!(
+            state.cat_ok,
+            Some(false),
+            "a failed dial read-back on a CAT rig trips the breaker so the loop \
+             stops blocking on a dead read every cycle"
+        );
+    }
+
+    #[test]
+    fn field_day_club_push_fires_without_wsjtx_or_psk_sinks() {
+        // Field Day club logging (N3FJP) with WSJT-X UDP and PSK Reporter both OFF
+        // (the shipped defaults). A completed FD QSO must still reach the club
+        // master log — the push used to be nested UNDER the WSJT-X/PSK gate, so it
+        // never ran when both sinks were off. Stand up a listener as the N3FJP box
+        // and prove the spawned push connects to it.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let engine = Arc::new(Mutex::new(Engine::new("W9XYZ", "EN37", 0)));
+        {
+            let mut eng = engine.lock().unwrap();
+            eng.apply_settings(Settings {
+                fd_class: "1D".to_string(),
+                fd_section: "WI".to_string(),
+                n3fjp_host: "127.0.0.1".to_string(),
+                n3fjp_port: port,
+                ..Settings::default()
+            });
+            eng.set_mode("fieldday-run").unwrap();
+            assert!(eng.fd_log_manual("K1ABC", "2A", "EMA", "CW").unwrap());
+        }
+
+        let mut backend = MockBackend::new();
+        let mut rig = Rig::vox();
+        let mut state = loop_state();
+        // Sinks OFF — the pre-fix bug means the club push is never reached.
+        let (sinks, mut ra, mut rr) = (no_sinks(), mock_reopen_audio(), mock_reopen_rig());
+
+        state
+            .step(
+                &engine,
+                &mut backend,
+                &mut rig,
+                &sinks,
+                0.0,
+                &mut ra,
+                &mut rr,
+            )
+            .unwrap();
+
+        // The push runs on a detached thread; wait (bounded) for it to connect.
+        listener.set_nonblocking(true).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        let mut connected = false;
+        while std::time::Instant::now() < deadline {
+            match listener.accept() {
+                Ok(_) => {
+                    connected = true;
+                    break;
+                }
+                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+                Err(_) => break,
+            }
+        }
+        assert!(
+            connected,
+            "the N3FJP club push fired with WSJT-X and PSK sinks both off"
+        );
+        assert_eq!(
+            state.last_fd_qsos, 1,
+            "the FD cursor advanced past the pushed QSO"
+        );
+    }
+}

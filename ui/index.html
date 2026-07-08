@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en" data-theme="dark" data-layout="right" data-viewport="md">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- Apply persisted theme / layout / scale / pane widths before first paint
+         so there's no reflow flash on launch. The React hooks keep them in sync. -->
+    <script>
+      (function () {
+        try {
+          var d = document.documentElement
+          var t = localStorage.getItem('tempo-theme')
+          if (t === 'light' || t === 'dark' || t === 'amber') d.setAttribute('data-theme', t)
+          var l = localStorage.getItem('tempo-layout')
+          if (l === 'right' || l === 'top') d.setAttribute('data-layout', l)
+          var den = localStorage.getItem('nexus-density')
+          if (den === 'guided' || den === 'standard' || den === 'dense') d.setAttribute('data-density', den)
+          if (localStorage.getItem('nexus-motion') === 'reduce') d.setAttribute('data-motion', 'reduce')
+          // Auto-fit zoom from the screen when there's no saved preference — keep
+          // this logic in sync with pickInitialZoom() in src/useScale.ts.
+          var s = Number(localStorage.getItem('tempo-ui-scale'))
+          var zoom
+          if ([90, 100, 110, 125].indexOf(s) !== -1) {
+            zoom = s / 100
+          } else {
+            var w = window.innerWidth, h = window.innerHeight
+            var z = w >= 3400 ? 125 : w >= 1600 ? 110 : w >= 1200 ? 100 : 90
+            if (h < 820 && z > 100) z = 100
+            if (h < 720 && z > 90) z = 90
+            zoom = z / 100
+          }
+          d.style.setProperty('--ui-zoom', String(zoom))
+          // Initial size class from EFFECTIVE width (mirror classifyViewport() in
+          // src/useViewport.ts) so the first paint is already at the right breakpoint.
+          var ew = window.innerWidth / (zoom || 1)
+          d.setAttribute('data-viewport', ew < 768 ? 'xs' : ew < 1100 ? 'sm' : ew < 1600 ? 'md' : ew < 2400 ? 'lg' : 'xl')
+          var lw = Number(localStorage.getItem('tempo-left-rail-w'))
+          if (lw > 0) d.style.setProperty('--left-rail-w', lw + 'px')
+          var rw = Number(localStorage.getItem('tempo-right-rail-w'))
+          if (rw > 0) d.style.setProperty('--right-rail-w', rw + 'px')
+        } catch (e) {}
+      })()
+    </script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="theme-color" content="#0e151f" />
+    <title>Nexus — unified ham digital-ops nerve center</title>
+    <meta
+      name="description"
+      content="Nexus is a unified, native ham digital-operations app — FT8/FT4 decode, waterfall, spots, map, propagation, logbook, and awards in one place, plus Tempo two-way free-text calling."
+    />
+
+    <!-- Open Graph / social unfurl -->
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Nexus — unified ham digital-ops nerve center" />
+    <meta
+      property="og:description"
+      content="FT8/FT4 + waterfall + spots + map + propagation + logbook + awards in one native app, plus Tempo two-way free-text calling. Zero-config setup, automatic propagation intelligence."
+    />
+    <meta property="og:url" content="https://github.com/kd9taw/nexus" />
+    <meta
+      property="og:image"
+      content="https://raw.githubusercontent.com/kd9taw/nexus/main/docs/img/social-card.png"
+    />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Nexus — unified ham digital-ops nerve center" />
+    <meta
+      name="twitter:description"
+      content="FT8/FT4 + waterfall + spots + map + propagation + logbook + awards in one native app, plus Tempo two-way calling."
+    />
+    <meta
+      name="twitter:image"
+      content="https://raw.githubusercontent.com/kd9taw/nexus/main/docs/img/social-card.png"
+    />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

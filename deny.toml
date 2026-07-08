@@ -1,0 +1,54 @@
+# cargo-deny — supply-chain + license gate (CI: EmbarkStudios/cargo-deny-action).
+# Allow-list enumerated from the real dependency tree (default + `live` features,
+# 146 packages); copyleft (LGPL/BSL) appears only inside OR expressions so it is
+# intentionally NOT allowed. See tasks/specs/ci-quality-floor.md.
+
+[graph]
+# Check the whole graph including optional features (e.g. propagation `live`).
+all-features = true
+
+[advisories]
+version = 2
+# RustSec advisories are denied by default in v2; add IDs here only with a reason.
+ignore = []
+
+[licenses]
+version = 2
+confidence-threshold = 0.9
+allow = [
+    "GPL-3.0-or-later",      # this project
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "CDLA-Permissive-2.0",
+    "Unlicense",
+    # serialport (the CAT/serial layer). Weak FILE-level copyleft: MPL-2.0 is
+    # explicitly GPL-compatible (MPL §13/GPL-compat clause) and imposes nothing
+    # on this GPLv3 app beyond sharing changes to serialport's own files.
+    "MPL-2.0",
+]
+
+# unescaper declares the DEPRECATED slash expression "GPL-3.0/MIT", which the
+# SPDX parser rejects outright. Clarified to the modern equivalent; MIT (an
+# allowed branch of the OR) satisfies the policy.
+[[licenses.clarify]]
+crate = "unescaper"
+expression = "GPL-3.0-only OR MIT"
+license-files = []
+
+[bans]
+# Duplicate transitive versions are common and noisy — surface, don't fail (yet).
+multiple-versions = "warn"
+wildcards = "deny"
+# In-workspace `{ path = ... }` deps carry no version by design — they are not
+# the supply-chain wildcard this gate exists to catch.
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

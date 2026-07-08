@@ -1,0 +1,42 @@
+PathName "United Kingdom to Caracas"
+PathTXName "Caracas"
+Path.L_tx.lat 10.48
+Path.L_tx.lng -66.9
+TXAntFilePath "dipole_14mhz_10m_aagl.13"
+TXGOS 0.0
+PathRXName "Birmingham"
+Path.L_rx.lat 52.4862
+Path.L_rx.lng -1.8904
+RXAntFilePath "dipole_14mhz_10m_aagl.13"
+RXGOS 0.0
+AntennaOrientation "TX2RX"
+TXBearing 0.0
+RXBearing 0.0
+Path.year 2018
+Path.month 5
+Path.hour 2,4,6,8,10,12,14,16,18,20,22,24
+//Path.hour 12
+Path.SSN  10
+Path.frequency  14
+Path.txpower -10
+Path.BW 1.0
+Path.SNRr 31
+Path.Relr 90
+Path.SNRXXp 90
+Path.ManMadeNoise "RESIDENTIAL"
+Path.Modulation "ANALOG"
+Path.SorL "SHORTPATH"
+RptFilePath "Reports/"
+//RptFileFormat = "RPT_ESL | RPT_PR | RPT_SNR | RPT_BCR | RPT_ELE | RPT_GRW | RPT_LONG"
+RptFileFormat = "RPT_DUMPPATH"
+LL.lat 52.4862
+LL.lng -1.8904
+LR.lat 52.4862
+LR.lng -1.8904
+UL.lat 52.4862
+UL.lng -1.8904
+UR.lat 52.4862
+UR.lng -1.8904
+latinc 1.0
+lnginc 1.0
+DataFilePath "../Data/"

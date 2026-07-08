@@ -1,0 +1,59 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Nexus",
+  "mainBinaryName": "Nexus",
+  "version": "0.3.0",
+  "identifier": "com.kd9taw.tempo",
+  "build": {
+    "frontendDist": "../ui/dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "npm --prefix ui run dev",
+    "beforeBuildCommand": "npm --prefix ui run build"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "Nexus",
+        "label": "main",
+        "width": 1200,
+        "height": 720,
+        "minWidth": 800,
+        "minHeight": 560,
+        "resizable": true,
+        "fullscreen": false,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "Utility",
+    "publisher": "KD9TAW",
+    "copyright": "Copyright (C) 2026 KD9TAW. GPL-3.0-or-later.",
+    "shortDescription": "Unified ham digital-ops nerve center (FT8/FT4 + Tempo)",
+    "longDescription": "Nexus is a unified, native ham digital-operations nerve center — FT8/FT4 decode, waterfall, spots, map, propagation, logbook, and awards in one app, plus Tempo two-way free-text calling. It keeps the technical data a ham operator expects — SNR, audio offset, dT, dial freq/band/sideband, mode/tier, T/R + slot timing — as first-class information, and makes station setup and propagation intelligence automatic.",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": [
+      "resources/hamlib/*"
+    ],
+    "windows": {
+      "webviewInstallMode": {
+        "type": "offlineInstaller"
+      },
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    }
+  }
+}

@@ -1,0 +1,8 @@
+# Revisions git blame should skip (bulk, mechanical, non-semantic changes).
+# Enable locally with:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+#
+# Append the SHA of the one-time whole-repo `cargo fmt` sweep commit below
+# (the commit that introduced rustfmt.toml + reformatted ~150 files). It is
+# whitespace-only, so ignoring it keeps `git blame` pointing at real authorship.
+# <cargo-fmt-sweep-commit-sha>

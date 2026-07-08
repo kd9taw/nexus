@@ -1,0 +1,28 @@
+ITU-R HF propagation coefficient data
+======================================
+
+Files: COEFF01W.txt .. COEFF12W.txt, P1239-3_Decile_Factors.txt
+
+Source: the ITU-R Study Group 3 reference implementation of Recommendation
+ITU-R P.533 ("ITURHFProp"), https://github.com/ITU-R-Study-Group-3/ITU-R-HF
+(P533/Data/), copied verbatim.
+
+Provenance: the COEFF##W monthly files carry the CCIR (Comité Consultatif
+International pour la Radio) numerical-map coefficients for ionospheric
+characteristics — foF2 (xf2), M(3000)F2 (xfm3), foE (xe), sporadic-E (xes*) —
+derived from the International Geophysical Year datasets and published through
+Recommendation ITU-R P.1239, together with the Recommendation ITU-R P.372
+atmospheric radio-noise coefficient arrays (fakp/fakabp/dud/fam) descending
+from CCIR Report 322. "P1239-3 Decile Factors" carries the MUF and
+field-strength day-to-day variability deciles of Recommendation ITU-R P.1239-3.
+
+These coefficients are the long-published ITU-R/CCIR numerical data that
+accompany every implementation of P.533 (they ship, byte-identical in content,
+with ITSHFBC/VOACAP and voacapl); the ITU-R Study Group 3 repository publishes
+them for use by implementers of the Recommendations. They are redistributed
+here unmodified, with attribution to ITU-R / CCIR, solely as input data for
+this application's independent implementation of the P.533/P.372 methods.
+
+No endorsement by the ITU is implied. This application's P.533 engine is an
+original implementation of the published Recommendation methods; see
+crates/propagation/src/p533/.

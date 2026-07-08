@@ -1,0 +1,4 @@
+# rustfmt config. Defaults (max_width 100, etc.) + an explicit edition pin so
+# `cargo fmt --check` is deterministic in CI. The repo was swept once to this
+# config; that whitespace-only commit is listed in .git-blame-ignore-revs.
+edition = "2021"

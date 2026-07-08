@@ -1,0 +1,262 @@
+# Tempo CI — headless Rust workspace tests/clippy + the web UI build.
+#
+# Scope: Linux-hosted gates — the simulation-only Rust tests/clippy, the web UI
+# build + Vitest, AND a Windows cross-COMPILE of the desktop app (compile/link
+# only, to catch src-tauri breakage the Linux tests can't see). It does NOT bundle
+# the NSIS installer or download the WebView2/Hamlib runtimes — that full packaging
+# is produced out-of-band by scripts/build-windows.sh (native MSYS2 UCRT64),
+# scripts/build-windows.ps1 (PowerShell wrapper), and scripts/build-windows-cross.sh
+# (the same Linux/WSL2 cross toolchain, with --bundles nsis) — see WINDOWS.md.
+# Published Windows binaries are cross-compiled beta and are not bundled here.
+#
+# Toolchain: the Rust jobs pin an exact stable (dtolnay/rust-toolchain@master with
+# toolchain: 1.93.1) instead of floating @stable. A floating stable silently rolls
+# rustfmt/clippy forward and reformats/re-lints the whole tree the day a new Rust
+# ships — which is exactly what bit this repo. Bump the version below deliberately
+# to adopt newer lints. The MSRV job intentionally stays pinned at 1.87.0.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  # Manual trigger — also the diagnostic lever for "why has CI never run".
+  workflow_dispatch:
+
+# Cancel superseded runs on the same ref to save CI minutes.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Job 1 — Rust workspace: build the Fortran/C/C++ libft1 modem (via the
+  # ft1-sys build.rs CMake project) and run the headless modem/engine/net/DX1
+  # round-trip tests, then clippy across the whole workspace.
+  test:
+    name: Rust tests + clippy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # libft1 build deps. The native (host == target) CMake path locates the
+      # FFTW3 single-precision library via pkg-config (`pkg_check_modules(FFTW3F
+      # REQUIRED fftw3f)`) and Boost via `find_package(Boost REQUIRED)`:
+      #   - gfortran        : the 4-CPM turbo modem is Fortran (gfortran runtime).
+      #   - libfftw3-dev     : ships fftw3f.pc + libfftw3f + fftw3.f03 (FFTW3
+      #                        SINGLE precision — used by four2a.f90 / fftw3 module).
+      #   - libboost-dev     : ships <boost/crc.hpp> for the header-only CRC-14 in
+      #                        crc14.cpp (find_package(Boost) config).
+      #   - cmake, ninja-build : drive the libft1 CMake project.
+      #   - pkg-config       : required by find_package(PkgConfig REQUIRED).
+      - name: Install libft1 build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gfortran \
+            libfftw3-dev \
+            libboost-dev \
+            cmake \
+            ninja-build \
+            pkg-config \
+            libasound2-dev \
+            libudev-dev
+
+      - name: Set up Rust 1.93.1 toolchain (pinned — see header)
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.93.1
+          components: clippy, rustfmt
+
+      - name: Cache cargo registry and build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: cargo fmt --check
+        run: cargo fmt --all --check
+
+      - name: cargo test --workspace
+        run: cargo test --workspace
+
+      - name: cargo clippy (deny warnings)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      # The real-radio path (cpal audio + serial PTT) is feature-gated out of the
+      # default build. Lint AND run its tests here — the Transport reconfig
+      # decisions, the WSJT-X/PSK emit builders, and the rigctld round-trip — so
+      # service.rs/device.rs can't silently rot or regress on the air.
+      - name: cargo clippy tempo-audio --features device,serial
+        run: cargo clippy -p tempo-audio --features device,serial --all-targets -- -D warnings
+
+      - name: cargo test tempo-audio --features device,serial
+        run: cargo test -p tempo-audio --features device,serial
+
+  # Job 2 — Web UI (Vite + React + TypeScript). `npm run build` is `tsc -b &&
+  # vite build`, so this also type-checks the DTO contract that mirrors
+  # crates/tempo-app/src/dto.rs.
+  ui:
+    name: Web UI build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install UI dependencies
+        run: npm --prefix ui install
+
+      - name: Build UI
+        run: npm --prefix ui run build
+
+      - name: Test UI (Vitest)
+        run: npm --prefix ui test
+
+      # Guardrail: no demo/mock/fabricated data may reach an operator. Greps the
+      # Rust + TS sources AND the just-built UI bundle for the deleted demo/mock
+      # fingerprints (propagation::demo, mockEngine, demoPropagation, …). Runs
+      # after the build so it also proves the mock tree-shook out of dist/.
+      - name: No demo/mock data guard
+        run: bash scripts/check-no-demo.sh
+
+  # Job 3 — MSRV: the workspace must compile on the pinned minimum toolchain
+  # (Cargo.toml [workspace.package] rust-version = "1.87"). Build-only check,
+  # incl. the propagation `live` feature (the heaviest dep set).
+  msrv:
+    name: MSRV (1.87) check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install libft1 build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gfortran libfftw3-dev libboost-dev cmake ninja-build pkg-config
+
+      - name: Set up Rust 1.87 toolchain
+        uses: dtolnay/rust-toolchain@1.87.0
+
+      - name: Cache cargo registry and build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-msrv-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-msrv-
+
+      - name: cargo check --workspace (MSRV)
+        run: cargo check --workspace --all-targets
+
+      - name: cargo check propagation --features live (MSRV)
+        run: cargo check -p propagation --features live
+
+  # Job 4 — Supply chain: RustSec advisories, license allow-list, sources, bans.
+  deny:
+    name: cargo-deny (supply chain + licenses)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: cargo-deny
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories bans sources licenses
+
+  # Job 5 — Windows cross-compile. The desktop shell (src-tauri) is outside the
+  # workspace and needs a WebView/MinGW toolchain the Linux test job lacks, so
+  # `cargo test` never touches it. This job cross-compiles it to
+  # x86_64-pc-windows-gnu with the MinGW-w64 toolchain — proving the Tauri command
+  # surface, the feature-gated `radio` audio/CAT path, and the libft1 Fortran/C/C++
+  # modem all still LINK for Windows. It is a compile/link check, not the shipping
+  # installer: no NSIS bundle, no WebView2/Hamlib download (those run out-of-band
+  # via scripts/build-windows-cross.sh, which adds --bundles nsis).
+  windows-cross:
+    name: Windows cross-compile (src-tauri)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # MinGW-w64 cross toolchain: gcc/g++/gfortran for the Fortran/C/C++ modem,
+      # cmake/ninja to drive the libft1 CMake project, and a host build-essential
+      # (cc/make) to cross-build FFTW3f for MinGW.
+      - name: Install MinGW-w64 cross toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-mingw-w64-x86-64 \
+            g++-mingw-w64-x86-64 \
+            gfortran-mingw-w64-x86-64 \
+            cmake \
+            ninja-build \
+            build-essential
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Set up Rust 1.93.1 toolchain (pinned) + windows-gnu target
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.93.1
+          targets: x86_64-pc-windows-gnu
+
+      - name: Cache cargo, FFTW, and build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+            src-tauri/target
+            target/fftw-mingw
+          key: ${{ runner.os }}-wincross-${{ hashFiles('Cargo.lock', 'src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-wincross-
+
+      # Cross-build FFTW3f for MinGW + the libft1 modem self-test exes (win_smoke,
+      # roundtrip, …). Proves the native modem chain links for Windows and produces
+      # target/fftw-mingw, which ft1-sys/build.rs reads on the src-tauri step below.
+      - name: Cross-build FFTW + libft1 modem exes
+        run: bash scripts/build-windows-cross.sh --no-gui
+
+      # src-tauri embeds the web UI via the custom-protocol feature. `cargo build`
+      # does NOT run Tauri's beforeBuildCommand, so build the dist explicitly first
+      # or the asset embed fails ("frontendDist does not exist").
+      - name: Build web UI (embedded assets)
+        run: |
+          npm --prefix ui ci
+          npm --prefix ui run build
+
+      # Compile/link the desktop app for Windows. NOT `cargo tauri build` — no NSIS
+      # bundle, no WebView2/Hamlib download — just prove src-tauri compiles clean.
+      - name: Cross-compile src-tauri (x86_64-pc-windows-gnu)
+        env:
+          FFTW_MINGW_PREFIX: ${{ github.workspace }}/target/fftw-mingw
+        run: >
+          cargo build --release
+          --manifest-path src-tauri/Cargo.toml
+          --target x86_64-pc-windows-gnu
+          --features radio,custom-protocol

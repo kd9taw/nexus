@@ -1,0 +1,224 @@
+---------------------------------------------------------------------------
+ International Telecommunications Union - Radiocommunication Sector (ITU-R)
+     ITURHFProp         Ver May 18 2024
+     HF Model (P533)    Ver 14.2
+     Noise Model (P372) Ver 14.3
+     Analysis Prepared  Sat May 18 13:43:23 2024
+
+---------------------------------------------------------------------------
+
+**********************************************************
+*      DumpPathData - p533() Path data structure         *
+**********************************************************
+**********************************************************
+*                 Input Parameters                       *
+**********************************************************
+	United Kingdom to Sydney
+	Year = 2018
+	Month = May
+	Hour  = 12 (hour UTC)
+	SSN (R12) = 10
+	Tx power = -10.000 (dB(1kW))
+	Tx Location Sydney
+	Tx latitude  = -0.591 (-33.870) [-33 52 11]
+	Tx longitude =  2.638 ( 151.170) [ 151 10 11]
+	Rx Location Birmingham
+	Rx latitude  =  0.916 ( 52.486) [ 52 29 10]
+	Rx longitude = -0.033 (-1.890) [-1 53 25]
+	local time Rx   =  12 
+	local time Tx   =  22 
+	Frequency =  14.000 (MHz)
+	Bandwidth =  1.000 (Hz)
+	Short or Long Path = Short
+	Modulation = ANALOG
+	Required signal-to-noise ratio =  31.000
+	Required Reliability (%) =  90
+	Required signal-to-interference ratio =  0.000
+	Man-made noise = RESIDENTIAL
+	Antenna configuration: Transmitter main beam to receiver main beam
+	Transmit antenna 14 MHz Dipole at 10 m AAGL    
+	Transmit antenna bearing = 322.229937
+	Transmit antenna gain offset = 0.000000
+	Receive antenna  14 MHz Dipole at 10 m AAGL    
+	Receive antenna bearing = 56.629710
+	Receive antenna gain offset = 0.000000
+**********************************************************
+*                 Calculated Parameters                  *
+**********************************************************
+****************** Distances (km) ************************
+	distance =  17038.272
+	slant range =  17767.288
+	dmax     =  4000.000
+************ Maximum Usable Frequencies (MHz) ************
+	basic MUF       =  11.320
+	10% MUF         =  13.880
+	50% MUF         =  11.320
+	90% MUF         =  9.022
+	Operational MUF =  17.628
+	10% OPMUF       =  21.613
+	90% OPMUF       =  14.049
+********* Lowest Order and Dominant Mode *****************
+	lowest order F2 layer mode = No Mode
+	lowest order E layer mode = No Mode
+	No Dominant mode for this path length
+************************ Season ***************************
+	season = Summer
+****** Field Strength (dB(1 uV/m)) and Rx Power (dBW) *****
+	Field Strength (7000 km > D)           = -307.000
+	Field Strength (7000 km < D < 9000 km) = -307.000
+	Field Strength           (D > 9000 km) = -22.899
+	Median Rx power = -153.011
+**************** Rx Elevation Angle (degs)****************
+	Rx Elevation angle =  8.000
+***************** Long Path Parameters *******************
+	Free-space Field Strength 3 MW e.i.r.p. (dB(1uV/m) =  54.608
+	Increased Long Distance Field Strength due to Focusing (dB) =  7.736
+	"Not otherwise included loss" (dB) = -0.170
+	Upper Reference Frequency (MHz)      =  17.628
+	Lower Reference Frequency (MHz)      =  8.295
+	Correction Factor at T + dM/2        =  1.557
+	Correction Factor at R - dM/2        =  1.543
+	Max Antenna Gain G_tl (0 to 8 deg)   =  0.010
+	Max Antenna Gain G_w (0 to 8 deg)    =  0.010
+	Mean gyrofrequency (T + dM/2 & R - dM/2) =  1.255
+	Scale factor f(f ,fL, fM, fH)        =  0.168
+***************** Noise Parameters (dB) *******************
+	Atmospheric noise upper decile =  8.647
+	Atmospheric noise lower decile =  6.145
+	Atmospheric noise              =  30.659
+	Man made noise upper decile    =  10.600
+	Man made noise lower decile    =  5.300
+	Man made noise                 =  40.752
+	Galactic noise upper decile    =  2.000
+	Galactic noise lower decile    =  2.000
+	Galactic noise                 =  25.639
+	Total noise upper decile       =  10.438
+	Total noise lower decile       =  4.898
+	Total noise                    =  41.239
+********************** SNR Parameters (dB) *************************************
+	Monthly median resultant signal-to-noise ratio =  9.711
+	Upper decile deviation signal-to-noise ratio   =  14.879
+	Lower decile deviation signal-to-noise ratio   =  16.469
+	Signal-to-noise exceeded for 90% of the month  = -6.758
+********************** SIR Parameters (dB) *************************************
+	Signal-to-interference ratio = -307.000
+	Upper decile deviation of the signal-to-interference ratio = -307.000
+	Lower decile deviation of the signal-to-interference ratio = -307.000
+******************** Reliability Parameters (%) *******************************
+	Basic Circuit Reliability                      =  2.910
+	Multimode Interference                         = -307.000
+	Overall Circuit Reliability without scattering =  0.000
+	Overall Circuit Reliability with scattering    =  0.000
+	Probability of scattering                      =  0.000
+	Probability required SNR is achieved                      =  0.000
+	Probability required time spread T0 is not exceeded       =  0.000
+	Probability required frequency spread f0 is not exceeded  =  0.000
+**********************************************************
+*          Penetration Point - Nearest Transmitter       *
+**********************************************************
+	Latitude	=	-0.512	(-29.326)	[-29 19 33]
+	Longitude	=	 2.569	( 147.192)	[147 11 31]
+	distance =  630.136
+	Magnetic dip (100 km)  = -60.435 (deg)
+	Gyrofrequency (100 km) =  1.504 (MHz)
+	Magnetic dip (300 km)  = -60.391 (deg)
+	Gyrofrequency (300 km) =  1.363 (MHz)
+	M(3000)F2 =  3.144
+	foE   =  0.397 (MHz)
+	foF2  =  3.480 (MHz)
+	solar zenith angle =  136.161 (deg)
+	solar declination  =  18.660 (deg)
+	solar hour angle   =  133.117 (deg)
+	equation of time   =  3.701 (minutes)
+	local sunrise      =  20:47 (UTC)  5:47 (Local)
+	local solar noon   =  2:07 (UTC)  11:07 (Local)
+	local sunset       =  7:27 (UTC)  16:27 (Local)
+	local time         =  11:00 (UTC)  20:00 (Local)
+**********************************************************
+*            Control Point   -      T + dM/2             *
+**********************************************************
+	Latitude	=	-0.410	(-23.482)	[-23 28 55]
+	Longitude	=	 2.490	( 142.682)	[142 40 56]
+	distance =  1419.856
+	Magnetic dip (100 km)  = -54.217 (deg)
+	Gyrofrequency (100 km) =  1.418 (MHz)
+	Magnetic dip (300 km)  = -54.238 (deg)
+	Gyrofrequency (300 km) =  1.284 (MHz)
+	M(3000)F2 =  3.185
+	foE   =  0.000 (MHz)
+	foF2  =  3.590 (MHz)
+	solar zenith angle =  132.045 (deg)
+	solar declination  =  18.660 (deg)
+	solar hour angle   =  128.608 (deg)
+	equation of time   =  3.701 (minutes)
+	local sunrise      =  20:55 (UTC)  5:55 (Local)
+	local solar noon   =  2:25 (UTC)  11:25 (Local)
+	local sunset       =  7:55 (UTC)  16:55 (Local)
+	local time         =  11:00 (UTC)  20:00 (Local)
+**********************************************************
+*            Control Point   -       MidPath             *
+**********************************************************
+	Latitude	=	 0.535	( 30.630)	[30 37 46]
+	Longitude	=	 1.874	( 107.344)	[107 20 39]
+	distance =  8519.136
+	Magnetic dip (100 km)  =  44.692 (deg)
+	Gyrofrequency (100 km) =  1.322 (MHz)
+	Magnetic dip (300 km)  =  44.431 (deg)
+	Gyrofrequency (300 km) =  1.189 (MHz)
+	M(3000)F2 =  3.288
+	foE   =  1.841 (MHz)
+	foF2  =  7.452 (MHz)
+	reflection height  =  0.000 (km)
+	solar zenith angle =  83.309 (deg)
+	solar declination  =  18.660 (deg)
+	solar hour angle   =  93.269 (deg)
+	equation of time   =  3.701 (minutes)
+	local sunrise      =  21:56 (UTC)  4:56 (Local)
+	local solar noon   =  4:46 (UTC)  11:46 (Local)
+	local sunset       =  11:37 (UTC)  18:37 (Local)
+	local time         =  11:00 (UTC)  18:00 (Local)
+**********************************************************
+*            Control Point   -       R - dM/2            *
+**********************************************************
+	Latitude	=	 1.011	( 57.954)	[57 57 14]
+	Longitude	=	 0.322	( 18.467)	[18 28 1]
+	distance =  15618.416
+	Magnetic dip (100 km)  =  71.559 (deg)
+	Gyrofrequency (100 km) =  1.333 (MHz)
+	Magnetic dip (300 km)  =  71.344 (deg)
+	Gyrofrequency (300 km) =  1.226 (MHz)
+	M(3000)F2 =  3.074
+	foE   =  0.000 (MHz)
+	foF2  =  4.793 (MHz)
+	solar zenith angle =  39.427 (deg)
+	solar declination  =  18.660 (deg)
+	solar hour angle   =  4.392 (deg)
+	equation of time   =  3.701 (minutes)
+	local sunrise      =  2:23 (UTC)  3:23 (Local)
+	local solar noon   =  10:42 (UTC)  11:42 (Local)
+	local sunset       =  19:00 (UTC)  20:00 (Local)
+	local time         =  11:00 (UTC)  12:00 (Local)
+**********************************************************
+*          Penetration Point -  Nearest Receiver         *
+**********************************************************
+	Latitude	=	 1.035	( 59.298)	[59 17 51]
+	Longitude	=	 0.557	( 31.887)	[31 53 14]
+	distance =  14828.696
+	Magnetic dip (100 km)  =  73.035 (deg)
+	Gyrofrequency (100 km) =  1.376 (MHz)
+	Magnetic dip (300 km)  =  72.797 (deg)
+	Gyrofrequency (300 km) =  1.264 (MHz)
+	M(3000)F2 =  3.092
+	foE   =  3.016 (MHz)
+	foF2  =  4.704 (MHz)
+	solar zenith angle =  42.637 (deg)
+	solar declination  =  18.660 (deg)
+	solar hour angle   =  17.813 (deg)
+	equation of time   =  3.701 (minutes)
+	local sunrise      =  1:21 (UTC)  3:21 (Local)
+	local solar noon   =  9:48 (UTC)  11:48 (Local)
+	local sunset       =  18:15 (UTC)  20:15 (Local)
+	local time         =  11:00 (UTC)  13:00 (Local)
+**********************************************************
+*               End DumpPathData()                       *
+**********************************************************

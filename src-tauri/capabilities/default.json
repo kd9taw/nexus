@@ -1,0 +1,9 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Default capability set for the Tempo main window. Grants only the core webview/window permissions Tempo needs; all radio/app data flows through our own #[tauri::command] handlers (get_snapshot, send_message, select_peer, set_tier), which require no extra capability.",
+  "windows": ["main", "panel-*"],
+  "permissions": [
+    "core:default"
+  ]
+}

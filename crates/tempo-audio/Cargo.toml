@@ -1,0 +1,37 @@
+[package]
+publish = false
+name = "tempo-audio"
+version = "0.2.0"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Nexus real-radio transport: sound-card audio (cpal) + PTT/CAT via rigctld, on the FT1 slot clock"
+
+[features]
+# Pure logic (rig over TCP, RX ring, slot-clock runtime) builds with no extra
+# system deps. The `device` feature pulls in cpal for real sound-card I/O — gate
+# it on so the workspace test build needs no audio libraries.
+default = []
+device = ["dep:cpal", "dep:tempo-net"]
+# Serial PTT + COM-port enumeration via `serialport`. OFF by default: the
+# headless workspace build has no libudev. The station PC enables it.
+serial = ["dep:serialport"]
+
+[dependencies]
+tempo-app = { path = "../tempo-app" }
+tempo-core = { path = "../tempo-core" }
+# Voice-keyer WAV I/O (read/write 12 kHz mono message files). Pure, no audio device.
+hound = "3.5"
+cpal = { version = "0.15", optional = true }
+serialport = { version = "4", optional = true }
+tempo-net = { path = "../tempo-net", optional = true }
+
+# Windows-only: assign the launched rigctld to a Job Object so the OS kills it
+# (freeing the serial/COM port) whenever Tempo exits — even on a crash.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }

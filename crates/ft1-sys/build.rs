@@ -1,0 +1,258 @@
+//! Build `libft1` (Fortran 4-CPM turbo modem + C ABI) via its CMake project and
+//! emit the link directives Cargo needs.
+//!
+//! The CMake project at `tempo/libft1` compiles the FT1 modem sources from the
+//! WSJT-X FT1 fork into a static `libft1.a` (target `ft1_static`, OUTPUT_NAME
+//! `ft1`). It pulls in the gfortran runtime, FFTW3 single precision, and (for the
+//! Boost header-only CRC-14 in `crc14.cpp`) libstdc++.
+//!
+//! # Cross-compiling Linux host -> Windows (x86_64-pc-windows-gnu)
+//! When the Cargo *target* is `x86_64-pc-windows-gnu` but the *host* is not
+//! Windows (e.g. building from Linux/WSL with the MinGW-w64 toolchain), the
+//! native code path below would be wrong: `cfg!(windows)` reflects the HOST, and
+//! CMake would otherwise pick up the host's compilers + host FFTW. The cross
+//! path drives CMake with `libft1/mingw-w64.cmake` (the MinGW-w64 toolchain file)
+//! and a statically cross-built FFTW3f, and links everything statically so the
+//! resulting Windows binary has no MinGW runtime-DLL dependency.
+//!
+//! The native (host == target) path is intentionally left byte-for-byte
+//! unchanged; all cross logic is gated behind `is_cross_to_windows_gnu()`.
+
+use std::env;
+use std::path::PathBuf;
+use std::process::Command;
+
+fn main() {
+    let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
+    let libft1_src = manifest
+        .join("../../libft1")
+        .canonicalize()
+        .expect("locate tempo/libft1");
+    let out = PathBuf::from(env::var("OUT_DIR").unwrap());
+
+    // Cross-compile branch: Linux (or any non-Windows) host -> Windows GNU target.
+    // Everything Windows-cross-specific lives here so the native path is untouched.
+    if is_cross_to_windows_gnu() {
+        build_cross_windows(&libft1_src, &out);
+        emit_rerun(&libft1_src);
+        return;
+    }
+
+    // ---- Native build (host == target): UNCHANGED from the original. ----------
+    // Configure.
+    let mut cfg = Command::new("cmake");
+    cfg.args([
+        "-S",
+        libft1_src.to_str().unwrap(),
+        "-B",
+        out.to_str().unwrap(),
+        "-DCMAKE_BUILD_TYPE=Release",
+    ]);
+    // On Windows the Fortran sources require the GNU toolchain (MSVC has no
+    // Fortran). Use Ninja if present, else MinGW Makefiles — both drive gfortran.
+    // Build from an MSYS2/MinGW environment with the GNU Rust target
+    // (x86_64-pc-windows-gnu). See WINDOWS.md.
+    if cfg!(windows) {
+        if which("ninja") {
+            cfg.args(["-G", "Ninja"]);
+        } else {
+            cfg.args(["-G", "MinGW Makefiles"]);
+        }
+    }
+    run(&mut cfg);
+
+    // Build just the static archive (skip shared lib + test executables).
+    run(Command::new("cmake").args([
+        "--build",
+        out.to_str().unwrap(),
+        "--target",
+        "ft1_static",
+        "--parallel",
+    ]));
+
+    // Link: static libft1 first, then its runtime dependencies.
+    println!("cargo:rustc-link-search=native={}", out.display());
+    println!("cargo:rustc-link-lib=static=ft1");
+    println!("cargo:rustc-link-lib=dylib=gfortran");
+    println!("cargo:rustc-link-lib=dylib=fftw3f");
+    println!("cargo:rustc-link-lib=dylib=stdc++");
+    println!("cargo:rustc-link-lib=dylib=m");
+    // The MinGW gfortran runtime also needs quadmath.
+    if cfg!(windows) {
+        println!("cargo:rustc-link-lib=dylib=quadmath");
+    }
+
+    emit_rerun(&libft1_src);
+}
+
+/// True when cross-compiling to `*-pc-windows-gnu` from a non-Windows host.
+/// Native Windows (host == Windows) and native Linux builds both return false.
+fn is_cross_to_windows_gnu() -> bool {
+    // `cfg!(windows)` is the HOST in a build script. If the host is already
+    // Windows this is the native path, not a cross compile.
+    if cfg!(windows) {
+        return false;
+    }
+    let target = env::var("TARGET").unwrap_or_default();
+    let host = env::var("HOST").unwrap_or_default();
+    target != host
+        && env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
+        && env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("gnu")
+}
+
+/// Drive the CMake cross build (MinGW-w64 toolchain + static FFTW3f) and emit
+/// static link directives for the gfortran/quadmath/stdc++/fftw3f runtimes so
+/// the linked Windows binary needs no MinGW runtime DLLs.
+fn build_cross_windows(libft1_src: &std::path::Path, out: &std::path::Path) {
+    let toolchain = libft1_src.join("mingw-w64.cmake");
+    assert!(
+        toolchain.exists(),
+        "missing MinGW toolchain file: {}",
+        toolchain.display()
+    );
+
+    // Statically cross-built FFTW3f (single precision). Overridable so a packager
+    // can point at a different prefix; defaults to the documented /tmp location.
+    let fftw_prefix =
+        env::var("FFTW_MINGW_PREFIX").unwrap_or_else(|_| "/tmp/fftw-mingw".to_string());
+    assert!(
+        PathBuf::from(&fftw_prefix).join("lib/libfftw3f.a").exists(),
+        "cross build needs MinGW FFTW3f at {fftw_prefix}/lib/libfftw3f.a — build it with \
+         ./configure --host=x86_64-w64-mingw32 --enable-float --enable-static \
+         --disable-shared --prefix={fftw_prefix}",
+    );
+
+    // Configure with the toolchain file. Prefer Ninja (matches the native path),
+    // falling back to Unix Makefiles (the cross compilers are unsuffixed MinGW
+    // binaries, so a plain make generator drives them fine).
+    let mut cfg = Command::new("cmake");
+    cfg.args([
+        "-S",
+        libft1_src.to_str().unwrap(),
+        "-B",
+        out.to_str().unwrap(),
+        "-DCMAKE_BUILD_TYPE=Release",
+        &format!("-DCMAKE_TOOLCHAIN_FILE={}", toolchain.display()),
+        &format!("-DFFTW_MINGW_PREFIX={fftw_prefix}"),
+    ]);
+    if which("ninja") {
+        cfg.args(["-G", "Ninja"]);
+    } else {
+        cfg.args(["-G", "Unix Makefiles"]);
+    }
+    run(&mut cfg);
+
+    run(Command::new("cmake").args([
+        "--build",
+        out.to_str().unwrap(),
+        "--target",
+        "ft1_static",
+        "--parallel",
+    ]));
+
+    // Link the static libft1 first, then its runtime dependencies — all STATIC so
+    // the Windows binary is self-contained (no libgfortran-5/libstdc++-6 DLLs).
+    // The gfortran/quadmath/stdc++ static archives live in the MinGW gcc lib dir;
+    // add it to the search path so rustc's gcc linker driver finds them.
+    println!("cargo:rustc-link-search=native={}", out.display());
+    println!("cargo:rustc-link-search=native={fftw_prefix}/lib");
+    if let Some(gcc_lib) = mingw_gcc_lib_dir() {
+        println!("cargo:rustc-link-search=native={gcc_lib}");
+    }
+    println!("cargo:rustc-link-lib=static=ft1");
+    // Order matters: ft1 -> fortran runtime -> quadmath, then C++ runtime, fftw.
+    println!("cargo:rustc-link-lib=static=gfortran");
+    println!("cargo:rustc-link-lib=static=quadmath");
+    println!("cargo:rustc-link-lib=static=stdc++");
+    println!("cargo:rustc-link-lib=static=fftw3f");
+    // m is part of the MinGW CRT (libmsvcrt); no separate libm. stdc++ pulls in
+    // what crc14.cpp needs. gcc/pthread come from the gcc driver automatically.
+}
+
+/// Locate the MinGW-w64 gcc library directory that holds the static gfortran /
+/// quadmath / stdc++ archives, by asking the cross gcc for its libgcc path.
+fn mingw_gcc_lib_dir() -> Option<String> {
+    let out = Command::new("x86_64-w64-mingw32-gcc")
+        .arg("-print-libgcc-file-name")
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let path = String::from_utf8(out.stdout).ok()?;
+    let p = PathBuf::from(path.trim());
+    p.parent().map(|d| d.display().to_string())
+}
+
+fn emit_rerun(libft1_src: &std::path::Path) {
+    println!("cargo:rerun-if-changed=build.rs");
+
+    // Tempo-side libft1 sources (the C-ABI shims, DX1, headers, build config).
+    // Every *_cabi.f90 MUST be listed: a content edit to one that is NOT watched
+    // silently links a STALE libft1.a (Cargo never re-runs CMake).
+    for rel in [
+        "CMakeLists.txt",
+        "ft1_cabi.f90",
+        "ft8_cabi.f90",
+        "ft8_stdcall.f90",
+        "ft4_cabi.f90",
+        "mingw-w64.cmake",
+        "include",
+        "dx1",
+    ] {
+        emit_rerun_glob(&libft1_src.join(rel));
+    }
+
+    // The FT1 modem Fortran lives OUTSIDE tempo/, in the WSJT-X FT1 fork that
+    // CMakeLists.txt references via `set(WX ...)`. CMake's own dependency tracking
+    // is correct, but Cargo will not re-run CMake (and so links a stale libft1.a)
+    // unless one of these files is registered here. Watch every modem .f90 in the
+    // FT1 + FT8 lib dirs per-file: a bare directory rerun-if-changed catches only
+    // add/remove, NOT content edits. Keep WX in sync with CMakeLists.txt.
+    let wx_lib = libft1_src.join("../../ft1/research/phase2/wsjtx-source/lib");
+    emit_rerun_glob(&wx_lib.join("ft1")); // FT1 modem (turbo, ldpc348, bcjr, sync, harq, ...)
+    emit_rerun_glob(&wx_lib.join("ft8")); // shared deps (osd174_91, ldpc_174_91 parity, ...)
+    emit_rerun_glob(&wx_lib.join("ft1_decode.f90")); // live decode + HARQ driver
+}
+
+/// Emit `cargo:rerun-if-changed` for `p`. If `p` is a directory, recurse one level
+/// and emit each contained `.f90`/`.f`/`.cpp`/`.h`/`.txt`/`.cmake` file individually
+/// (so content edits — not just add/remove — trigger a rebuild). Missing paths are
+/// skipped (emitting a non-existent path would force an unconditional rebuild).
+fn emit_rerun_glob(p: &std::path::Path) {
+    let Ok(canon) = p.canonicalize() else { return };
+    if canon.is_dir() {
+        if let Ok(rd) = std::fs::read_dir(&canon) {
+            for entry in rd.flatten() {
+                let c = entry.path();
+                let watch = c
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .map(|e| matches!(e, "f90" | "f" | "F90" | "cpp" | "c" | "h" | "txt" | "cmake"))
+                    .unwrap_or(false);
+                if watch {
+                    println!("cargo:rerun-if-changed={}", c.display());
+                }
+            }
+        }
+    } else {
+        println!("cargo:rerun-if-changed={}", canon.display());
+    }
+}
+
+fn run(cmd: &mut Command) {
+    let status = cmd
+        .status()
+        .unwrap_or_else(|e| panic!("failed to spawn {cmd:?}: {e}"));
+    assert!(status.success(), "command failed: {cmd:?}");
+}
+
+/// True if `bin` is on PATH (uses `where` on Windows, `which` elsewhere).
+fn which(bin: &str) -> bool {
+    let probe = if cfg!(windows) { "where" } else { "which" };
+    Command::new(probe)
+        .arg(bin)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
