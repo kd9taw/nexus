@@ -117,11 +117,12 @@ export function TuningStrip({
         onChange={(e) => setEntry(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === 'Enter') commitEntry()
+          else if (e.key === 'Escape') setEntry('')
         }}
-        onBlur={commitEntry}
+        onBlur={() => setEntry('')} // abandon a partial entry on blur — commit is Enter-only
         disabled={!catOk}
         placeholder="Go to MHz"
-        title="Type a frequency in MHz, then Enter"
+        title="Type a frequency in MHz, then Enter (Esc to cancel)"
         autoComplete="off"
         spellCheck={false}
       />

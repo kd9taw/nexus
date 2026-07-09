@@ -32,6 +32,11 @@ pub struct ProbeHit {
     pub model: u32,
     pub model_name: String,
     pub freq_hz: u64,
+    /// The model was a GUESS (a common-rig seed tried because no model was configured and the USB
+    /// descriptor didn't name one). The port + baud are confirmed working, but the model is not —
+    /// the UI should apply port/baud and still make the operator confirm Rig Model, since a wrong
+    /// same-family model (FT-991A answering the FTDX10 probe) would carry the wrong Hamlib tables.
+    pub model_seeded: bool,
 }
 
 /// A port + the Hamlib model to try on it, before the baud sweep.
@@ -40,6 +45,12 @@ pub struct Candidate {
     pub port_name: String,
     pub model: u32,
     pub model_name: String,
+    /// If set, probe ONLY this baud (a seed's family default) instead of the full sweep — keeps
+    /// the no-answer worst case from ballooning to minutes across every seeded model × 5 bauds.
+    pub baud: Option<u32>,
+    /// True = a common-rig seed (unconfirmed model); false = a native-USB match or the configured
+    /// fallback (trusted model).
+    pub seeded: bool,
 }
 
 /// Common CAT rigs to try when a bridge-chip port yields no model AND the operator hasn't set one
@@ -47,14 +58,15 @@ pub struct Candidate {
 /// chip's name in the USB descriptor, so Detect can't identify them; that's the whole reason
 /// Auto-test exists, but it used to find nothing until a model was picked (chicken-and-egg). Kept
 /// to one representative per popular family so the sweep stays quick (the first that answers wins).
-pub const COMMON_CAT_MODELS: &[(u32, &str)] = &[
-    (1042, "Yaesu FTDX10"),
-    (1035, "Yaesu FT-991 / FT-991A"),
-    (1049, "Yaesu FT-710"),
-    (1040, "Yaesu FTDX101D"),
-    (3073, "Icom IC-7300"),
-    (2037, "Kenwood TS-590SG"),
-    (2029, "Elecraft K3"),
+/// `(hamlib_model, display_name, family_default_baud)`. Seeded probes try only the family baud.
+pub const COMMON_CAT_MODELS: &[(u32, &str, u32)] = &[
+    (1042, "Yaesu FTDX10", 38400),
+    (1035, "Yaesu FT-991 / FT-991A", 38400),
+    (1049, "Yaesu FT-710", 38400),
+    (1040, "Yaesu FTDX101D", 38400),
+    (3073, "Icom IC-7300", 115200),
+    (2037, "Kenwood TS-590SG", 115200),
+    (2029, "Elecraft K3", 38400),
 ];
 
 /// Build probe candidates from enumerated USB ports. A native-USB rig (IC-705, FT-710…)
@@ -67,11 +79,13 @@ pub fn candidates_from(ports: &[UsbPort], fallback_model: u32) -> Vec<Candidate>
     ports
         .iter()
         .flat_map(|p| match match_rig_model(&p.product, &p.manufacturer) {
-            // Native-USB rig names its model → one exact candidate.
+            // Native-USB rig names its model → one exact, trusted candidate (full baud sweep).
             Some((m, name)) => vec![Candidate {
                 port_name: p.port_name.clone(),
                 model: m,
                 model_name: name.to_string(),
+                baud: None,
+                seeded: false,
             }],
             // Bridge chip WITH a configured model → use it (the rig is known, only the port isn't).
             None if fallback_model > 0 => vec![Candidate {
@@ -82,14 +96,19 @@ pub fn candidates_from(ports: &[UsbPort], fallback_model: u32) -> Vec<Candidate>
                 } else {
                     p.product.clone()
                 },
+                baud: None,
+                seeded: false,
             }],
-            // Bridge chip, no model yet → try the common rigs so Auto-test can still find the port.
+            // Bridge chip, no model yet → try the common rigs (family baud only) so Auto-test can
+            // still find the PORT; the model is a guess (flagged seeded).
             None => COMMON_CAT_MODELS
                 .iter()
-                .map(|(m, name)| Candidate {
+                .map(|(m, name, baud)| Candidate {
                     port_name: p.port_name.clone(),
                     model: *m,
                     model_name: (*name).to_string(),
+                    baud: Some(*baud),
+                    seeded: true,
                 })
                 .collect(),
         })
@@ -115,7 +134,9 @@ pub fn probe_cat_ports(fallback_model: u32, tcp_port: u16) -> Option<ProbeHit> {
     let ports = crate::ports::available_usb_ports();
     let addr = format!("127.0.0.1:{tcp_port}");
     for c in candidates_from(&ports, fallback_model) {
-        for &baud in PROBE_BAUDS {
+        // A seeded (guessed-model) candidate probes only its family baud; a trusted model sweeps.
+        let bauds: &[u32] = c.baud.as_ref().map(std::slice::from_ref).unwrap_or(PROBE_BAUDS);
+        for &baud in bauds {
             // Throwaway daemon for this (port, baud, model) — killed on drop.
             let Ok(proc) = spawn_rigctld(c.model, &c.port_name, baud, tcp_port, false) else {
                 continue;
@@ -135,6 +156,7 @@ pub fn probe_cat_ports(fallback_model: u32, tcp_port: u16) -> Option<ProbeHit> {
                     model: c.model,
                     model_name: c.model_name,
                     freq_hz,
+                    model_seeded: c.seeded,
                 });
             }
         }

@@ -126,6 +126,10 @@ impl ParkIndex {
     /// Rows without a usable reference are skipped. If the first row has no recognizable reference
     /// column, falls back to positional `[reference, name, …]`.
     pub fn parse_csv(csv: &str) -> ParkIndex {
+        // Strip a UTF-8 BOM — Excel/Sheets exports (exactly the operator-import path) start with
+        // U+FEFF, which `trim()` does NOT remove, so the header's first column ("reference") would
+        // never match and grid/location silently fall out.
+        let csv = csv.trim_start_matches('\u{feff}');
         let mut lines = csv.lines().filter(|l| !l.trim().is_empty());
         let header = match lines.next() {
             Some(h) => split_csv_line(h),
@@ -298,5 +302,16 @@ K-5678,Yellowstone National Park,1,US-WY,44.6,-110.5,DN44\n";
     fn search_respects_the_limit() {
         let idx = ParkIndex::parse_csv(PARKS_CSV);
         assert_eq!(idx.search("K-", 2).len(), 2);
+    }
+
+    #[test]
+    fn parses_csv_with_a_utf8_bom() {
+        // Excel/Sheets exports (the operator-import path) prepend a BOM; it must not defeat the
+        // header detection (else grid/location silently drop out via the positional fallback).
+        let idx = ParkIndex::parse_csv(&format!("\u{feff}{PARKS_CSV}"));
+        assert_eq!(idx.len(), 3);
+        let p = idx.search("K-0001", 1);
+        assert_eq!(p[0].grid, "FN54"); // grid column still resolved despite the BOM
+        assert_eq!(p[0].location, "US-ME");
     }
 }

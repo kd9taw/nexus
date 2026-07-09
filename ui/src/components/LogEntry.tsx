@@ -150,12 +150,26 @@ export function LogEntry({
   // the reference string so it fires when a NEW park is hunted, not on every snapshot poll.
   useEffect(() => {
     const h = snap.hunt
-    if (h?.reference) {
-      setLogParkProgram(h.program)
-      setLogParkRef(h.reference)
+    if (!h?.reference) return
+    const baseCall = (c: string) => c.trim().toUpperCase().split('/').pop() ?? ''
+    const callMatches = logCall.trim() !== '' && baseCall(h.call) === baseCall(logCall)
+    const ref = logParkRef.trim().toUpperCase()
+    const huntRef = h.reference.trim().toUpperCase()
+    if (callMatches || logCall.trim() === '') {
+      // Prefill (or keep) the hunted park — but only when the field is empty or still holds the
+      // prefill, so a manual override survives. `parkPicked` suppresses the search dropdown.
+      if (ref === '' || ref === huntRef) {
+        setParkPicked(true)
+        setLogParkProgram(h.program)
+        setLogParkRef(h.reference)
+      }
+    } else if (ref === huntRef) {
+      // Call changed to a NON-matching one: the engine's auto-tag won't apply the park to this
+      // call, so drop the prefill rather than SHOW a park that won't be logged.
+      setLogParkRef('')
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [snap.hunt?.reference, snap.hunt?.program])
+  }, [snap.hunt?.reference, snap.hunt?.program, logCall])
 
   // Search the local park directory as the operator types a POTA reference (debounced).
   useEffect(() => {

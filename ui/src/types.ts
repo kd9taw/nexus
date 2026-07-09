@@ -738,6 +738,8 @@ export interface CatProbeResult {
   modelName: string
   freqMhz: number
   detail: string
+  /** The model was a GUESS (a seeded common-rig probe) — apply port/baud but keep picking Rig Model. */
+  modelSeeded?: boolean
 }
 
 export interface Spectrum {

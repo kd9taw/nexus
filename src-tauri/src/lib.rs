@@ -3138,6 +3138,9 @@ struct CatProbeResult {
     model_name: String,
     freq_mhz: f64,
     detail: String,
+    /// The model was a GUESS (a common-rig seed, tried because none was configured). The UI should
+    /// apply port + baud but keep the operator picking the exact Rig Model.
+    model_seeded: bool,
 }
 
 /// Auto-test which serial port actually drives the rig: probe each USB port (read-only,
@@ -3164,17 +3167,27 @@ async fn probe_cat_ports(state: State<'_, SharedEngine>) -> Result<CatProbeResul
         Ok(match hit {
             Some(h) => {
                 let mhz = h.freq_hz as f64 / 1.0e6;
-                CatProbeResult {
-                    found: true,
-                    detail: format!(
+                let detail = if h.model_seeded {
+                    format!(
+                        "Found the port: {} @ {} baud — reads {:.3} MHz. Now pick your exact Rig \
+                         Model below ({} answered, but the model is a guess).",
+                        h.port_name, h.baud, mhz, h.model_name
+                    )
+                } else {
+                    format!(
                         "{} on {} @ {} baud — reads {:.3} MHz",
                         h.model_name, h.port_name, h.baud, mhz
-                    ),
+                    )
+                };
+                CatProbeResult {
+                    found: true,
+                    detail,
                     port_name: h.port_name,
                     baud: h.baud,
                     model: h.model,
                     model_name: h.model_name,
                     freq_mhz: mhz,
+                    model_seeded: h.model_seeded,
                 }
             }
             None => CatProbeResult {
@@ -3187,6 +3200,7 @@ async fn probe_cat_ports(state: State<'_, SharedEngine>) -> Result<CatProbeResul
                 detail: "No rig answered on any USB port. Check the cable and that the rig is on \
                          (and not already connected elsewhere), then retry."
                     .to_string(),
+                model_seeded: false,
             },
         })
     }
