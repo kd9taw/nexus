@@ -21,13 +21,20 @@ const STEPS = [
 export function TuningStrip({
   snap,
   onSnap,
+  step: stepProp,
+  onStep,
 }: {
   snap: AppSnapshot
   onSnap?: (s: AppSnapshot) => void
+  /** Controlled tuning step (Hz), shared with scope wheel-tuning; falls back to internal state. */
+  step?: number
+  onStep?: (hz: number) => void
 }) {
   const dial = snap.radio.dialMhz
   const catOk = snap.radio.catOk === true
-  const [step, setStep] = useState(100)
+  const [stepInternal, setStepInternal] = useState(100)
+  const step = stepProp ?? stepInternal
+  const setStep = onStep ?? setStepInternal
   const [entry, setEntry] = useState('')
   const rit = snap.radio.ritHz ?? 0
   const xit = snap.radio.xitHz ?? 0

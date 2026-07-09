@@ -49,8 +49,10 @@ pub fn ptt_line(on: bool) -> String {
 pub fn freq_line(hz: u64) -> String {
     format!("F {hz}\n")
 }
-/// rigctld command line to set mode + passband (Hz; 0 = rig default).
-pub fn mode_line(mode: &str, passband_hz: u32) -> String {
+/// rigctld command line to set mode + passband (Hz). `-1` = `RIG_PASSBAND_NOCHANGE` (leave the
+/// rig's current filter width untouched); `0` = `RIG_PASSBAND_NORMAL` (Hamlib actively commands
+/// the rig's *own* default width for the mode).
+pub fn mode_line(mode: &str, passband_hz: i32) -> String {
     format!("M {mode} {passband_hz}\n")
 }
 /// rigctld `R` — FM repeater shift: "plus"→`+`, "minus"→`-`, anything else→`None`.
@@ -189,6 +191,11 @@ pub struct Rig {
     serial: Option<Box<dyn serialport::SerialPort>>,
     /// Last PTT state we commanded (also lets callers/tests observe keying).
     pub keyed: bool,
+    /// True when the CAT link is a NETWORK transport (rigctld → SmartSDR / remote radio), where a
+    /// reply can legitimately take seconds. Serial rigs answer in milliseconds, so a serial link
+    /// uses a much shorter per-command deadline — a stalled serial read then can't hold the radio
+    /// loop (and the fast dial poll) for 2.5 s. Default false (serial / local).
+    slow_transport: bool,
 }
 
 impl Rig {
@@ -203,7 +210,15 @@ impl Rig {
             #[cfg(feature = "serial")]
             serial: None,
             keyed: false,
+            slow_transport: false,
         }
+    }
+
+    /// Mark this CAT link as a slow NETWORK transport (a longer per-command deadline). Call after
+    /// constructing a `Rig` for a network-CAT rig (e.g. a Flex reached over TCP) so a legitimately
+    /// slow reply isn't cut off; leave default (false) for serial rigs so a stalled read is bounded.
+    pub fn set_slow_transport(&mut self, slow: bool) {
+        self.slow_transport = slow;
     }
     /// No CAT control, no keying — rely on the rig's VOX.
     pub fn vox() -> Self {
@@ -259,6 +274,8 @@ impl Rig {
     }
 
     fn command_inner(&mut self, line: &str) -> std::io::Result<String> {
+        // Read the transport class before the mutable stream borrow below (they'd otherwise alias).
+        let slow = self.slow_transport;
         let stream = self.ensure_connected()?;
         // Discard any STALE bytes left in the socket by a prior MULTI-LINE reply — `m` (get_mode)
         // returns the mode line AND a passband line, and on a networked chain the 2nd line can
@@ -278,11 +295,15 @@ impl Rig {
         // Read until a COMPLETE reply (newline-terminated), not one 500 ms
         // gulp: a networked chain (rigctld → SmartSDR CAT → radio) can take
         // longer than one read window and can split a reply across reads.
-        // The per-read timeout (500 ms) bounds each wait; a 2.5 s overall
-        // deadline bounds the whole reply. An incomplete reply is an ERROR
-        // (not a silently-truncated "") so callers never treat a partial or
-        // timed-out answer as success — and `command` drops the stream.
-        let deadline = std::time::Instant::now() + Duration::from_millis(2_500);
+        // The per-read timeout (500 ms) bounds each wait; an overall deadline
+        // bounds the whole reply. An incomplete reply is an ERROR (not a
+        // silently-truncated "") so callers never treat a partial or timed-out
+        // answer as success — and `command` drops the stream. The deadline is
+        // transport-aware: a serial rig answers in ms so a stall is bounded
+        // tightly (it can't hold the radio loop / fast dial poll), while a
+        // network chain keeps the long 2.5 s window for legitimately slow replies.
+        let deadline_ms = if slow { 2_500 } else { 700 };
+        let deadline = std::time::Instant::now() + Duration::from_millis(deadline_ms);
         let mut out = Vec::with_capacity(64);
         let mut buf = [0u8; 256];
         loop {
@@ -310,7 +331,7 @@ impl Rig {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::TimedOut,
                     format!(
-                        "rig reply incomplete after 2.5 s (got {:?})",
+                        "rig reply incomplete after {deadline_ms} ms (got {:?})",
                         String::from_utf8_lossy(&out)
                     ),
                 ));
@@ -393,7 +414,7 @@ impl Rig {
     /// configured (works even when PTT is keyed by VOX/serial — control is separate).
     /// Surfaces a rig REJECTION (`RPRT -1`, e.g. a rig with no DATA/PKT submode) as
     /// an `Err`, so the radio loop's bounded retry can give up instead of looping.
-    pub fn set_mode(&mut self, mode: &str, passband_hz: u32) -> std::io::Result<()> {
+    pub fn set_mode(&mut self, mode: &str, passband_hz: i32) -> std::io::Result<()> {
         if mode.trim().is_empty() {
             return Ok(());
         }
@@ -533,7 +554,7 @@ impl Rig {
     /// carries filter width as the 2nd arg of set_mode (there is no portable bandwidth level).
     /// CAT-only. The caller passes the current mode (the loop tracks it).
     pub fn set_passband(&mut self, mode: &str, hz: u32) -> std::io::Result<()> {
-        self.set_mode(mode, hz)
+        self.set_mode(mode, hz as i32)
     }
 
     /// Send a RAW CAT command string straight to the rig via rigctld's `w` (send_cmd) and
@@ -627,6 +648,8 @@ mod tests {
         assert_eq!(freq_line(14_074_000), "F 14074000\n");
         assert_eq!(mode_line("USB", 0), "M USB 0\n");
         assert_eq!(mode_line("FM", 0), "M FM 0\n");
+        // -1 = RIG_PASSBAND_NOCHANGE: leave the rig's own filter width alone (no Width-OSD pop).
+        assert_eq!(mode_line("USB", -1), "M USB -1\n");
         assert!(reply_ok("RPRT 0\n"));
         assert!(!reply_ok("RPRT -1\n"));
     }
@@ -795,6 +818,8 @@ mod tests {
         // SmartSDR CAT chains answer slower than a local rigctld and TCP can
         // fragment: 700 ms in, byte-at-a-time. The old single-500ms-read
         // returned "" here (operator report: green connect, dead control).
+        // This is the NETWORK transport, so the long 2.5 s command deadline
+        // applies (a serial rig would use the short one) — mark it slow.
         use std::io::Write as _;
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
@@ -811,6 +836,7 @@ mod tests {
             }
         });
         let mut rig = Rig::rigctld(&addr.to_string());
+        rig.set_slow_transport(true); // network chain → long deadline
         assert_eq!(rig.read_freq().expect("whole reply assembled"), 14_074_000);
     }
 

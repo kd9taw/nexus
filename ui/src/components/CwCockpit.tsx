@@ -22,6 +22,7 @@ import {
 } from '../api'
 import { pushToast, withErrorToast } from '../toast'
 import { RotorStrip } from './RotorStrip'
+import { useWheelTune } from '../useWheelTune'
 
 interface Props {
   snap: AppSnapshot
@@ -88,6 +89,16 @@ export function CwCockpit({
   onWorkSpot,
 }: Props) {
   const catOk = snap.radio.catOk === true
+  // Wheel-to-tune over the CW scope, sharing the tuning strip's step selector.
+  const [tuneStep, setTuneStep] = useState(100)
+  const scopeRef = useRef<HTMLElement>(null)
+  useWheelTune(scopeRef, {
+    dialMhz: snap.radio.dialMhz,
+    sideband: snap.radio.sideband || 'USB',
+    enabled: catOk && !snap.radio.transmitting,
+    stepHz: tuneStep,
+    onSnap,
+  })
   // RX filter width (CW wants a NARROW filter — default 500 Hz, 50-Hz steps, 50–2000 Hz span).
   const filterHz = snap.radio.filterWidthHz ?? null
   const bumpFilter = (deltaHz: number) => {
@@ -381,7 +392,7 @@ export function CwCockpit({
             aria-label="CW pitch (Hz)"
           />
         </label>
-        <TuningStrip snap={snap} onSnap={onSnap} />
+        <TuningStrip snap={snap} onSnap={onSnap} step={tuneStep} onStep={setTuneStep} />
         <BandPicker snap={snap} mode="cw" onSnap={onSnap} />
         {catOk && (
           <div className="ph-filter" title="RX filter / passband width (CAT) — narrow to dig CW out of QRM">
@@ -433,7 +444,7 @@ export function CwCockpit({
         </div>
       )}
 
-      <section className="ph-scope-panel">
+      <section className="ph-scope-panel" ref={scopeRef} title="Scroll here to tune the VFO">
         <div className="ph-scope-head">
           <span className="ph-scope-head-label">Colors</span>
           <PalettePicker />

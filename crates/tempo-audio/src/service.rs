@@ -54,9 +54,20 @@ const MAX_TUNE_MS: f64 = 12_000.0;
 /// Safety auto-stop for a forgotten QSO recording: cap a single recording at 2 hours so a
 /// recording the operator forgot to stop can't fill the disk unbounded (~86 MB/hour).
 const MAX_QSO_REC_MS: f64 = 2.0 * 60.0 * 60.0 * 1000.0;
-/// How often to poll the rig's live dial/mode over CAT (each is a blocking TCP round-trip,
-/// so we throttle well below the loop rate) — fast enough to track a manual VFO knob turn.
+/// How often to run the FULL rig read-back over CAT — RF power, S-meter, mode mirror, DSP funcs.
+/// Each is a blocking TCP round-trip, so the heavy set is throttled well below the loop rate.
 const RIG_POLL_MS: f64 = 750.0;
+/// How often to run the FAST dial-only read-back. The dial is the one value that must track a
+/// manual VFO knob in real time, so it's polled ~4× faster than the heavy set — matching HRD's
+/// Yaesu responsiveness (which is pure fast polling; the earlier 1–2 s lag was self-inflicted by
+/// reading the dial only on the 750 ms health cadence). A single `F`-read is cheap on a healthy
+/// serial link, and the transport-aware read deadline bounds a stalled one.
+const FREQ_POLL_MS: f64 = 180.0;
+/// Consecutive heavy-poll dial-read failures before the CAT breaker trips. >1 so a single slow
+/// reply (the short serial deadline can cut off a legitimately-slow band-stack switch / USB spike)
+/// doesn't permanently kill read-back; small enough that a truly dead link still stops the loop
+/// blocking within ~2 s.
+const FREQ_MISS_LIMIT: u32 = 3;
 /// Hamlib func tokens for the Expert DSP toggles, in the engine's `[nb, nr, notch, comp, vox]`
 /// order. `ANF` (auto-notch) is the notch we expose — it works as a bare on/off toggle, unlike
 /// `MN` (manual notch) which needs a separate NOTCHF frequency level.
@@ -361,8 +372,16 @@ struct RadioLoop {
     /// An audio Rig-mode split engaged VFO B for an over — tear the rig split
     /// down once no over is pending (unless the cluster split owns VFO B).
     audio_rig_split: bool,
-    /// Last time we polled the rig's live dial over CAT (ms), for throttling.
+    /// Last time we ran the FULL rig read-back (dial + RF power + S-meter + mode + funcs), ms.
     last_rig_poll: f64,
+    /// Last time we ran the FAST dial-only read-back (ms). The dial is mirrored on a much shorter
+    /// cadence than the heavy reads so a manual VFO-knob turn tracks like HRD (~⅕ s), not the
+    /// 750 ms health poll — the heavy reads (S-meter/mode/funcs) stay slow to bound CAT traffic.
+    last_freq_poll: f64,
+    /// Consecutive HEAVY-poll dial-read failures. The CAT breaker only trips after a few in a row
+    /// (not a single miss) so one legitimately-slow reply — a band-stack switch, a USB-serial
+    /// latency spike — doesn't permanently disable read-back. Reset to 0 on any successful read.
+    freq_misses: u32,
     /// Last known CAT health (from connect/Test-CAT): `Some(false)` = configured but failing,
     /// so we skip the read-back poll to avoid blocking the loop on a dead read every cycle.
     cat_ok: Option<bool>,
@@ -441,6 +460,8 @@ impl RadioLoop {
             audio_rig_split: false,
             last_psk_flush: now_unix_ms(),
             last_rig_poll: now_unix_ms(),
+            last_freq_poll: now_unix_ms(),
+            freq_misses: 0,
             cat_ok: None,
             smeter_supported: None,
             smeter_misses: 0,
@@ -707,14 +728,21 @@ impl RadioLoop {
                         retuned = true;
                     }
                     if !md.trim().is_empty() {
+                        // A dial-only QSY (wheel/nudge) re-enters this force path with the SAME mode;
+                        // skip the diagnostic mode read-back then, so continuous wheel-tuning doesn't
+                        // fire an extra `w MD0;` round-trip per ~120 ms flush. The mode is still
+                        // re-asserted (an explicit same-mode re-click must still command the rig).
+                        let mode_changed = md != self.last_mode;
                         match rig.set_mode(&md, passband_for(&md)) {
                             Ok(()) => {
                                 self.last_mode = md.clone();
                                 retuned = true;
-                                // Read the mode straight back FROM the rig to confirm it
-                                // actually applied — rigctld can answer RPRT 0 without the rig
-                                // changing, which is the only way to tell those apart.
-                                retune_note = Some(mode_set_note(rig, &md));
+                                if mode_changed {
+                                    // Read the mode straight back FROM the rig to confirm it
+                                    // actually applied — rigctld can answer RPRT 0 without the rig
+                                    // changing, which is the only way to tell those apart.
+                                    retune_note = Some(mode_set_note(rig, &md));
+                                }
                             }
                             // `last_mode` is unchanged, so the steady-state path below re-tries
                             // on later loops and re-gives-up past the budget — a non-supporting
@@ -794,6 +822,11 @@ impl RadioLoop {
             //   the mismatch tag; it never overwrites the canonical commanded sideband.)
             if retuned {
                 self.last_rig_poll = now;
+                // Defer the fast dial mirror a FULL heavy interval after an app QSY: a read only
+                // ~180 ms after the F-ack could return the pre-QSY dial (Hamlib's get-cache, or a
+                // slow network chain) and observe_rig_freq would adopt it as a knob QSY and revert.
+                self.last_freq_poll = now + (RIG_POLL_MS - FREQ_POLL_MS);
+                self.freq_misses = 0; // a successful set_freq/set_mode proves the link is alive
                 // The app just commanded a new dial/mode — drop the stale read-back mode + passband
                 // width so a band/mode change can't flash a false "rig: X" mismatch or show the
                 // prior mode's filter width before the next poll reads the rig's true state.
@@ -829,6 +862,7 @@ impl RadioLoop {
                 && now - self.last_rig_poll >= RIG_POLL_MS
             {
                 self.last_rig_poll = now;
+                self.last_freq_poll = now; // heavy tick reads the dial too — don't double-read below
                 self.rig_poll_ticks = self.rig_poll_ticks.wrapping_add(1);
                 // Periodically re-probe a rig whose S-meter was found unsupported — a few
                 // STRENGTH misses can be a transient hiccup, not a real lack of support — so it
@@ -847,6 +881,7 @@ impl RadioLoop {
                 }
                 match rig.read_freq() {
                     Ok(hz) => {
+                        self.freq_misses = 0; // a good read clears the breaker's miss run
                         if hz != self.last_dial {
                             self.last_dial = hz;
                             if let Ok(mut eng) = engine.lock() {
@@ -1006,7 +1041,13 @@ impl RadioLoop {
                     // has no control channel — its read_freq errors instantly and
                     // means nothing, so it must NOT trip the breaker.
                     Err(e) => {
+                        // A real CAT rig tolerates a few consecutive misses before tripping — a slow
+                        // reply cut off by the short serial deadline must not permanently kill
+                        // read-back. A VOX/serial rig errors instantly + meaninglessly: never counts.
                         if rig.has_control() {
+                            self.freq_misses = self.freq_misses.saturating_add(1);
+                        }
+                        if rig.has_control() && self.freq_misses >= FREQ_MISS_LIMIT {
                             self.cat_ok = Some(false);
                             // Re-probe funcs on recovery; don't leave stale toggle states shown.
                             self.func_supported = [None; 5];
@@ -1024,6 +1065,31 @@ impl RadioLoop {
                                     format!("CAT read-back stopped — rig not answering ({e})"),
                                 );
                             }
+                        }
+                    }
+                }
+            }
+
+            // Fast dial-only mirror: the dial is the one value that must track a manual VFO knob in
+            // real time (a 1–2 s lag made live tuning feel unusable — HRD tracks Yaesu in ~⅕ s with
+            // pure fast polling). Runs on the fast cadence when the heavy read-back above did NOT (it
+            // stamps last_freq_poll, so never a double read), never right after an app retune (that
+            // branch defers it), under the same TX-safety + CAT-health gates. A read miss here is
+            // ignored — the 750 ms heavy poll stays the authoritative CAT health probe / breaker.
+            if !retuned
+                && self.tx_until_ms.is_none()
+                && !self.tuning_keyed
+                && !self.manual_ptt_applied
+                && self.cat_ok != Some(false)
+                && self.freq_misses == 0 // a heavy-poll miss pauses fast reads until it recovers
+                && now - self.last_freq_poll >= FREQ_POLL_MS
+            {
+                self.last_freq_poll = now;
+                if let Ok(hz) = rig.read_freq() {
+                    if hz != self.last_dial {
+                        self.last_dial = hz;
+                        if let Ok(mut eng) = engine.lock() {
+                            eng.observe_rig_freq(hz);
                         }
                     }
                 }
@@ -1395,9 +1461,11 @@ impl RadioLoop {
             if let Some(hz) = self.fake_it_restore.take() {
                 let _ = rig.set_freq(hz);
                 // Settle the poll guards so the knob-QSY detector can't adopt
-                // a not-yet-restored read-back as an operator QSY.
+                // a not-yet-restored read-back as an operator QSY (fast mirror deferred a full
+                // heavy interval, matching the retune path).
                 self.last_dial = hz;
                 self.last_rig_poll = now;
+                self.last_freq_poll = now + (RIG_POLL_MS - FREQ_POLL_MS);
             }
             if self.audio_rig_split {
                 self.audio_rig_split = false;
@@ -2300,14 +2368,16 @@ impl Transport {
 }
 
 /// The passband (Hz) to command alongside a rig mode. FT8/FT4 (the DATA submodes) need the
-/// FULL ~3 kHz audio passband — decodes span the whole band, and passband 0 ("normal") left
-/// some rigs on a narrow recalled DATA filter (e.g. 600 Hz on the FTDX10), clipping signals.
-/// For SSB / CW / FM we pass 0 so the rig keeps its own normal/recalled filter for that mode
-/// (the operator's chosen CW width, SSB filter, etc.).
-fn passband_for(md: &str) -> u32 {
+/// FULL ~3 kHz audio passband — decodes span the whole band, and a narrow recalled DATA filter
+/// (e.g. 600 Hz on the FTDX10) clips signals — so we force 3000 Hz there.
+/// For SSB / CW / FM we pass `-1` (`RIG_PASSBAND_NOCHANGE`) so the rig keeps EXACTLY its current
+/// filter — the operator's chosen CW width / SSB filter is left untouched. (Passband `0` is
+/// Hamlib's `RIG_PASSBAND_NORMAL`, which actively commands the rig's *default* width and pops the
+/// rig's Width display on every mode change — the bug this avoids.)
+fn passband_for(md: &str) -> i32 {
     match md.trim().to_ascii_uppercase().as_str() {
         "PKTUSB" | "PKTLSB" => 3000,
-        _ => 0,
+        _ => -1,
     }
 }
 
@@ -2395,6 +2465,7 @@ fn open_cat(t: &Transport, dial_hz: u64, mode: &str, ptt_mode: PttMode) -> RigOp
         // Auto-coexist: a rigctld is ALREADY here (e.g. WSJT-X launched one). Connect
         // THROUGH it instead of fighting for the serial port.
         let mut rig = Rig::with_control(Some(addr.clone()), ptt_mode);
+        rig.set_slow_transport(t.is_network()); // network chains get the long command deadline
         let _ = rig.set_freq(dial_hz);
         let _ = rig.set_mode(mode, passband_for(mode));
         let (ok, detail) = probe_cat(&mut rig, t.rigctld_port);
@@ -2420,6 +2491,7 @@ fn open_cat(t: &Transport, dial_hz: u64, mode: &str, ptt_mode: PttMode) -> RigOp
             // Give the daemon a moment to bind its TCP port before connecting.
             std::thread::sleep(Duration::from_millis(700));
             let mut rig = Rig::with_control(Some(addr), ptt_mode);
+            rig.set_slow_transport(network); // network chains get the long command deadline
             let _ = rig.set_freq(dial_hz);
             let _ = rig.set_mode(mode, passband_for(mode));
             let (ok, detail) = probe_cat(&mut rig, t.rigctld_port);
@@ -3287,11 +3359,12 @@ mod tests {
     #[test]
     fn poll_read_freq_failure_trips_the_cat_circuit_breaker() {
         // A half-open CAT link (writes succeed, replies never arrive) makes every
-        // read_freq block to the 2.5 s deadline and error. Without a runtime trip
-        // the poll guard (cat_ok != Some(false)) never fires and the slot loop
-        // blocks ~2.5 s every cycle, keying overs seconds late. A read_freq failure
-        // on a REAL CAT rig must set cat_ok = Some(false) so the guard disables
-        // further blocking polls until a successful command / reprobe.
+        // read_freq block to the deadline and error. Without a runtime trip the poll
+        // guard (cat_ok != Some(false)) never fires and the slot loop blocks every
+        // cycle, keying overs seconds late. Consecutive read_freq failures on a REAL
+        // CAT rig must set cat_ok = Some(false) so the guard disables further blocking
+        // polls until a successful command / reprobe — but a SINGLE miss is tolerated
+        // (one slow reply cut off by the short serial deadline must not kill read-back).
         let engine = Arc::new(Mutex::new(Engine::new("W9XYZ", "EN37", 0)));
         let mut backend = MockBackend::new();
         // A CAT rig pointed at a definitely-closed port: has_control() is true but
@@ -3301,31 +3374,36 @@ mod tests {
         drop(listener); // free the port so a connect is refused
         let mut rig = Rig::rigctld(&format!("127.0.0.1:{dead_port}"));
         let mut state = loop_state();
-        state.last_rig_poll = -1000.0; // due for a read-back poll at now = 0
         assert_ne!(
             state.cat_ok,
             Some(false),
             "precondition: the breaker has not tripped yet"
         );
         let (sinks, mut ra, mut rr) = (no_sinks(), mock_reopen_audio(), mock_reopen_rig());
+        let mut poll_once = |state: &mut RadioLoop, backend: &mut MockBackend, rig: &mut Rig| {
+            state.last_rig_poll = -1000.0; // force the heavy read-back poll due (at now = 0)
+            state
+                .step(&engine, backend, rig, &sinks, 0.0, &mut ra, &mut rr)
+                .unwrap();
+        };
 
-        state
-            .step(
-                &engine,
-                &mut backend,
-                &mut rig,
-                &sinks,
-                0.0,
-                &mut ra,
-                &mut rr,
-            )
-            .unwrap();
+        // One miss: tolerated (the breaker rides out a single slow/failed reply).
+        poll_once(&mut state, &mut backend, &mut rig);
+        assert_ne!(
+            state.cat_ok,
+            Some(false),
+            "a single dial-read miss is tolerated, not tripped"
+        );
 
+        // FREQ_MISS_LIMIT consecutive misses: the breaker trips.
+        for _ in 1..FREQ_MISS_LIMIT {
+            poll_once(&mut state, &mut backend, &mut rig);
+        }
         assert_eq!(
             state.cat_ok,
             Some(false),
-            "a failed dial read-back on a CAT rig trips the breaker so the loop \
-             stops blocking on a dead read every cycle"
+            "consecutive dial-read misses trip the breaker so the loop stops blocking \
+             on a dead read every cycle"
         );
     }
 

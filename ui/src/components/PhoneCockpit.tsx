@@ -14,6 +14,7 @@ import { RotorStrip } from './RotorStrip'
 import { MemoryBank } from './MemoryBank'
 import { setFrequency, getSettings, setSettings, setSplit, setRigFunc, setSidebandOverride, setFilterWidth, openPanelWindow } from '../api'
 import { bandLabelForMhz } from '../band'
+import { useWheelTune } from '../useWheelTune'
 
 interface Props {
   snap: AppSnapshot
@@ -80,6 +81,16 @@ export function PhoneCockpit({ snap, theme, pendingWork, onConsumeWork, onSnap, 
   const [span, setSpan] = useState<(typeof SPANS)[number]>(SPANS[0])
   const [lock, setLock] = useState(false) // hands-free PTT (toggle instead of hold)
   const [recBusy, setRecBusy] = useState(false) // in-flight guard for the record toggle
+  // Wheel-to-tune over the bandscope, sharing the tuning strip's step selector.
+  const [tuneStep, setTuneStep] = useState(100)
+  const scopeRef = useRef<HTMLDivElement>(null)
+  useWheelTune(scopeRef, {
+    dialMhz: snap.radio.dialMhz,
+    sideband: snap.radio.sideband || 'USB',
+    enabled: snap.radio.catOk === true && !snap.radio.transmitting,
+    stepHz: tuneStep,
+    onSnap,
+  })
 
   // AUTO sideband from the rig-mode policy — FM when the FM sub-mode is selected, else sideband
   // by band (LSB <10 MHz, USB above). The operator can override this transiently (below).
@@ -250,7 +261,7 @@ export function PhoneCockpit({ snap, theme, pendingWork, onConsumeWork, onSnap, 
             rig: {modeMismatch}
           </span>
         )}
-        <TuningStrip snap={snap} onSnap={onSnap} />
+        <TuningStrip snap={snap} onSnap={onSnap} step={tuneStep} onStep={setTuneStep} />
         <BandPicker snap={snap} mode="phone" onSnap={onSnap} />
         {catOk && (
           <div className={`ph-split ${splitOn ? 'on' : ''}`}>
@@ -387,7 +398,7 @@ export function PhoneCockpit({ snap, theme, pendingWork, onConsumeWork, onSnap, 
           <span className="ph-scope-head-label">Colors</span>
           <PalettePicker />
         </div>
-        <div className="ph-scope-wrap">
+        <div className="ph-scope-wrap" ref={scopeRef} title="Scroll here to tune the VFO">
           <div className="ph-span" role="group" aria-label="Bandscope span">
             {SPANS.map((sp) => (
               <button

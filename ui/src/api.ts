@@ -1022,6 +1022,11 @@ export async function exportLog(format: 'cabrillo' | 'adif'): Promise<string> {
  */
 export function subscribeSnapshot(fn: (snap: AppSnapshot) => void): () => void {
   let alive = true
+  // 300 ms: the dial-lag fix's real lever is the backend's fast ~180 ms dial read-back (was 750 ms),
+  // so a knob turn now tracks in well under a second even at this UI cadence, and wheel-tuning
+  // updates the readout instantly via the flushed set_frequency snapshot. Kept at 300 ms (not
+  // faster) because get_snapshot still does an O(roster×log) worked-before scan under the engine
+  // mutex — Wave 1 optimizes that scan, after which this can safely drop to ~150 ms.
   const id = window.setInterval(() => {
     if (!alive) return
     invoke<AppSnapshot>('get_snapshot').then(fn).catch(() => {})
