@@ -303,6 +303,15 @@ impl Logbook {
                 if rec.time_off_unix.is_none() {
                     rec.time_off_unix = old.time_off_unix;
                 }
+                // Preserve the stored POTA/SOTA park refs when the edit leaves them empty (a
+                // busted-call/RST fix must not silently drop the park from the record + ADIF).
+                let incoming_ota_empty = rec.ota.my_program.is_none()
+                    && rec.ota.my_ref.is_none()
+                    && rec.ota.their_program.is_none()
+                    && rec.ota.their_ref.is_none();
+                if incoming_ota_empty {
+                    rec.ota = old.ota.clone();
+                }
                 self.records[index] = rec;
                 true
             }

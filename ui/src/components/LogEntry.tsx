@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { AppSnapshot, FieldDayStatus, LoggedQso } from '../types'
-import { fdLogManual, getLog, logQso, qrzLookup } from '../api'
+import { fdLogManual, getLog, logQso, qrzLookup, searchParks, type Park } from '../api'
 import { callHistory, entitySlots, isNewEntity } from '../features/callHistory'
 import { RecallPanel } from './RecallPanel'
 import { pushToast, withErrorToast } from '../toast'
@@ -77,6 +77,9 @@ export function LogEntry({
   // POTA/SOTA park of the station worked (ota.their_*). Prefilled from a hunted spot; editable.
   const [logParkProgram, setLogParkProgram] = useState('POTA')
   const [logParkRef, setLogParkRef] = useState('')
+  // Local park-directory suggestions (POTA only) as the operator types the reference.
+  const [parkHits, setParkHits] = useState<Park[]>([])
+  const [parkPicked, setParkPicked] = useState(false)
   const [qrzBusy, setQrzBusy] = useState(false)
   const [allLog, setAllLog] = useState<LoggedQso[]>([])
   const rstRef = useRef<HTMLInputElement>(null)
@@ -122,10 +125,14 @@ export function LogEntry({
   // Clear them when the call changes to a DIFFERENT one, so a previous callsign's data never
   // bleeds onto another call's recall card — and so onCallBlur re-looks-up the new call.
   const enrichedForRef = useRef('')
+  // The call for which an Enter-triggered QRZ lookup was already ATTEMPTED (success OR miss/no
+  // callbook), so a second Enter logs instead of re-looping the lookup on an unresolvable call.
+  const triedLookupRef = useRef('')
   useEffect(() => {
     const c = logCall.trim().toUpperCase()
     if (enrichedForRef.current && c !== enrichedForRef.current) {
       enrichedForRef.current = ''
+      triedLookupRef.current = ''
       setLogName('')
       setLogQth('')
       setLogGrid('')
@@ -149,6 +156,26 @@ export function LogEntry({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [snap.hunt?.reference, snap.hunt?.program])
+
+  // Search the local park directory as the operator types a POTA reference (debounced).
+  useEffect(() => {
+    if (parkPicked) {
+      setParkPicked(false)
+      return
+    }
+    const q = logParkRef.trim()
+    if (logParkProgram !== 'POTA' || q.length < 2) {
+      setParkHits([])
+      return
+    }
+    const id = setTimeout(() => {
+      void searchParks(q, 8)
+        .then(setParkHits)
+        .catch(() => setParkHits([]))
+    }, 180)
+    return () => clearTimeout(id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [logParkRef, logParkProgram])
 
   const refreshLog = () => void getLog().then(setAllLog).catch(() => {})
   useEffect(() => {
@@ -332,11 +359,14 @@ export function LogEntry({
       whenUnix: Math.floor(Date.now() / 1000),
       confirmed: false,
       awardConfirmed: false,
-      // The park of the station worked (their side). The engine's pending-hunt auto-tag only
-      // fills this if we leave it empty, so an explicit entry here always wins.
-      ota: logParkRef.trim()
-        ? { theirProgram: logParkProgram, theirRef: logParkRef.trim().toUpperCase() }
-        : undefined,
+      // Only send an EXPLICIT park. A hunt-PREFILLED ref (still equal to the pending hunt) is left
+      // to the engine's callsign-matched auto-tag — which also clears the pend — so a prefill can
+      // never ride onto a non-matching call, and the hunt tags exactly the right QSO once.
+      ota:
+        logParkRef.trim() &&
+        logParkRef.trim().toUpperCase() !== (snap.hunt?.reference ?? '').trim().toUpperCase()
+          ? { theirProgram: logParkProgram, theirRef: logParkRef.trim().toUpperCase() }
+          : undefined,
     }
     const r = await withErrorToast(() => logQso(rec), 'Could not log the QSO')
     if (r) {
@@ -355,7 +385,15 @@ export function LogEntry({
   const onCallEnter = (e: React.KeyboardEvent) => {
     if (e.key !== 'Enter') return
     const call = logCall.trim()
-    if (call && !logName.trim() && !qrzBusy && enrichedForRef.current !== call.toUpperCase()) {
+    const cu = call.toUpperCase()
+    if (
+      call &&
+      !logName.trim() &&
+      !qrzBusy &&
+      enrichedForRef.current !== cu &&
+      triedLookupRef.current !== cu
+    ) {
+      triedLookupRef.current = cu // mark attempted so the next Enter logs even if the lookup misses
       e.preventDefault()
       void lookup(false)
     } else {
@@ -521,16 +559,42 @@ export function LogEntry({
           <option value="POTA">POTA</option>
           <option value="SOTA">SOTA</option>
         </select>
-        <input
-          className="settings-input mono le-park-ref"
-          value={logParkRef}
-          onChange={(e) => setLogParkRef(e.target.value.toUpperCase())}
-          onKeyDown={onEnter}
-          placeholder={logParkProgram === 'SOTA' ? 'Summit (W7A/MN-001)' : 'Park (K-1234)'}
-          title="Park/summit reference of the station you worked — logged to ADIF (POTA→SIG_INFO, SOTA→SOTA_REF)"
-          autoComplete="off"
-          spellCheck={false}
-        />
+        <div className="le-park-search">
+          <input
+            className="settings-input mono le-park-ref"
+            value={logParkRef}
+            onChange={(e) => setLogParkRef(e.target.value.toUpperCase())}
+            onKeyDown={onEnter}
+            onBlur={() => window.setTimeout(() => setParkHits([]), 150)}
+            placeholder={logParkProgram === 'SOTA' ? 'Summit (W7A/MN-001)' : 'Park (K-1234 or name)'}
+            title="Park/summit reference of the station you worked — logged to ADIF (POTA→SIG_INFO, SOTA→SOTA_REF)"
+            autoComplete="off"
+            spellCheck={false}
+          />
+          {parkHits.length > 0 && (
+            <ul className="le-park-suggest">
+              {parkHits.map((p) => (
+                <li key={p.reference}>
+                  <button
+                    type="button"
+                    onMouseDown={(e) => {
+                      e.preventDefault() // pick before the input's onBlur clears the list
+                      setParkPicked(true)
+                      setLogParkRef(p.reference)
+                      setParkHits([])
+                    }}
+                  >
+                    <span className="mono le-park-hit-ref">{p.reference}</span>
+                    <span className="le-park-hit-name">
+                      {p.name}
+                      {p.location ? ` · ${p.location}` : ''}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       </div>
 
       <textarea

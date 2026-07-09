@@ -965,6 +965,30 @@ export async function getActivation(): Promise<Activation> {
   return invoke<Activation>('get_activation')
 }
 
+/** A park directory entry from the local searchable list. */
+export interface Park {
+  reference: string
+  name: string
+  grid: string
+  location: string
+}
+/** Search the local (offline) POTA park directory by reference prefix or name substring. */
+export async function searchParks(query: string, limit?: number): Promise<Park[]> {
+  return invoke<Park[]>('search_parks', { query, limit })
+}
+/** How many parks are loaded locally (0 = not downloaded/imported yet). */
+export async function parksCount(): Promise<number> {
+  return invoke<number>('parks_count')
+}
+/** Import a park directory from CSV text the operator downloaded. Returns the park count. */
+export async function importParksCsv(csv: string): Promise<number> {
+  return invoke<number>('import_parks_csv', { csv })
+}
+/** Download + cache the current POTA all-parks list for offline search. Returns the park count. */
+export async function downloadParks(): Promise<number> {
+  return invoke<number>('download_parks')
+}
+
 /**
  * Export the contest/contact log in the given format. Returns the serialized
  * text (the caller saves it via a browser download). Rejects if there is no

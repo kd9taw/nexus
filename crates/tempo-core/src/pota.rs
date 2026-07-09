@@ -71,6 +71,142 @@ pub fn normalize_ref(program: OtaProgram, s: &str) -> Option<String> {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Local park directory — an importable/downloadable list searched OFFLINE (the
+// HRD workflow a test user asked for: grab the park list once, search it locally).
+// ---------------------------------------------------------------------------
+
+/// A park directory entry (from the POTA all-parks export or an operator-imported CSV).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Park {
+    /// Park reference, e.g. "K-1234" (uppercased).
+    pub reference: String,
+    /// Park name.
+    pub name: String,
+    /// Maidenhead grid, if the source has it ("" otherwise).
+    pub grid: String,
+    /// Location descriptor, e.g. "US-CA" ("" otherwise).
+    pub location: String,
+}
+
+/// An in-memory, locally-searchable park index. Built from a CSV (imported file or downloaded
+/// POTA export) and searched without any network. Dependency-free.
+#[derive(Debug, Clone, Default)]
+pub struct ParkIndex {
+    parks: Vec<Park>,
+}
+
+/// Split one CSV record into fields, honoring `"..."` quoting (doubled `""` = literal quote).
+/// Single-line records only — good enough for the flat POTA export.
+fn split_csv_line(line: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut in_quotes = false;
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '"' if in_quotes && chars.peek() == Some(&'"') => {
+                cur.push('"');
+                chars.next();
+            }
+            '"' => in_quotes = !in_quotes,
+            ',' if !in_quotes => {
+                out.push(std::mem::take(&mut cur));
+            }
+            _ => cur.push(c),
+        }
+    }
+    out.push(cur);
+    out
+}
+
+impl ParkIndex {
+    /// Parse a parks CSV. **Header-aware**: locates the reference / name / grid / location columns
+    /// by header name (case-insensitive substring), so column order + extra columns don't matter.
+    /// Rows without a usable reference are skipped. If the first row has no recognizable reference
+    /// column, falls back to positional `[reference, name, …]`.
+    pub fn parse_csv(csv: &str) -> ParkIndex {
+        let mut lines = csv.lines().filter(|l| !l.trim().is_empty());
+        let header = match lines.next() {
+            Some(h) => split_csv_line(h),
+            None => return ParkIndex::default(),
+        };
+        let find = |names: &[&str]| -> Option<usize> {
+            header.iter().position(|h| {
+                let h = h.trim().to_ascii_lowercase();
+                names.iter().any(|n| h == *n)
+            })
+        };
+        let ref_col = find(&["reference", "ref", "park", "parkreference"]);
+        let (ref_col, positional) = match ref_col {
+            Some(c) => (c, false),
+            // No header → treat the "header" line as data too, positional [ref, name, ...].
+            None => (0, true),
+        };
+        let name_col = if positional { Some(1) } else { find(&["name", "parkname"]) };
+        let grid_col = if positional { None } else { find(&["grid", "grid6", "maidenhead"]) };
+        let loc_col = if positional {
+            None
+        } else {
+            find(&["locationdesc", "location", "loc", "state"])
+        };
+        let get = |row: &[String], col: Option<usize>| -> String {
+            col.and_then(|c| row.get(c)).map(|s| s.trim().to_string()).unwrap_or_default()
+        };
+        let mut parks = Vec::new();
+        let mut push_row = |row: Vec<String>| {
+            let reference = get(&row, Some(ref_col)).to_ascii_uppercase();
+            if reference.is_empty() || !reference.contains('-') {
+                return;
+            }
+            parks.push(Park {
+                reference,
+                name: get(&row, name_col),
+                grid: get(&row, grid_col),
+                location: get(&row, loc_col),
+            });
+        };
+        if positional {
+            push_row(header);
+        }
+        for l in lines {
+            push_row(split_csv_line(l));
+        }
+        ParkIndex { parks }
+    }
+
+    pub fn len(&self) -> usize {
+        self.parks.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.parks.is_empty()
+    }
+
+    /// Search by reference (prefix match) or name (substring), case-insensitive. Reference-prefix
+    /// matches rank ahead of name matches. Returns up to `limit` results.
+    pub fn search(&self, query: &str, limit: usize) -> Vec<Park> {
+        let q = query.trim().to_ascii_uppercase();
+        if q.is_empty() {
+            return Vec::new();
+        }
+        let mut ref_hits = Vec::new();
+        let mut name_hits = Vec::new();
+        for p in &self.parks {
+            if p.reference.starts_with(&q) {
+                ref_hits.push(p.clone());
+                if ref_hits.len() >= limit {
+                    break;
+                }
+            } else if name_hits.len() < limit && p.name.to_ascii_uppercase().contains(&q) {
+                name_hits.push(p.clone());
+            }
+        }
+        ref_hits.extend(name_hits);
+        ref_hits.truncate(limit);
+        ref_hits
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -125,5 +261,42 @@ mod tests {
             normalize_ref(OtaProgram::Sota, "g/ld-001").as_deref(),
             Some("G/LD-001")
         );
+    }
+
+    const PARKS_CSV: &str = "reference,name,active,locationDesc,latitude,longitude,grid\n\
+K-0001,Acadia National Park,1,US-ME,44.35,-68.21,FN54\n\
+K-1234,\"Big Bend, Texas\",1,US-TX,29.25,-103.25,DL89\n\
+K-5678,Yellowstone National Park,1,US-WY,44.6,-110.5,DN44\n";
+
+    #[test]
+    fn parses_pota_csv_header_aware() {
+        let idx = ParkIndex::parse_csv(PARKS_CSV);
+        assert_eq!(idx.len(), 3);
+        let p = idx.search("K-1234", 5);
+        assert_eq!(p.len(), 1);
+        assert_eq!(p[0].reference, "K-1234");
+        assert_eq!(p[0].name, "Big Bend, Texas"); // quoted comma survived
+        assert_eq!(p[0].location, "US-TX");
+        assert_eq!(p[0].grid, "DL89");
+    }
+
+    #[test]
+    fn search_matches_ref_prefix_and_name_substring() {
+        let idx = ParkIndex::parse_csv(PARKS_CSV);
+        // Reference prefix.
+        let byref = idx.search("K-5", 5);
+        assert_eq!(byref.len(), 1);
+        assert_eq!(byref[0].reference, "K-5678");
+        // Name substring (case-insensitive), ranked after any ref matches.
+        let byname = idx.search("national", 5);
+        assert_eq!(byname.len(), 2); // Acadia + Yellowstone
+        // Empty query → nothing.
+        assert!(idx.search("  ", 5).is_empty());
+    }
+
+    #[test]
+    fn search_respects_the_limit() {
+        let idx = ParkIndex::parse_csv(PARKS_CSV);
+        assert_eq!(idx.search("K-", 2).len(), 2);
     }
 }

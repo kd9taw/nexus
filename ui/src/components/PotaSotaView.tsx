@@ -13,6 +13,9 @@ import {
   setActivation,
   clearActivation,
   getActivation,
+  parksCount,
+  downloadParks,
+  importParksCsv,
 } from '../api'
 import { pushToast, withErrorToast } from '../toast'
 import { bandFromKhz, spotModeClass } from '../otaHunt'
@@ -185,6 +188,38 @@ export function PotaSotaView({ snap, onHunt, onSnap }: Props) {
     }
   }
 
+  // Local park directory — download once / import a CSV, then search it offline in the log form.
+  const [parkN, setParkN] = useState(0)
+  const [parkBusy, setParkBusy] = useState(false)
+  const fileRef = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    void parksCount()
+      .then(setParkN)
+      .catch(() => {})
+  }, [])
+  const handleDownloadParks = async () => {
+    setParkBusy(true)
+    const n = await withErrorToast(() => downloadParks(), 'Park-list download failed')
+    setParkBusy(false)
+    if (n != null) {
+      setParkN(n)
+      pushToast(`Downloaded ${n.toLocaleString()} parks — searchable in the log`, 'success')
+    }
+  }
+  const handleImportFile = async (file: File) => {
+    setParkBusy(true)
+    try {
+      const csv = await file.text()
+      const n = await importParksCsv(csv)
+      setParkN(n)
+      pushToast(`Imported ${n.toLocaleString()} parks`, 'success')
+    } catch (e) {
+      pushToast(`Import failed: ${String(e)}`, 'error')
+    } finally {
+      setParkBusy(false)
+    }
+  }
+
   const handleClearHunt = async () => {
     const s = await withErrorToast(() => clearHuntTarget(), 'Could not clear hunt target')
     if (s) {
@@ -281,6 +316,30 @@ export function PotaSotaView({ snap, onHunt, onSnap }: Props) {
             </button>
           </>
         )}
+      </div>
+
+      {/* Local park directory — download/import once, then search offline in the log form. */}
+      <div className="pota-parklist">
+        <span className="pota-parklist-status">
+          {parkN > 0 ? `📖 ${parkN.toLocaleString()} parks — searchable in the log` : '📖 No local park list yet'}
+        </span>
+        <button type="button" className="pota-act-start" onClick={() => void handleDownloadParks()} disabled={parkBusy}>
+          {parkBusy ? '…' : parkN > 0 ? 'Update' : 'Download'}
+        </button>
+        <button type="button" className="pota-parklist-import" onClick={() => fileRef.current?.click()} disabled={parkBusy}>
+          Import CSV
+        </button>
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".csv,text/csv"
+          style={{ display: 'none' }}
+          onChange={(e) => {
+            const f = e.target.files?.[0]
+            if (f) void handleImportFile(f)
+            e.target.value = ''
+          }}
+        />
       </div>
 
       {/* Program toggle + band/mode filters + refresh */}

@@ -5731,6 +5731,83 @@ select optgroup {
   max-width: 84px;
   flex: 0 0 auto !important;
 }
+.le-park-search {
+  position: relative;
+  flex: 1;
+}
+.le-park-search .le-park-ref {
+  width: 100%;
+}
+/* Offline park-directory suggestions dropdown. */
+.le-park-suggest {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  margin: 0;
+  padding: 2px;
+  list-style: none;
+  max-height: 220px;
+  overflow-y: auto;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.28);
+}
+.le-park-suggest button {
+  display: flex;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-1) var(--space-2);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  text-align: left;
+  cursor: pointer;
+  font-size: 12px;
+}
+.le-park-suggest button:hover {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+.le-park-hit-ref {
+  flex: 0 0 auto;
+  color: var(--accent);
+  font-weight: 700;
+}
+.le-park-hit-name {
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Park-directory download/import control in the POTA view. */
+.pota-parklist {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 6px var(--space-3);
+  margin: 0 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-soft);
+  font-size: var(--fs-label);
+}
+.pota-parklist-status {
+  flex: 1;
+  color: var(--text-dim);
+}
+.pota-parklist-import {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 3px 10px;
+  color: var(--text);
+  cursor: pointer;
+}
+.pota-parklist-import:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
 /* Persistent Sent/Rcvd captions on the two RST boxes — the placeholders were hidden behind the
    default "59", so the send vs receive side was unlabeled. */
 .le-rst-field {

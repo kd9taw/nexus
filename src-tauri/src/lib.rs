@@ -108,6 +108,10 @@ type SharedLivePaths = Arc<Mutex<propagation::LiveSpots>>;
 /// hunter view's poll; read lock-only by the Needed scorer for POTA/SOTA tags.
 type SharedOtaSpots = Arc<Mutex<std::collections::HashMap<String, (i64, Vec<propagation::OtaSpot>)>>>;
 
+/// The locally-searchable POTA park directory (imported or downloaded once, searched offline).
+/// Distinct payload type → distinct TypeId for `.manage()`.
+type SharedParks = Arc<Mutex<tempo_core::pota::ParkIndex>>;
+
 /// Persistent opening-detection tracker (anomaly/onset hysteresis + onset
 /// stamping) across successive `get_propagation` polls. Stateful so it can flag a
 /// genuine onset (`is_new`) exactly once and keep a sustained opening latched.
@@ -718,6 +722,16 @@ fn census_path() -> PathBuf {
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| PathBuf::from("."))
         .join("grid_census.json")
+}
+
+/// Where the downloaded/imported POTA park directory CSV is cached (beside settings.json), so the
+/// list survives restarts and is searched offline. Losing it is harmless (re-download / re-import).
+fn parks_cache_path() -> PathBuf {
+    settings_path()
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("parks.csv")
 }
 
 /// The WSJT-X-format decode log (`ALL.TXT`), in the same base dir as the logbook —
@@ -6698,6 +6712,106 @@ fn get_activation(state: State<'_, SharedEngine>) -> Result<ActivationDto, Strin
     })
 }
 
+/// POTA all-parks export (CSV). Public list of every park's reference/name/location/grid. NOTE:
+/// endpoint + column layout should be verified against a live response — the parser is header-
+/// aware + tolerant, and `import_parks_csv` is the fallback if this URL ever changes.
+const PARKS_CSV_URL: &str = "https://pota.app/all_parks_ext.csv";
+
+/// A park directory search result (serde mirror of `tempo_core::pota::Park`).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ParkDto {
+    reference: String,
+    name: String,
+    grid: String,
+    location: String,
+}
+
+impl From<tempo_core::pota::Park> for ParkDto {
+    fn from(p: tempo_core::pota::Park) -> Self {
+        ParkDto {
+            reference: p.reference,
+            name: p.name,
+            grid: p.grid,
+            location: p.location,
+        }
+    }
+}
+
+/// Load the cached park CSV (if any) into the shared index at startup. Best-effort.
+fn load_parks_cache(parks: &SharedParks) {
+    if let Ok(csv) = std::fs::read_to_string(parks_cache_path()) {
+        if let Ok(mut idx) = parks.lock() {
+            *idx = tempo_core::pota::ParkIndex::parse_csv(&csv);
+        }
+    }
+}
+
+/// Search the local park directory (offline). Empty query or no list loaded → empty.
+#[tauri::command]
+fn search_parks(
+    parks: State<'_, SharedParks>,
+    query: String,
+    limit: Option<usize>,
+) -> Result<Vec<ParkDto>, String> {
+    let idx = parks.lock().map_err(|e| e.to_string())?;
+    Ok(idx
+        .search(&query, limit.unwrap_or(12))
+        .into_iter()
+        .map(ParkDto::from)
+        .collect())
+}
+
+/// How many parks are loaded in the local directory (0 = not downloaded/imported yet).
+#[tauri::command]
+fn parks_count(parks: State<'_, SharedParks>) -> Result<usize, String> {
+    Ok(parks.lock().map_err(|e| e.to_string())?.len())
+}
+
+/// Import a park directory from CSV text the operator downloaded (the HRD workflow). Caches it and
+/// swaps in the new index. Returns the park count. Always works regardless of the download URL.
+#[tauri::command]
+fn import_parks_csv(parks: State<'_, SharedParks>, csv: String) -> Result<usize, String> {
+    let idx = tempo_core::pota::ParkIndex::parse_csv(&csv);
+    if idx.is_empty() {
+        return Err("No parks parsed — is this a POTA parks CSV (needs a 'reference' column)?".into());
+    }
+    let n = idx.len();
+    let _ = std::fs::write(parks_cache_path(), &csv); // cache; failure is non-fatal
+    *parks.lock().map_err(|e| e.to_string())? = idx;
+    Ok(n)
+}
+
+/// Download the current POTA all-parks list, cache it, and load it for offline search. Blocking
+/// HTTP off the main thread (like the update check). Returns the park count.
+#[tauri::command]
+async fn download_parks(parks: State<'_, SharedParks>) -> Result<usize, String> {
+    let csv = tauri::async_runtime::spawn_blocking(|| -> Result<String, String> {
+        reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(60))
+            .user_agent(concat!("nexus/", env!("CARGO_PKG_VERSION"), " (+parks)"))
+            .build()
+            .map_err(|e| e.to_string())?
+            .get(PARKS_CSV_URL)
+            .send()
+            .map_err(|e| e.to_string())?
+            .error_for_status()
+            .map_err(|e| e.to_string())?
+            .text()
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    let idx = tempo_core::pota::ParkIndex::parse_csv(&csv);
+    if idx.is_empty() {
+        return Err("Downloaded list had no recognizable parks — the POTA export format may have changed.".into());
+    }
+    let n = idx.len();
+    let _ = std::fs::write(parks_cache_path(), &csv);
+    *parks.lock().map_err(|e| e.to_string())? = idx;
+    Ok(n)
+}
+
 // ----- coordinated QSY ("move together") — a separate, opt-in feature ------
 //
 // All no-ops while disabled. Enabling/disabling + the channel set/cadence are
@@ -6975,6 +7089,9 @@ pub fn run() {
     // board's park/summit chase rows appear from launch, and read by both the hunter panel
     // and the need scorer. Created here (not inline at `.manage`) so the poller can share it.
     let ota_spots: SharedOtaSpots = Arc::new(Mutex::new(std::collections::HashMap::new()));
+    // Local park directory — load the cached CSV (if any) so offline search works from launch.
+    let parks: SharedParks = Arc::new(Mutex::new(tempo_core::pota::ParkIndex::default()));
+    load_parks_cache(&parks);
     let region_paths = SharedRegionPaths(Arc::new(Mutex::new(propagation::LiveSpots::new(
         propagation::REGION_SPOT_CAP,
     ))));
@@ -7252,6 +7369,7 @@ pub fn run() {
         .manage(spots)
         .manage(live_paths)
         .manage(ota_spots)
+        .manage(parks)
         .manage(region_paths)
         .manage(health)
         .manage(SharedOpeningTracker::default())
@@ -7387,6 +7505,10 @@ pub fn run() {
             clear_hrdlog_code,
             hrdlog_push_qso,
             get_ota_spots,
+            search_parks,
+            parks_count,
+            import_parks_csv,
+            download_parks,
             set_activation,
             clear_activation,
             get_activation,
