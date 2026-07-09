@@ -11906,6 +11906,11 @@ select.settings-input {
   font-size: var(--fs-micro);
   color: var(--text-dim);
 }
+.rig-detect-nomodel {
+  font-size: var(--fs-micro);
+  color: var(--warn, #e8a33d);
+  line-height: 1.35;
+}
 .rig-detect-driver {
   font-size: var(--fs-micro);
   color: var(--band-marginal, #d8a657);

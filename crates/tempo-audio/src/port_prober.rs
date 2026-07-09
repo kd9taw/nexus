@@ -42,31 +42,56 @@ pub struct Candidate {
     pub model_name: String,
 }
 
+/// Common CAT rigs to try when a bridge-chip port yields no model AND the operator hasn't set one
+/// yet — so Auto-test can still find the port. Yaesu (and some others) report only the bridge
+/// chip's name in the USB descriptor, so Detect can't identify them; that's the whole reason
+/// Auto-test exists, but it used to find nothing until a model was picked (chicken-and-egg). Kept
+/// to one representative per popular family so the sweep stays quick (the first that answers wins).
+pub const COMMON_CAT_MODELS: &[(u32, &str)] = &[
+    (1042, "Yaesu FTDX10"),
+    (1035, "Yaesu FT-991 / FT-991A"),
+    (1049, "Yaesu FT-710"),
+    (1040, "Yaesu FTDX101D"),
+    (3073, "Icom IC-7300"),
+    (2037, "Kenwood TS-590SG"),
+    (2029, "Elecraft K3"),
+];
+
 /// Build probe candidates from enumerated USB ports. A native-USB rig (IC-705, FT-710…)
 /// names its model in the USB product string → [`match_rig_model`] resolves it; a rig
 /// behind a generic bridge chip (CP2102/FTDI) names only the chip → fall back to the
-/// operator's currently-configured `fallback_model` (the rig is known, only the *port*
-/// is in doubt). Candidates with no usable model (0) are dropped.
+/// operator's currently-configured `fallback_model` (the rig is known, only the *port* is in
+/// doubt), or — when no model is configured yet — seed [`COMMON_CAT_MODELS`] so Auto-test isn't
+/// dead before setup. Candidates with no usable model (0) are dropped.
 pub fn candidates_from(ports: &[UsbPort], fallback_model: u32) -> Vec<Candidate> {
     ports
         .iter()
-        .map(|p| {
-            let (model, model_name) = match match_rig_model(&p.product, &p.manufacturer) {
-                Some((m, name)) => (m, name.to_string()),
-                None => (
-                    fallback_model,
-                    if p.product.is_empty() {
-                        p.port_name.clone()
-                    } else {
-                        p.product.clone()
-                    },
-                ),
-            };
-            Candidate {
+        .flat_map(|p| match match_rig_model(&p.product, &p.manufacturer) {
+            // Native-USB rig names its model → one exact candidate.
+            Some((m, name)) => vec![Candidate {
                 port_name: p.port_name.clone(),
-                model,
-                model_name,
-            }
+                model: m,
+                model_name: name.to_string(),
+            }],
+            // Bridge chip WITH a configured model → use it (the rig is known, only the port isn't).
+            None if fallback_model > 0 => vec![Candidate {
+                port_name: p.port_name.clone(),
+                model: fallback_model,
+                model_name: if p.product.is_empty() {
+                    p.port_name.clone()
+                } else {
+                    p.product.clone()
+                },
+            }],
+            // Bridge chip, no model yet → try the common rigs so Auto-test can still find the port.
+            None => COMMON_CAT_MODELS
+                .iter()
+                .map(|(m, name)| Candidate {
+                    port_name: p.port_name.clone(),
+                    model: *m,
+                    model_name: (*name).to_string(),
+                })
+                .collect(),
         })
         .filter(|c| c.model > 0)
         .collect()
@@ -172,11 +197,16 @@ mod tests {
     }
 
     #[test]
-    fn unmatched_port_with_no_fallback_is_dropped() {
+    fn unmatched_port_with_no_fallback_seeds_common_models() {
+        // A bridge chip with no configured model used to be dropped (Auto-test found nothing until
+        // a model was picked — the FTdx10 chicken-and-egg). Now it seeds the common rigs on that
+        // port so the probe can still find it.
         let cands = candidates_from(
             &[usb("COM3", "CP2102 USB to UART Bridge", "Silicon Labs")],
             0,
         );
-        assert!(cands.is_empty(), "model 0 + no fallback → nothing to probe");
+        assert_eq!(cands.len(), COMMON_CAT_MODELS.len());
+        assert!(cands.iter().all(|c| c.port_name == "COM3"));
+        assert!(cands.iter().any(|c| c.model == 1042)); // FTDX10 is seeded
     }
 }
