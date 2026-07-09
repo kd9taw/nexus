@@ -1,9 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Dialog } from './ui/Dialog'
 import { PROFILE_LIST, PROFILES, type ProfileId } from '../features/profiles'
 import type { FeatureId, View } from '../features/registry'
-import type { AudioDevices, CatTestResult, DetectedRig, Settings } from '../types'
-import { detectRigs, discoverFlex, getAudioDevices } from '../api'
+import type { AudioDevices, CatTestResult, DetectedRig, ImportStats, Settings } from '../types'
+import { detectRigs, discoverFlex, getAudioDevices, importAdif } from '../api'
 import { isValidGrid } from '../grid'
 import { findDaxDevices, isDaxPaired } from '../features/dax'
 
@@ -64,10 +64,11 @@ const LICENSE: { id: string; label: string; blurb: string }[] = [
 const gridOk = isValidGrid
 
 /**
- * First-run setup wizard — three short, individually skippable steps:
+ * First-run setup wizard — four short, individually skippable steps:
  * 1. STATION (callsign + grid — the locator every feature computes from),
  * 2. RIG & AUDIO (auto-detect / Serial-vs-Network with Find-my-Flex + DAX / audio),
- * 3. GOALS (the original goal-driven preset selector — never asks for
+ * 3. LOG (optional ADIF import — seeds worked-before / needs / awards from your history),
+ * 4. GOALS (the original goal-driven preset selector — never asks for
  *    self-rated experience).
  * Everything stays changeable later in Settings; ESC/backdrop = skip-all
  * (marks seen, keeps the current feature set). Prefilled from settings so the
@@ -75,7 +76,30 @@ const gridOk = isValidGrid
  * See feature-modularity.md §4.6.
  */
 export function SetupWizard({ settings, onApply, onTestCat, onSkip }: Props) {
-  const [step, setStep] = useState(0) // 0 station · 1 rig · 2 goals
+  const [step, setStep] = useState(0) // 0 station · 1 rig · 2 log · 3 goals
+
+  // --- Step 3: optional ADIF log import (seeds worked-before / needs / awards) ---
+  const [importStats, setImportStats] = useState<ImportStats | null>(null)
+  const [importError, setImportError] = useState<string | null>(null)
+  const [importing, setImporting] = useState(false)
+  const logFileRef = useRef<HTMLInputElement>(null)
+  const onImportAdif = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0]
+    e.target.value = '' // let the same file be re-picked
+    if (!f) return
+    setImporting(true)
+    setImportError(null)
+    setImportStats(null)
+    try {
+      // Feedback is INLINE (below), not a toast — a toast paints dimmed + undismissable behind
+      // this modal wizard. A 0/0 result (non-ADIF file) is surfaced as a warning, not a success.
+      setImportStats(await importAdif(await f.text()))
+    } catch (err) {
+      setImportError(`Import failed: ${err instanceof Error ? err.message : String(err)}`)
+    } finally {
+      setImporting(false)
+    }
+  }
 
   // --- Step 1: station identity ---
   const [mycall, setMycall] = useState(() => settings?.mycall ?? '')
@@ -204,7 +228,7 @@ export function SetupWizard({ settings, onApply, onTestCat, onSkip }: Props) {
       .finally(() => setCatTesting(false))
   }
 
-  const stepTitles = ['Your station', 'Your rig', 'Your goals']
+  const stepTitles = ['Your station', 'Your rig', 'Your log', 'Your goals']
 
   return (
     <Dialog
@@ -216,7 +240,7 @@ export function SetupWizard({ settings, onApply, onTestCat, onSkip }: Props) {
       title="Set up Nexus"
       hideTitle
     >
-      <div className="wizard-dots" aria-label={`Step ${step + 1} of 3: ${stepTitles[step]}`}>
+      <div className="wizard-dots" aria-label={`Step ${step + 1} of ${stepTitles.length}: ${stepTitles[step]}`}>
         {stepTitles.map((t, i) => (
           <button
             key={t}
@@ -427,6 +451,62 @@ export function SetupWizard({ settings, onApply, onTestCat, onSkip }: Props) {
 
       {step === 2 && (
         <>
+          <h2 className="wizard-title">Bring in your existing log</h2>
+          <p className="wizard-sub">
+            Nexus works best when it knows your history. Importing your ADIF log is what powers{' '}
+            <strong>worked-before</strong> flags, the <strong>Needed</strong> board (new DXCC / states
+            / grids), and your <strong>awards</strong> progress — without it, the app starts blind and
+            treats every station as new. This is optional and you can import anytime from the Logbook,
+            but it's the single biggest thing that makes the app useful on day one.
+          </p>
+          <div className="wizard-log-import">
+            <input
+              ref={logFileRef}
+              type="file"
+              accept=".adi,.adif,text/plain"
+              style={{ display: 'none' }}
+              onChange={onImportAdif}
+            />
+            <button
+              type="button"
+              className="wizard-go"
+              disabled={importing}
+              onClick={() => logFileRef.current?.click()}
+            >
+              {importing ? 'Importing…' : importStats ? 'Import another ADIF file' : 'Import my ADIF log…'}
+            </button>
+            {importError && (
+              <p className="wizard-log-error" role="alert">
+                ⚠ {importError}
+              </p>
+            )}
+            {importStats &&
+              (importStats.added > 0 ? (
+                <p className="wizard-log-result" role="status">
+                  ✓ Imported <strong>{importStats.added}</strong>{' '}
+                  QSO{importStats.added === 1 ? '' : 's'}
+                  {importStats.skipped ? ` · ${importStats.skipped} already present` : ''}. Your
+                  worked-before and Needed board are now seeded.
+                </p>
+              ) : importStats.skipped > 0 ? (
+                <p className="wizard-log-result" role="status">
+                  ✓ All {importStats.skipped} QSOs were already in your log — you're seeded.
+                </p>
+              ) : (
+                <p className="wizard-log-error" role="status">
+                  ⚠ No QSOs found in that file — is it a standard ADIF (.adi/.adif) export?
+                </p>
+              ))}
+            <p className="wizard-license-sub">
+              From WSJT-X, N1MM, Log4OM, HRD, QRZ, LoTW, ClubLog — any standard ADIF (.adi/.adif)
+              export. Nothing leaves your computer; duplicates are detected and skipped.
+            </p>
+          </div>
+        </>
+      )}
+
+      {step === 3 && (
+        <>
           <h2 className="wizard-title">What do you mostly want to do?</h2>
           <p className="wizard-sub">
             Pick one or more — we’ll turn on the right features. You can change everything later in
@@ -491,7 +571,7 @@ export function SetupWizard({ settings, onApply, onTestCat, onSkip }: Props) {
       )}
 
       <div className="wizard-actions">
-        {step === 2 ? (
+        {step === 3 ? (
           <button
             type="button"
             className="wizard-everything"
@@ -511,7 +591,7 @@ export function SetupWizard({ settings, onApply, onTestCat, onSkip }: Props) {
           <button type="button" className="wizard-skip" onClick={onSkip}>
             I’ll set it up myself
           </button>
-          {step < 2 ? (
+          {step < 3 ? (
             <button
               type="button"
               className="wizard-go"

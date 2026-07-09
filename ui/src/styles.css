@@ -6374,6 +6374,24 @@ select optgroup {
   color: var(--text-faint);
   line-height: 1.4;
 }
+.wizard-log-import {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+.wizard-log-result {
+  margin: 0;
+  font-size: var(--fs-body);
+  color: var(--rx);
+  line-height: 1.5;
+}
+.wizard-log-error {
+  margin: 0;
+  font-size: var(--fs-body);
+  color: var(--tx);
+  line-height: 1.5;
+}
 .ph-rec {
   display: inline-flex;
   align-items: center;
