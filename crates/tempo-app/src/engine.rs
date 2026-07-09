@@ -353,6 +353,10 @@ pub struct Engine {
     /// radio loop (independent of the decoder) so the waterfall reflects LIVE
     /// sound-card input — not just the once-per-slot decoded frame.
     spectrum_audio: Vec<f32>,
+    /// Cached waterfall row — recomputed once per audio feed in the radio loop, so `get_spectrum_row`
+    /// (the ~20-30 Hz UI poll) just returns it instead of re-running the Goertzel under the engine
+    /// lock on every call (the source of the "choppy" Phone scope under lock/IPC contention).
+    spectrum_cache: Option<crate::dto::Spectrum>,
     /// A longer rolling RX-audio ring (several seconds) — the batch per-channel decode
     /// behind the wideband CW skimmer (the 4096-sample waterfall window is too short).
     cw_audio: Vec<f32>,
@@ -577,6 +581,7 @@ impl Engine {
             qso_record_path: None,
             periods_dir: None,
             spectrum_audio: Vec::new(),
+            spectrum_cache: None,
             cw_audio: Vec::new(),
             cw_stream: tempo_core::cw_decode::CwStreamDecoder::new(ft1::SAMPLE_RATE, 600.0),
             qso_audio: Vec::new(),
@@ -3210,6 +3215,9 @@ impl Engine {
             let drop = self.spectrum_audio.len() - SPECTRUM_WINDOW;
             self.spectrum_audio.drain(0..drop);
         }
+        // Recompute the cached waterfall row here (radio-loop thread) so the UI poll returns it
+        // without re-running the Goertzel under the engine lock.
+        self.spectrum_cache = Some(Self::compute_spectrum(&self.spectrum_audio));
         // Also feed the longer CW-decode ring (the 4096-sample waterfall window is far too
         // short for Morse — CW_WINDOW holds several seconds so a callsign fits).
         self.cw_audio.extend_from_slice(samples);
@@ -4782,28 +4790,34 @@ impl Engine {
     /// audio (the rolling window fed by the radio loop), so the waterfall tracks
     /// real sound-card input continuously. Falls back to the last decoded frame,
     /// then to zeros before any audio has arrived.
-    pub fn spectrum_row(&self) -> Spectrum {
-        let src: Option<&[f32]> = if !self.spectrum_audio.is_empty() {
-            Some(&self.spectrum_audio)
-        } else {
-            self.last_rx.as_deref()
-        };
-        // No audio yet (no device selected, Companion/UDP source with no local
-        // capture, or before the first decode) → return an EMPTY row, not a row of
-        // zeros. An all-zeros 120-bin row is non-empty, so the waterfall would
-        // "scroll" a flat colormap-floor band that reads as a broken/blank display;
-        // an empty row lets the UI cleanly skip the tick until real audio arrives.
+    /// Compute one waterfall row (120-bin Goertzel over 200–2900 Hz audio). An EMPTY row for empty
+    /// audio — not zeros — so the UI cleanly skips the tick (an all-zeros row scrolls a flat floor
+    /// band that reads as broken).
+    fn compute_spectrum(audio: &[f32]) -> Spectrum {
         const LO_HZ: f32 = 200.0;
         const HI_HZ: f32 = 2900.0;
-        let row = match src {
-            Some(f) => spectrum::power_spectrum(f, ft1::SAMPLE_RATE, LO_HZ, HI_HZ, SPECTRUM_BINS),
-            None => Vec::new(),
+        let row = if audio.is_empty() {
+            Vec::new()
+        } else {
+            spectrum::power_spectrum(audio, ft1::SAMPLE_RATE, LO_HZ, HI_HZ, SPECTRUM_BINS)
         };
         Spectrum {
             row,
             lo_hz: LO_HZ,
             hi_hz: HI_HZ,
         }
+    }
+
+    pub fn spectrum_row(&self) -> Spectrum {
+        // Live capture → return the row already computed in the radio loop (cheap clone, no
+        // recompute under the lock). Fallback: a Companion/UDP source with no local capture →
+        // compute from the last decoded RX buffer on demand (rare, low-rate path).
+        if let Some(c) = &self.spectrum_cache {
+            if !c.row.is_empty() {
+                return c.clone();
+            }
+        }
+        Self::compute_spectrum(self.last_rx.as_deref().unwrap_or(&[]))
     }
 }
 

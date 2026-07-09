@@ -7638,6 +7638,12 @@ select.settings-input {
   text-transform: uppercase;
   color: var(--text-dim);
 }
+.ph-scope-sub {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-faint);
+}
 .ph-scope-head-label {
   font-size: 10px;
   font-weight: 600;

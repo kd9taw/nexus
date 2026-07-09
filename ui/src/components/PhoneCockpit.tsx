@@ -380,9 +380,9 @@ export function PhoneCockpit({ snap, theme, pendingWork, onConsumeWork, onSnap, 
         <div className="ph-scope-head">
           <span
             className="ph-scope-title"
-            title="A ~3 kHz slice of the receiver audio passband — not a band-wide panadapter"
+            title="Receiver AUDIO spectrum (200–2900 Hz of the demodulated passband) — not a band-wide RF panadapter, so a voice fills the passband rather than sliding across it as you tune."
           >
-            Passband
+            Passband <span className="ph-scope-sub">· RX audio</span>
           </span>
           <span className="ph-scope-head-label">Colors</span>
           <PalettePicker />

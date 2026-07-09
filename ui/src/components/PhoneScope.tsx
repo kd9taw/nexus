@@ -88,8 +88,11 @@ export function PhoneScope({
     let drawing = false
     let acc = 0
     let last = performance.now()
-    const ROW_MS = 33 // ~30 Hz real-time scope (the FT8 waterfall is ~8 Hz / 120 ms)
-    const ROW_MS_REDUCED = 100 // still lively, but gentler under reduced-motion
+    // ~20 Hz — plenty smooth for a scope, and the row is now cached engine-side (computed once per
+    // audio feed in the radio loop) so each poll is a cheap read, not a Goertzel recompute under
+    // the lock. Fewer + lighter polls = no more contention stutter (the "choppy" report).
+    const ROW_MS = 50
+    const ROW_MS_REDUCED = 120 // gentler under reduced-motion
     const AGC_ALPHA = 0.4 // snappy attack/release — a rig scope, not a slow FT8 noise floor
     const TRACE_FRAC = 0.45 // top fraction = panadapter trace; rest = waterfall
 
