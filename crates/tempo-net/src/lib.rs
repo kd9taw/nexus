@@ -20,7 +20,9 @@
 //! no test ever touches the real network).
 
 pub mod cluster;
+pub mod flexcat;
 pub mod flexdisc;
+pub mod flexvita;
 pub mod mqtt;
 pub mod n1mm;
 pub mod n3fjp;
