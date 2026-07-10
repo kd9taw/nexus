@@ -20,7 +20,7 @@ import type {
 } from '../types'
 import { MapInsightRail } from './prop/MapInsightRail'
 import type { Theme } from '../useTheme'
-import { getAurora, getDeclination, getPca, getSatellites } from '../api'
+import { getAurora, getDeclination, getPca, getSatellites, getLog, getLogStats } from '../api'
 // CQ-zone boundaries (HB9HIL hamradio-zones-geojson, MIT — see NOTICE): bundled
 // as a raw asset and fetched lazily so the 2.7 MB never loads until toggled on.
 import cqzonesUrl from '../data/cqzones.geojson?url'
@@ -201,6 +201,7 @@ type LayerKey =
   | 'pca'
   | 'gridLabels'
   | 'cqzones'
+  | 'coverage'
   | 'sats'
   | 'coast'
   | 'grid'
@@ -231,6 +232,7 @@ const DEFAULT_LAYERS: Record<LayerKey, Layer> = {
   grid: { label: 'Grid (20°×10°)', visible: true, opacity: 0.5 },
   gridLabels: { label: 'Grid labels (AA…RR)', visible: false, opacity: 0.7 },
   cqzones: { label: 'CQ zones', visible: false, opacity: 0.6 },
+  coverage: { label: 'My coverage (worked)', visible: false, opacity: 0.45 },
   sats: { label: 'Satellites (amateur)', visible: false, opacity: 0.9 },
   rings: { label: 'Range rings', visible: true, opacity: 0.55 },
   heat: { label: 'Band heat (openings)', visible: true, opacity: 0.55 },
@@ -682,8 +684,12 @@ export function MapView({
   }
   const [cqzones, setCqzones] = useState<CqZoneFeature[] | null>(null)
   const cqzonesOn = layers.cqzones.visible
+  // Coverage layer flags (declared here so the CQ-zone geometry loads for the coverage layer too).
+  const coverageOn = layers.coverage.visible
+  const [coverageDim, setCoverageDim] = useState<'grids' | 'zones'>('grids')
+  const needZoneGeo = cqzonesOn || (coverageOn && coverageDim === 'zones')
   useEffect(() => {
-    if (!cqzonesOn || cqzones) return
+    if (!needZoneGeo || cqzones) return
     let live = true
     fetch(cqzonesUrl)
       .then((r) => r.json())
@@ -693,7 +699,65 @@ export function MapView({
       live = false
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cqzonesOn])
+  }, [needZoneGeo])
+
+  // ---- Coverage layer: what the operator has WORKED, colored on the globe. Configurable
+  // dimension (grid squares vs CQ zones), derived from the log on the frontend so there's no
+  // backend dependency. Fetched only while the layer + that dimension are active. ----
+  const [workedGrids, setWorkedGrids] = useState<Set<string> | null>(null)
+  const [workedZones, setWorkedZones] = useState<Set<number> | null>(null)
+  useEffect(() => {
+    if (!coverageOn || coverageDim !== 'grids' || workedGrids) return
+    let live = true
+    getLog()
+      .then((log) => {
+        if (!live) return
+        const set = new Set<string>()
+        for (const q of log) {
+          const g = q.grid?.trim().toUpperCase()
+          if (g && g.length >= 4) set.add(g.slice(0, 4))
+        }
+        setWorkedGrids(set)
+      })
+      .catch(() => {})
+    return () => {
+      live = false
+    }
+  }, [coverageOn, coverageDim, workedGrids])
+  useEffect(() => {
+    if (!coverageOn || coverageDim !== 'zones' || workedZones) return
+    let live = true
+    getLogStats()
+      .then((s) => live && setWorkedZones(new Set(s.byZone.map((z) => z.zone))))
+      .catch(() => {})
+    return () => {
+      live = false
+    }
+  }, [coverageOn, coverageDim, workedZones])
+  // A MultiPolygon of the worked 4-char grid cells (each 2°×1°), rebuilt only when the set changes
+  // — one path() call draws them all.
+  const coverageGridGeo = useMemo(() => {
+    if (!workedGrids || workedGrids.size === 0) return null
+    const polys: number[][][][] = []
+    for (const g of workedGrids) {
+      const c = gridToLatLon(g)
+      if (!c) continue
+      const w = c.lon - 1
+      const e = c.lon + 1
+      const s = c.lat - 0.5
+      const n = c.lat + 0.5
+      polys.push([
+        [
+          [w, s],
+          [e, s],
+          [e, n],
+          [w, n],
+          [w, s],
+        ],
+      ])
+    }
+    return { type: 'MultiPolygon', coordinates: polys } as unknown as GeoPermissibleObjects
+  }, [workedGrids])
 
 
   // Draw.
@@ -886,6 +950,25 @@ export function MapView({
         const [lat, lon] = f.properties.cq_zone_name_loc
         const p = project(proj, { lat, lon })
         if (p) ctx.fillText(String(f.properties.cq_zone_number), p[0], p[1])
+      }
+      ctx.globalAlpha = 1
+    }
+    // Coverage: fill the operator's WORKED grid squares / CQ zones so award progress (VUCC / WAZ)
+    // reads at a glance. Behind the layer toggle + opacity; the data is lazy-loaded above.
+    if (layers.coverage.visible) {
+      ctx.globalAlpha = layers.coverage.opacity
+      ctx.fillStyle = 'rgba(78, 163, 255, 0.5)' // the "worked/confirm" blue from the map legend
+      if (coverageDim === 'grids' && coverageGridGeo) {
+        ctx.beginPath()
+        path(coverageGridGeo)
+        ctx.fill()
+      } else if (coverageDim === 'zones' && cqzones && workedZones) {
+        for (const f of cqzones) {
+          if (!workedZones.has(f.properties.cq_zone_number)) continue
+          ctx.beginPath()
+          path(f.geometry)
+          ctx.fill()
+        }
       }
       ctx.globalAlpha = 1
     }
@@ -1401,7 +1484,7 @@ export function MapView({
     }
     // theme is a draw dependency so colors refresh on theme switch.
     void theme
-  }, [me, kind, colorBy, pathMode, view, size, layers, placed, placedSpots, placedDxped, mufStations, auroraPts, pca, cqzones, sats, reliefReady, prop, selStation, selectedCall, needByCall, theme, nowMs, focusBand, pulseTick, xrayEff, flareActive, flareHafNow, hoverKey, focusSat])
+  }, [me, kind, colorBy, pathMode, view, size, layers, placed, placedSpots, placedDxped, mufStations, auroraPts, pca, cqzones, sats, reliefReady, prop, selStation, selectedCall, needByCall, theme, nowMs, focusBand, pulseTick, xrayEff, flareActive, flareHafNow, hoverKey, focusSat, coverageDim, coverageGridGeo, workedZones])
 
   // THE SUN + RADIATING ENERGY — the flare layer's animated half, on its own
   // transparent canvas at ~20 fps, mounted ONLY while a flare is active and the
@@ -2019,6 +2102,18 @@ export function MapView({
                 >
                   {flarePreview ? '■ stop' : '☀ preview'}
                 </button>
+              )}
+              {k === 'coverage' && (
+                <select
+                  className="map-coverage-dim"
+                  value={coverageDim}
+                  onChange={(e) => setCoverageDim(e.target.value as 'grids' | 'zones')}
+                  title="What to color: your worked grid squares (VUCC) or CQ zones (WAZ)"
+                  aria-label="Coverage dimension"
+                >
+                  <option value="grids">Grids</option>
+                  <option value="zones">CQ zones</option>
+                </select>
               )}
               <input
                 type="range"

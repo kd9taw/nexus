@@ -2676,6 +2676,16 @@ button.nb-chip:hover {
   width: 100%;
   margin-top: var(--space-1);
 }
+.map-coverage-dim {
+  margin-top: var(--space-1);
+  width: 100%;
+  font-size: var(--fs-label);
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface, transparent);
+  color: var(--text);
+}
 
 /* Logbook header action buttons (Import ADIF / Log QSO). */
 .log-actions {
