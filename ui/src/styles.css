@@ -7518,6 +7518,108 @@ select optgroup {
   font-size: 11px;
   color: var(--text-faint);
 }
+/* ---- User watch list (Settings ▸ Alerts) ---- */
+.settings-watchlist-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+.watchlist {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.watchlist-hint {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.watchlist-hint code {
+  font-family: var(--font-mono);
+  color: var(--text-dim);
+}
+.watchlist-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.watchlist-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.watchlist-kind {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 800;
+  padding: 1px 5px;
+  border-radius: 999px;
+  color: var(--accent-ink);
+  background: var(--accent);
+}
+.watchlist-kind-dxcc {
+  background: var(--state-ok, #2fbf71);
+}
+.watchlist-value {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 12px;
+}
+.watchlist-flag {
+  font-size: 10px;
+  color: var(--text-faint);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0 5px;
+}
+.watchlist-remove {
+  margin-left: auto;
+  color: var(--state-weak);
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 var(--space-1);
+}
+.watchlist-remove:hover {
+  color: #fff;
+  background: var(--state-weak);
+  border-radius: var(--radius-sm);
+}
+.watchlist-add {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.watchlist-kind-select {
+  flex: 0 0 auto;
+  width: auto;
+}
+.watchlist-cqonly {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.watchlist-add-btn {
+  padding: 5px var(--space-4);
+  border-radius: var(--radius-sm);
+  font-weight: 800;
+  color: var(--accent-ink);
+  background: var(--accent);
+  border: 1px solid var(--accent);
+}
+.watchlist-add-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
 select.settings-input {
   -webkit-appearance: none;
   appearance: none;

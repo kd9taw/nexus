@@ -38,6 +38,7 @@ import {
 } from './api'
 import { withErrorToast, pushToast } from './toast'
 import { processDecodes } from './alerts'
+import { loadWatchlist, type WatchFilter } from './watchlist'
 import { useTheme } from './useTheme'
 import { useLayout } from './useLayout'
 import { useScale } from './useScale'
@@ -579,6 +580,14 @@ export default function App() {
   const [typingTick, setTypingTick] = useState(0)
   const [bandPlan, setBandPlan] = useState<BandChannel[]>([])
   const [settings, setSettings] = useState<Settings | null>(null)
+  // User watch list (localStorage) — fed to the decode alerter. Re-synced when the manager
+  // edits it (it dispatches `nexus:watchlist-changed`), so alerts pick up changes live.
+  const [watchlist, setWatchlist] = useState<WatchFilter[]>(() => loadWatchlist())
+  useEffect(() => {
+    const resync = () => setWatchlist(loadWatchlist())
+    window.addEventListener('nexus:watchlist-changed', resync)
+    return () => window.removeEventListener('nexus:watchlist-changed', resync)
+  }, [])
   const [onboardDismissed, setOnboardDismissed] = useState<boolean>(
     () => localStorage.getItem(ONBOARD_KEY) === '1',
   )
@@ -751,8 +760,9 @@ export default function App() {
         state: snap.fieldDay?.state ?? snap.qso?.state ?? null,
         dxcall,
       },
+      watchlist,
     )
-  }, [snap, settings, handleCall])
+  }, [snap, settings, handleCall, watchlist])
 
   // Bumps when a QSO is logged AND "Clear DX call after logging" is on — the
   // cockpit watches it and wipes its DX Call/Grid fields (stock WSJT-X option).

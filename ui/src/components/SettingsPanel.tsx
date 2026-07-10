@@ -44,6 +44,7 @@ import { findDaxDevices, isDaxPaired } from '../features/dax'
 import type { ConnEvent, CredStatus } from '../types'
 import { FrequencyControl } from './FrequencyControl'
 import { LevelMeter } from './LevelMeter'
+import { WatchlistPanel } from './WatchlistPanel'
 import type { Layout } from '../useLayout'
 import type { Scale } from '../useScale'
 import { SCALE_STEPS } from '../useScale'
@@ -436,15 +437,6 @@ export function SettingsPanel({
 
   // Wanted watch list: comma-separated exact calls or trailing-* wildcard prefixes
   // (e.g. "VP8*, 3Y0J") that raise a loud alert even on a worked station.
-  const updateWantedCalls = (raw: string) => {
-    markDirty()
-    const list = raw
-      .split(',')
-      .map((x) => x.trim().toUpperCase())
-      .filter((x) => x.length > 0)
-    setForm((prev) => (prev ? { ...prev, wantedCalls: list } : prev))
-  }
-
   /** WSJT-X Split Operation (none | rig | fakeit). */
   const setSplitMode = (m: NonNullable<Settings['splitMode']>) => {
     markDirty()
@@ -2878,22 +2870,10 @@ export function SettingsPanel({
                 </span>
               </div>
 
-              <label className="settings-field">
-                <span className="settings-label">Wanted watch list</span>
-                <input
-                  className="settings-input"
-                  type="text"
-                  value={(form.wantedCalls ?? []).join(', ')}
-                  placeholder="VP8*, 3Y0J"
-                  onChange={(e) => updateWantedCalls(e.target.value)}
-                  autoComplete="off"
-                  spellCheck={false}
-                />
-                <span className="settings-hint">
-                  Heard stations on this list raise a loud alert — even ones you've already
-                  worked. Comma-separated exact calls or a trailing-* wildcard prefix (e.g. VP8*).
-                </span>
-              </label>
+            </div>
+            <div className="settings-watchlist-block">
+              <span className="settings-label">Watch list</span>
+              <WatchlistPanel />
             </div>
           </fieldset>
 

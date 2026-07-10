@@ -11,6 +11,7 @@
 
 import type { DecodeRow, Settings } from './types'
 import { pushToast } from './toast'
+import { matchWatchlist, watchLabel, type WatchFilter } from './watchlist'
 
 const alertedDecodes = new Set<string>()
 
@@ -99,6 +100,9 @@ export function processDecodes(
   // alert path stays usable without a handler.
   onWork?: (d: DecodeRow) => void,
   qso?: QsoContext,
+  // The operator's user-defined watch list (localStorage). A match is the loudest tier —
+  // they explicitly asked to be told about it — and takes precedence over the generic logic.
+  watchlist?: WatchFilter[],
 ): void {
   const engaged = engagedInQso(qso)
   const partner = qso?.dxcall?.toUpperCase() ?? null
@@ -108,6 +112,26 @@ export function processDecodes(
     // Already working this station → nothing about them is news (skipped WITHOUT
     // consuming the dedup key, so a later fresh event can still alert).
     if (partner && call?.toUpperCase() === partner) continue
+
+    // User watch list FIRST: an explicitly-watched call/prefix/entity is the loudest tier and
+    // pre-empts the generic new/CQ logic (deduped once per filter+call so it doesn't spam).
+    if (watchlist && watchlist.length) {
+      const hit = matchWatchlist(d, watchlist)
+      if (hit) {
+        const wkey = `watch:${hit.id}:${call ?? '?'}`
+        if (!alertedDecodes.has(wkey)) {
+          alertedDecodes.add(wkey)
+          const where = d.country ? ` — ${d.country}` : ''
+          doubleBeep(BEEP_HZ.newdxcc)
+          pushToast(`⭐ Watch ${watchLabel(hit)}: ${call ?? 'station'}${where}`, 'success', 15000, {
+            prominent: true,
+            action: onWork && d.from ? () => onWork(d) : undefined,
+            actionLabel: 'Work',
+          })
+        }
+        continue // don't ALSO fire a generic new/CQ alert for the same decode
+      }
+    }
 
     // Decide whether this row should alert (highest priority first). New DXCC
     // and new grid are gated by alertNew; a new DXCC is the loud "new one".
