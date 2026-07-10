@@ -147,15 +147,25 @@ impl ParkIndex {
             // No header → treat the "header" line as data too, positional [ref, name, ...].
             None => (0, true),
         };
-        let name_col = if positional { Some(1) } else { find(&["name", "parkname"]) };
-        let grid_col = if positional { None } else { find(&["grid", "grid6", "maidenhead"]) };
+        let name_col = if positional {
+            Some(1)
+        } else {
+            find(&["name", "parkname"])
+        };
+        let grid_col = if positional {
+            None
+        } else {
+            find(&["grid", "grid6", "maidenhead"])
+        };
         let loc_col = if positional {
             None
         } else {
             find(&["locationdesc", "location", "loc", "state"])
         };
         let get = |row: &[String], col: Option<usize>| -> String {
-            col.and_then(|c| row.get(c)).map(|s| s.trim().to_string()).unwrap_or_default()
+            col.and_then(|c| row.get(c))
+                .map(|s| s.trim().to_string())
+                .unwrap_or_default()
         };
         let mut parks = Vec::new();
         let mut push_row = |row: Vec<String>| {
@@ -303,7 +313,7 @@ K-5678,Yellowstone National Park,1,US-WY,44.6,-110.5,DN44\n";
         // Name substring (case-insensitive), ranked after any ref matches.
         let byname = idx.search("national", 5);
         assert_eq!(byname.len(), 2); // Acadia + Yellowstone
-        // Empty query → nothing.
+                                     // Empty query → nothing.
         assert!(idx.search("  ", 5).is_empty());
     }
 

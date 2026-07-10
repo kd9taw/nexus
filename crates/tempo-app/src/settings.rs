@@ -491,6 +491,13 @@ pub struct Settings {
     /// confirmation source — an upload here never earns DXCC/WAS credit.
     pub hrdlog_upload: bool,
 
+    /// Auto-forward EVERY logged QSO (not just Field Day) to N3FJP over the same
+    /// `n3fjp_host`/`n3fjp_port` — N3FJP ACLog / everyday general logging. ADDDIRECT with
+    /// EXCLUDEDUPES, so it can't double-log a contact the Field-Day path also pushed. Off by
+    /// default; empty host = off regardless.
+    #[serde(default)]
+    pub n3fjp_upload: bool,
+
     /// Watch near-region spots (not just your own paths) so opening detection can
     /// flag "a band is open around you" before you've worked anyone. On by default;
     /// the operator opt-out for the near-region MQTT feed (Phase 2).
@@ -892,6 +899,7 @@ impl Default for Settings {
             clublog_upload: false,
             eqsl_upload: false,
             hrdlog_upload: false,
+            n3fjp_upload: false,
             opening_regional: true,
             macros: Macros::default(),
             voice_messages: default_voice_messages(),

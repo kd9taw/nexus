@@ -1603,6 +1603,8 @@ export interface Settings {
   /** N3FJP real-time push (club master log). Empty host = off. */
   n3fjpHost?: string
   n3fjpPort?: number
+  /** Auto-forward EVERY logged QSO to N3FJP ACLog (not just Field Day). Uses the host/port above. */
+  n3fjpUpload?: boolean
   /** N1MM contact broadcast target ("host" or "host:port"). Empty = off. */
   n1mmAddr?: string
   /** DXpedition special op: 'none' | 'hound' | 'superhound' (SuperFox hound). */

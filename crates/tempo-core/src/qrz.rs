@@ -502,7 +502,10 @@ mod tests {
         assert_eq!(r.dxcc, Some(291));
         assert_eq!(r.cq_zone, Some(3));
         assert_eq!(r.itu_zone, Some(6));
-        assert_eq!(r.image.as_deref(), Some("https://cdn-xml.qrz.com/q/aa7bq/aa7bq.jpg"));
+        assert_eq!(
+            r.image.as_deref(),
+            Some("https://cdn-xml.qrz.com/q/aa7bq/aa7bq.jpg")
+        );
     }
 
     #[test]

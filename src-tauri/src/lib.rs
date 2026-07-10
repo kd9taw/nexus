@@ -6558,6 +6558,52 @@ fn note_upload_shared(engine: &SharedEngine, msg: String, ok: bool) {
 /// QSO, so a fast multi-connector push can't overwrite its own outcomes between
 /// two snapshot polls. Outcomes are stamped on the QSO by the underlying
 /// `*_push_qso_impl` (per-QSO upload state machine).
+/// Band string ("20m") → N3FJP meters ("20"); leaves cm bands ("70cm") intact.
+fn n3fjp_band_meters(band: &str) -> String {
+    let b = band.trim();
+    if b.to_ascii_lowercase().ends_with("cm") {
+        b.to_string()
+    } else {
+        b.trim_end_matches(['m', 'M']).to_string()
+    }
+}
+
+/// Nexus mode → N3FJP mode: fold USB/LSB to SSB; pass the rest (FT8/FT4/CW/FM/RTTY…) through.
+fn n3fjp_mode(mode: &str) -> String {
+    match mode.to_ascii_uppercase().as_str() {
+        "USB" | "LSB" => "SSB".to_string(),
+        other => other.to_string(),
+    }
+}
+
+/// Forward ONE general (non-Field-Day) logged QSO to N3FJP ACLog over TCP ADDDIRECT. Uses the
+/// same `n3fjp_host`/`n3fjp_port` as the Field-Day push; N3FJP's EXCLUDEDUPES dedupes any overlap.
+fn n3fjp_push_qso_impl(dto: &LoggedQso, engine: &SharedEngine) -> Result<(), String> {
+    let (host, port, mycall) = {
+        let eng = engine.lock().map_err(|e| e.to_string())?;
+        let s = eng.settings();
+        (
+            s.n3fjp_host.trim().to_string(),
+            s.n3fjp_port,
+            s.mycall.trim().to_string(),
+        )
+    };
+    if host.is_empty() {
+        return Err("no N3FJP host set".to_string());
+    }
+    let push = tempo_net::n3fjp::N3fjpQso {
+        call: dto.call.clone(),
+        class: String::new(),
+        section: String::new(),
+        band_meters: n3fjp_band_meters(&dto.band),
+        mode: n3fjp_mode(&dto.mode),
+        freq_mhz: dto.freq_mhz,
+        when_unix: dto.when_unix,
+        operator: mycall,
+    };
+    tempo_net::n3fjp::push_qso(&host, port, &push)
+}
+
 fn auto_push_one(
     engine: &SharedEngine,
     dto: LoggedQso,
@@ -6565,6 +6611,7 @@ fn auto_push_one(
     clublog_on: bool,
     eqsl_on: bool,
     hrdlog_on: bool,
+    n3fjp_on: bool,
 ) {
     let call = dto.call.clone();
     let mut parts: Vec<String> = Vec::new();
@@ -6649,7 +6696,7 @@ fn auto_push_one(
         all_ok &= ok;
     }
     if eqsl_on {
-        let (part, ok) = match eqsl_push_qso_impl(dto, engine) {
+        let (part, ok) = match eqsl_push_qso_impl(dto.clone(), engine) {
             Ok(r) => {
                 let ok = matches!(r.outcome.as_str(), "accepted" | "duplicate");
                 conn_log(
@@ -6675,6 +6722,20 @@ fn auto_push_one(
             Err(e) => {
                 conn_log("eQSL", "error", format!("auto-push {call} — {e}"));
                 (format!("eQSL ✗ {e}"), false)
+            }
+        };
+        parts.push(part);
+        all_ok &= ok;
+    }
+    if n3fjp_on {
+        let (part, ok) = match n3fjp_push_qso_impl(&dto, engine) {
+            Ok(()) => {
+                conn_log("N3FJP", "ok", format!("auto-forward {call}"));
+                ("N3FJP ✓".to_string(), true)
+            }
+            Err(e) => {
+                conn_log("N3FJP", "error", format!("auto-forward {call} — {e}"));
+                (format!("N3FJP ✗ {e}"), false)
             }
         };
         parts.push(part);
@@ -7445,26 +7506,27 @@ pub fn run() {
         let push_engine = engine.clone();
         std::thread::spawn(move || loop {
             std::thread::sleep(std::time::Duration::from_secs(2));
-            let (recs, qrz_on, clublog_on, eqsl_on, hrdlog_on) = {
+            let (recs, qrz_on, clublog_on, eqsl_on, hrdlog_on, n3fjp_on) = {
                 // Recover a poisoned lock (conn_log pattern) — a panicked command
                 // holding the engine must not silently kill auto-upload forever.
                 let mut eng = push_engine.lock().unwrap_or_else(|e| e.into_inner());
-                let (q, c, e, h) = {
+                let (q, c, e, h, n) = {
                     let s = eng.settings();
                     (
                         s.qrz_logbook_upload,
                         s.clublog_upload,
                         s.eqsl_upload,
                         s.hrdlog_upload,
+                        s.n3fjp_upload && !s.n3fjp_host.trim().is_empty(),
                     )
                 };
-                if !(q || c || e || h) {
+                if !(q || c || e || h || n) {
                     // Nothing enabled: LEAVE the queue intact (bounded at 256) so
                     // flipping a toggle on later still uploads this session's
                     // recent QSOs — log-first-configure-later must not lose them.
                     continue;
                 }
-                (eng.take_pending_uploads(), q, c, e, h)
+                (eng.take_pending_uploads(), q, c, e, h, n)
             };
             // ClubLog suspended (403 latch): skip that leg instead of erroring
             // per QSO — the suspension was announced once; re-push covers later.
@@ -7478,6 +7540,7 @@ pub fn run() {
                     clublog_live,
                     eqsl_on,
                     hrdlog_on,
+                    n3fjp_on,
                 );
             }
         });

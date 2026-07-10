@@ -36,7 +36,8 @@ fn be_u32(b: &[u8], off: usize) -> Option<u32> {
         .map(|s| u32::from_be_bytes([s[0], s[1], s[2], s[3]]))
 }
 fn be_u16(b: &[u8], off: usize) -> Option<u16> {
-    b.get(off..off + 2).map(|s| u16::from_be_bytes([s[0], s[1]]))
+    b.get(off..off + 2)
+        .map(|s| u16::from_be_bytes([s[0], s[1]]))
 }
 
 /// Parse the VITA-49 header and return the envelope + payload slice. `None` on a short/malformed
@@ -61,7 +62,10 @@ pub fn parse_vita(dg: &[u8]) -> Option<VitaPacket<'_>> {
         let oui_word = be_u32(dg, off)?;
         let class_word = be_u32(dg, off + 4)?;
         off += 8;
-        (Some(oui_word & 0x00FF_FFFF), Some((class_word & 0xFFFF) as u16))
+        (
+            Some(oui_word & 0x00FF_FFFF),
+            Some((class_word & 0xFFFF) as u16),
+        )
     } else {
         (None, None)
     };

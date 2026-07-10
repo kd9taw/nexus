@@ -200,7 +200,12 @@ impl FlexCat {
             .write_all(encode_command(seq, command).as_bytes())?;
         let deadline = std::time::Instant::now() + timeout;
         while let Some(remaining) = deadline.checked_duration_since(std::time::Instant::now()) {
-            if let Ok(FlexMsg::Reply { seq: rseq, code, msg }) = self.rx.recv_timeout(remaining) {
+            if let Ok(FlexMsg::Reply {
+                seq: rseq,
+                code,
+                msg,
+            }) = self.rx.recv_timeout(remaining)
+            {
                 if rseq == seq {
                     return Ok((code, msg));
                 }
@@ -219,7 +224,10 @@ mod tests {
 
     #[test]
     fn parses_the_greeting_and_replies() {
-        assert_eq!(parse_line("V1.4.0.0\n"), FlexMsg::Version("1.4.0.0".to_string()));
+        assert_eq!(
+            parse_line("V1.4.0.0\n"),
+            FlexMsg::Version("1.4.0.0".to_string())
+        );
         assert_eq!(parse_line("H2ABC\n"), FlexMsg::Handle(0x2ABC));
         assert_eq!(
             parse_line("R3|0|0x40000000\n"),
@@ -249,7 +257,10 @@ mod tests {
                 body: "display pan 0x40000000 center=14.1".to_string()
             }
         );
-        assert!(matches!(parse_line("M10000000|hello\n"), FlexMsg::Message { .. }));
+        assert!(matches!(
+            parse_line("M10000000|hello\n"),
+            FlexMsg::Message { .. }
+        ));
         assert!(matches!(parse_line("garbage"), FlexMsg::Unknown(_)));
     }
 

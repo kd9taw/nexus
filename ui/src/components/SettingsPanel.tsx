@@ -3990,6 +3990,26 @@ export function SettingsPanel({
               </label>
 
               <div className="settings-field">
+                <label className="settings-toggle">
+                  <span className="settings-label">Forward every QSO</span>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={form.n3fjpUpload ?? false}
+                    className={`toggle${form.n3fjpUpload ? ' on' : ''}`}
+                    onClick={() => updateBool('n3fjpUpload', !form.n3fjpUpload)}
+                  >
+                    <span className="toggle-knob" />
+                  </button>
+                </label>
+                <span className="settings-hint">
+                  Also push <strong>every</strong> logged QSO (not just Field Day) to N3FJP ACLog on
+                  the host above — everyday general logging. N3FJP dedupes, so it's safe to run
+                  alongside the Field-Day push.
+                </span>
+              </div>
+
+              <div className="settings-field">
                 <span className="settings-label">Connection test</span>
                 <div className="settings-input-row">
                   <button

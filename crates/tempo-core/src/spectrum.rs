@@ -65,7 +65,11 @@ pub fn power_spectrum(samples: &[f32], sr: f32, f_lo: f32, f_hi: f32, bins: usiz
         let src = &samples[samples.len() - n..];
         // Remove the DC offset before windowing so a bias in the capture can't leak into the low
         // bins (the bin-0 skip below only drops the exact-DC/Nyquist bin, not the leakage skirt).
-        let mean = if n > 0 { src.iter().sum::<f32>() / n as f32 } else { 0.0 };
+        let mean = if n > 0 {
+            src.iter().sum::<f32>() / n as f32
+        } else {
+            0.0
+        };
         for i in 0..n {
             buf[pad + i] = (src[i] - mean) * hann(pad + i);
         }
@@ -161,7 +165,10 @@ mod tests {
         let peak1 = near(bin_of(1500.0));
         let peak2 = near(bin_of(1540.0));
         let dip = row[bin_of(1520.0)];
-        assert!(peak1 > 0.6 && peak2 > 0.6, "both tones present (p1={peak1}, p2={peak2})");
+        assert!(
+            peak1 > 0.6 && peak2 > 0.6,
+            "both tones present (p1={peak1}, p2={peak2})"
+        );
         assert!(dip < 0.5, "resolved with a dip between them (dip={dip})");
     }
 
@@ -180,7 +187,10 @@ mod tests {
             .unwrap()
             .0;
         let peak_f = peak as f32 / 512.0 * 4000.0;
-        assert!((peak_f - 1500.0).abs() < 20.0, "peak is the tone, not DC (got {peak_f} Hz)");
+        assert!(
+            (peak_f - 1500.0).abs() < 20.0,
+            "peak is the tone, not DC (got {peak_f} Hz)"
+        );
     }
 
     // Warm-up: fewer than FFT_N samples are front-zero-padded and still peak in the right place.
@@ -195,6 +205,9 @@ mod tests {
             .unwrap()
             .0;
         let peak_f = peak as f32 / 512.0 * 4000.0;
-        assert!((peak_f - 1500.0).abs() < 40.0, "short-input peak near 1500 Hz (got {peak_f} Hz)");
+        assert!(
+            (peak_f - 1500.0).abs() < 40.0,
+            "short-input peak near 1500 Hz (got {peak_f} Hz)"
+        );
     }
 }
