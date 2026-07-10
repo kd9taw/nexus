@@ -1502,6 +1502,8 @@ export interface Settings {
   catBroker: boolean
   /** TCP port the CAT broker listens on (Hamlib NET rigctl default 4532). */
   catBrokerPort: number
+  /** A FlexRadio's IP for the SmartSDR API (port 4992), for the native panadapter. Empty = off. */
+  flexRadioIp: string
   /** Let a broker client (WSJT-X/N1MM) key PTT when Nexus is idle. OFF by
    * default — Nexus owns TX unless the operator opts in. */
   catBrokerPtt?: boolean

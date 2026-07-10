@@ -1974,6 +1974,23 @@ export function SettingsPanel({
                   <span className="settings-hint">Other apps connect here (Hamlib NET rigctl default 4532).</span>
                 </label>
               )}
+              {(form.rigModel === 2036 || form.rigModel === 23005) && (
+                <label className="settings-field">
+                  <span className="settings-label">Flex radio IP (native panadapter)</span>
+                  <input
+                    className="settings-input"
+                    type="text"
+                    value={form.flexRadioIp}
+                    placeholder="e.g. 192.168.1.50"
+                    onChange={(e) => update('flexRadioIp', e.target.value)}
+                    autoComplete="off"
+                  />
+                  <span className="settings-hint">
+                    Your FlexRadio's LAN IP (SmartSDR API, port 4992) — turns on the native RF
+                    panadapter. This is the <em>radio's</em> address, not the SmartSDR-CAT port above.
+                  </span>
+                </label>
+              )}
             </div>
             <div className="settings-cat-test">
               <button

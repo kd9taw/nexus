@@ -175,6 +175,12 @@ pub struct Settings {
     /// TCP port the CAT broker listens on (Hamlib NET rigctl default 4532).
     pub cat_broker_port: u16,
 
+    /// A FlexRadio's IP address for the SmartSDR Ethernet API (port 4992), used by the native
+    /// panadapter worker. Distinct from the CAT `rig_addr` (which for the SmartSDR-CAT model 2036
+    /// points at the *PC's* CAT port, not the radio). Empty = no native Flex scope.
+    #[serde(default)]
+    pub flex_radio_ip: String,
+
     // --- multi-radio (dual-radio) ---
     /// Configured radios. EMPTY in older settings files → migrated to a single profile 0 mirroring
     /// the flat rig/audio fields above (see `ensure_radio_profiles`). A single-radio station always
@@ -798,6 +804,7 @@ impl Default for Settings {
             rotator_host: String::new(),
             cat_broker: false,
             cat_broker_port: 4532,
+            flex_radio_ip: String::new(),
             radios: Vec::new(), // migrated to a single profile on load()
             active_radio: 0,
             radio_pegged: false,
