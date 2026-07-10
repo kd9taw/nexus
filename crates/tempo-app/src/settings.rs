@@ -498,6 +498,20 @@ pub struct Settings {
     #[serde(default)]
     pub n3fjp_upload: bool,
 
+    /// Cloudlog / Wavelog self-hosted logbook base URL (e.g. `https://log.example.com`). Empty = off.
+    #[serde(default)]
+    pub cloudlog_url: String,
+    /// Cloudlog/Wavelog station-profile id to log each QSO against.
+    #[serde(default)]
+    pub cloudlog_station_id: String,
+    /// Cloudlog/Wavelog instance API key — a per-instance token for the operator's OWN self-hosted
+    /// logbook (not a third-party account password), stored alongside the URL.
+    #[serde(default)]
+    pub cloudlog_key: String,
+    /// Auto-forward each logged QSO to the Cloudlog/Wavelog instance above. Off by default.
+    #[serde(default)]
+    pub cloudlog_upload: bool,
+
     /// Watch near-region spots (not just your own paths) so opening detection can
     /// flag "a band is open around you" before you've worked anyone. On by default;
     /// the operator opt-out for the near-region MQTT feed (Phase 2).
@@ -900,6 +914,10 @@ impl Default for Settings {
             eqsl_upload: false,
             hrdlog_upload: false,
             n3fjp_upload: false,
+            cloudlog_url: String::new(),
+            cloudlog_station_id: String::new(),
+            cloudlog_key: String::new(),
+            cloudlog_upload: false,
             opening_regional: true,
             macros: Macros::default(),
             voice_messages: default_voice_messages(),

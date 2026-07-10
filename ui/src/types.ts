@@ -1605,6 +1605,12 @@ export interface Settings {
   n3fjpPort?: number
   /** Auto-forward EVERY logged QSO to N3FJP ACLog (not just Field Day). Uses the host/port above. */
   n3fjpUpload?: boolean
+  /** Cloudlog / Wavelog self-hosted logbook: base URL, station-profile id, instance API key. */
+  cloudlogUrl?: string
+  cloudlogStationId?: string
+  cloudlogKey?: string
+  /** Auto-forward each logged QSO to the Cloudlog/Wavelog instance above. */
+  cloudlogUpload?: boolean
   /** N1MM contact broadcast target ("host" or "host:port"). Empty = off. */
   n1mmAddr?: string
   /** DXpedition special op: 'none' | 'hound' | 'superhound' (SuperFox hound). */

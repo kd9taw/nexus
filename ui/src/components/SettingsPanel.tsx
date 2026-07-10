@@ -4033,6 +4033,74 @@ export function SettingsPanel({
           </fieldset>
 
           <fieldset className="settings-section">
+            <legend>Cloudlog / Wavelog</legend>
+            <p className="settings-note">
+              Auto-forward each logged QSO to your self-hosted <strong>Cloudlog</strong> or{' '}
+              <strong>Wavelog</strong> logbook (HTTP). The API key is a per-instance token for your
+              own server — enter it, your station-profile id, and turn on the toggle.
+            </p>
+            <div className="settings-grid">
+              <label className="settings-field">
+                <span className="settings-label">Base URL</span>
+                <input
+                  className="settings-input"
+                  type="text"
+                  value={form.cloudlogUrl ?? ''}
+                  placeholder="https://log.example.com"
+                  onChange={(e) => update('cloudlogUrl', e.target.value)}
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                <span className="settings-hint">Your Cloudlog/Wavelog site root. Leave blank to disable.</span>
+              </label>
+
+              <label className="settings-field">
+                <span className="settings-label">Station profile id</span>
+                <input
+                  className="settings-input"
+                  type="text"
+                  inputMode="numeric"
+                  value={form.cloudlogStationId ?? ''}
+                  placeholder="1"
+                  onChange={(e) => update('cloudlogStationId', e.target.value)}
+                  autoComplete="off"
+                />
+                <span className="settings-hint">The station-location profile to log against (Cloudlog ▸ Station Locations).</span>
+              </label>
+
+              <label className="settings-field">
+                <span className="settings-label">API key</span>
+                <input
+                  className="settings-input"
+                  type="password"
+                  value={form.cloudlogKey ?? ''}
+                  placeholder="your instance API key"
+                  onChange={(e) => update('cloudlogKey', e.target.value)}
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                <span className="settings-hint">Cloudlog ▸ Account ▸ API Keys — a key with read/write.</span>
+              </label>
+
+              <div className="settings-field">
+                <label className="settings-toggle">
+                  <span className="settings-label">Auto-forward QSOs</span>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={form.cloudlogUpload ?? false}
+                    className={`toggle${form.cloudlogUpload ? ' on' : ''}`}
+                    onClick={() => updateBool('cloudlogUpload', !form.cloudlogUpload)}
+                  >
+                    <span className="toggle-knob" />
+                  </button>
+                </label>
+                <span className="settings-hint">Push every logged QSO to the instance above as it's logged.</span>
+              </div>
+            </div>
+          </fieldset>
+
+          <fieldset className="settings-section">
             <legend>N1MM+ Integration</legend>
             <div className="settings-grid">
               <label className="settings-field">

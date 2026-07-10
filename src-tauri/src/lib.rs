@@ -6604,6 +6604,30 @@ fn n3fjp_push_qso_impl(dto: &LoggedQso, engine: &SharedEngine) -> Result<(), Str
     tempo_net::n3fjp::push_qso(&host, port, &push)
 }
 
+/// Forward ONE logged QSO to a Cloudlog/Wavelog instance (HTTP JSON ADIF POST). URL + key +
+/// station id come from Settings (plain — a per-instance self-hosted token, not an account
+/// password).
+fn cloudlog_push_qso_impl(dto: &LoggedQso, engine: &SharedEngine) -> Result<String, String> {
+    let (url, station_id, key) = {
+        let eng = engine.lock().map_err(|e| e.to_string())?;
+        let s = eng.settings();
+        (
+            s.cloudlog_url.trim().to_string(),
+            s.cloudlog_station_id.trim().to_string(),
+            s.cloudlog_key.trim().to_string(),
+        )
+    };
+    if url.is_empty() {
+        return Err("no Cloudlog URL set".to_string());
+    }
+    if key.is_empty() {
+        return Err("no Cloudlog API key set".to_string());
+    }
+    let rec: tempo_core::logbook::QsoRecord = dto.clone().into();
+    let adif = tempo_core::logbook::adif_record(&rec);
+    propagation::live::cloudlog::upload(&url, &key, &station_id, &adif)
+}
+
 fn auto_push_one(
     engine: &SharedEngine,
     dto: LoggedQso,
@@ -6612,6 +6636,7 @@ fn auto_push_one(
     eqsl_on: bool,
     hrdlog_on: bool,
     n3fjp_on: bool,
+    cloudlog_on: bool,
 ) {
     let call = dto.call.clone();
     let mut parts: Vec<String> = Vec::new();
@@ -6736,6 +6761,20 @@ fn auto_push_one(
             Err(e) => {
                 conn_log("N3FJP", "error", format!("auto-forward {call} — {e}"));
                 (format!("N3FJP ✗ {e}"), false)
+            }
+        };
+        parts.push(part);
+        all_ok &= ok;
+    }
+    if cloudlog_on {
+        let (part, ok) = match cloudlog_push_qso_impl(&dto, engine) {
+            Ok(_) => {
+                conn_log("Cloudlog", "ok", format!("auto-forward {call}"));
+                ("Cloudlog ✓".to_string(), true)
+            }
+            Err(e) => {
+                conn_log("Cloudlog", "error", format!("auto-forward {call} — {e}"));
+                (format!("Cloudlog ✗ {e}"), false)
             }
         };
         parts.push(part);
@@ -7506,11 +7545,11 @@ pub fn run() {
         let push_engine = engine.clone();
         std::thread::spawn(move || loop {
             std::thread::sleep(std::time::Duration::from_secs(2));
-            let (recs, qrz_on, clublog_on, eqsl_on, hrdlog_on, n3fjp_on) = {
+            let (recs, qrz_on, clublog_on, eqsl_on, hrdlog_on, n3fjp_on, cloudlog_on) = {
                 // Recover a poisoned lock (conn_log pattern) — a panicked command
                 // holding the engine must not silently kill auto-upload forever.
                 let mut eng = push_engine.lock().unwrap_or_else(|e| e.into_inner());
-                let (q, c, e, h, n) = {
+                let (q, c, e, h, n, cl) = {
                     let s = eng.settings();
                     (
                         s.qrz_logbook_upload,
@@ -7518,15 +7557,16 @@ pub fn run() {
                         s.eqsl_upload,
                         s.hrdlog_upload,
                         s.n3fjp_upload && !s.n3fjp_host.trim().is_empty(),
+                        s.cloudlog_upload && !s.cloudlog_url.trim().is_empty(),
                     )
                 };
-                if !(q || c || e || h || n) {
+                if !(q || c || e || h || n || cl) {
                     // Nothing enabled: LEAVE the queue intact (bounded at 256) so
                     // flipping a toggle on later still uploads this session's
                     // recent QSOs — log-first-configure-later must not lose them.
                     continue;
                 }
-                (eng.take_pending_uploads(), q, c, e, h, n)
+                (eng.take_pending_uploads(), q, c, e, h, n, cl)
             };
             // ClubLog suspended (403 latch): skip that leg instead of erroring
             // per QSO — the suspension was announced once; re-push covers later.
@@ -7541,6 +7581,7 @@ pub fn run() {
                     eqsl_on,
                     hrdlog_on,
                     n3fjp_on,
+                    cloudlog_on,
                 );
             }
         });
