@@ -24,6 +24,8 @@ import {
   setSource as apiSetSource,
   setTxEnabled as apiSetTxEnabled,
   setTxLevel as apiSetTxLevel,
+  setActiveRadio as apiSetActiveRadio,
+  setPegLock as apiSetPegLock,
   setTune as apiSetTune,
   haltTx as apiHaltTx,
   setTxEven as apiSetTxEven,
@@ -865,6 +867,20 @@ export default function App() {
     })
   }, [])
 
+  // Dual-radio: switch the active radio (rig loop swaps rigs, carrier dropped first) and toggle
+  // peg-lock. The returned snapshot echoes the new active radio + tune instantly.
+  const handleSetActiveRadio = useCallback((id: number) => {
+    void withErrorToast(() => apiSetActiveRadio(id), 'Could not switch radios').then((s) => {
+      if (s) setSnap(s)
+    })
+  }, [])
+
+  const handleSetPegLock = useCallback((on: boolean) => {
+    void withErrorToast(() => apiSetPegLock(on), 'Could not set peg-lock').then((s) => {
+      if (s) setSnap(s)
+    })
+  }, [])
+
   // WSJT-X Tx-slot click (Tx1–Tx5 buttons / Alt+N): force the row's text as the
   // next transmission to the DX. The backend starts/retargets the QSO + arms TX;
   // applying the returned snapshot makes the Tx panel's "next" dot land at once.
@@ -1512,6 +1528,7 @@ export default function App() {
             key={`sp-wiz${wizardGen}`}
             onSaved={handleSettingsSaved}
             radio={snap.radio}
+            activeRadioId={snap.activeRadioId}
             layout={wfLayout}
             onLayoutChange={setWfLayout}
             scale={scale}
@@ -1650,6 +1667,10 @@ export default function App() {
         mycall={snap.mycall}
         mygrid={snap.mygrid}
         radio={snap.radio}
+        radios={snap.radios}
+        radioPegged={snap.radioPegged}
+        onSetActiveRadio={handleSetActiveRadio}
+        onSetPegLock={handleSetPegLock}
         link={snap.link}
         bandPlan={bandPlan}
         onSetFrequency={handleSetFrequency}

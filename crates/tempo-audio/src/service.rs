@@ -30,7 +30,7 @@ use crate::rig::{PttMode, Rig, SerialLine};
 use crate::rigctld_proc::{spawn_rigctld, RigctldProc};
 
 use tempo_app::dto::Tier;
-use tempo_app::settings::Settings;
+use tempo_app::settings::{RadioProfile, Settings};
 use tempo_core::message::Msg;
 use tempo_net::pskreporter::{PskReporter, Spot};
 use tempo_net::server::WsjtxServer;
@@ -182,7 +182,10 @@ pub fn run_radio(engine: Arc<Mutex<Engine>>, cfg: RadioConfig) -> Result<(), Str
     // rebuilt **live** below when the operator changes rig/PTT/audio settings, so
     // CAT connects on Save without an app restart.
     let applied = Transport::from_cfg(&cfg);
-    let (mut rig, rigctld_proc, init_ok, init_detail) = open_rig(&applied, cfg.dial_hz, &cfg.mode);
+    // Initial open: allow coexisting onto a pre-existing EXTERNAL rigctld (e.g. WSJT-X already sharing
+    // the rig). Mid-session rig SWITCHES pass `allow_coexist=false` when they reuse their own port.
+    let (mut rig, rigctld_proc, init_ok, init_detail) =
+        open_rig(&applied, cfg.dial_hz, &cfg.mode, true);
     if let Ok(mut eng) = engine.lock() {
         eng.set_cat_status(init_ok, init_detail);
     }
@@ -242,7 +245,27 @@ pub fn run_radio(engine: Arc<Mutex<Engine>>, cfg: RadioConfig) -> Result<(), Str
     // it in tests). The wrapper owns only the device edges (sound card + rigctld)
     // and injects their re-open side-effects.
     let mut state = RadioLoop::new(applied, rigctld_proc, &cfg);
+
+    // --- Dual-radio: persistent per-radio CAT (true "both live"). The ACTIVE radio is `rig`/`state`
+    // above (unchanged path). Every OTHER enabled radio gets its own persistent rigctld+Rig in the
+    // monitor pool, polled READ-ONLY on a dedicated thread → the switcher pills show both rigs live.
+    // Switching = a HANDOFF (swap the active Rig with a pool one) — no teardown, so no read-back race.
+    let pool: MonitorPool = Arc::new(Mutex::new(Vec::new()));
+    // The active radio at startup (so the monitor thread doesn't also open it).
+    let mut last_active = engine
+        .lock()
+        .map(|e| e.settings().active_radio)
+        .unwrap_or(0);
+    {
+        let mon_engine = engine.clone();
+        let mon_pool = pool.clone();
+        std::thread::spawn(move || monitor_loop(mon_engine, mon_pool));
+    }
     loop {
+        // Dual-radio: if the operator switched the active radio, hand off between the active Rig and
+        // the monitor pool BEFORE the normal tick — so `state.applied` already matches the new active
+        // and the `rig_differs` teardown never fires (the new rig is already connected + on-frequency).
+        handoff_if_switched(&engine, &pool, &mut rig, &mut state, &mut last_active);
         // App shutdown: unkey the transmitter through the still-alive rig before
         // the process exits. Without this, quitting while keyed (a TX slot or a
         // tune carrier) leaves the radio transmitting until its own timeout.
@@ -276,9 +299,351 @@ pub fn run_radio(engine: Arc<Mutex<Engine>>, cfg: RadioConfig) -> Result<(), Str
                     b
                 })
             },
-            &mut |t: &Transport, dial: u64, md: &str| open_rig(t, dial, md),
+            &mut |t: &Transport, dial: u64, md: &str, allow_coexist: bool| {
+                open_rig(t, dial, md, allow_coexist)
+            },
         )?;
         std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+// ======================= Dual-radio: persistent per-radio CAT (monitor pool) =======================
+
+/// The shared pool of persistent, read-only CAT connections to the NON-active radios ("both live").
+type MonitorPool = Arc<Mutex<Vec<MonitorConn>>>;
+
+/// Per-radio dial-read cadence for a monitor (unhurried — the active radio has the fast poll).
+const MONITOR_POLL_MS: f64 = 600.0;
+
+/// One persistent CAT connection to a NON-active radio. Holds its own live rigctld + Rig; a switch
+/// HANDS this Rig to/from the active slot (never a teardown). CAT-only: no audio, and this struct is
+/// only ever READ from (no `ptt`/`set_*` call site touches a `MonitorConn` — single-TX-authority).
+struct MonitorConn {
+    id: u32,
+    transport: Transport,
+    rig: Rig,
+    rigctld_proc: Option<RigctldProc>,
+    last_poll: f64,
+    ticks: u32,
+    smeter_supported: Option<bool>,
+}
+
+impl Transport {
+    /// Build a transport from a SPECIFIC radio profile (not the flat active mirror) — to open a
+    /// monitor connection to a non-active radio. Audio/monitor fields are zeroed (monitors are
+    /// CAT-only) and the broker port dropped (only the active radio talks to the broker).
+    fn from_profile(p: &RadioProfile) -> Self {
+        Self {
+            ptt_method: p.ptt_method.clone(),
+            rig_model: p.rig_model,
+            serial_port: p.serial_port.clone(),
+            baud: p.baud,
+            rig_conn: p.rig_conn.clone(),
+            rig_addr: p.rig_addr.clone(),
+            rigctld_port: p.rigctld_port,
+            broker_self_port: None,
+            audio_in: String::new(),
+            audio_out: String::new(),
+            voice_mic_device: String::new(),
+            tx_level: p.tx_level,
+            monitor_enabled: false,
+            monitor_device: String::new(),
+            monitor_level: 0.5,
+        }
+    }
+}
+
+/// Open a READ-ONLY CAT connection for a monitor radio: launch its rigctld (or share an EXTERNAL one
+/// already on the port) and probe by reading the dial — but NEVER set freq/mode/PTT (a monitor must
+/// not disturb the radio the operator isn't focused on). Returns the Rig + daemon handle + cat_ok.
+fn open_monitor(t: &Transport) -> (Rig, Option<RigctldProc>, Option<bool>) {
+    if t.rig_model == 0 {
+        return (Rig::vox(), None, None);
+    }
+    // A monitor ALWAYS spawns its OWN rigctld — it must NEVER coexist onto a daemon already on the
+    // port, because `probe_rigctld` can only tell that SOMETHING is listening, not WHICH radio it
+    // serves; coexisting onto another radio's daemon is the dual-radio crossed-CAT bug (a monitor
+    // reading + commanding the wrong rig). If the port is already taken, our spawned rigctld can't
+    // bind and exits immediately → `is_alive()` is false → we report DISCONNECTED (fail safe) instead
+    // of connecting to the foreign daemon. Distinct ports (validated on every save) make this the
+    // normal, clean path.
+    let addr = format!("127.0.0.1:{}", t.rigctld_port);
+    let (target, network) = if t.is_network() {
+        (t.rig_addr.as_str(), true)
+    } else {
+        (t.serial_port.as_str(), false)
+    };
+    match spawn_rigctld(t.rig_model, target, t.baud, t.rigctld_port, network) {
+        Ok(mut proc) => {
+            std::thread::sleep(Duration::from_millis(700));
+            if !proc.is_alive() {
+                // Our daemon exited — it couldn't bind the port (a clash). Do NOT connect: whatever's
+                // on the port isn't ours. Report disconnected; the pill shows the radio down.
+                return (Rig::vox(), None, Some(false));
+            }
+            let mut rig = Rig::with_control(Some(addr), PttMode::Vox);
+            rig.set_slow_transport(network);
+            let (ok, _d) = probe_cat(&mut rig, t.rigctld_port);
+            (rig, Some(proc), ok)
+        }
+        Err(_) => (Rig::vox(), None, Some(false)),
+    }
+}
+
+/// The monitor thread: keeps a persistent read-only CAT connection to every ENABLED, NON-active radio,
+/// reconciling the pool against live settings and polling each radio's dial/mode/S-meter into the
+/// engine's per-radio live cache. NEVER commands or keys a rig.
+fn monitor_loop(engine: Arc<Mutex<Engine>>, pool: MonitorPool) {
+    loop {
+        if SHUTDOWN.load(std::sync::atomic::Ordering::Relaxed) {
+            return;
+        }
+        // Desired monitor set (enabled, non-active, has a rig model), snapshot under a brief lock.
+        let (active, want): (u32, Vec<(u32, Transport)>) = match engine.lock() {
+            Ok(e) => {
+                let s = e.settings();
+                let active = s.active_radio;
+                let want = s
+                    .radios
+                    .iter()
+                    .filter(|p| p.enabled && p.id != active && p.rig_model != 0)
+                    .map(|p| (p.id, Transport::from_profile(p)))
+                    .collect();
+                (active, want)
+            }
+            Err(_) => {
+                std::thread::sleep(Duration::from_millis(200));
+                continue;
+            }
+        };
+        reconcile_pool(&pool, &want, &engine);
+        poll_monitors(&pool, active, &engine);
+        std::thread::sleep(Duration::from_millis(150));
+    }
+}
+
+/// Bring the monitor pool in line with the desired `(id, transport)` set: open newly-wanted radios,
+/// close removed ones, rebuild a radio whose CAT config changed. Opens happen WITHOUT the pool lock
+/// held (spawning rigctld is slow) so a concurrent handoff never waits on a daemon launch.
+fn reconcile_pool(pool: &MonitorPool, want: &[(u32, Transport)], engine: &Arc<Mutex<Engine>>) {
+    let (to_open, to_close): (Vec<(u32, Transport)>, Vec<u32>) = {
+        let p = pool.lock().unwrap_or_else(|e| e.into_inner());
+        let mut to_open = Vec::new();
+        for (id, t) in want {
+            match p.iter().find(|c| c.id == *id) {
+                // Keep only a CAT-identical AND LIVE conn. A conn parked as `Rig::vox()` (rigctld
+                // couldn't bind / CAT probe failed — often a transient same-port bind race at the
+                // switch moment) has no control channel; recycle it so it self-heals instead of
+                // polling dead forever (and so a later switch-to never adopts a dead conn).
+                Some(c) if !c.transport.rig_differs(t) && c.rig.has_control() => {} // keep
+                _ => to_open.push((*id, t.clone())), // new / CAT changed / DEAD → (re)open
+            }
+        }
+        let to_close: Vec<u32> = p
+            .iter()
+            .map(|c| c.id)
+            .filter(|id| {
+                match want.iter().find(|(wid, _)| wid == id) {
+                    None => true, // no longer wanted
+                    Some((_, t)) => p.iter().find(|c| c.id == *id).is_some_and(|c| {
+                        c.transport.rig_differs(t) || !c.rig.has_control() // CAT changed OR dead
+                    }),
+                }
+            })
+            .collect();
+        (to_open, to_close)
+    };
+    if !to_close.is_empty() {
+        let mut p = pool.lock().unwrap_or_else(|e| e.into_inner());
+        p.retain(|c| !to_close.contains(&c.id)); // drop kills each daemon
+        if let Ok(mut e) = engine.lock() {
+            for id in &to_close {
+                e.forget_radio_live(*id);
+            }
+        }
+    }
+    for (id, t) in to_open {
+        let (rig, proc, ok) = open_monitor(&t); // slow (spawn) — pool lock NOT held
+        if let Ok(mut e) = engine.lock() {
+            e.observe_radio_cat(id, ok);
+        }
+        let mut p = pool.lock().unwrap_or_else(|e| e.into_inner());
+        // A handoff may have inserted this id meanwhile (old active → pool); don't double-open.
+        if !p.iter().any(|c| c.id == id) {
+            p.push(MonitorConn {
+                id,
+                transport: t,
+                rig,
+                rigctld_proc: proc,
+                last_poll: 0.0,
+                ticks: 0,
+                smeter_supported: None,
+            });
+        }
+    }
+}
+
+/// Poll each monitor connection read-only into the engine's per-radio live cache. Dial every poll;
+/// mode + S-meter every 3rd. Holds the pool lock during the (short-timeout) reads — a concurrent
+/// handoff uses `try_lock` and simply retries next tick, so the active audio/TX loop never blocks.
+fn poll_monitors(pool: &MonitorPool, active: u32, engine: &Arc<Mutex<Engine>>) {
+    let now = now_unix_ms();
+    let mut p = pool.lock().unwrap_or_else(|e| e.into_inner());
+    // Poll only the SINGLE most-overdue monitor per call, so the pool lock is held for at most ONE
+    // rig read (~500 ms) rather than all of them — a concurrent `handoff_if_switched` try_lock then
+    // always finds a gap between reads, keeping switches feeling instant even mid-poll.
+    let conn = match p
+        .iter_mut()
+        .filter(|c| c.id != active && now - c.last_poll >= MONITOR_POLL_MS)
+        .min_by(|a, b| {
+            a.last_poll
+                .partial_cmp(&b.last_poll)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        }) {
+        Some(c) => c,
+        None => return,
+    };
+    {
+        conn.last_poll = now;
+        conn.ticks = conn.ticks.wrapping_add(1);
+        match conn.rig.read_freq() {
+            Ok(hz) => {
+                if let Ok(mut e) = engine.lock() {
+                    e.observe_radio_freq(conn.id, hz);
+                    e.observe_radio_cat(conn.id, Some(true));
+                }
+                if conn.ticks % 3 == 0 {
+                    if let Some(mm) = conn.rig.read_mode() {
+                        if let Ok(mut e) = engine.lock() {
+                            e.observe_radio_mode(conn.id, mm);
+                        }
+                    }
+                    if conn.smeter_supported != Some(false) {
+                        match conn.rig.read_smeter_db() {
+                            Some(db) => {
+                                conn.smeter_supported = Some(true);
+                                if let Ok(mut e) = engine.lock() {
+                                    e.observe_radio_smeter(conn.id, db);
+                                }
+                            }
+                            None if conn.smeter_supported.is_none() => {
+                                conn.smeter_supported = Some(false);
+                            }
+                            None => {}
+                        }
+                    }
+                }
+            }
+            Err(_) => {
+                if let Ok(mut e) = engine.lock() {
+                    e.observe_radio_cat(conn.id, Some(false));
+                }
+            }
+        }
+    }
+}
+
+/// If the operator switched the active radio, HAND OFF between the active Rig and the monitor pool:
+/// take the (already-connected) new active out of the pool into the active slot, and push the old
+/// active back into the pool. No teardown, no reconnect — so the dial can't race back to the old rig.
+/// Non-blocking: if the monitor thread holds the pool (mid-poll), retry next 20 ms tick.
+fn handoff_if_switched(
+    engine: &Arc<Mutex<Engine>>,
+    pool: &MonitorPool,
+    rig: &mut Rig,
+    state: &mut RadioLoop,
+    last_active: &mut u32,
+) {
+    let (active, want_active) = match engine.lock() {
+        Ok(e) => {
+            let s = e.settings();
+            (s.active_radio, Transport::from_settings(s))
+        }
+        Err(_) => return,
+    };
+    if active == *last_active {
+        return;
+    }
+    // FIX #1 (TX-safety): unkey the OUTGOING rig if it's keyed BEFORE it leaves the active slot into
+    // the READ-ONLY monitor pool — otherwise it would sit there with PTT still asserted (a stuck
+    // carrier that nothing ever drops). `set_active_radio` cleared the ENGINE's TX intent (halt_tx);
+    // this drops the PHYSICAL PTT, which only the loop thread can command. Mirrors step()'s
+    // unkey-before-teardown guard.
+    if rig.keyed || state.tx_until_ms.is_some() || state.tuning_keyed || state.manual_ptt_applied {
+        let _ = rig.ptt(false);
+        let _ = rig.stop_morse();
+        state.tx_until_ms = None;
+        state.tuning_keyed = false;
+        state.manual_ptt_applied = false;
+    }
+    let mut p = match pool.try_lock() {
+        Ok(p) => p,
+        // FIX #4: recover a poisoned pool (like poll/reconcile do) — else every future switch would be
+        // silently lost. WouldBlock = monitor mid-poll → retry next tick (never stall the audio loop).
+        Err(std::sync::TryLockError::Poisoned(e)) => e.into_inner(),
+        Err(std::sync::TryLockError::WouldBlock) => return,
+    };
+    // The monitor's `from_profile` conn transport zeroes the broker port; compare CAT fields against a
+    // broker-stripped `want` so the broker being on doesn't spuriously fail the match (FIX #3: adopt
+    // ONLY a conn whose CAT config matches what we now want — a stale conn is dropped + reopened).
+    let mut want_cat = want_active.clone();
+    want_cat.broker_self_port = None;
+    // Adopt ONLY a LIVE conn: a monitor whose rigctld failed to bind / whose CAT probe never connected
+    // is parked in the pool as a `Rig::vox()` (no control channel — see `open_monitor`). Adopting that
+    // dead conn would install a control-less rig as the active radio, and because `state.applied` is
+    // then set to its transport, step()'s `rig_differs` stays false and NEVER rebuilds it → the radio's
+    // CAT is permanently dead after the switch. Requiring `has_control()` makes a dead conn fall through
+    // to the fallback branch, which drops it and lets step()'s `rig_differs` reopen the radio FRESH via
+    // `open_cat` (no is_alive gate, self-healing) — exactly how the startup radio stays healthy.
+    if let Some(idx) = p
+        .iter()
+        .position(|c| c.id == active && c.rig.has_control() && !c.transport.rig_differs(&want_cat))
+    {
+        let conn = p.remove(idx);
+        let old_rig = std::mem::replace(rig, conn.rig);
+        let old_proc = state.rigctld_proc.take();
+        let mut old_transport = std::mem::replace(&mut state.applied, conn.transport);
+        // Monitor conns always carry `broker_self_port = None` (`from_profile`); strip it off the
+        // demoted radio's transport too, so the monitor `reconcile` doesn't see `rig_differs` (which
+        // compares broker port) and needlessly tear down + reopen the radio we just demoted.
+        old_transport.broker_self_port = None;
+        state.rigctld_proc = conn.rigctld_proc;
+        // The ACTIVE radio DOES interact with the CAT broker — set its broker port to the live value so
+        // `rig_differs` won't see a diff and tear the just-handed-off rig back down. (Audio fields stay
+        // zeroed → `audio_differs` fires → the RX codec rebuilds to the new radio, the one device swap.)
+        state.applied.broker_self_port = want_active.broker_self_port;
+        if let Ok(mut e) = engine.lock() {
+            e.forget_radio_live(active);
+        }
+        // The new active rig is ALREADY connected + on its own frequency; reset the per-rig caches so
+        // step()'s retune re-asserts the restored dial/mode and the health/capability re-probe runs.
+        state.reset_for_handoff();
+        // The old active radio joins the monitor pool (stays live); the new active leaves it.
+        p.push(MonitorConn {
+            id: *last_active,
+            transport: old_transport,
+            rig: old_rig,
+            rigctld_proc: old_proc,
+            last_poll: 0.0,
+            ticks: 0,
+            smeter_supported: None,
+        });
+        *last_active = active;
+    } else {
+        // Fallback: no MATCHING live conn for the new active (never opened / model 0 / a stale conn from
+        // a config change). Drop any stale conn for this id so its daemon is reaped + its port freed,
+        // then let step()'s `rig_differs` path open the new active fresh (it also unkeys + tears down
+        // the OLD active safely). The old active is not kept monitored in this edge — steady state
+        // (both radios configured) always ADOPTS above. A switch during a radio's very first monitor
+        // open can transiently coexist onto the monitor daemon; it self-heals on the next reconcile.
+        p.retain(|c| c.id != active);
+        if let Ok(mut e) = engine.lock() {
+            e.forget_radio_live(active);
+        }
+        // The active radio changed — force the RX audio to rebuild to the new radio's device even if
+        // step()'s rig_differs path handles the CAT (audio_differs alone can miss an empty-vs-empty).
+        state.force_audio_rebuild = true;
+        *last_active = active;
     }
 }
 
@@ -360,6 +725,12 @@ struct RadioLoop {
     /// change (used when the voice-mic notice cleared a line the monitor may
     /// still be entitled to — its guard/failure state gets re-surfaced).
     monitor_reapply: bool,
+    /// One-shot: force the RX-audio backend to rebuild on the next tick even if `audio_differs` is
+    /// false. Set by a dual-radio handoff — the new radio's audio device MUST be (re)opened, and a
+    /// radio whose audio is "system default" (empty) would otherwise compare equal to another empty
+    /// and skip the rebuild, leaving the OLD radio's sound-card stream running (the "audio never
+    /// leaves the FTDX10" bug). Consumed (taken) in the step() audio-rebuild guard.
+    force_audio_rebuild: bool,
     /// We wrote the current audio-error line with a voice-mic open failure, so we clear
     psk_spots: Vec<Spot>,
     last_psk_flush: f64,
@@ -453,6 +824,7 @@ impl RadioLoop {
             voice_mic_open: false,
             voice_mic_failed: false,
             monitor_reapply: false,
+            force_audio_rebuild: false,
             err_owner: ErrOwner::None,
             psk_spots: Vec::new(),
             early_done_slot: None,
@@ -475,6 +847,36 @@ impl RadioLoop {
         }
     }
 
+    /// Reset the per-rig caches after a dual-radio HANDOFF adopted an already-connected Rig for a new
+    /// active radio. Forces the retune block to re-assert the restored dial/mode (sentinel
+    /// `last_dial`/`last_mode`) and the health / S-meter / DSP-func capabilities to re-probe for the
+    /// new rig. Does NOT touch `applied`/`rigctld_proc` (the handoff set those) or the slot/TX clock.
+    fn reset_for_handoff(&mut self) {
+        self.last_dial = 0; // != any real dial → force the retune to command the restored freq
+        self.last_mode = String::new(); // force the mode re-assert
+        self.mode_fail_count = 0;
+        self.mode_giveup = None;
+        self.last_cw_wpm = 0;
+        self.last_fm = None;
+        self.manual_ptt_applied = false;
+        self.last_rf_power = None;
+        self.fake_it_restore = None;
+        self.audio_rig_split = false;
+        self.last_rig_poll = 0.0; // poll the new rig's health/mode/S-meter immediately
+        self.last_freq_poll = 0.0;
+        self.freq_misses = 0;
+        self.cat_ok = None; // re-establish CAT health from the new rig
+        self.smeter_supported = None;
+        self.smeter_misses = 0;
+        self.func_supported = [None; 5];
+        self.func_misses = [0; 5];
+        self.func_state = [None; 5];
+        // The audio device must be (re)opened for the new radio even if its device name matches
+        // (e.g. both "system default") — force it, since `audio_differs` alone would skip an
+        // empty-vs-empty compare and leave the OLD radio's sound-card stream running.
+        self.force_audio_rebuild = true;
+    }
+
     /// One radio-loop iteration: fold captured audio in, apply live reconfig
     /// (re-open the rig/sound card via the injected closures on a Settings
     /// change), drop the TX tail, run the slot (TX keying / RX decode), emit
@@ -489,7 +891,8 @@ impl RadioLoop {
         sinks: &Sinks,
         now: f64,
         reopen_audio: &mut dyn FnMut(&Transport) -> Result<B, String>,
-        reopen_rig: &mut dyn FnMut(&Transport, u64, &str) -> RigOpen,
+        // `allow_coexist`: may reuse a rigctld already on the port (external share) vs must spawn fresh.
+        reopen_rig: &mut dyn FnMut(&Transport, u64, &str, bool) -> RigOpen,
     ) -> Result<(), String> {
         // Steer the slot clock to TRUE UTC: subtract the measured PC-clock-vs-UTC
         // offset (local − UTC) from the system clock, so TX keys and RX decode
@@ -567,12 +970,23 @@ impl RadioLoop {
                         eng.halt_tx();
                     }
                 }
-                self.rigctld_proc = None; // drop kills the old daemon + frees the port
-                let (new_rig, proc, ok, detail) = reopen_rig(&want, dial, &md);
+                // Whether `reopen_rig` may auto-coexist onto a rigctld ALREADY listening on the new
+                // port (see `allow_coexist_on_swap`). We must NOT coexist onto our OWN daemon that
+                // we're about to kill — its corpse would keep commanding the OLD radio (the dual-radio
+                // "switch back to HF still drives the 2 m Icom" bug).
+                let allow_coexist = allow_coexist_on_swap(
+                    self.rigctld_proc.is_some(),
+                    self.applied.rigctld_port,
+                    want.rigctld_port,
+                );
+                self.rigctld_proc = None; // drop kills + reaps the old daemon (frees its port)
+                let (new_rig, proc, ok, detail) = reopen_rig(&want, dial, &md, allow_coexist);
                 *rig = new_rig;
                 self.rigctld_proc = proc;
-                self.last_dial = dial;
-                self.last_mode = md.clone();
+                // Do NOT claim last_dial/last_mode here: open_cat's set_freq/set_mode are best-effort
+                // (`let _ =`), so a failed open-time tune must be retried. Leaving these at the OLD
+                // radio's values makes the retune block below (same tick) see `dial != last_dial` and
+                // re-apply until it sticks, instead of silently stranding the new rig off-frequency.
                 self.mode_fail_count = 0; // fresh rig — the retune retry budget resets
                 self.mode_giveup = None; // and a fresh rig may well accept what the old rejected
                 self.cat_ok = ok;
@@ -587,7 +1001,9 @@ impl RadioLoop {
                 }
             }
             let mut audio_rebuilt = false;
-            if want.audio_differs(&self.applied) {
+            // A dual-radio switch forces the rebuild (a new radio's device must be opened even if the
+            // name compares equal — e.g. two "system default"s); else rebuild only on a real change.
+            if std::mem::take(&mut self.force_audio_rebuild) || want.audio_differs(&self.applied) {
                 // The queued TX audio for a live over lives ENTIRELY in the old
                 // backend's output ring — replacing the backend discards it. If
                 // we're mid-transmission (a slot over, a tune carrier, or manual
@@ -827,9 +1243,9 @@ impl RadioLoop {
                 // slow network chain) and observe_rig_freq would adopt it as a knob QSY and revert.
                 self.last_freq_poll = now + (RIG_POLL_MS - FREQ_POLL_MS);
                 self.freq_misses = 0; // a successful set_freq/set_mode proves the link is alive
-                // The app just commanded a new dial/mode — drop the stale read-back mode + passband
-                // width so a band/mode change can't flash a false "rig: X" mismatch or show the
-                // prior mode's filter width before the next poll reads the rig's true state.
+                                      // The app just commanded a new dial/mode — drop the stale read-back mode + passband
+                                      // width so a band/mode change can't flash a false "rig: X" mismatch or show the
+                                      // prior mode's filter width before the next poll reads the rig's true state.
                 if let Ok(mut eng) = engine.lock() {
                     eng.clear_rig_mode();
                     eng.clear_rig_passband();
@@ -951,8 +1367,10 @@ impl RadioLoop {
                             // set it against, and re-queue on a failed/rejected set — so a CAT
                             // hiccup or a split `m` read never silently swallows the operator's click.
                             if let Some(ref mode) = m {
-                                let width_req =
-                                    engine.lock().ok().and_then(|mut e| e.take_passband_request());
+                                let width_req = engine
+                                    .lock()
+                                    .ok()
+                                    .and_then(|mut e| e.take_passband_request());
                                 if let Some(hz) = width_req {
                                     if rig.set_passband(mode, hz).is_ok() {
                                         if let Ok(mut eng) = engine.lock() {
@@ -993,7 +1411,8 @@ impl RadioLoop {
                         if let Some(hz) = engine.lock().ok().and_then(|mut e| e.take_xit_apply()) {
                             let _ = rig.set_xit(hz);
                         }
-                        if let Some(vfo_b) = engine.lock().ok().and_then(|mut e| e.take_vfo_apply()) {
+                        if let Some(vfo_b) = engine.lock().ok().and_then(|mut e| e.take_vfo_apply())
+                        {
                             let _ = rig.set_vfo(if vfo_b { "VFOB" } else { "VFOA" });
                         }
                         // DSP funcs (NB/NR/notch=ANF/COMP/VOX): one GET per still-supported func on
@@ -2409,10 +2828,10 @@ type RigOpen = (Rig, Option<RigctldProc>, Option<bool>, String);
 /// launches the bundled `rigctld`, sets the dial/mode, and probes by reading the
 /// frequency back; for serial PTT it opens the control line; for VOX `cat_ok` is
 /// `None` (not applicable). Mirrors WSJT-X's Test CAT.
-fn open_rig(t: &Transport, dial_hz: u64, mode: &str) -> RigOpen {
+fn open_rig(t: &Transport, dial_hz: u64, mode: &str, allow_coexist: bool) -> RigOpen {
     match t.ptt_method.as_str() {
         // CAT PTT: control + keying both over rigctld.
-        "cat" if t.rig_model != 0 => open_cat(t, dial_hz, mode, PttMode::Cat),
+        "cat" if t.rig_model != 0 => open_cat(t, dial_hz, mode, PttMode::Cat, allow_coexist),
         "cat" => (
             Rig::vox(),
             None,
@@ -2431,7 +2850,7 @@ fn open_rig(t: &Transport, dial_hz: u64, mode: &str) -> RigOpen {
         // no `M`/`F` command at all because CAT was fused to the PTT method. (Matched
         // explicitly, not via the catch-all, so a typo'd/legacy ptt_method string
         // degrades safely to pure VOX below rather than silently grabbing the port.)
-        "vox" if t.rig_model != 0 => open_cat(t, dial_hz, mode, PttMode::Vox),
+        "vox" if t.rig_model != 0 => open_cat(t, dial_hz, mode, PttMode::Vox, allow_coexist),
         _ => (
             Rig::vox(),
             None,
@@ -2441,11 +2860,26 @@ fn open_rig(t: &Transport, dial_hz: u64, mode: &str) -> RigOpen {
     }
 }
 
+/// Decide whether a rig SWITCH may auto-coexist onto a rigctld already listening on the new radio's
+/// port. When we currently own a daemon (`owns_daemon`) and the new radio reuses its port
+/// (`old_port == new_port`), the daemon "already here" after we kill ours is our own dying corpse —
+/// coexisting onto it would keep commanding the OLD radio. Force a fresh daemon in that case; else a
+/// genuinely external rigctld (WSJT-X, a different port, or one we never owned) may be shared. Pure.
+fn allow_coexist_on_swap(owns_daemon: bool, old_port: u16, new_port: u16) -> bool {
+    !(owns_daemon && old_port == new_port)
+}
+
 /// Open a CAT control channel via the bundled `rigctld` (launching it, or sharing one
 /// already running), set the dial/mode, and probe it — layering `ptt_mode` on top so
 /// keying (CAT vs VOX) stays independent of control. Used for BOTH a CAT-PTT rig and a
 /// VOX-keyed rig that still has CAT freq/mode control.
-fn open_cat(t: &Transport, dial_hz: u64, mode: &str, ptt_mode: PttMode) -> RigOpen {
+fn open_cat(
+    t: &Transport,
+    dial_hz: u64,
+    mode: &str,
+    ptt_mode: PttMode,
+    allow_coexist: bool,
+) -> RigOpen {
     let addr = format!("127.0.0.1:{}", t.rigctld_port);
     if t.broker_self_port == Some(t.rigctld_port) {
         // Misconfig: our own CAT broker and the launched rigctld want the same port.
@@ -2461,9 +2895,11 @@ fn open_cat(t: &Transport, dial_hz: u64, mode: &str, ptt_mode: PttMode) -> RigOp
             ),
         );
     }
-    if crate::rigctld_server::probe_rigctld(&addr, Duration::from_millis(400)) {
+    if allow_coexist && crate::rigctld_server::probe_rigctld(&addr, Duration::from_millis(400)) {
         // Auto-coexist: a rigctld is ALREADY here (e.g. WSJT-X launched one). Connect
-        // THROUGH it instead of fighting for the serial port.
+        // THROUGH it instead of fighting for the serial port. Skipped on a dual-radio SWITCH that
+        // reuses the port of the daemon we just killed (`allow_coexist == false`), so we never
+        // reconnect through our own dying daemon and keep commanding the OLD radio.
         let mut rig = Rig::with_control(Some(addr.clone()), ptt_mode);
         rig.set_slow_transport(t.is_network()); // network chains get the long command deadline
         let _ = rig.set_freq(dial_hz);
@@ -2752,8 +3188,227 @@ mod tests {
     fn mock_reopen_audio() -> impl FnMut(&Transport) -> Result<MockBackend, String> {
         |_t: &Transport| Ok(MockBackend::new())
     }
-    fn mock_reopen_rig() -> impl FnMut(&Transport, u64, &str) -> RigOpen {
-        |_t: &Transport, _d: u64, _m: &str| (Rig::vox(), None, None, String::new())
+    fn mock_reopen_rig() -> impl FnMut(&Transport, u64, &str, bool) -> RigOpen {
+        |_t: &Transport, _d: u64, _m: &str, _coexist: bool| (Rig::vox(), None, None, String::new())
+    }
+
+    #[test]
+    fn switch_reusing_own_port_forces_a_fresh_daemon() {
+        // Dual-radio: two radios sharing a rigctld port. Switching between them must NOT coexist onto
+        // the just-killed daemon (that kept commanding the old rig — the "switch back to HF still
+        // drives the 2 m Icom" bug); it must spawn fresh. Distinct ports coexist normally, and a
+        // switch where we owned no daemon (we were sharing an external rigctld) still coexists.
+        assert!(
+            !allow_coexist_on_swap(true, 4532, 4532),
+            "own daemon + same port → spawn fresh"
+        );
+        assert!(
+            allow_coexist_on_swap(true, 4532, 4534),
+            "own daemon + different port → normal probe"
+        );
+        assert!(
+            allow_coexist_on_swap(false, 4532, 4532),
+            "no owned daemon (external share) → coexist"
+        );
+        assert!(
+            allow_coexist_on_swap(false, 4532, 4534),
+            "no owned daemon, different port → coexist"
+        );
+    }
+
+    #[test]
+    fn handoff_swaps_active_radio_with_the_pool_no_teardown() {
+        // Durable dual-radio: switching the active radio HANDS the (already-connected) new active Rig
+        // OUT of the monitor pool into the active slot, and pushes the OLD active back INTO the pool —
+        // no teardown/rebuild, so the dial can't race back to the old rig. `self.applied` becomes the
+        // new radio's transport, which is exactly why the `rig_differs` teardown then never fires.
+        let engine = Arc::new(Mutex::new(Engine::new("W9XYZ", "EN37", 0)));
+        let (r1, r1_transport, r1_port) = {
+            let mut e = engine.lock().unwrap();
+            let r1 = e.add_radio(); // radios = [0, 1]; active still 0
+            let p = e
+                .settings()
+                .radios
+                .iter()
+                .find(|p| p.id == r1)
+                .unwrap()
+                .clone();
+            // The monitor conn's transport must equal what `from_settings` yields once r1 is active
+            // (i.e. r1's profile) — else the handoff correctly REFUSES to adopt a stale conn (fix #3).
+            (r1, Transport::from_profile(&p), p.rigctld_port)
+        };
+        let mut state = loop_state();
+        state.applied = cat_transport(4532, None); // radio 0 (active) on its port
+        let mut rig = Rig::vox();
+        // Radio 1 is already LIVE in the monitor pool with a transport matching its profile. A live
+        // monitor conn holds a control-bearing Rig (`with_control`) + its own daemon — only such a conn
+        // is adopted (a dead `Rig::vox()` conn is rejected; see `handoff_skips_a_dead_conn…`).
+        let pool: MonitorPool = Arc::new(Mutex::new(vec![MonitorConn {
+            id: r1,
+            transport: r1_transport,
+            rig: Rig::with_control(Some(format!("127.0.0.1:{r1_port}")), PttMode::Vox),
+            rigctld_proc: None,
+            last_poll: 0.0,
+            ticks: 0,
+            smeter_supported: None,
+        }]));
+        let mut last_active = 0u32;
+        engine.lock().unwrap().set_active_radio(r1); // operator switches to radio 1
+        handoff_if_switched(&engine, &pool, &mut rig, &mut state, &mut last_active);
+
+        assert_eq!(last_active, r1, "active tracked to radio 1");
+        assert!(
+            state.force_audio_rebuild,
+            "a switch forces the RX audio to rebuild to the new radio's device (even if names match)"
+        );
+        assert_eq!(
+            state.applied.rigctld_port, r1_port,
+            "active transport is now radio 1's — a HANDOFF, so rig_differs won't rebuild"
+        );
+        assert_eq!(
+            state.last_dial, 0,
+            "caches reset so the retune re-asserts the restored dial"
+        );
+        let p = pool.lock().unwrap();
+        assert_eq!(p.len(), 1, "pool still holds exactly one monitor");
+        assert_eq!(
+            p[0].id, 0,
+            "the OLD active (radio 0) is now the monitor — stayed live, not torn down"
+        );
+        assert_eq!(
+            p[0].transport.rigctld_port, 4532,
+            "old active's transport preserved in the pool"
+        );
+    }
+
+    #[test]
+    fn handoff_skips_a_dead_conn_and_reopens_fresh() {
+        // The IC-9700 CAT-dead bug: a monitor conn whose rigctld failed to bind is parked as a
+        // control-less `Rig::vox()`. Adopting it would install a dead rig as the active radio AND
+        // (because applied becomes its transport) step()'s rig_differs would never rebuild it → CAT
+        // permanently dead. The handoff must REJECT a dead conn and fall through to the fresh-open path.
+        let engine = Arc::new(Mutex::new(Engine::new("W9XYZ", "EN37", 0)));
+        let (r1, r1_transport) = {
+            let mut e = engine.lock().unwrap();
+            let r1 = e.add_radio();
+            let p = e
+                .settings()
+                .radios
+                .iter()
+                .find(|p| p.id == r1)
+                .unwrap()
+                .clone();
+            (r1, Transport::from_profile(&p))
+        };
+        let mut state = loop_state();
+        state.applied = cat_transport(4532, None); // radio 0 (active) on its port
+        let mut rig = Rig::vox();
+        // Radio 1's monitor conn is DEAD: a `Rig::vox()` with no control channel + no daemon.
+        let pool: MonitorPool = Arc::new(Mutex::new(vec![MonitorConn {
+            id: r1,
+            transport: r1_transport,
+            rig: Rig::vox(),
+            rigctld_proc: None,
+            last_poll: 0.0,
+            ticks: 0,
+            smeter_supported: None,
+        }]));
+        let mut last_active = 0u32;
+        engine.lock().unwrap().set_active_radio(r1);
+        handoff_if_switched(&engine, &pool, &mut rig, &mut state, &mut last_active);
+
+        assert_eq!(
+            last_active, r1,
+            "still tracks the switch (doesn't spin every tick)"
+        );
+        assert!(
+            state.force_audio_rebuild,
+            "fallback forces the RX audio to rebuild to the new radio's device"
+        );
+        assert_eq!(
+            state.applied.rigctld_port, 4532,
+            "applied UNCHANGED → step()'s rig_differs opens radio 1 FRESH via open_cat (self-heal)"
+        );
+        let p = pool.lock().unwrap();
+        assert!(
+            !p.iter().any(|c| c.id == r1),
+            "the dead conn is dropped so its (stale) daemon is reaped + the id can reopen clean"
+        );
+    }
+
+    #[test]
+    fn handoff_unkeys_a_keyed_outgoing_rig() {
+        // TX-safety: if the operator switches radios mid-transmission, the OUTGOING rig must be
+        // unkeyed before it goes into the read-only monitor pool — else it's a stuck carrier.
+        let engine = Arc::new(Mutex::new(Engine::new("W9XYZ", "EN37", 0)));
+        let (r1, r1_transport) = {
+            let mut e = engine.lock().unwrap();
+            let r1 = e.add_radio();
+            let p = e
+                .settings()
+                .radios
+                .iter()
+                .find(|p| p.id == r1)
+                .unwrap()
+                .clone();
+            (r1, Transport::from_profile(&p))
+        };
+        let mut state = loop_state();
+        state.applied = cat_transport(4532, None);
+        // Mid-TX on the active radio (a slot over in flight + manual PTT held).
+        state.tx_until_ms = Some(now_unix_ms() + 5000.0);
+        state.manual_ptt_applied = true;
+        let mut rig = Rig::vox();
+        let pool: MonitorPool = Arc::new(Mutex::new(vec![MonitorConn {
+            id: r1,
+            rig: Rig::with_control(
+                Some(format!("127.0.0.1:{}", r1_transport.rigctld_port)),
+                PttMode::Vox,
+            ),
+            transport: r1_transport,
+            rigctld_proc: None,
+            last_poll: 0.0,
+            ticks: 0,
+            smeter_supported: None,
+        }]));
+        let mut last_active = 0u32;
+        engine.lock().unwrap().set_active_radio(r1);
+        handoff_if_switched(&engine, &pool, &mut rig, &mut state, &mut last_active);
+        assert!(
+            state.tx_until_ms.is_none(),
+            "slot-TX state cleared → no stuck carrier in the pool"
+        );
+        assert!(!state.manual_ptt_applied, "manual PTT cleared on handoff");
+        assert!(!state.tuning_keyed);
+        assert_eq!(last_active, r1, "still completed the switch");
+    }
+
+    #[test]
+    fn handoff_falls_back_when_new_active_not_in_pool() {
+        // If the new active radio has no live monitor conn (never opened), the handoff is a no-op on
+        // the pool (leaves the fresh-open to step()'s rig_differs path) but still tracks last_active
+        // so it doesn't spin every tick.
+        let engine = Arc::new(Mutex::new(Engine::new("W9XYZ", "EN37", 0)));
+        let r1 = {
+            let mut e = engine.lock().unwrap();
+            e.add_radio()
+        };
+        let mut state = loop_state();
+        state.applied = cat_transport(4532, None);
+        let mut rig = Rig::vox();
+        let pool: MonitorPool = Arc::new(Mutex::new(Vec::new())); // empty pool
+        let mut last_active = 0u32;
+        engine.lock().unwrap().set_active_radio(r1);
+        handoff_if_switched(&engine, &pool, &mut rig, &mut state, &mut last_active);
+        assert_eq!(
+            last_active, r1,
+            "tracked the switch even with no pool conn (fallback to rebuild)"
+        );
+        assert_eq!(
+            state.applied.rigctld_port, 4532,
+            "applied unchanged → step()'s rig_differs opens it fresh"
+        );
+        assert!(pool.lock().unwrap().is_empty());
     }
 
     #[test]
@@ -2975,7 +3630,7 @@ mod tests {
         // CAT broker and the launched rigctld both on the same port → no self-connect,
         // no doomed spawn; a clear message instead. Pure (no I/O before the guard).
         let t = cat_transport(4532, Some(4532));
-        let (_rig, proc, ok, detail) = open_rig(&t, 14_074_000, "USB");
+        let (_rig, proc, ok, detail) = open_rig(&t, 14_074_000, "USB", true);
         assert!(proc.is_none());
         assert_eq!(ok, Some(false));
         assert!(detail.contains("different ports"), "got: {detail}");
@@ -3016,7 +3671,7 @@ mod tests {
 
         // open_rig must SHARE it (no spawn), not fight for the serial port.
         let t = cat_transport(port, None);
-        let (_rig, proc, ok, detail) = open_rig(&t, 14_074_000, "USB");
+        let (_rig, proc, ok, detail) = open_rig(&t, 14_074_000, "USB", true);
         assert!(
             proc.is_none(),
             "shared the existing rigctld — did not spawn one"
@@ -3039,7 +3694,7 @@ mod tests {
         let sinks = no_sinks();
         let reopened = std::cell::Cell::new(false);
         let mut ra = mock_reopen_audio();
-        let mut rr = |_t: &Transport, _d: u64, _m: &str| {
+        let mut rr = |_t: &Transport, _d: u64, _m: &str, _c: bool| {
             reopened.set(true);
             (Rig::vox(), None, None, "test".to_string())
         };

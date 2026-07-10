@@ -135,7 +135,11 @@ pub fn probe_cat_ports(fallback_model: u32, tcp_port: u16) -> Option<ProbeHit> {
     let addr = format!("127.0.0.1:{tcp_port}");
     for c in candidates_from(&ports, fallback_model) {
         // A seeded (guessed-model) candidate probes only its family baud; a trusted model sweeps.
-        let bauds: &[u32] = c.baud.as_ref().map(std::slice::from_ref).unwrap_or(PROBE_BAUDS);
+        let bauds: &[u32] = c
+            .baud
+            .as_ref()
+            .map(std::slice::from_ref)
+            .unwrap_or(PROBE_BAUDS);
         for &baud in bauds {
             // Throwaway daemon for this (port, baud, model) — killed on drop.
             let Ok(proc) = spawn_rigctld(c.model, &c.port_name, baud, tcp_port, false) else {

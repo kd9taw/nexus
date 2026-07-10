@@ -205,9 +205,9 @@ impl AppState {
                 // Optimistic until the engine has seen decodes to judge from
                 // (the engine recomputes this from recent DT each snapshot).
                 time_sync_ok: true,
-                rf_power: None, // engine fills from command/read-back
-                smeter_db: None, // engine fills from CAT STRENGTH read-back
-                rig_mode: None, // engine fills from CAT mode read-back (display-only)
+                rf_power: None,          // engine fills from command/read-back
+                smeter_db: None,         // engine fills from CAT STRENGTH read-back
+                rig_mode: None,          // engine fills from CAT mode read-back (display-only)
                 sideband_override: None, // engine fills from the cockpit mode picker (transient)
                 phone_seg_lo: None, // engine fills from license privileges for the current band
                 phone_seg_hi: None,
@@ -630,6 +630,10 @@ impl AppState {
             // let `engine::Engine::snapshot` fill them in.
             mode: OpMode::Chat,
             radio: self.radio.clone(),
+            // Multi-radio summaries are owned by the Engine (fills them in snapshot()).
+            radios: Vec::new(),
+            active_radio_id: 0,
+            radio_pegged: false,
             link: self.link.clone(),
             stations,
             conversations,

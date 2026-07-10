@@ -3255,6 +3255,86 @@ body.resizing {
   margin-left: auto;
 }
 
+/* Dual-radio switcher (only rendered with >1 radio) — pills in the brand group. */
+.radio-switcher {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-left: var(--space-3);
+  padding-left: var(--space-3);
+  border-left: 1px solid var(--border);
+}
+.radio-pill {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  line-height: 1.05;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-dim);
+  padding: 3px var(--space-2);
+  border-radius: var(--radius-sm, 6px);
+  min-height: 30px;
+  cursor: pointer;
+  transition: var(--transition);
+}
+.radio-pill:hover {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+}
+.radio-pill.active {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  color: var(--accent);
+  cursor: default;
+}
+.radio-pill.tx {
+  border-color: var(--tx);
+  color: var(--tx);
+}
+.radio-pill-name {
+  font-weight: 700;
+  font-size: 12px;
+}
+.radio-pill-band {
+  font-weight: 500;
+  font-size: 10px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+.radio-pill.active .radio-pill-band {
+  color: color-mix(in srgb, var(--accent) 80%, var(--text-faint));
+}
+/* A background (monitored) radio whose CAT probe is failing — visible at a glance. */
+.radio-pill.cat-dead {
+  border-color: color-mix(in srgb, var(--state-weak) 45%, var(--border));
+  color: var(--state-weak);
+}
+.radio-pill.cat-dead .radio-pill-band,
+.radio-pill-warn {
+  color: var(--state-weak);
+}
+.radio-peg {
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 5px var(--space-2);
+  border-radius: 999px;
+  min-height: 30px;
+  cursor: pointer;
+  transition: var(--transition);
+}
+.radio-peg:hover {
+  color: var(--text);
+}
+.radio-peg.on {
+  background: color-mix(in srgb, var(--state-ok) 18%, transparent);
+  border-color: color-mix(in srgb, var(--state-ok) 45%, transparent);
+  color: var(--state-ok);
+}
+
 /* ---- Frequency / band control (flagship, used in TopBar + Settings) ---- */
 .freq-control {
   display: flex;
@@ -5472,6 +5552,51 @@ select optgroup {
 .cw-abort:hover {
   background: color-mix(in srgb, var(--state-weak) 22%, transparent);
 }
+/* Tune (ATU/amp carrier) + Stop-TX utilities — shared look across the Phone & CW cockpits.
+   Restored after the de-FT8 pass dropped them; reuse the Operate cockpit's set_tune/halt_tx. */
+.ph-tx-utils {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+.ph-tune,
+.cw-tune {
+  padding: 6px var(--space-4);
+  border-radius: var(--radius-sm);
+  font-weight: 800;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid var(--border);
+  transition: var(--transition);
+}
+.ph-tune:hover:not(:disabled),
+.cw-tune:hover:not(:disabled) {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--border) 40%, var(--text-dim));
+}
+.ph-tune:disabled,
+.cw-tune:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.ph-tune.keyed,
+.cw-tune.keyed {
+  background: var(--state-ok);
+  border-color: var(--state-ok);
+  color: var(--accent-ink);
+  animation: pulse 0.9s ease-in-out infinite;
+}
+.ph-stoptx {
+  padding: 6px var(--space-4);
+  border-radius: var(--radius-sm);
+  font-weight: 800;
+  color: var(--state-weak);
+  background: color-mix(in srgb, var(--state-weak) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--state-weak) 50%, transparent);
+}
+.ph-stoptx:hover {
+  background: color-mix(in srgb, var(--state-weak) 22%, transparent);
+}
 /* Live CW decode strip — a monospace readout of the signal under the marker. */
 .cw-decode {
   display: flex;
@@ -5726,6 +5851,12 @@ select optgroup {
   align-items: center;
   flex-wrap: wrap;
   gap: var(--space-1);
+}
+/* Wraps the frequency read-out as a real box so the mouse-wheel tuning listener gets its events;
+   the vertical-resize cursor hints "scroll here to tune". */
+.tuning-readout-wheel {
+  display: inline-flex;
+  cursor: ns-resize;
 }
 /* VFO A/B + RIT/XIT clarifier clusters. */
 .tuning-vfo,
@@ -7457,6 +7588,106 @@ select.settings-input {
 .settings-refresh:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+.settings-refresh.danger:hover {
+  border-color: var(--state-weak);
+  color: var(--state-weak);
+}
+
+/* Dual-radio: "which radio you're configuring" banner (Rig + Audio tabs). */
+.radio-config-banner {
+  margin-bottom: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+.radio-config-banner strong {
+  color: var(--accent);
+}
+
+/* Dual-radio roster (Settings ▸ Rig) */
+.radios-manager {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.radio-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3);
+  background: var(--bg-elev-1);
+}
+.radio-card.active {
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-elev-1));
+}
+.radio-card-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.radio-name-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.radio-active-badge {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  border-radius: 999px;
+  padding: 3px var(--space-2);
+}
+.radio-card-meta {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+.radio-band-coverage {
+  margin-top: var(--space-2);
+}
+.band-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-top: var(--space-1);
+}
+.band-chip {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px var(--space-2);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: var(--transition);
+  font-variant-numeric: tabular-nums;
+}
+.band-chip:hover {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+}
+.band-chip.on {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  color: var(--accent);
+}
+.radios-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+  flex-wrap: wrap;
 }
 .settings-note {
   grid-column: 1 / -1;
@@ -10577,9 +10808,12 @@ select.settings-input {
 }
 .or-row {
   display: grid;
-  grid-template-columns: 52px minmax(72px, 1.3fr) minmax(56px, 1fr) 58px 60px 52px 46px 50px;
+  /* Wider Need + Call columns (Call fits VE2OPR-length calls + the B4/L marks) and a roomier
+     inter-column gap. The Need column is wide enough for the common 1–2 chips; anything past it is
+     clipped by `.or-need` below rather than bleeding over the callsign. */
+  grid-template-columns: 68px minmax(90px, 1.4fr) minmax(52px, 1fr) 54px 56px 48px 44px 48px;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
   padding: 3px var(--space-2);
   font-size: 0.82rem;
   border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
@@ -10633,12 +10867,26 @@ select.settings-input {
 .or-row.worked {
   opacity: 0.72;
 }
+/* The Need column holds the per-call need chips (ovals). Constrain it to its own grid cell so
+   multiple chips (or a wide NewZone chip) can never spill over and overlap the callsign — the
+   reported "dimmed Zone field on top of the Call" bug. Chips beyond the cell width are clipped. */
+.or-need {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  overflow: hidden;
+}
+.or-need .need-chip {
+  flex: 0 0 auto;
+}
 .or-call {
   font-family: var(--font-mono);
   font-weight: 700;
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

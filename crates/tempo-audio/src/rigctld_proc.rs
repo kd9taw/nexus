@@ -60,6 +60,14 @@ impl RigctldProc {
     pub fn id(&self) -> u32 {
         self.child.id()
     }
+
+    /// True if the daemon is still running. rigctld that fails to bind its TCP port (e.g. the port is
+    /// already taken by another radio's daemon or the CAT broker) exits immediately — so a `false`
+    /// here means "did NOT get the port": the caller must NOT connect, or it would land on whatever
+    /// FOREIGN daemon holds the port (the dual-radio crossed-CAT bug). Non-blocking.
+    pub fn is_alive(&mut self) -> bool {
+        matches!(self.child.try_wait(), Ok(None))
+    }
 }
 
 impl Drop for RigctldProc {

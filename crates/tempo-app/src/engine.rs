@@ -25,11 +25,22 @@ use tempo_core::qsy::{Directive, Roamer};
 use tempo_core::{channel, ft1, spectrum, tx};
 
 use crate::dto::{
-    AppSnapshot, DecodeRow, FieldDayQso, FieldDayStatus, OpMode, QsoStatus, QsyStatus, SourceKind,
-    Spectrum, Tier,
+    AppSnapshot, DecodeRow, FieldDayQso, FieldDayStatus, OpMode, QsoStatus, QsyStatus,
+    RadioSummary, SourceKind, Spectrum, Tier,
 };
 use crate::settings::Settings;
 use crate::AppState;
+
+/// Live CAT read-back for one NON-active radio (dual-radio), fed by the monitor thread. `None` fields
+/// mean "not read yet / not reported". `cat_ok` mirrors the active radio's `(Option<bool>)` health.
+#[derive(Debug, Clone, Default)]
+pub struct RadioLive {
+    pub dial_mhz: Option<f64>,
+    pub band: Option<String>,
+    pub sideband: Option<String>,
+    pub smeter_db: Option<i32>,
+    pub cat_ok: Option<bool>,
+}
 use modes::{NativeSource, SignalSource, WsjtxUdpSource};
 use tempo_core::message::{same_call, Msg};
 
@@ -373,6 +384,12 @@ pub struct Engine {
     /// `None` for VOX (no CAT), `Some(true/false)` for a CAT/serial rig. Written
     /// by the radio loop when it (re)opens or probes the rig.
     cat_status: (Option<bool>, String),
+    /// Dual-radio: LIVE read-back state for the NON-active radios, keyed by radio id. The monitor
+    /// thread (one CAT poll per non-active radio, read-only) feeds these via `observe_radio_*`; the
+    /// snapshot's `radios[]` shows each radio's live freq/mode/S-meter/CAT-health from here instead of
+    /// its stale profile `last_*`. The ACTIVE radio is NOT in this map — its live state is the flat
+    /// `rig_*`/`settings.dial_mhz` block, driven by the existing `observe_rig_*`.
+    radio_live: std::collections::HashMap<u32, RadioLive>,
     /// Set by `test_cat` to ask the radio loop to re-probe the current rig and
     /// refresh `cat_status`; the loop clears it via [`Engine::take_cat_reprobe`].
     cat_reprobe: bool,
@@ -588,6 +605,7 @@ impl Engine {
             cw_stream: tempo_core::cw_decode::CwStreamDecoder::new(ft1::SAMPLE_RATE, 600.0),
             qso_audio: Vec::new(),
             cat_status: (None, String::new()),
+            radio_live: std::collections::HashMap::new(),
             cat_reprobe: false,
             audio_error: None,
             qsy,
@@ -612,13 +630,93 @@ impl Engine {
         if s.mycall != self.settings.mycall || s.mygrid != self.settings.mygrid {
             self.app.set_identity(&s.mycall, &s.mygrid);
         }
-        self.app.set_radio(s.dial_mhz, &s.band, &s.sideband);
         // The signal source is owned by `set_source` (which binds the socket), not
         // the settings form — preserve the live choice so a stale form save can't
         // silently flip it.
         let live_source = self.source_kind;
+        // The whole dual-radio roster (radios list + which radio is active + peg-lock + the active
+        // radio's live tune) is LIVE operating state, owned by the dedicated verbs (`add_radio`/
+        // `remove_radio`/`rename_radio`/`set_radio_bands`/`set_active_radio`/`set_radio_pegged`), NOT
+        // the settings form — exactly like `source`. Capture it BEFORE the move so a Save from a form
+        // loaded before a live roster/switch change can't revert it (drop a just-added radio, yank the
+        // operator off the radio they switched to, or fold the flat CAT into the wrong profile).
+        // `form_active` is the radio the flat rig form was editing — captured before
+        // `ensure_radio_profiles` can remap a stale id (else the "removed radio" guard is dead code).
+        let live_source_radios = std::mem::take(&mut self.settings.radios);
+        let live_active = self.settings.active_radio;
+        let live_pegged = self.settings.radio_pegged;
+        let (live_dial, live_band, live_sideband) = (
+            self.settings.dial_mhz,
+            self.settings.band.clone(),
+            self.settings.sideband.clone(),
+        );
+        // Which radio the incoming flat fields describe. A P2-aware Settings form carries the roster
+        // + its edited radio in `active_radio`. A LEGACY payload with no `radios` (an old settings.json
+        // or a pre-P2 saved config profile) describes the LIVE active radio — fold its flat CAT there,
+        // NOT into id 0, or loading a single-radio profile would clobber whatever radio is active.
+        let form_active = if s.radios.is_empty() {
+            live_active
+        } else {
+            s.active_radio
+        };
         self.settings = s;
         self.settings.source = live_source;
+        self.settings.radios = live_source_radios;
+        self.settings.radio_pegged = live_pegged;
+        self.settings.ensure_radio_profiles();
+        // Fold the form's flat rig/audio edits into the profile the FORM was editing — the flat fields
+        // describe the radio SHOWN in the form, which may differ from the live active radio if a
+        // switch happened after the form loaded. If that radio was removed live, drop its stale edits.
+        if self.settings.radios.iter().any(|p| p.id == form_active) {
+            self.settings.active_radio = form_active;
+            self.settings.sync_active_from_flat();
+            // The form's tune describes form_active too — persist it as that radio's last tune.
+            if let Some(p) = self
+                .settings
+                .radios
+                .iter_mut()
+                .find(|p| p.id == form_active)
+            {
+                p.last_dial_mhz = self.settings.dial_mhz;
+                p.last_band = self.settings.band.clone();
+                p.last_sideband = self.settings.sideband.clone();
+            }
+        }
+        // Restore the LIVE active radio and re-establish the invariant the service loop relies on:
+        // the flat CAT/audio mirror + the tune MUST match the active radio (else it would command the
+        // wrong hardware on the next `Transport::from_settings` rebuild). Common case (form edited the
+        // live radio) keeps the form's tune; a diverged switch pins the mirror + tune back to the live
+        // rig — the form's tune already went to form_active's profile above.
+        self.settings.active_radio = live_active;
+        self.settings.ensure_radio_profiles();
+        // Two live rigctld daemons need distinct ports — de-conflict on EVERY save, not just at load,
+        // else an in-session config (e.g. a flat-form port edit, or loading a pre-P2 profile) can
+        // leave two radios sharing 4532; their monitors then cross-connect and command the wrong rig.
+        self.settings.ensure_distinct_radio_ports();
+        // `ensure_distinct_radio_ports` may have just BUMPED the active radio's profile rigctld/rotctld
+        // port to de-conflict it. Re-pin the flat CAT/audio mirror to the active profile NOW, so the
+        // active-radio loop (which reads the flat mirror via `Transport::from_settings`) and the
+        // monitors (which read each profile via `Transport::from_profile`) agree on the daemon port.
+        // Skipping this in the common (form==live) branch WAS the dual-radio CAT bug: a bumped port
+        // lived only in the profile while the flat mirror kept the old, colliding port — so the active
+        // rig and a monitor both bound the same port and the monitor's rigctld died. That is the
+        // dead-CAT symptom that flipped to whichever radio was the monitor. `sync_flat_from_active`
+        // copies rig/audio/rotator fields only (NOT dial/band/sideband), so the tune selection below is
+        // unaffected.
+        self.settings.sync_flat_from_active();
+        let (app_dial, app_band, app_sideband) = if form_active == live_active {
+            (
+                self.settings.dial_mhz,
+                self.settings.band.clone(),
+                self.settings.sideband.clone(),
+            )
+        } else {
+            self.settings.dial_mhz = live_dial;
+            self.settings.band = live_band.clone();
+            self.settings.sideband = live_sideband.clone();
+            (live_dial, live_band, live_sideband)
+        };
+        self.app.set_radio(app_dial, &app_band, &app_sideband);
         // Re-derive the live timing/tuning state from the saved settings.
         self.tx_parity = if self.settings.tx_even { 0 } else { 1 };
         self.tx_offset_hz = self.settings.tx_offset_hz;
@@ -723,6 +821,112 @@ impl Engine {
         }
     }
 
+    /// Switch the ACTIVE radio (dual-radio). Persists the current radio's live tune into its
+    /// profile, flips the active id, mirrors the new profile's CAT/audio into the flat fields (so
+    /// the radio loop swaps to it on the next tick), and restores the new radio's last band/freq.
+    /// The LIGHT path — deliberately does NOT touch Mode / TX queues / identity (unlike
+    /// `apply_settings`), so swinging radios mid-session never resets the operator to Chat. No-op if
+    /// `id` isn't a configured radio or is already active.
+    pub fn set_active_radio(&mut self, id: u32) {
+        if id == self.settings.active_radio || !self.settings.radios.iter().any(|p| p.id == id) {
+            return;
+        }
+        // Fold the OUTGOING radio's live flat CAT/audio edits into its own profile BEFORE we mirror
+        // the new radio in — otherwise an unsaved flat change made while this radio was active (e.g. a
+        // live Pwr/tx_level tweak) is discarded by `sync_flat_from_active` below. `active_radio` still
+        // names the outgoing radio here, so this folds into the right profile.
+        self.settings.sync_active_from_flat();
+        // Defense-in-depth: folding the outgoing radio's flat mirror into its profile could carry a
+        // colliding rigctld/rotctld port; de-conflict immediately so a switch can never leave two
+        // radios sharing one daemon port (the flat mirror is re-pinned from the new active below).
+        self.settings.ensure_distinct_radio_ports();
+        // Persist the current radio's live tune into its profile before we leave it.
+        let cur = self.settings.active_radio;
+        if let Some(p) = self.settings.radios.iter_mut().find(|p| p.id == cur) {
+            p.last_dial_mhz = self.settings.dial_mhz;
+            p.last_band = self.settings.band.clone();
+            p.last_sideband = self.settings.sideband.clone();
+        }
+        // A radio swap is a hard context change (different antenna/band): stop TX + drop the decode
+        // context + roster, exactly like a band QSY.
+        self.halt_tx();
+        self.clear_decode_context();
+        self.app.clear_stations();
+        self.sideband_override = None;
+        // Flip active + mirror the new profile's CAT/audio into the flat fields — Transport::
+        // from_settings then differs and the loop's existing swap tears down the old rig + opens
+        // the new one (unkey-first).
+        self.settings.active_radio = id;
+        self.settings.sync_flat_from_active();
+        // Adopt the new radio's tune. Prefer its LIVE monitored dial (dual-radio: the radio has been
+        // connected the whole time, so use where it ACTUALLY is — the operator may have hand-tuned it),
+        // else its persisted last tune, else the mirrored dial. `band` follows the chosen dial.
+        let live = self.radio_live.get(&id).cloned();
+        if let Some(l) = live.filter(|l| l.dial_mhz.is_some()) {
+            let dial = l.dial_mhz.unwrap();
+            let band = l
+                .band
+                .filter(|b| !b.is_empty())
+                .or_else(|| crate::bandplan::band_for_dial(dial).map(str::to_string))
+                .unwrap_or_else(|| self.settings.band.clone());
+            let sb = l.sideband.unwrap_or_else(|| self.settings.sideband.clone());
+            self.settings.dial_mhz = dial;
+            self.settings.band = band.clone();
+            self.settings.sideband = sb.clone();
+            self.app.set_radio(dial, &band, &sb);
+        } else if let Some(p) = self.settings.active_profile().cloned() {
+            let (dial, band, sb) = if p.last_band.is_empty() {
+                (
+                    self.settings.dial_mhz,
+                    self.settings.band.clone(),
+                    self.settings.sideband.clone(),
+                )
+            } else {
+                (p.last_dial_mhz, p.last_band, p.last_sideband)
+            };
+            self.settings.dial_mhz = dial;
+            self.settings.band = band.clone();
+            self.settings.sideband = sb.clone();
+            self.app.set_radio(dial, &band, &sb);
+        }
+        self.immediate_retune = true;
+        self.sync_fd_band();
+    }
+
+    /// Peg-lock: when on, band selection never auto-switches the active radio (P4). Light setter.
+    pub fn set_radio_pegged(&mut self, on: bool) {
+        self.settings.radio_pegged = on;
+    }
+
+    /// Add a new (2nd/3rd…) radio to the roster and SWITCH TO IT (returns its id). Switching makes the
+    /// flat Rig/Audio form edit the NEW radio, so the operator configures the radio they just added —
+    /// NOT the previously-active radio (which is how a config could get clobbered). The new radio has
+    /// no model yet, so it comes up as VOX/no-CAT until configured.
+    pub fn add_radio(&mut self) -> u32 {
+        let id = self.settings.add_radio_profile();
+        self.set_active_radio(id);
+        id
+    }
+
+    /// Remove a radio from the roster (no-op on the active or last radio). Pure roster edit.
+    pub fn remove_radio(&mut self, id: u32) -> bool {
+        self.settings.remove_radio_profile(id)
+    }
+
+    /// Rename a radio profile (operator-facing name / switcher label). Pure roster edit.
+    pub fn rename_radio(&mut self, id: u32, name: &str) {
+        if let Some(p) = self.settings.radios.iter_mut().find(|p| p.id == id) {
+            p.name = name.trim().to_string();
+        }
+    }
+
+    /// Set a radio's band-coverage set (empty = covers everything) for auto-routing (P4). Pure edit.
+    pub fn set_radio_bands(&mut self, id: u32, bands: Vec<String>) {
+        if let Some(p) = self.settings.radios.iter_mut().find(|p| p.id == id) {
+            p.bands = bands;
+        }
+    }
+
     pub fn set_frequency(&mut self, dial_mhz: f64, band: &str, mode: &str) {
         // Band change invalidates the decode context: answering a HISTORY row from
         // the old band would target a station that isn't here and derive parity
@@ -793,6 +997,40 @@ impl Engine {
             &self.settings.sideband,
         );
         self.sync_fd_band();
+    }
+
+    // --- Dual-radio: per-radio live read-back from the monitor thread (NON-active radios only) ---
+    // These update `radio_live[id]` WITHOUT touching the active flat state / decode context / TX — a
+    // monitor read must never move the operator's cockpit or key anything. Callers MUST pass a
+    // non-active radio id (the active radio uses `observe_rig_*`).
+
+    /// Record a non-active radio's live dial (Hz) + derived band. No cockpit/decode side effects.
+    pub fn observe_radio_freq(&mut self, id: u32, hz: u64) {
+        let mhz = hz as f64 / 1_000_000.0;
+        let e = self.radio_live.entry(id).or_default();
+        e.dial_mhz = Some(mhz);
+        e.band = crate::bandplan::band_for_dial(mhz).map(str::to_string);
+    }
+
+    /// Record a non-active radio's live mode (Hamlib name, e.g. "USB"/"FM").
+    pub fn observe_radio_mode(&mut self, id: u32, mode: String) {
+        self.radio_live.entry(id).or_default().sideband = Some(mode);
+    }
+
+    /// Record a non-active radio's live S-meter (dB rel S9).
+    pub fn observe_radio_smeter(&mut self, id: u32, db: i32) {
+        self.radio_live.entry(id).or_default().smeter_db = Some(db);
+    }
+
+    /// Record a non-active radio's live CAT health (`Some(true/false)`), for its switcher pill.
+    pub fn observe_radio_cat(&mut self, id: u32, ok: Option<bool>) {
+        self.radio_live.entry(id).or_default().cat_ok = ok;
+    }
+
+    /// Drop a radio's live cache (it left the monitor pool — became active, was removed, or
+    /// disconnected). The snapshot then falls back to its profile `last_*`.
+    pub fn forget_radio_live(&mut self, id: u32) {
+        self.radio_live.remove(&id);
     }
 
     /// The active tier's band plan with the operator's working-frequency
@@ -957,9 +1195,9 @@ impl Engine {
     ) {
         self.set_operating_mode(mode, false);
         self.set_frequency(freq_mhz, band, "USB"); // clears split + arms the retune
-        // Working a spot carries explicit mode intent — drop any manual override (even same-band)
-        // so the spot's band-auto sideband applies (10 m mixes FM + SSB, so a stale FM override
-        // must not key FM onto an SSB spot).
+                                                   // Working a spot carries explicit mode intent — drop any manual override (even same-band)
+                                                   // so the spot's band-auto sideband applies (10 m mixes FM + SSB, so a stale FM override
+                                                   // must not key FM onto an SSB spot).
         self.sideband_override = None;
         if let Some(up) = split_up_khz {
             self.split_tx_mhz = Some(freq_mhz + up / 1000.0);
@@ -3666,8 +3904,9 @@ impl Engine {
         s.radio.sideband_override = self.sideband_override.clone();
         // Phone sub-band the operator may legally use on the CURRENT band + class — the band-strip
         // shades it. None for no-phone-privilege / Open / off-plan bands (then the strip shows none).
-        let (plo, phi) = crate::privileges::phone_segment(self.settings.license_class, &self.settings.band)
-            .map_or((None, None), |(lo, hi)| (Some(lo), Some(hi)));
+        let (plo, phi) =
+            crate::privileges::phone_segment(self.settings.license_class, &self.settings.band)
+                .map_or((None, None), |(lo, hi)| (Some(lo), Some(hi)));
         s.radio.phone_seg_lo = plo;
         s.radio.phone_seg_hi = phi;
         // Rig DSP-func states [nb, nr, notch, comp, vox]; None = unsupported → the toggle hides.
@@ -3684,6 +3923,56 @@ impl Engine {
         s.radio.clock_offset_ms = self.clock_offset_ms;
         s.radio.source = self.source_kind;
         s.radio.source_label = self.source.label();
+        // Multi-radio switcher summaries (dual-radio). Left empty for a single-radio station (the
+        // UI then renders no switcher). The active radio carries the live state we just filled into
+        // `s.radio`; the others show their last-known tune (they're not connected in the active-only
+        // model), so `catOk`/`smeterDb` are None for them.
+        s.active_radio_id = self.settings.active_radio;
+        s.radio_pegged = self.settings.radio_pegged;
+        if self.settings.radios.len() > 1 {
+            s.radios = self
+                .settings
+                .radios
+                .iter()
+                .map(|p| {
+                    if p.id == self.settings.active_radio {
+                        RadioSummary {
+                            id: p.id,
+                            name: p.name.clone(),
+                            band: s.radio.band.clone(),
+                            dial_mhz: s.radio.dial_mhz,
+                            sideband: s.radio.sideband.clone(),
+                            is_active: true,
+                            cat_ok: self.cat_status.0,
+                            smeter_db: self.rig_smeter_db,
+                            transmitting: s.radio.transmitting,
+                            bands: p.bands.clone(),
+                        }
+                    } else {
+                        // Non-active radio: prefer the LIVE monitor read-back (dual-radio "both
+                        // live"); fall back to the profile's last-known tune until the first read.
+                        let live = self.radio_live.get(&p.id);
+                        RadioSummary {
+                            id: p.id,
+                            name: p.name.clone(),
+                            band: live
+                                .and_then(|l| l.band.clone())
+                                .filter(|b| !b.is_empty())
+                                .unwrap_or_else(|| p.last_band.clone()),
+                            dial_mhz: live.and_then(|l| l.dial_mhz).unwrap_or(p.last_dial_mhz),
+                            sideband: live
+                                .and_then(|l| l.sideband.clone())
+                                .unwrap_or_else(|| p.last_sideband.clone()),
+                            is_active: false,
+                            cat_ok: live.and_then(|l| l.cat_ok),
+                            smeter_db: live.and_then(|l| l.smeter_db),
+                            transmitting: false,
+                            bands: p.bands.clone(),
+                        }
+                    }
+                })
+                .collect();
+        }
         // Coordinated-QSY status — only while the (opt-in) feature is enabled.
         if self.settings.qsy_enabled {
             s.qsy = Some(self.qsy_status());
@@ -7928,5 +8217,148 @@ mod tests {
             "too-weak caller ignored — the run keeps calling CQ"
         );
         assert!(qso.dxcall.is_none(), "did not lock the below-floor caller");
+    }
+
+    #[test]
+    fn saving_a_stale_form_port_cannot_diverge_the_flat_mirror_from_the_active_profile() {
+        // THE dual-radio dead-CAT bug (2026-07-10): the active-radio loop reads the rigctld port from
+        // the flat mirror (Transport::from_settings) while monitors read it per-profile
+        // (Transport::from_profile). If a Save carries a STALE/colliding flat port, apply_settings folds
+        // it into the active profile, ensure_distinct_radio_ports BUMPS the profile back to a distinct
+        // port — but if the flat mirror is NOT then re-synced, flat and profile DIVERGE: the active rig
+        // and a monitor both try to bind the old port, the monitor's rigctld dies, and CAT is dead on
+        // whichever radio is the monitor. This asserts flat == the (de-conflicted) active profile port.
+        let mut e = Engine::new("KD9TAW", "EN52", 0);
+        e.settings.ensure_radio_profiles();
+        e.settings.rig_model = 1042; // FTDX10 on radio 0 (rigctld 4532)
+        e.settings.sync_active_from_flat();
+        let r1 = e.add_radio(); // IC-9700 → distinct rigctld port (4534), now active
+        e.settings.rig_model = 3081;
+        e.settings.sync_active_from_flat();
+
+        let r0_port = e
+            .settings
+            .radios
+            .iter()
+            .find(|p| p.id == 0)
+            .unwrap()
+            .rigctld_port;
+        // Operator saves the IC-9700's config, but the form still shows radio 0's stale rigctld port
+        // (the frontend keeps the previous flat fields on a live roster change) → a collision payload.
+        let mut form = e.settings().clone();
+        assert_eq!(
+            form.active_radio, r1,
+            "the form is editing the active (IC-9700)"
+        );
+        form.rigctld_port = r0_port; // the stale/colliding port
+        e.apply_settings(form);
+
+        let r1_port = e
+            .settings
+            .radios
+            .iter()
+            .find(|p| p.id == r1)
+            .unwrap()
+            .rigctld_port;
+        assert_ne!(
+            r1_port, r0_port,
+            "ensure_distinct_radio_ports keeps the two radios' daemon ports distinct"
+        );
+        assert_eq!(
+            e.settings.rigctld_port, r1_port,
+            "flat mirror (active loop's Transport::from_settings) == the de-conflicted active profile \
+             port (monitors' Transport::from_profile) — no divergence, so neither daemon collides"
+        );
+    }
+
+    #[test]
+    fn dual_radio_switch_mirrors_flat_and_snapshot_lists_both() {
+        // Switching the active radio must mirror the new radio's CAT into the flat fields (so the
+        // service loop swaps rigs) and repoint the snapshot's `radio` at it, while listing both.
+        let mut e = Engine::new("KD9TAW", "EN52", 0);
+        e.settings.ensure_radio_profiles();
+        e.settings.rig_model = 1042;
+        e.settings.rig_model_name = "Yaesu FTDX10".into();
+        e.settings.band = "20m".into();
+        e.settings.dial_mhz = 14.074;
+        e.settings.sync_active_from_flat();
+        e.rename_radio(0, "FTDX10");
+
+        // "+ Add radio" now SWITCHES to the new radio, so its config form edits the NEW radio (not the
+        // previously-active one — the clobber bug). Configure it via the flat form while it's active.
+        let r1 = e.add_radio();
+        assert_eq!(
+            e.settings.active_radio, r1,
+            "add_radio switches to the new radio"
+        );
+        e.settings.rig_model = 3081;
+        e.settings.rig_model_name = "Icom IC-9700".into();
+        e.settings.band = "2m".into();
+        e.settings.dial_mhz = 144.2;
+        e.settings.sync_active_from_flat();
+        e.rename_radio(r1, "IC-9700");
+
+        // Switch to radio 0 (mirrors the FTDX10), make a live flat edit, then switch back to r1 — the
+        // switch under test. The outgoing flat edit must FOLD into radio 0's profile, not be discarded.
+        e.set_active_radio(0);
+        assert_eq!(
+            e.settings.rig_model, 1042,
+            "flat mirrors the FTDX10 after switching to it"
+        );
+        e.settings.tx_level = 0.42;
+        e.set_active_radio(r1);
+        assert_eq!(e.settings.active_radio, r1, "active flipped to r1");
+        assert_eq!(
+            e.settings.rig_model, 3081,
+            "flat CAT mirrors radio 1 after switch"
+        );
+        assert_eq!(e.settings.dial_mhz, 144.2, "restored radio 1's last dial");
+        assert_eq!(
+            e.settings
+                .radios
+                .iter()
+                .find(|p| p.id == 0)
+                .unwrap()
+                .tx_level,
+            0.42,
+            "outgoing radio's live flat edit was folded into its profile before the switch"
+        );
+
+        let snap = e.snapshot();
+        assert_eq!(snap.active_radio_id, r1);
+        assert_eq!(snap.radios.len(), 2, "both radios listed");
+        let active = snap.radios.iter().find(|r| r.id == r1).unwrap();
+        assert!(active.is_active);
+        assert_eq!(active.band, "2m", "active summary shows the live band");
+        let idle = snap.radios.iter().find(|r| r.id == 0).unwrap();
+        assert!(!idle.is_active, "radio 0 now idle");
+        assert_eq!(idle.band, "20m", "idle radio shows its last-known band");
+        assert!(
+            idle.cat_ok.is_none(),
+            "idle radio is not connected (active-only model)"
+        );
+
+        // A Save from a STALE form (loaded before the 2nd radio existed / before the switch) must
+        // NOT drop radio 1, revert the active radio, or clobber radio 1's CAT with the form's flat
+        // (radio-0) fields — the roster is live state, preserved across apply_settings.
+        let mut stale = Settings::default();
+        stale.ensure_radio_profiles(); // one profile, id 0, default CAT
+        stale.active_radio = 0;
+        stale.rig_model = 1042; // the stale form still describes radio 0
+        e.apply_settings(stale);
+        assert_eq!(
+            e.settings.active_radio, r1,
+            "stale Save preserved the live active radio"
+        );
+        assert_eq!(
+            e.settings.radios.len(),
+            2,
+            "stale Save did not drop the 2nd radio"
+        );
+        let p1 = e.settings.radios.iter().find(|p| p.id == r1).unwrap();
+        assert_eq!(
+            p1.rig_model, 3081,
+            "radio 1's CAT was not clobbered by the stale form"
+        );
     }
 }

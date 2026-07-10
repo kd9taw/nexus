@@ -8,7 +8,7 @@ import { BandPicker } from './BandPicker'
 import { VoiceKeyer } from './VoiceKeyer'
 import { LevelMeter } from './LevelMeter'
 import { LogEntry } from './LogEntry'
-import { setPtt, setRfPower, startQsoRecording, stopQsoRecording } from '../api'
+import { setPtt, setRfPower, startQsoRecording, stopQsoRecording, setTune, haltTx } from '../api'
 import { pushToast } from '../toast'
 import { RotorStrip } from './RotorStrip'
 import { MemoryBank } from './MemoryBank'
@@ -487,6 +487,26 @@ export function PhoneCockpit({ snap, theme, pendingWork, onConsumeWork, onSnap, 
           <span>Lock</span>
         </label>
         <span className="ph-ptt-hint">Hold the button or the Space bar · you talk on the rig's mic</span>
+        <div className="ph-tx-utils">
+          <button
+            type="button"
+            className={`ph-tune${snap.radio.tuning ? ' keyed' : ''}`}
+            aria-pressed={snap.radio.tuning}
+            onClick={() => void setTune(!snap.radio.tuning)}
+            disabled={!snap.radio.txAllowed}
+            title="Key a steady carrier to tune an ATU/amp (auto-stops on the tune watchdog). Click again to stop."
+          >
+            {snap.radio.tuning ? 'TUNING…' : 'Tune'}
+          </button>
+          <button
+            type="button"
+            className="ph-stoptx"
+            onClick={() => void haltTx()}
+            title="Stop transmitting immediately — unkey PTT and drop the tune carrier"
+          >
+            Stop TX
+          </button>
+        </div>
       </div>
 
       <VoiceKeyer txEnabled={snap.radio.txEnabled} keyed={keyed} />

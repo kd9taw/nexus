@@ -74,6 +74,13 @@ Three back-ends are available (set in Settings > Rig):
 
 CAT frequency/mode commands are independent of PTT method — a VOX rig still receives frequency and mode changes. The `serial` Cargo feature must be present for RTS/DTR; without it the build silently falls back to VOX behavior.
 
+## Tune & Stop TX
+
+Below the PTT row are two utility buttons:
+
+- **Tune** keys a steady, unmodulated carrier so you can tune an antenna tuner (ATU) or set an amplifier. It shows **TUNING…** while the carrier is on; click it again to stop. The Transmit Watchdog also drops it automatically, and it's disabled when the current frequency/mode is outside your license privileges.
+- **Stop TX** immediately unkeys everything — PTT, the tune carrier, and any voice-keyer playback — a one-click panic stop.
+
 ## RF Power
 
 A **0–100% slider** in the cockpit header sends a Hamlib `RFPOWER` level command (0.0–1.0) to the rig over CAT whenever you drag it. Set it to the level your rig's ALC reads zero to avoid over-drive; start conservatively and increase. The default TX audio output gain (`tx_level`) is **0.9** (90% of full digital drive) and is applied before the sound card output stage.

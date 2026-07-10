@@ -88,7 +88,10 @@ mod tests {
 
     #[test]
     fn version_from_filename_survives_odd_names() {
-        assert_eq!(version_from_filename("Nexus_0.4.1.exe"), Some("0.4.1".into())); // trailing dot
+        assert_eq!(
+            version_from_filename("Nexus_0.4.1.exe"),
+            Some("0.4.1".into())
+        ); // trailing dot
         assert_eq!(
             version_from_filename("/Nexus_Setup/Nexus_0.4.1_x64-setup.exe"),
             Some("0.4.1".into()) // parent dir also has "Nexus_"
@@ -104,7 +107,10 @@ mod tests {
     #[test]
     fn none_on_garbage_or_a_non_nexus_filename() {
         assert_eq!(parse_latest_version("not json"), None);
-        assert_eq!(parse_latest_version(r#"{"release":{"filename":"readme.txt"}}"#), None);
+        assert_eq!(
+            parse_latest_version(r#"{"release":{"filename":"readme.txt"}}"#),
+            None
+        );
         assert_eq!(parse_latest_version("{}"), None);
     }
 

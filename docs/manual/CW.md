@@ -104,14 +104,19 @@ Type any free-form text in the text box and press `Enter` or click **Send**. The
 
 ---
 
-## Abort
+## Tune
 
-Press `Esc` or click the **Abort** button at any time to:
+Click **Tune** to key a steady, unmodulated carrier for tuning an antenna tuner (ATU) or setting an amplifier. It shows **TUNING…** while the carrier is on; click again to stop. The Transmit Watchdog also drops it automatically, and it's disabled when the current frequency is outside your license privileges.
+
+## Stop TX
+
+Press `Esc` or click the **Stop TX** button at any time to:
 
 1. Clear the entire CW send queue immediately.
 2. On **CAT back-end**: send Hamlib `\stop_morse` to halt the rig's keyer in place.
 3. On **Soundcard back-end**: flush the audio output ring and release PTT (250 ms TX tail remains, not configurable).
 4. On **WinKeyer back-end**: send the WK Clear-Buffer command, which stops keying immediately and flushes the keyer's send buffer.
+5. Drop any **tune carrier** and release PTT (a true stop-everything).
 
 The abort flag is consumed exactly once; a subsequent send starts cleanly.
 

@@ -2778,7 +2778,12 @@ fn set_mode(state: State<'_, SharedEngine>, mode: String) -> Result<AppSnapshot,
 #[tauri::command]
 fn get_settings(state: State<'_, SharedEngine>) -> Result<Settings, String> {
     let eng = state.lock().map_err(|e| e.to_string())?;
-    Ok(eng.settings().clone())
+    // Defensive: re-mirror the ACTIVE radio's profile into the flat fields the UI reads (idempotent —
+    // a no-op when already in sync). Guarantees the Settings Rig/Audio form always shows the active
+    // radio's own CAT + audio device, independent of which code path last flipped the active radio.
+    let mut s = eng.settings().clone();
+    s.sync_flat_from_active();
+    Ok(s)
 }
 
 /// Apply + persist new settings. Returns the refreshed snapshot.
@@ -2841,10 +2846,15 @@ fn set_settings(
         propagation::live::dxped::set_clublog_key(&effective_clublog_key(
             &settings.clublog_api_key,
         ));
-        if let Err(e) = settings.save(&settings_path()) {
+        // Apply FIRST, then persist the engine's AUTHORITATIVE merged state — apply_settings keeps the
+        // LIVE dual-radio roster / active radio / peg / tune (discarding the form's possibly-stale
+        // copies), so saving the raw form here would write a roster that diverges from the engine and
+        // revert the active radio on the next launch. Persist eng.settings() post-merge, like every
+        // light verb does.
+        eng.apply_settings(settings);
+        if let Err(e) = eng.settings().save(&settings_path()) {
             eprintln!("tempo: failed to persist settings: {e}");
         }
-        eng.apply_settings(settings);
         eng.snapshot()
     }; // release the engine lock before spawning feed threads
 
@@ -3558,6 +3568,90 @@ fn set_tx_level(state: State<'_, SharedEngine>, level: f32) -> Result<AppSnapsho
     eng.set_tx_level(level);
     if let Err(e) = eng.settings().save(&settings_path()) {
         eprintln!("tempo: set_tx_level save failed: {e}");
+    }
+    Ok(eng.snapshot())
+}
+
+/// Switch the active radio (dual-radio). The light path — mirrors the chosen profile's
+/// CAT/audio into the flat fields so the radio loop swaps the rig on the next tick (carrier
+/// dropped first), restores that radio's last tune, and never touches Mode/TX-queues (unlike
+/// `apply_settings`). Persisted so the active radio survives a restart. Returns the snapshot.
+#[tauri::command]
+fn set_active_radio(state: State<'_, SharedEngine>, id: u32) -> Result<AppSnapshot, String> {
+    let (snap, settings) = {
+        let mut eng = state.lock().map_err(|e| e.to_string())?;
+        eng.set_active_radio(id);
+        if let Err(e) = eng.settings().save(&settings_path()) {
+            eprintln!("tempo: set_active_radio save failed: {e}");
+        }
+        (eng.snapshot(), eng.settings().clone())
+    }; // drop the engine lock before touching the rotator daemon
+    // Each radio carries its own rotator — re-sync the rotctld daemon to the newly-active radio's
+    // rotator config (mirrors set_settings). The rig loop swaps CAT/audio on its own via the flat
+    // mirror, but the rotator daemon only follows an explicit sync.
+    sync_rotctld(&settings);
+    Ok(snap)
+}
+
+/// Peg-lock the active radio (dual-radio): when on, selecting a band never auto-switches the
+/// active radio (P4 routing respects it). Persisted. Returns the refreshed snapshot.
+#[tauri::command]
+fn set_peg_lock(state: State<'_, SharedEngine>, on: bool) -> Result<AppSnapshot, String> {
+    let mut eng = state.lock().map_err(|e| e.to_string())?;
+    eng.set_radio_pegged(on);
+    if let Err(e) = eng.settings().save(&settings_path()) {
+        eprintln!("tempo: set_peg_lock save failed: {e}");
+    }
+    Ok(eng.snapshot())
+}
+
+/// Add a radio to the roster (dual-radio). Appends a new profile with distinct daemon ports; does
+/// not change the active radio (the operator switches to it to configure its CAT). Returns the
+/// snapshot — the switcher then shows the new radio.
+#[tauri::command]
+fn add_radio(state: State<'_, SharedEngine>) -> Result<AppSnapshot, String> {
+    let mut eng = state.lock().map_err(|e| e.to_string())?;
+    eng.add_radio();
+    if let Err(e) = eng.settings().save(&settings_path()) {
+        eprintln!("tempo: add_radio save failed: {e}");
+    }
+    Ok(eng.snapshot())
+}
+
+/// Remove a radio from the roster (no-op on the active or last radio). Returns the snapshot.
+#[tauri::command]
+fn remove_radio(state: State<'_, SharedEngine>, id: u32) -> Result<AppSnapshot, String> {
+    let mut eng = state.lock().map_err(|e| e.to_string())?;
+    eng.remove_radio(id);
+    if let Err(e) = eng.settings().save(&settings_path()) {
+        eprintln!("tempo: remove_radio save failed: {e}");
+    }
+    Ok(eng.snapshot())
+}
+
+/// Rename a radio profile (its switcher label). Returns the snapshot.
+#[tauri::command]
+fn rename_radio(state: State<'_, SharedEngine>, id: u32, name: String) -> Result<AppSnapshot, String> {
+    let mut eng = state.lock().map_err(|e| e.to_string())?;
+    eng.rename_radio(id, &name);
+    if let Err(e) = eng.settings().save(&settings_path()) {
+        eprintln!("tempo: rename_radio save failed: {e}");
+    }
+    Ok(eng.snapshot())
+}
+
+/// Set a radio's band-coverage set (empty = covers everything) for auto band-routing. Returns the
+/// snapshot.
+#[tauri::command]
+fn set_radio_bands(
+    state: State<'_, SharedEngine>,
+    id: u32,
+    bands: Vec<String>,
+) -> Result<AppSnapshot, String> {
+    let mut eng = state.lock().map_err(|e| e.to_string())?;
+    eng.set_radio_bands(id, bands);
+    if let Err(e) = eng.settings().save(&settings_path()) {
+        eprintln!("tempo: set_radio_bands save failed: {e}");
     }
     Ok(eng.snapshot())
 }
@@ -7530,6 +7624,12 @@ pub fn run() {
             stop_qso_recording,
             set_tx_enabled,
             set_tx_level,
+            set_active_radio,
+            set_peg_lock,
+            add_radio,
+            remove_radio,
+            rename_radio,
+            set_radio_bands,
             set_tune,
             halt_tx,
             test_cat,

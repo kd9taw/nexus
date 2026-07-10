@@ -1,9 +1,10 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import type { AppSnapshot } from '../types'
 import { setFrequency, setRit, setXit, setVfo } from '../api'
 import { bandLabelForMhz } from '../band'
 import { pushToast } from '../toast'
 import { FrequencyReadout } from './FrequencyReadout'
+import { useWheelTune } from '../useWheelTune'
 
 /** Tuning steps (Hz). The `×10` buttons jump ten of the selected step. */
 const STEPS = [
@@ -55,6 +56,18 @@ export function TuningStrip({
   // Round to the nearest Hz to avoid float drift accumulating on repeated nudges.
   const nudge = (deltaHz: number) => void tuneTo(Math.round((dial + deltaHz / 1e6) * 1e6) / 1e6)
 
+  // Mouse-wheel tuning over the big frequency read-out itself (operator request) — same coalesced
+  // CAT path + selected step (Shift = ×10) as the scope wheel-tune, for hunting CW/phone signals
+  // that have no agreed default frequency. Disabled while transmitting or CAT-down.
+  const readoutRef = useRef<HTMLSpanElement>(null)
+  useWheelTune(readoutRef, {
+    dialMhz: dial,
+    sideband: snap.radio.sideband || 'USB',
+    enabled: catOk && !snap.radio.transmitting,
+    stepHz: step,
+    onSnap,
+  })
+
   return (
     <div className="tuning-strip" role="group" aria-label="Tuning">
       <button
@@ -77,14 +90,20 @@ export function TuningStrip({
       >
         ◄
       </button>
-      <FrequencyReadout
-        dialMhz={dial}
-        size="hero"
-        editable
-        disabled={!catOk}
-        onCommit={(mhz) => void tuneTo(mhz)}
-        txBlocked={!bandLabelForMhz(dial)}
-      />
+      <span
+        ref={readoutRef}
+        className="tuning-readout-wheel"
+        title={catOk ? `Scroll to tune ±${step} Hz (Shift = ×10)` : undefined}
+      >
+        <FrequencyReadout
+          dialMhz={dial}
+          size="hero"
+          editable
+          disabled={!catOk}
+          onCommit={(mhz) => void tuneTo(mhz)}
+          txBlocked={!bandLabelForMhz(dial)}
+        />
+      </span>
       <button
         type="button"
         className="tuning-nudge"

@@ -19,6 +19,8 @@ import {
   setRigFunc,
   setFilterWidth,
   openPanelWindow,
+  setTune,
+  haltTx,
 } from '../api'
 import { pushToast, withErrorToast } from '../toast'
 import { RotorStrip } from './RotorStrip'
@@ -267,7 +269,9 @@ export function CwCockpit({
     setText('')
   }
   const abort = () => {
+    // Stop the CW keyer AND drop any tune carrier / stray PTT — a true stop-everything (Esc).
     void stopCw()
+    void haltTx()
   }
   const changeKeyer = (k: 'cat' | 'soundcard' | 'winkeyer') => {
     setKeyer(k)
@@ -433,8 +437,18 @@ export function CwCockpit({
         <span className={`cw-tx ${snap.radio.transmitting ? 'on' : ''}`}>
           {snap.radio.transmitting ? '▲ KEYING' : snap.radio.txEnabled ? '▼ RX' : '■ TX off'}
         </span>
-        <button type="button" className="cw-abort" onClick={abort} title="Stop sending (Esc)">
-          Abort
+        <button
+          type="button"
+          className={`cw-tune${snap.radio.tuning ? ' keyed' : ''}`}
+          aria-pressed={snap.radio.tuning}
+          onClick={() => void setTune(!snap.radio.tuning)}
+          disabled={!snap.radio.txAllowed}
+          title="Key a steady carrier to tune an ATU/amp (auto-stops on the tune watchdog). Click again to stop."
+        >
+          {snap.radio.tuning ? 'TUNING…' : 'Tune'}
+        </button>
+        <button type="button" className="cw-abort" onClick={abort} title="Stop TX — CW sending + tune carrier (Esc)">
+          Stop TX
         </button>
       </div>
 

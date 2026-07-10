@@ -689,8 +689,14 @@ mod tests {
 
     #[test]
     fn mode_passband_parse_splits_the_m_reply() {
-        assert_eq!(parse_mode_passband("USB\n2400\n"), (Some("USB".into()), Some(2400)));
-        assert_eq!(parse_mode_passband("CW\n500\n"), (Some("CW".into()), Some(500)));
+        assert_eq!(
+            parse_mode_passband("USB\n2400\n"),
+            (Some("USB".into()), Some(2400))
+        );
+        assert_eq!(
+            parse_mode_passband("CW\n500\n"),
+            (Some("CW".into()), Some(500))
+        );
         assert_eq!(parse_mode_passband("USB\n"), (Some("USB".into()), None)); // split → width later
         assert_eq!(parse_mode_passband("USB\n0\n"), (Some("USB".into()), None)); // 0 = rig default
         assert_eq!(parse_mode_passband("RPRT -1\n"), (None, None));

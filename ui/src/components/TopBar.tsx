@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
-import type { BandChannel, LinkState, RadioStatus, Tier } from '../types'
+import type { BandChannel, LinkState, RadioStatus, RadioSummary, Tier } from '../types'
 import type { Theme } from '../useTheme'
 import type { Layout } from '../useLayout'
 import { ThemeSwitcher } from './ThemeSwitcher'
 import { FrequencyControl } from './FrequencyControl'
 import { StatusLane } from './StatusLane'
 import { LevelMeter } from './LevelMeter'
+import { RadioSwitcher } from './RadioSwitcher'
 
 interface Props {
   /** Hide the TX-control cluster (the FT cockpit shows its own consolidated
@@ -22,6 +23,12 @@ interface Props {
   mycall: string
   mygrid: string
   radio: RadioStatus
+  /** Multi-radio switcher summaries (dual-radio). Empty/1-element ⇒ no switcher shown. */
+  radios?: RadioSummary[]
+  /** Peg-lock state for the switcher. */
+  radioPegged?: boolean
+  onSetActiveRadio?: (id: number) => void
+  onSetPegLock?: (on: boolean) => void
   link: LinkState
   bandPlan: BandChannel[]
   onSetFrequency: (dialMhz: number, band: string, mode: string) => void
@@ -84,6 +91,10 @@ export function TopBar({
   mycall,
   mygrid,
   radio,
+  radios,
+  radioPegged,
+  onSetActiveRadio,
+  onSetPegLock,
   link,
   bandPlan,
   onSetFrequency,
@@ -113,6 +124,14 @@ export function TopBar({
           {mycall}
           <span className="mygrid">{mygrid}</span>
         </span>
+        {radios && radios.length > 1 && (
+          <RadioSwitcher
+            radios={radios}
+            pegged={radioPegged ?? false}
+            onSwitch={(id) => onSetActiveRadio?.(id)}
+            onTogglePeg={(on) => onSetPegLock?.(on)}
+          />
+        )}
       </div>
 
       {!hideFrequencyControl && (

@@ -822,6 +822,37 @@ export async function setTxLevel(level: number): Promise<AppSnapshot> {
   return invoke<AppSnapshot>('set_tx_level', { level })
 }
 
+/** Switch the active radio (dual-radio). The rig loop swaps rigs on the next tick (carrier
+ * dropped first); Mode/TX-queues are untouched. Returns the fresh snapshot. */
+export async function setActiveRadio(id: number): Promise<AppSnapshot> {
+  return invoke<AppSnapshot>('set_active_radio', { id })
+}
+
+/** Peg-lock the active radio (dual-radio): band selection won't auto-switch. Returns the snapshot. */
+export async function setPegLock(on: boolean): Promise<AppSnapshot> {
+  return invoke<AppSnapshot>('set_peg_lock', { on })
+}
+
+/** Add a radio to the roster (dual-radio). Distinct daemon ports auto-assigned; active unchanged. */
+export async function addRadio(): Promise<AppSnapshot> {
+  return invoke<AppSnapshot>('add_radio')
+}
+
+/** Remove a radio from the roster (no-op on the active or last radio). Returns the snapshot. */
+export async function removeRadio(id: number): Promise<AppSnapshot> {
+  return invoke<AppSnapshot>('remove_radio', { id })
+}
+
+/** Rename a radio profile (its switcher label). Returns the snapshot. */
+export async function renameRadio(id: number, name: string): Promise<AppSnapshot> {
+  return invoke<AppSnapshot>('rename_radio', { id, name })
+}
+
+/** Set a radio's band-coverage set (empty = covers everything) for auto-routing. Returns snapshot. */
+export async function setRadioBands(id: number, bands: string[]): Promise<AppSnapshot> {
+  return invoke<AppSnapshot>('set_radio_bands', { id, bands })
+}
+
 /** Key / unkey a tune carrier. Returns the fresh snapshot. */
 export async function setTune(on: boolean): Promise<AppSnapshot> {
   return invoke<AppSnapshot>('set_tune', { on })

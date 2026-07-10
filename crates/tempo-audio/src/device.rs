@@ -10,7 +10,7 @@
 //! Device/rate selection here is the conservative default; on a real station you
 //! may want to pick a specific CODEC device and a 48 kHz config explicitly.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU32};
 use std::sync::{Arc, Mutex};
 
@@ -50,32 +50,85 @@ pub(crate) static AUDIO_HOST_LOCK: Mutex<()> = Mutex::new(());
 /// name can't be read) are ignored, yielding empty/partial lists rather than
 /// failing — this feeds a UI dropdown.
 pub fn available_devices() -> (Vec<String>, Vec<String>) {
-    // Serialize against CpalBackend::open() (see AUDIO_HOST_LOCK) — concurrent cpal
-    // host/device access during stream construction crashes natively.
-    let _host_guard = AUDIO_HOST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let host = cpal::default_host();
-    let inputs = host
-        .input_devices()
-        .map(|it| it.filter_map(|d| d.name().ok()).collect())
-        .unwrap_or_default();
-    let outputs = host
-        .output_devices()
-        .map(|it| it.filter_map(|d| d.name().ok()).collect())
-        .unwrap_or_default();
-    (inputs, outputs)
+    // cpal's host/device enumeration can PANIC deep in the platform backend (Windows WASAPI has
+    // been seen to panic on a broken/virtual device — some Flex DAX, RDP-remote-audio, or bad-driver
+    // setups). This runs when the Settings tab opens, so an un-isolated panic there crashes the whole
+    // app before the operator can even finish Rig setup. Isolate it: a panic yields empty lists (the
+    // operator can still TYPE a device name) instead of taking down the process. (A genuine native
+    // access-violation in a driver DLL can't be caught here — that needs the faulting module named in
+    // Windows Event Viewer — but a Rust-level panic in cpal is caught and survived.)
+    std::panic::catch_unwind(|| {
+        // Serialize against CpalBackend::open() (see AUDIO_HOST_LOCK) — concurrent cpal
+        // host/device access during stream construction crashes natively.
+        let _host_guard = AUDIO_HOST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let host = cpal::default_host();
+        let inputs = host
+            .input_devices()
+            .map(|it| it.filter_map(|d| d.name().ok()).collect())
+            .unwrap_or_default();
+        let outputs = host
+            .output_devices()
+            .map(|it| it.filter_map(|d| d.name().ok()).collect())
+            .unwrap_or_default();
+        (disambiguate_names(inputs), disambiguate_names(outputs))
+    })
+    .unwrap_or_else(|_| (Vec::new(), Vec::new()))
+}
+
+/// Disambiguate duplicate device names for a UI picker: the FIRST occurrence of a name is kept
+/// bare (so existing single-device configs still resolve), and each later duplicate gets a
+/// trailing " #N" (`#2`, `#3`, …). Two radios that both enumerate as the generic "USB Audio CODEC"
+/// (a Yaesu + Icom pair is the common case) thus become distinct, selectable entries instead of two
+/// identical strings that both resolve to the first codec. Matched back by [`split_device_ordinal`].
+fn disambiguate_names(names: Vec<String>) -> Vec<String> {
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    names
+        .into_iter()
+        .map(|n| {
+            let c = counts.entry(n.clone()).or_insert(0);
+            *c += 1;
+            if *c == 1 {
+                n
+            } else {
+                format!("{n} #{c}")
+            }
+        })
+        .collect()
+}
+
+/// Inverse of [`disambiguate_names`] for one name: split off a trailing " #N" (N ≥ 2) into a base
+/// name + 1-based ordinal. A name with no such suffix is the 1st (bare) device.
+fn split_device_ordinal(name: &str) -> (&str, usize) {
+    if let Some(pos) = name.rfind(" #") {
+        if let Ok(n) = name[pos + 2..].parse::<usize>() {
+            if n >= 2 {
+                return (&name[..pos], n);
+            }
+        }
+    }
+    (name, 1)
 }
 
 /// Pick a device by name from an iterator of devices, falling back to `default`
-/// when `name` is empty/None or no device matches.
+/// when `name` is empty/None or no device matches. Understands the " #N" ordinal suffix
+/// [`disambiguate_names`] appends to identically-named devices, so two rigs sharing the generic
+/// "USB Audio CODEC" name resolve to DIFFERENT codecs (else `find()` always returns the first).
 pub(crate) fn pick_device(
     devices: Option<impl Iterator<Item = cpal::Device>>,
     name: Option<&str>,
     default: Option<cpal::Device>,
 ) -> Option<cpal::Device> {
     let wanted = name.map(str::trim).filter(|n| !n.is_empty());
-    if let (Some(wanted), Some(mut devs)) = (wanted, devices) {
-        if let Some(d) = devs.find(|d| d.name().ok().as_deref() == Some(wanted)) {
-            return Some(d);
+    if let (Some(wanted), Some(devs)) = (wanted, devices) {
+        let (base, ordinal) = split_device_ordinal(wanted);
+        let mut seen = 0usize;
+        for d in devs {
+            if d.name().ok().as_deref() == Some(base) {
+                seen += 1;
+                if seen == ordinal {
+                    return Some(d);
+                }
+            }
         }
     }
     default
@@ -150,6 +203,39 @@ impl VoiceMic {
                     let mut r = ring_cb.lock().unwrap_or_else(|e| e.into_inner());
                     for frame in data.chunks(ch.max(1)) {
                         let m = frame.iter().map(|&s| s as f32 / 32768.0).sum::<f32>()
+                            / ch.max(1) as f32;
+                        r.push_back(m);
+                    }
+                },
+                err_fn,
+                None,
+            ),
+            // Radio USB CODEC mics may advertise U8 or I32 — handle them too.
+            SampleFormat::U8 => dev.build_input_stream(
+                &cfg.config(),
+                move |data: &[u8], _: &cpal::InputCallbackInfo| {
+                    let mut r = ring_cb.lock().unwrap_or_else(|e| e.into_inner());
+                    for frame in data.chunks(ch.max(1)) {
+                        let m = frame
+                            .iter()
+                            .map(|&s| (s as f32 - 128.0) / 128.0)
+                            .sum::<f32>()
+                            / ch.max(1) as f32;
+                        r.push_back(m);
+                    }
+                },
+                err_fn,
+                None,
+            ),
+            SampleFormat::I32 => dev.build_input_stream(
+                &cfg.config(),
+                move |data: &[i32], _: &cpal::InputCallbackInfo| {
+                    let mut r = ring_cb.lock().unwrap_or_else(|e| e.into_inner());
+                    for frame in data.chunks(ch.max(1)) {
+                        let m = frame
+                            .iter()
+                            .map(|&s| s as f32 / 2_147_483_648.0)
+                            .sum::<f32>()
                             / ch.max(1) as f32;
                         r.push_back(m);
                     }
@@ -268,6 +354,54 @@ impl CpalBackend {
                 err_fn,
                 None,
             ),
+            // Radio USB CODECs (e.g. the IC-9700) may advertise U8 or I32 capture
+            // rather than F32/I16 — handle them so RX capture opens on any rig.
+            SampleFormat::U8 => in_dev.build_input_stream(
+                &in_cfg.config(),
+                move |data: &[u8], _: &cpal::InputCallbackInfo| {
+                    let mut ring = in_ring_cb.lock().unwrap_or_else(|e| e.into_inner());
+                    let monitoring = mon_enabled_in.load(std::sync::atomic::Ordering::Relaxed);
+                    let mut peak = 0.0f32;
+                    for frame in data.chunks(in_ch.max(1)) {
+                        let m = frame
+                            .iter()
+                            .map(|&s| (s as f32 - 128.0) / 128.0)
+                            .sum::<f32>()
+                            / in_ch.max(1) as f32;
+                        peak = peak.max(m.abs());
+                        ring.push_back(m);
+                        if monitoring {
+                            mon_ring_in.push(m);
+                        }
+                    }
+                    update_rx_meter(&rx_meter_cb, peak);
+                },
+                err_fn,
+                None,
+            ),
+            SampleFormat::I32 => in_dev.build_input_stream(
+                &in_cfg.config(),
+                move |data: &[i32], _: &cpal::InputCallbackInfo| {
+                    let mut ring = in_ring_cb.lock().unwrap_or_else(|e| e.into_inner());
+                    let monitoring = mon_enabled_in.load(std::sync::atomic::Ordering::Relaxed);
+                    let mut peak = 0.0f32;
+                    for frame in data.chunks(in_ch.max(1)) {
+                        let m = frame
+                            .iter()
+                            .map(|&s| s as f32 / 2_147_483_648.0)
+                            .sum::<f32>()
+                            / in_ch.max(1) as f32;
+                        peak = peak.max(m.abs());
+                        ring.push_back(m);
+                        if monitoring {
+                            mon_ring_in.push(m);
+                        }
+                    }
+                    update_rx_meter(&rx_meter_cb, peak);
+                },
+                err_fn,
+                None,
+            ),
             other => return Err(format!("unsupported input sample format: {other:?}")),
         }
         .map_err(|e| e.to_string())?;
@@ -295,6 +429,38 @@ impl CpalBackend {
                     let mut ring = out_ring_cb.lock().unwrap_or_else(|e| e.into_inner());
                     for frame in data.chunks_mut(out_ch.max(1)) {
                         let v = (ring.pop_front().unwrap_or(0.0).clamp(-1.0, 1.0) * 32767.0) as i16;
+                        for x in frame.iter_mut() {
+                            *x = v;
+                        }
+                    }
+                },
+                err_fn,
+                None,
+            ),
+            // Radio USB CODECs (e.g. the IC-9700) may advertise U8 or I32 playback
+            // rather than F32/I16 — handle them so TX/output opens on any rig.
+            SampleFormat::U8 => out_dev.build_output_stream(
+                &out_cfg.config(),
+                move |data: &mut [u8], _: &cpal::OutputCallbackInfo| {
+                    let mut ring = out_ring_cb.lock().unwrap_or_else(|e| e.into_inner());
+                    for frame in data.chunks_mut(out_ch.max(1)) {
+                        let v = (ring.pop_front().unwrap_or(0.0).clamp(-1.0, 1.0) * 127.0 + 128.0)
+                            as u8;
+                        for x in frame.iter_mut() {
+                            *x = v;
+                        }
+                    }
+                },
+                err_fn,
+                None,
+            ),
+            SampleFormat::I32 => out_dev.build_output_stream(
+                &out_cfg.config(),
+                move |data: &mut [i32], _: &cpal::OutputCallbackInfo| {
+                    let mut ring = out_ring_cb.lock().unwrap_or_else(|e| e.into_inner());
+                    for frame in data.chunks_mut(out_ch.max(1)) {
+                        let v = (ring.pop_front().unwrap_or(0.0).clamp(-1.0, 1.0) * 2_147_483_647.0)
+                            as i32;
                         for x in frame.iter_mut() {
                             *x = v;
                         }
@@ -419,5 +585,51 @@ impl AudioBackend for CpalBackend {
             ring.drain(..).collect()
         };
         resample_linear(&dev, mic.rate, MODEM_RATE)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{disambiguate_names, split_device_ordinal};
+
+    #[test]
+    fn disambiguates_duplicate_device_names() {
+        // Two rigs both enumerating as "USB Audio CODEC" must become distinct, selectable entries;
+        // the first stays bare (existing single-device configs keep resolving), later ones get #N.
+        let got = disambiguate_names(vec![
+            "USB Audio CODEC".into(),
+            "Speakers".into(),
+            "USB Audio CODEC".into(),
+            "USB Audio CODEC".into(),
+        ]);
+        assert_eq!(
+            got,
+            vec![
+                "USB Audio CODEC",
+                "Speakers",
+                "USB Audio CODEC #2",
+                "USB Audio CODEC #3",
+            ]
+        );
+    }
+
+    #[test]
+    fn split_device_ordinal_is_the_inverse_of_disambiguate() {
+        assert_eq!(
+            split_device_ordinal("USB Audio CODEC"),
+            ("USB Audio CODEC", 1)
+        );
+        assert_eq!(
+            split_device_ordinal("USB Audio CODEC #2"),
+            ("USB Audio CODEC", 2)
+        );
+        assert_eq!(
+            split_device_ordinal("USB Audio CODEC #3"),
+            ("USB Audio CODEC", 3)
+        );
+        // Only a synthetic " #N" with N >= 2 is an ordinal; a real name that happens to contain
+        // "#1" or a non-numeric "#" is left intact as the 1st device.
+        assert_eq!(split_device_ordinal("Rig #1"), ("Rig #1", 1));
+        assert_eq!(split_device_ordinal("Mic #A"), ("Mic #A", 1));
     }
 }

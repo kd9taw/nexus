@@ -11,10 +11,14 @@
 /// platform enumeration fails.
 #[cfg(feature = "serial")]
 pub fn available_ports() -> Vec<String> {
-    match serialport::available_ports() {
+    // serialport's Windows enumeration walks the registry / SetupAPI and can panic on some driver
+    // setups (Flex/virtual COM ports). This runs when the Settings tab opens, so isolate it — a
+    // panic yields an empty list (the operator can still type a COM port) instead of crashing.
+    std::panic::catch_unwind(|| match serialport::available_ports() {
         Ok(ports) => ports.into_iter().map(|p| p.port_name).collect(),
         Err(_) => Vec::new(),
-    }
+    })
+    .unwrap_or_default()
 }
 
 /// Names of the serial ports currently present.

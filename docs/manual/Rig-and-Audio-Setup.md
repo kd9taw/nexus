@@ -120,6 +120,18 @@ To run WSJT-X alongside Nexus: enable the broker in Nexus, then point WSJT-X's H
 
 ---
 
+## Two Radios (Dual Radio)
+
+If you run two rigs — for example an HF radio and a VHF/UHF radio on separate antennas — Nexus can keep **both connected at once** and let you switch between them instantly.
+
+- **Add the second radio:** Settings → Rig, click **+ Add radio**. A new radio card appears. Give it a name (e.g. "IC-9700"), then click **Configure** on it to make it the active radio so the Rig/CAT + Audio settings below configure *that* radio. Set its model, port, baud, and audio, then Save. Switch back to your first radio the same way. Single-radio operators never see any of this beyond the "+ Add radio" button.
+- **Distinct daemon ports:** each radio runs its own bundled `rigctld` at the same time, so the two rigs must use **different rigctld TCP ports**. New radios are assigned a free port automatically, and any accidental collision is repaired on load — you don't normally have to think about it.
+- **Switching:** with two radios configured, a **switcher appears in the top bar** (one pill per radio, showing each rig's live frequency). Click a pill to switch. Both rigs stay connected the whole time — the non-active one is monitored (its frequency and S-meter stay live in the switcher), and switching is an instant handoff with no CAT reconnect, so the dial never bounces. When you switch to a radio, Nexus adopts the frequency it's *actually* on (you may have hand-tuned it).
+- **Band coverage (optional):** each radio can be given a set of bands it covers. (Automatic band-based routing — pick a band and Nexus selects the covering radio — is a planned follow-up.)
+- **What's shared:** you operate (waterfall, decode, transmit, audio) the **active** radio; the other stays connected for monitoring. Watching both waterfalls at the same time is a planned later addition.
+
+---
+
 ## Audio Device Selection
 
 In Settings → Audio, select:
@@ -128,6 +140,12 @@ In Settings → Audio, select:
 - **Output Device (TX)** — the sound card feeding audio into the rig's data/mic input (the input side of your interface). This is what Nexus transmits.
 
 Leave either as **System default** to use the OS default device. For most USB interfaces (SignaLink, DigiRig, and similar), one device appears under two names — pick the same device for both, or use Detect to fill them from the USB product string.
+
+### FlexRadio DAX audio missing from the device lists?
+
+If your Flex's **DAX** audio channels don't appear in the Input/Output lists (so the waterfall stays blank and there's no decode) even though CAT control works, and another program like Fldigi *can* see them, the cause is almost always **Windows not enumerating the DAX devices to the normal audio APIs** — not a Nexus bug. The usual culprit is a **Remote Desktop (RDP) session with "remote audio" enabled**, which hides local playback/recording devices from the standard device list. Nexus and WSJT-X use the standard Windows audio device list; Fldigi reads WDM-KS devices directly, which is why it still sees them.
+
+Fix: in your RDP client, set audio to **Play on the remote computer** (or disable remote audio), reconnect, and confirm the DAX channels now appear under Settings → Audio. This also affects any WASAPI/MME-based app, not just Nexus.
 
 ### TX Level
 

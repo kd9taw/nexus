@@ -352,6 +352,38 @@ mod device_monitor {
                 err_fn,
                 None,
             ),
+            // Many radio USB CODECs (the IC-9700 among them) advertise U8 or I32
+            // rather than F32/I16; handle them so the monitor opens on any rig.
+            SampleFormat::U8 => dev.build_output_stream(
+                &config,
+                move |data: &mut [u8], _: &cpal::OutputCallbackInfo| {
+                    let level = f32::from_bits(level_cb.load(Ordering::Relaxed));
+                    for frame in data.chunks_mut(out_ch.max(1)) {
+                        let s = (rs.next(&ring_cb) * level).clamp(-1.0, 1.0);
+                        let v = (s * 127.0 + 128.0) as u8;
+                        for x in frame.iter_mut() {
+                            *x = v;
+                        }
+                    }
+                },
+                err_fn,
+                None,
+            ),
+            SampleFormat::I32 => dev.build_output_stream(
+                &config,
+                move |data: &mut [i32], _: &cpal::OutputCallbackInfo| {
+                    let level = f32::from_bits(level_cb.load(Ordering::Relaxed));
+                    for frame in data.chunks_mut(out_ch.max(1)) {
+                        let s = (rs.next(&ring_cb) * level).clamp(-1.0, 1.0);
+                        let v = (s * 2_147_483_647.0) as i32;
+                        for x in frame.iter_mut() {
+                            *x = v;
+                        }
+                    }
+                },
+                err_fn,
+                None,
+            ),
             other => return Err(format!("unsupported monitor output format: {other:?}")),
         }
         .map_err(|e| e.to_string())?;

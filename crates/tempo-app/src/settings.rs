@@ -953,6 +953,90 @@ impl Settings {
         self.radios.iter().find(|p| p.id == self.active_radio)
     }
 
+    /// Append a new radio profile with a fresh (never-reused) id, a placeholder name, and CAT/rotator
+    /// TCP ports guaranteed distinct from every existing radio's (two daemons can't bind one port).
+    /// Returns the new profile's id. The operator then configures its CAT by switching to it (the
+    /// flat rig form always edits the active radio). Does NOT change the active radio.
+    pub fn add_radio_profile(&mut self) -> u32 {
+        self.ensure_radio_profiles();
+        let next_id = self.radios.iter().map(|p| p.id).max().unwrap_or(0) + 1;
+        let mut used: Vec<u16> = self
+            .radios
+            .iter()
+            .flat_map(|p| [p.rigctld_port, p.rotctld_port])
+            .collect();
+        if self.cat_broker {
+            used.push(self.cat_broker_port);
+        }
+        let mut free_from = |start: u16| -> u16 {
+            let mut port = start;
+            while used.contains(&port) {
+                port += 1;
+            }
+            used.push(port);
+            port
+        };
+        let rigctld_port = free_from(4532);
+        let rotctld_port = free_from(4533);
+        let name = format!("Radio {}", self.radios.len() + 1);
+        self.radios.push(RadioProfile {
+            id: next_id,
+            name,
+            rigctld_port,
+            rotctld_port,
+            ..RadioProfile::default()
+        });
+        next_id
+    }
+
+    /// Auto-repair colliding daemon ports so every radio can run its OWN persistent rigctld/rotctld at
+    /// the same time (true dual-radio needs two live daemons — a shared port would make the monitor
+    /// connect through the active radio's daemon). Bumps any duplicate `rigctld_port`/`rotctld_port`
+    /// (and any that clashes with the CAT broker) to the next free value, first-radio-wins. Idempotent;
+    /// called on load. `add_radio_profile` already assigns distinct ports, so this only fixes older
+    /// configs or hand-edited collisions.
+    pub fn ensure_distinct_radio_ports(&mut self) {
+        let broker = self.cat_broker.then_some(self.cat_broker_port);
+        if validate_radio_ports(&self.radios, broker).is_ok() {
+            return;
+        }
+        let mut used: Vec<u16> = broker.into_iter().collect();
+        let mut free_from = |start: u16, used: &mut Vec<u16>| -> u16 {
+            let mut port = start.max(1024);
+            while used.contains(&port) {
+                port = port.saturating_add(1);
+            }
+            used.push(port);
+            port
+        };
+        for p in self.radios.iter_mut() {
+            if used.contains(&p.rigctld_port) {
+                p.rigctld_port = free_from(4532, &mut used);
+            } else {
+                used.push(p.rigctld_port);
+            }
+            // Only radios that actually have a rotator claim a rotctld port.
+            if p.rotator_model > 0 || !p.rotator_host.is_empty() {
+                if used.contains(&p.rotctld_port) {
+                    p.rotctld_port = free_from(4533, &mut used);
+                } else {
+                    used.push(p.rotctld_port);
+                }
+            }
+        }
+    }
+
+    /// Remove a radio profile by id. Refuses to remove the active radio or the last remaining one
+    /// (there must always be ≥1, and the active must exist). Returns whether it removed anything.
+    pub fn remove_radio_profile(&mut self, id: u32) -> bool {
+        if id == self.active_radio || self.radios.len() <= 1 {
+            return false;
+        }
+        let before = self.radios.len();
+        self.radios.retain(|p| p.id != id);
+        self.radios.len() != before
+    }
+
     /// Copy the ACTIVE profile's rig/audio fields INTO the flat mirror, so every existing consumer
     /// (Transport::from_settings, sync_rotctld, rig_mode…) reads the active radio unchanged. No-op
     /// when the flat fields already equal the active profile (the single-radio case). Called on load.
@@ -1103,6 +1187,7 @@ impl Settings {
         // Multi-radio: migrate an older (flat-only) settings file to a single radio profile, then
         // mirror the active profile into the flat fields so every existing consumer reads unchanged.
         s.ensure_radio_profiles();
+        s.ensure_distinct_radio_ports(); // two live daemons (dual-radio) need distinct ports
         s.sync_flat_from_active();
         s
     }
@@ -1641,7 +1726,10 @@ mod tests {
 
         let back = Settings::load(&path);
         assert_eq!(back.radios.len(), 1);
-        assert_eq!(back.radios[0].rig_model, 3081, "flat edit persisted into the active profile");
+        assert_eq!(
+            back.radios[0].rig_model, 3081,
+            "flat edit persisted into the active profile"
+        );
         assert_eq!(back.radios[0].rig_model_name, "Icom IC-9700"); // synced flat field
         assert_eq!(back.rig_model, 3081, "flat mirror intact after reload");
         let _ = std::fs::remove_file(&path);
@@ -1649,11 +1737,106 @@ mod tests {
 
     #[test]
     fn validate_radio_ports_rejects_duplicate_ports() {
-        let a = RadioProfile { id: 0, name: "A".into(), rigctld_port: 4532, ..Default::default() };
-        let b = RadioProfile { id: 1, name: "B".into(), rigctld_port: 4532, ..Default::default() };
-        assert!(validate_radio_ports(&[a.clone(), b.clone()], None).is_err(), "same rigctld port");
-        let b2 = RadioProfile { rigctld_port: 4534, ..b };
-        assert!(validate_radio_ports(&[a.clone(), b2], None).is_ok(), "distinct ports OK");
-        assert!(validate_radio_ports(&[a], Some(4532)).is_err(), "broker collides with a rig");
+        let a = RadioProfile {
+            id: 0,
+            name: "A".into(),
+            rigctld_port: 4532,
+            ..Default::default()
+        };
+        let b = RadioProfile {
+            id: 1,
+            name: "B".into(),
+            rigctld_port: 4532,
+            ..Default::default()
+        };
+        assert!(
+            validate_radio_ports(&[a.clone(), b.clone()], None).is_err(),
+            "same rigctld port"
+        );
+        let b2 = RadioProfile {
+            rigctld_port: 4534,
+            ..b
+        };
+        assert!(
+            validate_radio_ports(&[a.clone(), b2], None).is_ok(),
+            "distinct ports OK"
+        );
+        assert!(
+            validate_radio_ports(&[a], Some(4532)).is_err(),
+            "broker collides with a rig"
+        );
+    }
+
+    #[test]
+    fn add_radio_profile_assigns_a_fresh_id_and_distinct_ports() {
+        // Adding a 2nd radio must never collide daemon ports with radio 1 (or the CAT broker) — two
+        // rigctld/rotctld instances can't bind the same TCP port.
+        let mut s = Settings::default();
+        s.ensure_radio_profiles(); // radio 0 on the default 4532/4533
+        s.cat_broker = true;
+        s.cat_broker_port = 4534;
+        let id = s.add_radio_profile();
+        assert_eq!(s.radios.len(), 2);
+        assert_eq!(id, 1, "fresh, non-reused id");
+        let new = s.radios.iter().find(|p| p.id == id).unwrap();
+        assert_eq!(new.name, "Radio 2");
+        // Distinct from radio 0 (4532/4533) AND the broker (4534).
+        assert_ne!(new.rigctld_port, 4532);
+        assert_ne!(new.rigctld_port, 4534, "dodges the CAT broker port too");
+        assert_ne!(new.rigctld_port, new.rotctld_port);
+        // The whole roster must pass the port validator (broker included).
+        assert!(validate_radio_ports(&s.radios, Some(s.cat_broker_port)).is_ok());
+    }
+
+    #[test]
+    fn ensure_distinct_radio_ports_repairs_collisions() {
+        // Two live daemons (true dual-radio) need distinct ports; an old/hand-edited config that
+        // shares one is auto-repaired on load (first radio wins its port, the other moves off it).
+        let mut s = Settings::default();
+        s.ensure_radio_profiles(); // radio 0 @ 4532
+        let r1 = s.add_radio_profile();
+        s.radios
+            .iter_mut()
+            .find(|p| p.id == r1)
+            .unwrap()
+            .rigctld_port = 4532; // force a collision
+        assert!(validate_radio_ports(&s.radios, None).is_err());
+        s.ensure_distinct_radio_ports();
+        assert!(
+            validate_radio_ports(&s.radios, None).is_ok(),
+            "collision repaired"
+        );
+        assert_eq!(
+            s.radios.iter().find(|p| p.id == 0).unwrap().rigctld_port,
+            4532,
+            "first radio keeps its port"
+        );
+        assert_ne!(
+            s.radios.iter().find(|p| p.id == r1).unwrap().rigctld_port,
+            4532,
+            "the colliding radio was moved to a free port"
+        );
+    }
+
+    #[test]
+    fn remove_radio_profile_guards_active_and_last() {
+        let mut s = Settings::default();
+        s.ensure_radio_profiles();
+        let two = s.add_radio_profile();
+        // Can't remove the active radio.
+        assert!(
+            !s.remove_radio_profile(s.active_radio),
+            "refuses the active radio"
+        );
+        assert_eq!(s.radios.len(), 2);
+        // Can remove a non-active radio.
+        assert!(s.remove_radio_profile(two));
+        assert_eq!(s.radios.len(), 1);
+        // Can't remove the last remaining one.
+        assert!(
+            !s.remove_radio_profile(s.active_radio),
+            "refuses the last radio"
+        );
+        assert_eq!(s.radios.len(), 1);
     }
 }

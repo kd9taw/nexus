@@ -261,6 +261,27 @@ pub enum SourceKind {
     Companion,
 }
 
+/// A compact per-radio summary for the multi-radio switcher (dual-radio). One per configured radio;
+/// the ACTIVE radio carries live state, the others their last-known band/frequency (they're not
+/// connected in the active-only model). Absent/1-element ⇒ the UI renders single-radio, unchanged.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RadioSummary {
+    pub id: u32,
+    pub name: String,
+    pub band: String,
+    pub dial_mhz: f64,
+    pub sideband: String,
+    pub is_active: bool,
+    /// Live CAT health for the active radio; `None` for a not-connected radio.
+    pub cat_ok: Option<bool>,
+    /// Live S-meter (dB rel S9) for the active radio; `None` otherwise.
+    pub smeter_db: Option<i32>,
+    pub transmitting: bool,
+    /// The bands this radio covers (empty = all) — for auto-routing (P4) + a coverage hint.
+    pub bands: Vec<String>,
+}
+
 /// Current radio / slot-timing status.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1283,6 +1304,16 @@ pub struct AppSnapshot {
     pub mygrid: String,
     pub mode: OpMode,
     pub radio: RadioStatus,
+    /// Multi-radio switcher summaries (dual-radio). One per configured radio; empty or 1-element
+    /// for a single-radio station (the UI then shows no switcher). `radio` above is the active one.
+    #[serde(default)]
+    pub radios: Vec<RadioSummary>,
+    /// The id of the active radio (matches one of `radios`).
+    #[serde(default)]
+    pub active_radio_id: u32,
+    /// Peg-lock state (band selection won't auto-switch when true).
+    #[serde(default)]
+    pub radio_pegged: bool,
     pub link: LinkState,
     pub stations: Vec<Station>,
     pub conversations: Vec<Conversation>,

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { AudioDevices, BandChannel, CatTestResult, DetectedRig, RadioStatus, Settings } from '../types'
 import {
   clearClublogPassword,
@@ -25,6 +25,11 @@ import {
   setQrzLogbookKey,
   setQrzPassword,
   setSettings,
+  addRadio,
+  removeRadio,
+  renameRadio,
+  setActiveRadio,
+  setRadioBands,
   testCat,
   probeCatPorts,
   qrzTestConnection,
@@ -52,6 +57,9 @@ interface Props {
   onSaved?: () => void
   /** Live radio status, so the Audio section can show the real RX meter. */
   radio?: RadioStatus
+  /** The live active radio id (dual-radio). The form reloads when this changes so a switch made from
+   * the always-visible TopBar pills while Settings is open can't leave the Rig form stale. */
+  activeRadioId?: number
   /** Workspace layout/scale prefs (UI-only — applied live, not via setSettings). */
   layout: Layout
   onLayoutChange: (l: Layout) => void
@@ -107,6 +115,11 @@ const CTCSS_TONES = [
 ]
 
 const NUMERIC_KEYS: FieldKey[] = ['dialMhz', 'baud', 'rigctldPort', 'rigModel', 'txWatchdogMin', 'catBrokerPort', 'tuneTimeoutSecs']
+
+// Standard serial CAT baud rates offered in the Rig baud picker. A rig's manual lists its
+// supported rate(s); most modern rigs run 38400 or 115200. Auto-detect may set a value outside
+// this list — the picker keeps it as an extra option so it's never silently dropped.
+const STANDARD_BAUDS = [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200]
 
 /** WSJT-X Split Operation choices (Settings ▸ Radio parity). */
 const SPLIT_MODES: { value: NonNullable<Settings['splitMode']>; label: string }[] = [
@@ -195,6 +208,7 @@ const CLUSTER_PRESETS: { label: string; host: string }[] = [
 export function SettingsPanel({
   onSaved,
   radio,
+  activeRadioId,
   layout,
   onLayoutChange,
   scale,
@@ -294,6 +308,27 @@ export function SettingsPanel({
   // it parses as a positive number, so a half-typed "14." never corrupts the form.
   const [mhzDraft, setMhzDraft] = useState<{ idx: number; text: string } | null>(null)
 
+  // Dual-radio: if the active radio changes underneath us (the operator used the always-visible
+  // TopBar switcher pills while Settings is open), the flat Rig/CAT form now describes the WRONG
+  // radio. Reload the form from the live settings so a Save can't fold edits into — or command —
+  // the wrong rig. Skip the first observation (the mount effect already loads the form).
+  const lastActiveRef = useRef<number | undefined>(undefined)
+  useEffect(() => {
+    if (activeRadioId == null) return
+    if (lastActiveRef.current === undefined) {
+      lastActiveRef.current = activeRadioId
+      return
+    }
+    if (lastActiveRef.current === activeRadioId) return
+    lastActiveRef.current = activeRadioId
+    void getSettings()
+      .then((s) => {
+        setForm(s)
+        dirtyRef.current = false
+      })
+      .catch(() => {})
+  }, [activeRadioId])
+
   useEffect(() => {
     let mounted = true
     setStatus('loading')
@@ -301,6 +336,7 @@ export function SettingsPanel({
       .then((s) => {
         if (mounted) {
           setForm(s)
+          dirtyRef.current = false
           setStatus('idle')
         }
       })
@@ -343,7 +379,11 @@ export function SettingsPanel({
     setForm((prev) => (prev ? { ...prev, [key]: value } : prev))
   }
 
+  // Tracks unsaved flat-form edits, so switching the active radio (which reloads the form) can warn
+  // before discarding them. A ref (not state) — read synchronously in the switch handler, no re-render.
+  const dirtyRef = useRef(false)
   const markDirty = () => {
+    dirtyRef.current = true
     setStatus('idle')
     setError(null)
   }
@@ -474,6 +514,60 @@ export function SettingsPanel({
   const selectRig = (modelNum: number) => {
     markDirty()
     setForm((prev) => (prev ? { ...prev, rigModel: modelNum, rigModelName: findRigModelName(modelNum) } : prev))
+  }
+
+  // --- Dual-radio roster (P2). These are LIVE verbs: they persist immediately and return a fresh
+  // snapshot. We then re-pull the full settings and merge ONLY the radios[]/active/peg fields back
+  // into the form, so the roster reflects the change without discarding unsaved flat-form edits.
+  const reloadRadios = () => {
+    void getSettings().then((s) => {
+      setForm((prev) =>
+        prev ? { ...prev, radios: s.radios, activeRadio: s.activeRadio, radioPegged: s.radioPegged } : s,
+      )
+      onSaved?.()
+    })
+  }
+  const handleAddRadio = () => {
+    void withErrorToast(() => addRadio(), 'Could not add a radio').then((s) => s && reloadRadios())
+  }
+  const handleRemoveRadio = (id: number) => {
+    // Destructive + immediate + unrecoverable (drops the radio's CAT/audio config, its unique
+    // rigctld port, and band coverage) — confirm before removing.
+    const r = form?.radios?.find((p) => p.id === id)
+    if (!window.confirm(`Remove ${r?.name ?? 'this radio'}? This deletes its CAT/audio config and can't be undone.`)) {
+      return
+    }
+    void withErrorToast(() => removeRadio(id), 'Could not remove the radio').then((s) => s && reloadRadios())
+  }
+  const handleRenameRadio = (id: number, name: string) => {
+    void withErrorToast(() => renameRadio(id, name), 'Could not rename the radio').then((s) => s && reloadRadios())
+  }
+  const handleToggleRadioBand = (id: number, band: string) => {
+    const radio = form?.radios?.find((r) => r.id === id)
+    if (!radio) return
+    const bands = radio.bands.includes(band)
+      ? radio.bands.filter((b) => b !== band)
+      : [...radio.bands, band]
+    void withErrorToast(() => setRadioBands(id, bands), 'Could not set band coverage').then(
+      (s) => s && reloadRadios(),
+    )
+  }
+  // Switching the active radio is a LIVE rig swap (carrier dropped first) that re-points the flat
+  // rig form at that radio — so here we FULLY reload the form (unlike the roster edits above).
+  const handleConfigureRadio = (id: number) => {
+    // Switching re-points the flat form at the new radio (full reload), discarding any unsaved edits
+    // to the current one — warn first if there are any.
+    if (dirtyRef.current && !window.confirm('Discard unsaved changes and switch to this radio?')) {
+      return
+    }
+    void withErrorToast(() => setActiveRadio(id), 'Could not switch radios').then((s) => {
+      if (!s) return
+      void getSettings().then((full) => {
+        setForm(full)
+        dirtyRef.current = false
+      })
+      onSaved?.()
+    })
   }
 
   // Lazily fetch the full Hamlib catalog only the first time it's requested.
@@ -867,11 +961,15 @@ export function SettingsPanel({
     setError(null)
     try {
       await setSettings({ ...form, mycall: form.mycall.trim().toUpperCase() })
+      dirtyRef.current = false
       setStatus('saved')
       onSaved?.()
-    } catch {
+    } catch (err) {
       setStatus('idle')
-      setError('Could not save settings.')
+      // Surface the backend's actual message (Tauri rejects with the Err string) — e.g. the
+      // dual-radio port-collision rejection tells the operator exactly which ports clash.
+      const msg = typeof err === 'string' ? err : err instanceof Error ? err.message : ''
+      setError(msg || 'Could not save settings.')
     }
   }
 
@@ -1172,6 +1270,109 @@ export function SettingsPanel({
           {/* ---- Rig control ---- */}
           {tab === 'rig' && (
           <>
+          {/* Dual-radio roster (P2). Always shown — the "+ Add radio" button is the discovery
+              affordance a single-radio operator sees; the per-radio list + band coverage only
+              matter once there's a 2nd radio. */}
+          <fieldset className="settings-section">
+            <legend>Radios</legend>
+            <div className="radios-manager">
+              {(form.radios ?? []).map((r) => {
+                const isActive = r.id === form.activeRadio
+                const multi = (form.radios?.length ?? 1) > 1
+                return (
+                  <div key={r.id} className={`radio-card${isActive ? ' active' : ''}`}>
+                    <div className="radio-card-head">
+                      <input
+                        className="settings-input radio-name-input"
+                        type="text"
+                        defaultValue={r.name}
+                        placeholder="Radio name"
+                        onBlur={(e) => {
+                          const v = e.target.value.trim()
+                          if (v && v !== r.name) handleRenameRadio(r.id, v)
+                        }}
+                        autoComplete="off"
+                        spellCheck={false}
+                      />
+                      {isActive ? (
+                        <span
+                          className="radio-active-badge"
+                          title="The Rig / CAT + Audio settings below configure this radio."
+                        >
+                          Active
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          className="settings-refresh"
+                          onClick={() => handleConfigureRadio(r.id)}
+                          title="Make this the active radio so the Rig / CAT form below configures it (drops the carrier and swaps rigs)."
+                        >
+                          Configure
+                        </button>
+                      )}
+                      {multi && !isActive && (
+                        <button
+                          type="button"
+                          className="settings-refresh danger"
+                          onClick={() => handleRemoveRadio(r.id)}
+                          title="Remove this radio from the roster"
+                        >
+                          Remove
+                        </button>
+                      )}
+                    </div>
+                    <div className="radio-card-meta">
+                      {r.rigModelName && r.rigModelName !== 'None / VOX'
+                        ? r.rigModelName
+                        : 'No rig model set'}
+                      {' · '}
+                      {r.rigConn === 'network' ? r.rigAddr || 'no address' : r.serialPort || 'no COM port'}
+                      {' · audio '}
+                      {r.audioIn || 'default'}
+                      {' · rigctld :'}
+                      {r.rigctldPort}
+                    </div>
+                    {multi && (
+                      <div className="radio-band-coverage">
+                        <span className="settings-hint">
+                          Covers bands (for auto band-routing; none = covers all):
+                        </span>
+                        <div className="band-chip-row">
+                          {FREQ_BANDS.map((b) => {
+                            const on = r.bands.includes(b)
+                            return (
+                              <button
+                                key={b}
+                                type="button"
+                                className={`band-chip${on ? ' on' : ''}`}
+                                aria-pressed={on}
+                                onClick={() => handleToggleRadioBand(r.id, b)}
+                              >
+                                {b}
+                              </button>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+            <div className="radios-actions">
+              <button type="button" className="settings-refresh" onClick={handleAddRadio}>
+                + Add radio
+              </button>
+              <span className="settings-hint">
+                {(form.radios?.length ?? 1) > 1
+                  ? `The Rig / CAT + Audio settings below configure “${
+                      form.radios?.find((r) => r.id === form.activeRadio)?.name ?? 'the active radio'
+                    }”. Each radio has its OWN CAT + audio — use “Configure” (or the top-bar pills) to set up the other radio. “+ Add radio” switches to the new radio automatically.`
+                  : 'Run two rigs at once — e.g. an HF radio plus a VHF/UHF radio on a different antenna? Add a second radio, then switch between them from the top bar. Newcomers can ignore this.'}
+              </span>
+            </div>
+          </fieldset>
           <fieldset className="settings-section">
             <legend>Profiles</legend>
             <div className="settings-grid">
@@ -1541,16 +1742,23 @@ export function SettingsPanel({
 
               <label className="settings-field">
                 <span className="settings-label">Baud</span>
-                <input
+                <select
                   className="settings-input"
-                  type="number"
-                  inputMode="numeric"
                   value={String(form.baud)}
-                  placeholder="38400"
-                  onChange={(e) => update('baud', e.target.value)}
-                  autoComplete="off"
-                />
-                <span className="settings-hint">Serial baud rate.</span>
+                  onChange={(e) => updateNum('baud', Number(e.target.value))}
+                >
+                  {(STANDARD_BAUDS.includes(form.baud)
+                    ? STANDARD_BAUDS
+                    : [form.baud, ...STANDARD_BAUDS]
+                  ).map((b) => (
+                    <option key={b} value={b}>
+                      {b.toLocaleString()}
+                    </option>
+                  ))}
+                </select>
+                <span className="settings-hint">
+                  Serial baud rate — match your rig's CAT setting (most modern rigs: 38,400 or 115,200).
+                </span>
               </label>
                 </>
               )}
@@ -1805,6 +2013,17 @@ export function SettingsPanel({
           {/* ---- Audio ---- */}
           {tab === 'audio' && (
           <>
+          {(form.radios?.length ?? 1) > 1 && (
+            <div className="radio-config-banner">
+              🎚 Audio devices below are for{' '}
+              <strong>
+                {form.radios?.find((r) => r.id === form.activeRadio)?.name ?? 'the active radio'}
+              </strong>
+              . Each radio has its OWN input/output — switch radios (the top-bar pills, or “Configure”
+              in Rig ▸ Radios) to set the other radio's audio. The RX audio + waterfall follow whichever
+              radio is active.
+            </div>
+          )}
           <fieldset className="settings-section">
             <legend>Audio</legend>
             <div className="settings-grid">

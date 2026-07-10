@@ -5,6 +5,133 @@ All notable changes to Nexus (formerly Tempo) are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] — 2026-07-10 — operating experience + dual-radio
+
+Field-test-driven work on the day-to-day operating experience (waterfall fidelity, a prominent
+frequency readout, dial latency, logbook scale) plus the start of true dual-radio support.
+
+### Added
+
+- **Dual-radio — run two rigs at once** (e.g. an HF radio + a VHF/UHF radio on separate antennas).
+  Add a second radio in Settings ▸ Rig; a switcher appears in the top bar. Both rigs stay
+  **permanently connected** — the non-active radio is monitored live (its frequency/S-meter show in
+  the switcher) and switching is an instant **handoff** with no CAT teardown, so the dial never
+  bounces. Invisible for single-radio stations (only a quiet "+ Add radio" button appears). Each
+  radio has its own CAT/audio/rotator config and band-coverage set; daemon ports are auto-assigned
+  distinct and auto-repaired on load.
+- **Prominent, unified frequency readout** — a large, accent-colored MHz display shared across the
+  digital, CW, and Phone cockpits; click to type an exact frequency.
+- **Universal FFT waterfall** — every rig's audio scope now uses a real 4096-point FFT (~7.8 Hz/bin
+  across 0–4000 Hz) instead of the old coarse filter bank, so even a Yaesu's soundcard waterfall
+  resolves close signals.
+- **Mouse-wheel tuning** — scroll over the scope **or the big frequency readout** to tune by the
+  selected step (Shift = ×10); great for hunting CW/phone signals off the FTx default frequencies.
+- **POTA park auto-load by reference** — type a park number in the log entry and its name/location
+  fills in from the local index, with a live `api.pota.app` fallback.
+- **Optional ADIF import at first-run** — the setup wizard now offers to import your existing log up
+  front (skippable), so the needed/worked-before/awards intelligence works from day one.
+- **Per-radio standard baud dropdown** in the Rig settings (1200–115,200) instead of free text.
+- **Tune & Stop-TX controls in the Phone and CW cockpits** — a **Tune** button keys a steady carrier to
+  tune an ATU or amplifier (auto-released by the TX watchdog), and **Stop TX** unkeys everything instantly
+  (PTT, tune carrier, and CW keying). Restored — these were missing from the voice/CW cockpits.
+
+### Changed
+
+- **Fast dial tracking** — the rig's frequency is now polled on a short (~180 ms) sub-cadence,
+  separate from the slower S-meter/mode/power reads, with transport-aware read deadlines, so the
+  dial keeps up with the VFO knob (matching HRD-class responsiveness on Yaesu).
+- **Mode changes keep the rig's filter width** — switching bands/modes no longer forces the rig's
+  passband to its default (which was popping the Width display); explicit width changes still apply.
+- **Logbook performance at 10k+ QSOs** — the logbook list is virtualized and its filter/sort
+  memoized, so large logs scroll smoothly instead of lagging.
+
+### Fixed
+
+- **FTx Call Roster overlap** — need-chips (e.g. NewZone) no longer spill over the callsign, and the
+  Call column fits longer calls like VE2OPR.
+- **Settings-tab crash hardening** — audio/serial device enumeration is now panic-isolated, so a
+  quirky/virtual device (some Flex DAX / RDP-remote-audio setups) can't crash the app when opening
+  Settings.
+- **Dual-radio CAT no longer dies on the background radio.** Saving a radio's config could leave the
+  active radio and the monitored radio fighting over the same daemon port, so CAT went dead on whichever
+  radio wasn't active — and flipped when you switched. The daemon port is now always re-synced after
+  de-confliction, so CAT stays live on **both** radios in either direction.
+- **Per-radio audio on rigs with a generic USB codec.** Two rigs that both enumerate as "USB Audio CODEC"
+  are now listed as distinct entries ("USB Audio CODEC", "USB Audio CODEC #2"), so each radio can point at
+  its own soundcard; previously both silently resolved to the first codec.
+- **Radio soundcards that use 8-bit or 24-bit audio** (some Icom USB codecs) now open correctly for RX
+  capture, TX, and the headphone monitor — they were failing with an "unsupported format" error.
+
+_(Protocol decoders for a native FlexRadio panadapter and a per-radio native scope are in progress
+behind the scenes; not yet user-visible.)_
+
+## [0.4.1] — Phone / POTA / CAT punch-list
+
+Field-test fixes and polish for voice/CW operating, park activations, and rig tuning.
+
+### Added
+
+- **POTA/SOTA logging** — a park/summit field in the log entry, an OTA column in the logbook, an
+  activation mode that tags every QSO, and standard `SIG`/`SIG_INFO`/`SOTA_REF` ADIF.
+- **Local POTA park search** — a bundled, refreshable park index for offline park lookup.
+- **CAT tuning from the Phone/CW cockpits** — direct frequency entry, VFO up/down step tuning,
+  RIT/XIT, and A/B VFO select (a Win4-style rig-control panel).
+
+### Changed
+
+- **De-FT8'd Phone & CW cockpits** — the top bar no longer shows FT8/digital furniture in voice/CW;
+  each mode keeps its own controls. Sortable logbook columns; clearer hunt-chip visibility;
+  smart-Enter QRZ lookup.
+- **Smoother FTdx10 (and general rig) setup** — Auto-test seeds the detected model, with a callout
+  when no model is set, and clearer rig hints.
+- **Phone bandscope perf + clarity** — cached spectrum row, a you-are-here dial marker, a passband
+  overlay, and honest labels.
+
+### Fixed
+
+- Auto-test wrong-model guard, park-prefill honesty, CSV BOM on export, and tuning-entry fixes from
+  the review pass.
+
+## [0.4.0] — band map, log stats, weak-signal CW, callbook photo, filter width
+
+### Added
+
+- **Vertical pop-out band map** — an N1MM-style frequency map of live cluster spots for the Phone
+  and CW cockpits, colored by award need with worked calls struck through; click a spot to QSY to
+  its exact frequency and prefill the log (including from the pop-out window).
+- **Full-band activity strip** — a clickable spot strip spanning the whole band with a you-are-here
+  dial marker; your licensed phone sub-band is shaded per US license class.
+- **Logbook Statistics** — QSOs by band / mode / year / hour-of-day, top DXCC entities, WAS states,
+  confirmation rate, plus continent, CQ-zone, and DX-vs-domestic breakdowns (cty.dat-resolved).
+- **Weak-signal CW decode** — the decoder now gates on true SNR against off-pitch band noise, so the
+  sensitivity slider genuinely trades copy against noise and the "E E E" storm between signals is gone.
+- **Real CAT S-meter** — the Phone scope meter reads the rig's actual STRENGTH over CAT (S0–S9+60);
+  shows "—" rather than faking a level when the rig doesn't report it or during TX.
+- **RX filter-width control** — read/set the rig's passband over CAT from the Phone and CW cockpits
+  (CW defaults narrow at 500 Hz to dig signals out of QRM).
+- **Rig DSP toggles** — NB / NR / auto-notch on Phone and CW, plus COMP and VOX on Phone;
+  capability-probed so only functions your rig reports are shown.
+- **Manual split + sideband override on Phone** — one-click "work up N" split with an offset stepper,
+  and a USB/LSB/FM override that reverts to the band-correct sideband on a band change.
+- **Callbook photo + worked-before recall card** — the "B4" hint grew into a full recall panel:
+  QRZ/HamQTH profile photo, prior contacts, distance/bearing from your QTH, and a same-band dupe flag.
+- **Split RST fields** — separate Sent / Rcvd reports in the log entry (the CW decoder fills Rcvd).
+- **Auto callbook lookup** — name/QTH fill shortly after you stop typing a call, no Tab needed.
+- **Update check** — on launch (throttled to once a day) Nexus checks SourceForge for a newer
+  release and shows a dismissible notice, with a manual check in Settings; it only opens the
+  download page, never downloads or runs anything.
+
+### Changed
+
+- The redundant top-bar band dropdown (fed by the digital band plan, so a wrong-dial control on
+  voice/CW) is hidden on Phone and CW; each cockpit keeps its own band picker.
+
+### Fixed
+
+- A periodic scope/passband stall: the slower CAT reads (mode, S-meter, DSP functions) are now
+  staggered across poll cycles instead of stacking into one.
+- The 4 m band (70.0–70.5 MHz) is now recognized by the UI band ranges, matching the backend plan.
+
 ## [0.3.0] — the Nexus transformation
 
 **Tempo became Nexus.** What began as a chat-first app for the FT1/DX1 waveforms

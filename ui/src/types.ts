@@ -1703,6 +1703,65 @@ export interface Settings {
     qso: string[]
     band: string[]
   }
+  // --- dual-radio ---
+  /** Configured radios (dual-radio). Migrated to a single profile for a one-radio station; the flat
+   * rig/audio fields above mirror whichever is active. Absent on very old records. */
+  radios?: RadioProfile[]
+  /** The id of the active radio (the one the flat rig fields describe). */
+  activeRadio?: number
+  /** Peg-lock: band selection won't auto-switch the active radio when true. */
+  radioPegged?: boolean
+}
+
+/** One radio's complete connection profile (dual-radio). Mirrors the Rust `RadioProfile`; the flat
+ * `Settings` rig/audio fields are a mirror of whichever profile is active. The Settings roster edits
+ * `name`/`bands` per radio; CAT/audio are edited via the flat form on the active radio. */
+export interface RadioProfile {
+  id: number
+  name: string
+  enabled: boolean
+  pttMethod: string
+  rigModel: number
+  rigModelName: string
+  serialPort: string
+  baud: number
+  rigConn: string
+  rigAddr: string
+  rigctldPort: number
+  audioIn: string
+  audioOut: string
+  txLevel: number
+  rotatorModel: number
+  rotatorPort: string
+  rotatorBaud: number
+  rotatorHost: string
+  rotctldPort: number
+  /** Bands this radio covers (empty = all) — for auto band-routing (P4). */
+  bands: string[]
+  lastDialMhz: number
+  lastBand: string
+  lastSideband: string
+  /** Native panadapter: "auto" | "none" | "flex" | "civ". */
+  nativeScope: string
+}
+
+/** A compact per-radio summary for the multi-radio switcher (dual-radio). One per configured
+ * radio; the active radio carries live band/frequency/S-meter, the others their last-known tune.
+ * `radios` on the snapshot is empty or 1-element for a single-radio station (no switcher shown). */
+export interface RadioSummary {
+  id: number
+  name: string
+  band: string
+  dialMhz: number
+  sideband: string
+  isActive: boolean
+  /** Live CAT health for the active radio; null for a not-connected radio. */
+  catOk: boolean | null
+  /** Live S-meter (dB rel S9) for the active radio; null otherwise. */
+  smeterDb: number | null
+  transmitting: boolean
+  /** Bands this radio covers (empty = all) — for auto-routing (P4) + a coverage hint. */
+  bands: string[]
 }
 
 export interface AppSnapshot {
@@ -1710,6 +1769,12 @@ export interface AppSnapshot {
   mygrid: string
   mode: OpMode
   radio: RadioStatus
+  /** Multi-radio switcher summaries (dual-radio); empty/1-element ⇒ single-radio, no switcher. */
+  radios?: RadioSummary[]
+  /** The id of the active radio (matches one of `radios`). */
+  activeRadioId?: number
+  /** Peg-lock: band selection won't auto-switch the active radio when true. */
+  radioPegged?: boolean
   link: LinkState
   stations: Station[]
   conversations: Conversation[]
