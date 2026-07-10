@@ -744,9 +744,12 @@ export interface CatProbeResult {
 
 export interface Spectrum {
   row: number[]
-  /** The audio window the row spans (Hz) — data-driven, never hardcode 200/2900. */
+  /** The window the row spans (Hz) — data-driven, never hardcode 200/2900. For a native RF
+   * panadapter this is the absolute RF span. */
   loHz?: number
   hiHz?: number
+  /** Feed source: "audio" (soundcard FFT), "flex" (SmartSDR VITA), or "civ" (Icom CI-V scope). */
+  source?: string
 }
 
 /** A single decoded signal in the most-recent RX slot (WSJT-X style row). */

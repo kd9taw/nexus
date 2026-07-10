@@ -6656,6 +6656,20 @@ select optgroup {
   align-items: center;
   gap: var(--space-2);
 }
+/* Native-RF-feed badge: a FlexRadio/Icom panadapter is driving the scope, not the soundcard FFT. */
+.ph-scope-src {
+  margin-left: auto;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  color: var(--accent-ink);
+  background: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+}
 .ph-scope-smeter-label {
   font-family: var(--font-mono);
   font-size: 11px;
