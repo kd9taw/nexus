@@ -5102,8 +5102,8 @@ impl Engine {
         };
         Spectrum {
             row,
-            lo_hz: LO_HZ,
-            hi_hz: HI_HZ,
+            lo_hz: f64::from(LO_HZ),
+            hi_hz: f64::from(HI_HZ),
             source: "audio".into(),
         }
     }

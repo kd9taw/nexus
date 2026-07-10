@@ -200,7 +200,12 @@ impl FlexCat {
             .write_all(encode_command(seq, command).as_bytes())?;
         let deadline = std::time::Instant::now() + timeout;
         while let Some(remaining) = deadline.checked_duration_since(std::time::Instant::now()) {
-            if let Ok(FlexMsg::Reply { seq: rseq, code, msg }) = self.rx.recv_timeout(remaining) {
+            if let Ok(FlexMsg::Reply {
+                seq: rseq,
+                code,
+                msg,
+            }) = self.rx.recv_timeout(remaining)
+            {
                 if rseq == seq {
                     return Ok((code, msg));
                 }
@@ -211,6 +216,19 @@ impl FlexCat {
             "no reply from Flex",
         ))
     }
+
+    /// Fire-and-forget: write a command WITHOUT consuming its reply, returning the sequence
+    /// number it was sent with. Use this when a single thread also needs [`recv`] to see the
+    /// async status stream — `command` would swallow those `S…` frames while waiting for its
+    /// reply, so the panadapter worker sends via `send` and reads replies + status through
+    /// `recv` instead. Reply matching (by the returned seq) is the caller's job.
+    pub fn send(&mut self, command: &str) -> std::io::Result<u32> {
+        let seq = self.seq;
+        self.seq = self.seq.wrapping_add(1).max(1);
+        self.stream
+            .write_all(encode_command(seq, command).as_bytes())?;
+        Ok(seq)
+    }
 }
 
 #[cfg(test)]
@@ -219,7 +237,10 @@ mod tests {
 
     #[test]
     fn parses_the_greeting_and_replies() {
-        assert_eq!(parse_line("V1.4.0.0\n"), FlexMsg::Version("1.4.0.0".to_string()));
+        assert_eq!(
+            parse_line("V1.4.0.0\n"),
+            FlexMsg::Version("1.4.0.0".to_string())
+        );
         assert_eq!(parse_line("H2ABC\n"), FlexMsg::Handle(0x2ABC));
         assert_eq!(
             parse_line("R3|0|0x40000000\n"),
@@ -249,7 +270,10 @@ mod tests {
                 body: "display pan 0x40000000 center=14.1".to_string()
             }
         );
-        assert!(matches!(parse_line("M10000000|hello\n"), FlexMsg::Message { .. }));
+        assert!(matches!(
+            parse_line("M10000000|hello\n"),
+            FlexMsg::Message { .. }
+        ));
         assert!(matches!(parse_line("garbage"), FlexMsg::Unknown(_)));
     }
 
