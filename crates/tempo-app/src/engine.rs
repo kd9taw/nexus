@@ -16,7 +16,7 @@
 use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use tempo_core::fieldday::{Exchange, FieldDayStation};
 use tempo_core::logbook::{Logbook, QsoRecord};
@@ -370,6 +370,10 @@ pub struct Engine {
     /// (the ~20-30 Hz UI poll) just returns it instead of re-running the Goertzel under the engine
     /// lock on every call (the source of the "choppy" Phone scope under lock/IPC contention).
     spectrum_cache: Option<crate::dto::Spectrum>,
+    /// The latest NATIVE RF panadapter row (Flex VITA / Icom CI-V) + when it arrived. Preferred
+    /// over `spectrum_cache` while fresh (< 1 s); a stalled native source falls back to audio.
+    /// Fed by `set_spectrum_rf`; `None` until a native scope worker is running.
+    spectrum_rf: Option<(crate::dto::Spectrum, Instant)>,
     /// A longer rolling RX-audio ring (several seconds) — the batch per-channel decode
     /// behind the wideband CW skimmer (the 4096-sample waterfall window is too short).
     cw_audio: Vec<f32>,
@@ -601,6 +605,7 @@ impl Engine {
             periods_dir: None,
             spectrum_audio: Vec::new(),
             spectrum_cache: None,
+            spectrum_rf: None,
             cw_audio: Vec::new(),
             cw_stream: tempo_core::cw_decode::CwStreamDecoder::new(ft1::SAMPLE_RATE, 600.0),
             qso_audio: Vec::new(),
@@ -5099,10 +5104,25 @@ impl Engine {
             row,
             lo_hz: LO_HZ,
             hi_hz: HI_HZ,
+            source: "audio".into(),
         }
     }
 
+    /// Feed a NATIVE RF spectrum row (Flex SmartSDR VITA-49 or the Icom CI-V scope). It takes
+    /// precedence over the audio-FFT scope while fresh; a stalled native source auto-falls-back
+    /// to audio, so the waterfall never goes dead if the panadapter stream drops.
+    pub fn set_spectrum_rf(&mut self, spectrum: crate::dto::Spectrum) {
+        self.spectrum_rf = Some((spectrum, Instant::now()));
+    }
+
     pub fn spectrum_row(&self) -> Spectrum {
+        // A native RF panadapter (Flex/Icom) wins while its rows are fresh (< 1 s) — this is the
+        // single seam both native workers feed via `set_spectrum_rf`.
+        if let Some((spec, at)) = &self.spectrum_rf {
+            if at.elapsed() < std::time::Duration::from_secs(1) && !spec.row.is_empty() {
+                return spec.clone();
+            }
+        }
         // Live capture → return the row already computed in the radio loop (cheap clone, no
         // recompute under the lock). Fallback: a Companion/UDP source with no local capture →
         // compute from the last decoded RX buffer on demand (rare, low-rate path).
@@ -8217,6 +8237,38 @@ mod tests {
             "too-weak caller ignored — the run keeps calling CQ"
         );
         assert!(qso.dxcall.is_none(), "did not lock the below-floor caller");
+    }
+
+    #[test]
+    fn native_rf_spectrum_takes_precedence_over_audio_then_falls_back() {
+        // The shared per-radio scope seam: a fresh native RF row (Flex/Icom) wins over the
+        // audio-FFT scope; an empty/absent native row falls back so the waterfall never dies.
+        let mut e = Engine::new("W9XYZ", "EN52", 0);
+        e.set_spectrum_audio(&vec![0.1f32; 256]);
+        assert_eq!(e.spectrum_row().source, "audio", "audio-FFT by default");
+
+        e.set_spectrum_rf(crate::dto::Spectrum {
+            row: vec![0.5, 0.6, 0.7],
+            lo_hz: 144_000_000.0,
+            hi_hz: 144_200_000.0,
+            source: "flex".into(),
+        });
+        let rf = e.spectrum_row();
+        assert_eq!(rf.source, "flex", "fresh native RF row wins");
+        assert_eq!(rf.row, vec![0.5, 0.6, 0.7]);
+
+        // An empty native row must NOT blank the scope — fall back to audio.
+        e.set_spectrum_rf(crate::dto::Spectrum {
+            row: vec![],
+            lo_hz: 0.0,
+            hi_hz: 0.0,
+            source: "civ".into(),
+        });
+        assert_eq!(
+            e.spectrum_row().source,
+            "audio",
+            "empty native row → audio fallback"
+        );
     }
 
     #[test]
