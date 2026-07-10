@@ -15,7 +15,7 @@
 //! yet confirmed on live hardware — the orchestration flags this until an operator verifies it.
 
 /// Flex's registered OUI in the VITA class id (24-bit).
-pub const FLEX_OUI: u32 = 0x001C_2D;
+pub const FLEX_OUI: u32 = 0x00_1C_2D;
 /// VITA packet class code for panadapter FFT data.
 pub const FFT_PACKET_CLASS: u16 = 0x8003;
 

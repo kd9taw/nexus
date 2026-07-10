@@ -175,6 +175,20 @@ pub struct Settings {
     /// TCP port the CAT broker listens on (Hamlib NET rigctl default 4532).
     pub cat_broker_port: u16,
 
+    // --- multi-radio (dual-radio) ---
+    /// Configured radios. EMPTY in older settings files → migrated to a single profile 0 mirroring
+    /// the flat rig/audio fields above (see `ensure_radio_profiles`). A single-radio station always
+    /// has exactly one, and the flat fields are kept mirrored to the ACTIVE profile so every
+    /// existing consumer (Transport::from_settings, sync_rotctld, rig_mode) reads them unchanged.
+    #[serde(default)]
+    pub radios: Vec<RadioProfile>,
+    /// The id of the ACTIVE radio (the one the UI commands + the operating scope shows).
+    #[serde(default)]
+    pub active_radio: u32,
+    /// Peg-lock: when true, band selection never auto-switches the active radio.
+    #[serde(default)]
+    pub radio_pegged: bool,
+
     // --- network (WSJT-X parity) ---
     /// Emit the WSJT-X-compatible UDP protocol (for JTAlert/GridTracker/loggers).
     pub wsjtx_udp: bool,
@@ -633,6 +647,107 @@ impl Default for Macros {
     }
 }
 
+/// One radio's complete, independently-configurable connection profile. A single-radio station has
+/// exactly one (migrated from the flat `Settings` rig/audio fields); adding a 2nd radio in Settings
+/// appends another. Serde-defaulted throughout so partial/older records load.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct RadioProfile {
+    /// Stable id, never reused — routing / active-selection / per-radio state key on it.
+    pub id: u32,
+    /// Operator-facing name ("FTDX10", "IC-9700"); defaults to the rig model name.
+    pub name: String,
+    /// Configured but not driven when false (a rig temporarily unplugged).
+    pub enabled: bool,
+    // --- CAT (mirror of the flat rig fields) ---
+    pub ptt_method: String,
+    pub rig_model: u32,
+    pub rig_model_name: String,
+    pub serial_port: String,
+    pub baud: u32,
+    pub rig_conn: String,
+    pub rig_addr: String,
+    /// UNIQUE across enabled profiles (validated) — each radio's own rigctld TCP port.
+    pub rigctld_port: u16,
+    // --- audio (a rig's own RX codec) ---
+    pub audio_in: String,
+    pub audio_out: String,
+    pub tx_level: f32,
+    // --- rotator (per-radio; replaces the old 4533 rotctld singleton) ---
+    pub rotator_model: u32,
+    pub rotator_port: String,
+    pub rotator_baud: u32,
+    pub rotator_host: String,
+    /// UNIQUE across enabled profiles (validated) — each radio's own rotctld TCP port.
+    pub rotctld_port: u16,
+    // --- band routing (auto-select this radio for these bands; EMPTY = covers everything) ---
+    pub bands: Vec<String>,
+    // --- per-radio persisted tune (restored when the radio becomes active) ---
+    pub last_dial_mhz: f64,
+    pub last_band: String,
+    pub last_sideband: String,
+    // --- native panadapter: "auto" | "none" | "flex" | "civ" ---
+    pub native_scope: String,
+}
+
+impl Default for RadioProfile {
+    fn default() -> Self {
+        RadioProfile {
+            id: 0,
+            name: String::new(),
+            enabled: true,
+            ptt_method: "vox".to_string(),
+            rig_model: 0,
+            rig_model_name: "None / VOX".to_string(),
+            serial_port: String::new(),
+            baud: 38400,
+            rig_conn: "serial".to_string(),
+            rig_addr: String::new(),
+            rigctld_port: 4532,
+            audio_in: String::new(),
+            audio_out: String::new(),
+            tx_level: 0.9,
+            rotator_model: 0,
+            rotator_port: String::new(),
+            rotator_baud: default_rotator_baud(),
+            rotator_host: String::new(),
+            rotctld_port: 4533,
+            bands: Vec::new(),
+            last_dial_mhz: 0.0,
+            last_band: String::new(),
+            last_sideband: String::new(),
+            native_scope: "auto".to_string(),
+        }
+    }
+}
+
+/// Validate that every enabled profile's rigctld port + rotctld port (and the CAT broker port, if
+/// on) are pairwise distinct — two daemons can't bind the same TCP port. Pure; used by the Settings
+/// save path + the UI. Rotctld ports only count for profiles that actually have a rotator.
+pub fn validate_radio_ports(radios: &[RadioProfile], broker: Option<u16>) -> Result<(), String> {
+    let mut used: Vec<(u16, String)> = Vec::new();
+    for p in radios.iter().filter(|p| p.enabled) {
+        used.push((p.rigctld_port, format!("{}'s CAT", p.name)));
+        if p.rotator_model > 0 || !p.rotator_host.is_empty() {
+            used.push((p.rotctld_port, format!("{}'s rotator", p.name)));
+        }
+    }
+    if let Some(b) = broker {
+        used.push((b, "the CAT broker".to_string()));
+    }
+    for i in 0..used.len() {
+        for j in (i + 1)..used.len() {
+            if used[i].0 == used[j].0 {
+                return Err(format!(
+                    "TCP port {} is claimed by both {} and {} — give them different ports",
+                    used[i].0, used[i].1, used[j].1
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -683,6 +798,9 @@ impl Default for Settings {
             rotator_host: String::new(),
             cat_broker: false,
             cat_broker_port: 4532,
+            radios: Vec::new(), // migrated to a single profile on load()
+            active_radio: 0,
+            radio_pegged: false,
             wsjtx_udp: false,
             wsjtx_udp_addr: "127.0.0.1:2237".to_string(),
             write_all_txt: false,
@@ -782,6 +900,142 @@ impl Default for Settings {
 }
 
 impl Settings {
+    /// Build a RadioProfile mirroring the current flat rig/audio fields — the migration seed for a
+    /// single-radio station's profile 0.
+    fn radio_profile_from_flat(&self, id: u32) -> RadioProfile {
+        RadioProfile {
+            id,
+            name: if self.rig_model_name.trim().is_empty() || self.rig_model_name == "None / VOX" {
+                format!("Radio {}", id + 1)
+            } else {
+                self.rig_model_name.clone()
+            },
+            enabled: true,
+            ptt_method: self.ptt_method.clone(),
+            rig_model: self.rig_model,
+            rig_model_name: self.rig_model_name.clone(),
+            serial_port: self.serial_port.clone(),
+            baud: self.baud,
+            rig_conn: self.rig_conn.clone(),
+            rig_addr: self.rig_addr.clone(),
+            rigctld_port: self.rigctld_port,
+            audio_in: self.audio_in.clone(),
+            audio_out: self.audio_out.clone(),
+            tx_level: self.tx_level,
+            rotator_model: self.rotator_model,
+            rotator_port: self.rotator_port.clone(),
+            rotator_baud: self.rotator_baud,
+            rotator_host: self.rotator_host.clone(),
+            rotctld_port: 4533,
+            bands: Vec::new(),
+            last_dial_mhz: self.dial_mhz,
+            last_band: self.band.clone(),
+            last_sideband: self.sideband.clone(),
+            native_scope: "auto".to_string(),
+        }
+    }
+
+    /// Ensure at least one radio profile exists (migrate the flat fields to profile 0 for older
+    /// settings) and that `active_radio` names a real profile.
+    pub fn ensure_radio_profiles(&mut self) {
+        if self.radios.is_empty() {
+            let p = self.radio_profile_from_flat(0);
+            self.radios.push(p);
+            self.active_radio = 0;
+        }
+        if !self.radios.iter().any(|p| p.id == self.active_radio) {
+            self.active_radio = self.radios[0].id;
+        }
+    }
+
+    /// The active radio profile (guaranteed present after `ensure_radio_profiles`).
+    pub fn active_profile(&self) -> Option<&RadioProfile> {
+        self.radios.iter().find(|p| p.id == self.active_radio)
+    }
+
+    /// Copy the ACTIVE profile's rig/audio fields INTO the flat mirror, so every existing consumer
+    /// (Transport::from_settings, sync_rotctld, rig_mode…) reads the active radio unchanged. No-op
+    /// when the flat fields already equal the active profile (the single-radio case). Called on load.
+    pub fn sync_flat_from_active(&mut self) {
+        let Some(p) = self.active_profile().cloned() else {
+            return;
+        };
+        self.ptt_method = p.ptt_method;
+        self.rig_model = p.rig_model;
+        self.rig_model_name = p.rig_model_name;
+        self.serial_port = p.serial_port;
+        self.baud = p.baud;
+        self.rig_conn = p.rig_conn;
+        self.rig_addr = p.rig_addr;
+        self.rigctld_port = p.rigctld_port;
+        self.audio_in = p.audio_in;
+        self.audio_out = p.audio_out;
+        self.tx_level = p.tx_level;
+        self.rotator_model = p.rotator_model;
+        self.rotator_port = p.rotator_port;
+        self.rotator_baud = p.rotator_baud;
+        self.rotator_host = p.rotator_host;
+    }
+
+    /// Copy the flat mirror back INTO the active profile — so edits made through today's flat rig/
+    /// audio form persist into the active radio's profile. Called before save. Keeps the two
+    /// representations from diverging (the single writer, per the mirror invariant).
+    pub fn sync_active_from_flat(&mut self) {
+        self.ensure_radio_profiles();
+        let active = self.active_radio;
+        // Snapshot flat fields first (avoid borrowing self while mutating the profile).
+        let (
+            ptt_method,
+            rig_model,
+            rig_model_name,
+            serial_port,
+            baud,
+            rig_conn,
+            rig_addr,
+            rigctld_port,
+            audio_in,
+            audio_out,
+            tx_level,
+            rotator_model,
+            rotator_port,
+            rotator_baud,
+            rotator_host,
+        ) = (
+            self.ptt_method.clone(),
+            self.rig_model,
+            self.rig_model_name.clone(),
+            self.serial_port.clone(),
+            self.baud,
+            self.rig_conn.clone(),
+            self.rig_addr.clone(),
+            self.rigctld_port,
+            self.audio_in.clone(),
+            self.audio_out.clone(),
+            self.tx_level,
+            self.rotator_model,
+            self.rotator_port.clone(),
+            self.rotator_baud,
+            self.rotator_host.clone(),
+        );
+        if let Some(p) = self.radios.iter_mut().find(|p| p.id == active) {
+            p.ptt_method = ptt_method;
+            p.rig_model = rig_model;
+            p.rig_model_name = rig_model_name;
+            p.serial_port = serial_port;
+            p.baud = baud;
+            p.rig_conn = rig_conn;
+            p.rig_addr = rig_addr;
+            p.rigctld_port = rigctld_port;
+            p.audio_in = audio_in;
+            p.audio_out = audio_out;
+            p.tx_level = tx_level;
+            p.rotator_model = rotator_model;
+            p.rotator_port = rotator_port;
+            p.rotator_baud = rotator_baud;
+            p.rotator_host = rotator_host;
+        }
+    }
+
     /// Load settings from `path`, or return defaults if missing/invalid.
     pub fn load(path: &Path) -> Self {
         let mut s: Settings = std::fs::read_to_string(path)
@@ -846,6 +1100,10 @@ impl Settings {
                     && seen.insert(h.to_ascii_lowercase())
             })
             .collect();
+        // Multi-radio: migrate an older (flat-only) settings file to a single radio profile, then
+        // mirror the active profile into the flat fields so every existing consumer reads unchanged.
+        s.ensure_radio_profiles();
+        s.sync_flat_from_active();
         s
     }
 
@@ -859,7 +1117,11 @@ impl Settings {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
         }
-        let json = serde_json::to_string_pretty(self).map_err(std::io::Error::other)?;
+        // Persist a copy whose active radio profile reflects any edits made through the flat rig/
+        // audio form (the mirror invariant). `self` is left untouched.
+        let mut to_save = self.clone();
+        to_save.sync_active_from_flat();
+        let json = serde_json::to_string_pretty(&to_save).map_err(std::io::Error::other)?;
         let tmp = path.with_extension("json.tmp");
         std::fs::write(&tmp, json)?;
         std::fs::rename(&tmp, path)
@@ -1329,5 +1591,69 @@ mod tests {
             "a deliberately-disabled modern config stays disabled"
         );
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn migrates_a_flat_config_to_a_single_radio_profile() {
+        // An older settings.json (no `radios`) loads as exactly one profile mirroring the flat
+        // rig/audio fields; the flat fields stay identical (single-radio behavior unchanged).
+        let path = std::env::temp_dir()
+            .join("tempo_settings_radiomigrate")
+            .join("settings.json");
+        let mut legacy = Settings::default();
+        legacy.rig_model = 1042;
+        legacy.rig_model_name = "Yaesu FTDX10".into();
+        legacy.serial_port = "COM5".into();
+        legacy.audio_in = "USB Audio CODEC".into();
+        legacy.radios = Vec::new(); // force the legacy (unmigrated) shape
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, serde_json::to_string(&legacy).unwrap()).unwrap();
+
+        let s = Settings::load(&path);
+        assert_eq!(s.radios.len(), 1, "migrated to exactly one profile");
+        let p = &s.radios[0];
+        assert_eq!(p.id, 0);
+        assert_eq!(p.rig_model, 1042);
+        assert_eq!(p.name, "Yaesu FTDX10");
+        assert_eq!(p.serial_port, "COM5");
+        assert_eq!(p.audio_in, "USB Audio CODEC");
+        assert_eq!(p.rotctld_port, 4533);
+        assert_eq!(s.active_radio, 0);
+        // Flat mirror unchanged — every existing consumer reads it as before.
+        assert_eq!(s.rig_model, 1042);
+        assert_eq!(s.serial_port, "COM5");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn save_mirrors_a_flat_edit_into_the_active_profile() {
+        // The mirror invariant: editing the flat rig fields (today's UI) and saving persists the
+        // edit into the active profile, so a reload preserves it.
+        let path = std::env::temp_dir()
+            .join("tempo_settings_radiomirror")
+            .join("settings.json");
+        let mut s = Settings::default();
+        s.ensure_radio_profiles();
+        s.rig_model = 3081;
+        s.rig_model_name = "Icom IC-9700".into();
+        s.serial_port = "COM7".into();
+        s.save(&path).unwrap();
+
+        let back = Settings::load(&path);
+        assert_eq!(back.radios.len(), 1);
+        assert_eq!(back.radios[0].rig_model, 3081, "flat edit persisted into the active profile");
+        assert_eq!(back.radios[0].rig_model_name, "Icom IC-9700"); // synced flat field
+        assert_eq!(back.rig_model, 3081, "flat mirror intact after reload");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn validate_radio_ports_rejects_duplicate_ports() {
+        let a = RadioProfile { id: 0, name: "A".into(), rigctld_port: 4532, ..Default::default() };
+        let b = RadioProfile { id: 1, name: "B".into(), rigctld_port: 4532, ..Default::default() };
+        assert!(validate_radio_ports(&[a.clone(), b.clone()], None).is_err(), "same rigctld port");
+        let b2 = RadioProfile { rigctld_port: 4534, ..b };
+        assert!(validate_radio_ports(&[a.clone(), b2], None).is_ok(), "distinct ports OK");
+        assert!(validate_radio_ports(&[a], Some(4532)).is_err(), "broker collides with a rig");
     }
 }

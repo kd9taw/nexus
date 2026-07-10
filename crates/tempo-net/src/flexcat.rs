@@ -200,8 +200,7 @@ impl FlexCat {
             .write_all(encode_command(seq, command).as_bytes())?;
         let deadline = std::time::Instant::now() + timeout;
         while let Some(remaining) = deadline.checked_duration_since(std::time::Instant::now()) {
-            if let Some(FlexMsg::Reply { seq: rseq, code, msg }) = self.rx.recv_timeout(remaining).ok()
-            {
+            if let Ok(FlexMsg::Reply { seq: rseq, code, msg }) = self.rx.recv_timeout(remaining) {
                 if rseq == seq {
                     return Ok((code, msg));
                 }
