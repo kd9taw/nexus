@@ -22,6 +22,7 @@
 //! at build time and a sound card at runtime).
 
 pub mod backend;
+pub mod civ;
 pub mod frames;
 pub mod monitor;
 pub mod port_prober;

@@ -1,0 +1,385 @@
+//! Icom CI-V command table — pure encoders/decoders for the CAT-parity verb set, built on
+//! [`super::frame`]. No I/O. Covers the 7300-family (IC-7300/7610/9700/705/905), whose
+//! command numbers are shared; per-model differences are the CI-V **address** (below) and a
+//! few band/mode specifics handled by the caller.
+//!
+//! A command builder returns a [`Frame`] (`.to_bytes()` for the wire); a decoder takes a
+//! *reply* frame and extracts the value. Set commands are acknowledged with a bare
+//! `FB`/`FA` ([`Frame::is_ack`]/[`Frame::is_nak`]).
+
+use super::frame::{bcd_to_freq, freq_to_bcd, Frame};
+
+/// The Icom rigs Nexus knows how to drive natively over CI-V, with their factory-default
+/// CI-V bus address. (The address is user-changeable on the rig; the serial engine lets the
+/// operator override it, defaulting to these.)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IcomModel {
+    Ic7300,
+    Ic7610,
+    Ic9700,
+    Ic705,
+    Ic905,
+}
+
+impl IcomModel {
+    /// The factory-default CI-V address for this model.
+    pub fn default_civ_addr(self) -> u8 {
+        match self {
+            IcomModel::Ic7300 => 0x94,
+            IcomModel::Ic7610 => 0x98,
+            IcomModel::Ic9700 => 0xA2,
+            IcomModel::Ic705 => 0xA4,
+            IcomModel::Ic905 => 0xAC,
+        }
+    }
+
+    /// Recognize a model from a human/rig model name (e.g. "Icom IC-9700"). Case- and
+    /// separator-insensitive on the `ic####` token.
+    pub fn from_name(name: &str) -> Option<Self> {
+        let n: String = name
+            .to_ascii_lowercase()
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric())
+            .collect();
+        // Longest/most-specific tokens first so "ic905" doesn't shadow nothing, etc.
+        for (tok, m) in [
+            ("ic7300", IcomModel::Ic7300),
+            ("ic7610", IcomModel::Ic7610),
+            ("ic9700", IcomModel::Ic9700),
+            ("ic705", IcomModel::Ic705),
+            ("ic905", IcomModel::Ic905),
+        ] {
+            if n.contains(tok) {
+                return Some(m);
+            }
+        }
+        None
+    }
+}
+
+/// Operating modes as CI-V mode bytes (command `0x04`/`0x06` payload byte 0).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    Lsb,
+    Usb,
+    Am,
+    Cw,
+    Rtty,
+    Fm,
+    CwR,
+    RttyR,
+}
+
+impl Mode {
+    pub fn to_byte(self) -> u8 {
+        match self {
+            Mode::Lsb => 0x00,
+            Mode::Usb => 0x01,
+            Mode::Am => 0x02,
+            Mode::Cw => 0x03,
+            Mode::Rtty => 0x04,
+            Mode::Fm => 0x05,
+            Mode::CwR => 0x07,
+            Mode::RttyR => 0x08,
+        }
+    }
+    pub fn from_byte(b: u8) -> Option<Mode> {
+        Some(match b {
+            0x00 => Mode::Lsb,
+            0x01 => Mode::Usb,
+            0x02 => Mode::Am,
+            0x03 => Mode::Cw,
+            0x04 => Mode::Rtty,
+            0x05 => Mode::Fm,
+            0x07 => Mode::CwR,
+            0x08 => Mode::RttyR,
+            _ => return None,
+        })
+    }
+    /// The canonical uppercase name Nexus/Hamlib use.
+    pub fn name(self) -> &'static str {
+        match self {
+            Mode::Lsb => "LSB",
+            Mode::Usb => "USB",
+            Mode::Am => "AM",
+            Mode::Cw => "CW",
+            Mode::Rtty => "RTTY",
+            Mode::Fm => "FM",
+            Mode::CwR => "CWR",
+            Mode::RttyR => "RTTYR",
+        }
+    }
+    pub fn from_name(name: &str) -> Option<Mode> {
+        Some(match name.to_ascii_uppercase().as_str() {
+            "LSB" => Mode::Lsb,
+            "USB" => Mode::Usb,
+            "AM" => Mode::Am,
+            "CW" => Mode::Cw,
+            "RTTY" | "FSK" => Mode::Rtty,
+            "FM" => Mode::Fm,
+            "CWR" | "CW-R" => Mode::CwR,
+            "RTTYR" | "RTTY-R" | "FSKR" => Mode::RttyR,
+            _ => return None,
+        })
+    }
+}
+
+// ---- command builders (controller → radio) ----
+
+/// Read the operating frequency (cmd `03`). Reply carries 5-byte BCD freq.
+pub fn read_freq(radio: u8) -> Frame {
+    Frame::command(radio, 0x03, &[])
+}
+/// Set the operating frequency (cmd `05`).
+pub fn set_freq(radio: u8, hz: u64) -> Frame {
+    Frame::command(radio, 0x05, &freq_to_bcd(hz))
+}
+/// Read the operating mode + filter (cmd `04`).
+pub fn read_mode(radio: u8) -> Frame {
+    Frame::command(radio, 0x04, &[])
+}
+/// Set the operating mode (cmd `06`), optionally selecting a filter (1/2/3).
+pub fn set_mode(radio: u8, mode: Mode, filter: Option<u8>) -> Frame {
+    match filter {
+        Some(f) => Frame::command(radio, 0x06, &[mode.to_byte(), f]),
+        None => Frame::command(radio, 0x06, &[mode.to_byte()]),
+    }
+}
+/// Read PTT state (cmd `1C 00`). Reply data `[0x00, 0x00|0x01]`.
+pub fn read_ptt(radio: u8) -> Frame {
+    Frame::command(radio, 0x1C, &[0x00])
+}
+/// Set PTT (cmd `1C 00`): `tx=true` keys the transmitter.
+pub fn set_ptt(radio: u8, tx: bool) -> Frame {
+    Frame::command(radio, 0x1C, &[0x00, u8::from(tx)])
+}
+/// Read the S-meter (cmd `15 02`). Reply is a 2-byte big-endian BCD level 0000–0255.
+pub fn read_smeter(radio: u8) -> Frame {
+    Frame::command(radio, 0x15, &[0x02])
+}
+/// Read RF output power (cmd `14 0A`). Reply is a 2-byte BCD level 0000–0255.
+pub fn read_rf_power(radio: u8) -> Frame {
+    Frame::command(radio, 0x14, &[0x0A])
+}
+/// Set RF output power (cmd `14 0A`) as a percentage 0–100 (mapped to 0–255).
+pub fn set_rf_power(radio: u8, percent: u8) -> Frame {
+    let level = u16::from(percent.min(100)) * 255 / 100;
+    let [hi, lo] = level_to_bcd2(level);
+    Frame::command(radio, 0x14, &[0x0A, hi, lo])
+}
+
+// ---- reply decoders ----
+
+/// Extract the frequency (Hz) from a `03` frequency report (or an unsolicited transceive
+/// `00` report, which shares the 5-byte-BCD payload).
+pub fn parse_freq(f: &Frame) -> Option<u64> {
+    if (f.cmd == 0x03 || f.cmd == 0x00) && f.data.len() >= 5 {
+        Some(bcd_to_freq(&f.data[..5]))
+    } else {
+        None
+    }
+}
+/// Extract `(mode, filter)` from a `04` mode report (or transceive `01`).
+pub fn parse_mode(f: &Frame) -> Option<(Mode, Option<u8>)> {
+    if (f.cmd == 0x04 || f.cmd == 0x01) && !f.data.is_empty() {
+        let mode = Mode::from_byte(f.data[0])?;
+        Some((mode, f.data.get(1).copied()))
+    } else {
+        None
+    }
+}
+/// Extract PTT state from a `1C 00` reply (`true` = transmitting).
+pub fn parse_ptt(f: &Frame) -> Option<bool> {
+    if f.cmd == 0x1C && f.data.first() == Some(&0x00) {
+        f.data.get(1).map(|&b| b != 0)
+    } else {
+        None
+    }
+}
+/// Extract the raw S-meter level (0–255) from a `15 02` reply.
+pub fn parse_smeter_raw(f: &Frame) -> Option<u16> {
+    if f.cmd == 0x15 && f.data.first() == Some(&0x02) && f.data.len() >= 3 {
+        Some(level_from_bcd2(f.data[1], f.data[2]))
+    } else {
+        None
+    }
+}
+/// Extract the raw RF-power level (0–255) from a `14 0A` reply.
+pub fn parse_rf_power_raw(f: &Frame) -> Option<u16> {
+    if f.cmd == 0x14 && f.data.first() == Some(&0x0A) && f.data.len() >= 3 {
+        Some(level_from_bcd2(f.data[1], f.data[2]))
+    } else {
+        None
+    }
+}
+
+/// Convert a raw Icom S-meter reading (0–255) to dB relative to S9, using Icom's nominal
+/// scale (S9 ≈ raw 120; each S-unit ≈ 6 dB below S9; raw 120→241 ≈ 0→+60 dB over S9).
+/// Approximate and per-rig-calibratable, but consistent and monotonic.
+pub fn smeter_db_rel_s9(raw: u16) -> f32 {
+    let raw = raw.min(255) as f32;
+    if raw <= 120.0 {
+        raw / 120.0 * 54.0 - 54.0 // S0 = -54 dB … S9 = 0 dB
+    } else {
+        (raw - 120.0) / (241.0 - 120.0) * 60.0 // S9 … S9+60
+    }
+}
+
+// ---- 2-byte big-endian BCD level codec (S-meter, RF power: 0000–0255) ----
+
+/// Encode a 0–255 level as Icom's 2-byte, big-endian, 4-digit BCD (e.g. 128 → `[0x01,0x28]`).
+fn level_to_bcd2(v: u16) -> [u8; 2] {
+    let v = v.min(9999);
+    let hi = (v / 100) as u8; // 0–25 (two BCD digits: thousands+hundreds)
+    let lo = (v % 100) as u8; // 0–99 (tens+ones)
+    [to_bcd(hi), to_bcd(lo)]
+}
+/// Decode Icom's 2-byte big-endian BCD level back to 0–255.
+fn level_from_bcd2(hi: u8, lo: u8) -> u16 {
+    u16::from(from_bcd(hi)) * 100 + u16::from(from_bcd(lo))
+}
+/// Two decimal digits → one BCD byte (defensive: values > 99 wrap on the 100s).
+fn to_bcd(v: u8) -> u8 {
+    ((v / 10 % 10) << 4) | (v % 10)
+}
+/// One BCD byte → two decimal digits (non-decimal nibbles clamped to 0).
+fn from_bcd(b: u8) -> u8 {
+    let hi = b >> 4;
+    let lo = b & 0x0F;
+    (if hi > 9 { 0 } else { hi }) * 10 + (if lo > 9 { 0 } else { lo })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::civ::frame::bcd_to_freq;
+
+    #[test]
+    fn model_addresses_and_name_detection() {
+        assert_eq!(IcomModel::Ic9700.default_civ_addr(), 0xA2);
+        assert_eq!(IcomModel::Ic7300.default_civ_addr(), 0x94);
+        assert_eq!(
+            IcomModel::from_name("Icom IC-9700"),
+            Some(IcomModel::Ic9700)
+        );
+        assert_eq!(IcomModel::from_name("ic7300"), Some(IcomModel::Ic7300));
+        assert_eq!(IcomModel::from_name("Yaesu FTDX10"), None);
+    }
+
+    #[test]
+    fn set_freq_encodes_cmd_05_with_bcd() {
+        let f = set_freq(0xA2, 145_000_000);
+        assert_eq!(f.cmd, 0x05);
+        assert_eq!(f.to, 0xA2);
+        assert_eq!(bcd_to_freq(&f.data), 145_000_000);
+    }
+
+    #[test]
+    fn freq_report_round_trip() {
+        // Radio replies to a read: FE FE E0 A2 03 <bcd> FD.
+        let reply = Frame {
+            to: 0xE0,
+            from: 0xA2,
+            cmd: 0x03,
+            data: freq_to_bcd(432_100_000).to_vec(),
+        };
+        assert_eq!(parse_freq(&reply), Some(432_100_000));
+        // A transceive (cmd 00) report is decoded the same way.
+        let xcv = Frame {
+            cmd: 0x00,
+            ..reply.clone()
+        };
+        assert_eq!(parse_freq(&xcv), Some(432_100_000));
+    }
+
+    #[test]
+    fn mode_table_is_a_bijection_on_known_modes() {
+        for m in [
+            Mode::Lsb,
+            Mode::Usb,
+            Mode::Am,
+            Mode::Cw,
+            Mode::Rtty,
+            Mode::Fm,
+            Mode::CwR,
+            Mode::RttyR,
+        ] {
+            assert_eq!(Mode::from_byte(m.to_byte()), Some(m));
+            assert_eq!(Mode::from_name(m.name()), Some(m));
+        }
+        assert_eq!(Mode::from_byte(0x7F), None);
+    }
+
+    #[test]
+    fn set_mode_with_and_without_filter() {
+        assert_eq!(set_mode(0xA2, Mode::Usb, None).data, vec![0x01]);
+        assert_eq!(set_mode(0xA2, Mode::Cw, Some(2)).data, vec![0x03, 0x02]);
+    }
+
+    #[test]
+    fn ptt_set_and_parse() {
+        assert_eq!(set_ptt(0xA2, true).data, vec![0x00, 0x01]);
+        assert_eq!(set_ptt(0xA2, false).data, vec![0x00, 0x00]);
+        let rx = Frame {
+            to: 0xE0,
+            from: 0xA2,
+            cmd: 0x1C,
+            data: vec![0x00, 0x00],
+        };
+        let tx = Frame {
+            data: vec![0x00, 0x01],
+            ..rx.clone()
+        };
+        assert_eq!(parse_ptt(&rx), Some(false));
+        assert_eq!(parse_ptt(&tx), Some(true));
+    }
+
+    #[test]
+    fn level_bcd2_round_trips() {
+        for v in [0u16, 1, 99, 100, 120, 128, 241, 255] {
+            let [hi, lo] = level_to_bcd2(v);
+            assert_eq!(level_from_bcd2(hi, lo), v, "level {v}");
+        }
+        // Known Icom byte layout: 128 → 0x01 0x28.
+        assert_eq!(level_to_bcd2(128), [0x01, 0x28]);
+    }
+
+    #[test]
+    fn smeter_raw_reply_and_db_curve() {
+        // FE FE E0 A2 15 02 <2-byte BCD> FD, raw 120 = S9.
+        let [hi, lo] = level_to_bcd2(120);
+        let reply = Frame {
+            to: 0xE0,
+            from: 0xA2,
+            cmd: 0x15,
+            data: vec![0x02, hi, lo],
+        };
+        assert_eq!(parse_smeter_raw(&reply), Some(120));
+        assert!(
+            (smeter_db_rel_s9(120) - 0.0).abs() < 0.001,
+            "raw 120 = S9 = 0 dB"
+        );
+        assert!(smeter_db_rel_s9(0) < smeter_db_rel_s9(120)); // S0 below S9
+        assert!(smeter_db_rel_s9(241) > smeter_db_rel_s9(120)); // S9+60 above S9
+        assert!(
+            (smeter_db_rel_s9(0) + 54.0).abs() < 0.001,
+            "raw 0 = S0 = -54 dB"
+        );
+    }
+
+    #[test]
+    fn rf_power_set_maps_percent_to_level() {
+        // 100% → raw 255 → BCD 0x02 0x55.
+        assert_eq!(set_rf_power(0xA2, 100).data, vec![0x0A, 0x02, 0x55]);
+        assert_eq!(set_rf_power(0xA2, 0).data, vec![0x0A, 0x00, 0x00]);
+        // Round-trips through the raw decoder.
+        let f = set_rf_power(0xA2, 50);
+        let reply = Frame {
+            to: 0xE0,
+            from: 0xA2,
+            cmd: 0x14,
+            data: f.data.clone(),
+        };
+        assert_eq!(parse_rf_power_raw(&reply), Some(127)); // 50% of 255
+    }
+}
