@@ -314,16 +314,28 @@ pub fn run_radio(engine: Arc<Mutex<Engine>>, cfg: RadioConfig) -> Result<(), Str
         .lock()
         .map(|e| e.settings().active_radio)
         .unwrap_or(0);
+    // Raised the moment a switch intent is seen, dropped when the handoff completes: the
+    // monitor thread pauses its pool work while set, so a switch never queues behind slow
+    // monitor CAT reads (the pool lock is otherwise held for whole read bursts).
+    let switch_pending = Arc::new(std::sync::atomic::AtomicBool::new(false));
     {
         let mon_engine = engine.clone();
         let mon_pool = pool.clone();
-        std::thread::spawn(move || monitor_loop(mon_engine, mon_pool));
+        let mon_pending = switch_pending.clone();
+        std::thread::spawn(move || monitor_loop(mon_engine, mon_pool, mon_pending));
     }
     loop {
         // Dual-radio: if the operator switched the active radio, hand off between the active Rig and
         // the monitor pool BEFORE the normal tick — so `state.applied` already matches the new active
         // and the `rig_differs` teardown never fires (the new rig is already connected + on-frequency).
-        handoff_if_switched(&engine, &pool, &mut rig, &mut state, &mut last_active);
+        handoff_if_switched(
+            &engine,
+            &pool,
+            &mut rig,
+            &mut state,
+            &mut last_active,
+            &switch_pending,
+        );
         // App shutdown: unkey the transmitter through the still-alive rig before
         // the process exits. Without this, quitting while keyed (a TX slot or a
         // tune carrier) leaves the radio transmitting until its own timeout.
@@ -458,7 +470,11 @@ fn open_monitor(t: &Transport) -> (Rig, Option<CatDaemon>, Option<bool>) {
 /// The monitor thread: keeps a persistent read-only CAT connection to every ENABLED, NON-active radio,
 /// reconciling the pool against live settings and polling each radio's dial/mode/S-meter into the
 /// engine's per-radio live cache. NEVER commands or keys a rig.
-fn monitor_loop(engine: Arc<Mutex<Engine>>, pool: MonitorPool) {
+fn monitor_loop(
+    engine: Arc<Mutex<Engine>>,
+    pool: MonitorPool,
+    pending: Arc<std::sync::atomic::AtomicBool>,
+) {
     loop {
         if SHUTDOWN.load(std::sync::atomic::Ordering::Relaxed) {
             return;
@@ -481,8 +497,14 @@ fn monitor_loop(engine: Arc<Mutex<Engine>>, pool: MonitorPool) {
                 continue;
             }
         };
-        reconcile_pool(&pool, &want, &engine);
-        poll_monitors(&pool, active, &engine);
+        // A switch is mid-flight: stay off the pool entirely so the handoff's try_lock wins
+        // on its next 20 ms tick (a monitor poll can hold the lock for whole read bursts).
+        if pending.load(std::sync::atomic::Ordering::Relaxed) {
+            std::thread::sleep(Duration::from_millis(20));
+            continue;
+        }
+        reconcile_pool(&pool, &want, active, &engine);
+        poll_monitors(&pool, active, &engine, &pending);
         std::thread::sleep(Duration::from_millis(150));
     }
 }
@@ -490,7 +512,12 @@ fn monitor_loop(engine: Arc<Mutex<Engine>>, pool: MonitorPool) {
 /// Bring the monitor pool in line with the desired `(id, transport)` set: open newly-wanted radios,
 /// close removed ones, rebuild a radio whose CAT config changed. Opens happen WITHOUT the pool lock
 /// held (spawning rigctld is slow) so a concurrent handoff never waits on a daemon launch.
-fn reconcile_pool(pool: &MonitorPool, want: &[(u32, Transport)], engine: &Arc<Mutex<Engine>>) {
+fn reconcile_pool(
+    pool: &MonitorPool,
+    want: &[(u32, Transport)],
+    active: u32,
+    engine: &Arc<Mutex<Engine>>,
+) {
     let (to_open, to_close): (Vec<(u32, Transport)>, Vec<u32>) = {
         let mut p = pool.lock().unwrap_or_else(|e| e.into_inner());
         let mut to_open = Vec::new();
@@ -510,6 +537,14 @@ fn reconcile_pool(pool: &MonitorPool, want: &[(u32, Transport)], engine: &Arc<Mu
         }
         let mut to_close: Vec<u32> = Vec::new();
         for c in p.iter_mut() {
+            // NEVER close the new ACTIVE radio's conn: right after a switch it leaves the want
+            // list, but the handoff wants to ADOPT it (the instant switch). Closing it here
+            // wins the race by design (back-to-back locks vs a 20 ms-cadence try_lock) and
+            // downgrades every switch to a fresh daemon spawn. If the handoff instead takes
+            // its fallback, IT drops this conn — nothing leaks.
+            if c.id == active {
+                continue;
+            }
             let keep = match want.iter().find(|(wid, _)| *wid == c.id) {
                 None => false, // no longer wanted
                 Some((_, t)) => {
@@ -560,12 +595,18 @@ fn reconcile_pool(pool: &MonitorPool, want: &[(u32, Transport)], engine: &Arc<Mu
 /// Poll each monitor connection read-only into the engine's per-radio live cache. Dial every poll;
 /// mode + S-meter every 3rd. Holds the pool lock during the (short-timeout) reads — a concurrent
 /// handoff uses `try_lock` and simply retries next tick, so the active audio/TX loop never blocks.
-fn poll_monitors(pool: &MonitorPool, active: u32, engine: &Arc<Mutex<Engine>>) {
+fn poll_monitors(
+    pool: &MonitorPool,
+    active: u32,
+    engine: &Arc<Mutex<Engine>>,
+    pending: &std::sync::atomic::AtomicBool,
+) {
     let now = now_unix_ms();
     let mut p = pool.lock().unwrap_or_else(|e| e.into_inner());
-    // Poll only the SINGLE most-overdue monitor per call, so the pool lock is held for at most ONE
-    // rig read (~500 ms) rather than all of them — a concurrent `handoff_if_switched` try_lock then
-    // always finds a gap between reads, keeping switches feeling instant even mid-poll.
+    // Poll only the SINGLE most-overdue monitor per call, so the pool lock is held for one read
+    // burst rather than all of them (each read is bounded by the rig deadline — up to the SLOW
+    // 2.5 s one for daemon-backed rigs). A concurrent handoff try_locks AND raises `pending`,
+    // which pauses these polls entirely, so a switch waits out at most one in-flight read.
     let conn = match p
         .iter_mut()
         .filter(|c| c.id != active && now - c.last_poll >= MONITOR_POLL_MS)
@@ -586,6 +627,9 @@ fn poll_monitors(pool: &MonitorPool, active: u32, engine: &Arc<Mutex<Engine>>) {
                 if let Ok(mut e) = engine.lock() {
                     e.observe_radio_freq(conn.id, hz);
                     e.observe_radio_cat(conn.id, Some(true));
+                }
+                if pending.load(std::sync::atomic::Ordering::Relaxed) {
+                    return; // a switch just started — release the pool after the one read
                 }
                 if conn.ticks % 3 == 0 {
                     if let Some(mm) = conn.rig.read_mode() {
@@ -633,7 +677,9 @@ fn handoff_if_switched(
     rig: &mut Rig,
     state: &mut RadioLoop,
     last_active: &mut u32,
+    pending: &std::sync::atomic::AtomicBool,
 ) {
+    use std::sync::atomic::Ordering;
     let (active, want_active) = match engine.lock() {
         Ok(e) => {
             let s = e.settings();
@@ -642,8 +688,16 @@ fn handoff_if_switched(
         Err(_) => return,
     };
     if active == *last_active {
+        // No switch in flight (or the intent vanished before the handoff won the pool —
+        // operator flipped back / band-routing bounced): the deferral guard protects only
+        // the switch currently in flight, so it must vanish with the intent.
+        state.handoff_deferred = false;
+        pending.store(false, Ordering::Relaxed);
         return;
     }
+    // Switch in flight: pause the monitor thread's pool work so this handoff isn't
+    // queued behind a multi-second monitor read burst (cleared on every exit below).
+    pending.store(true, Ordering::Relaxed);
     // FIX #1 (TX-safety): unkey the OUTGOING rig if it's keyed BEFORE it leaves the active slot into
     // the READ-ONLY monitor pool — otherwise it would sit there with PTT still asserted (a stuck
     // carrier that nothing ever drops). `set_active_radio` cleared the ENGINE's TX intent (halt_tx);
@@ -652,7 +706,10 @@ fn handoff_if_switched(
     // UNCONDITIONAL (root-cause fix): the client-side flags can desync from the radio
     // (a failed unkey used to clear them), and a keyed radio demoted into the read-only
     // pool is unrecoverable there. One idempotent key-up per switch is cheap insurance.
-    {
+    // Once per SWITCH INTENT, not per deferred retry tick (each retry is a 20 ms-cadence
+    // try_lock; re-unkeying every retry adds CAT round-trips that stretch the retry past the
+    // monitor's lock-free gaps). Still re-runs if anything keyed the rig mid-deferral.
+    if !state.handoff_deferred || rig.keyed || state.tx_until_ms.is_some() {
         let _ = rig.ptt(false);
         let _ = rig.stop_morse();
         state.tx_until_ms = None;
@@ -686,10 +743,15 @@ fn handoff_if_switched(
     // CAT is permanently dead after the switch. Requiring `has_control()` makes a dead conn fall through
     // to the fallback branch, which drops it and lets step()'s `rig_differs` reopen the radio FRESH via
     // `open_cat` (no is_alive gate, self-healing) — exactly how the startup radio stays healthy.
-    if let Some(idx) = p
-        .iter()
-        .position(|c| c.id == active && c.rig.has_control() && !c.transport.rig_differs(&want_cat))
-    {
+    if let Some(idx) = p.iter_mut().position(|c| {
+        c.id == active
+            && c.rig.has_control()
+            // Mirror reconcile's keep-gate: a live TCP cache over a DEAD daemon is a zombie —
+            // adopting it installs dead CAT as the active radio with `applied` matching, so
+            // rig_differs would never rebuild it. Refuse → the fallback drops it + reopens fresh.
+            && c.rigctld_proc.as_mut().is_none_or(CatDaemon::is_alive)
+            && !c.transport.rig_differs(&want_cat)
+    }) {
         let conn = p.remove(idx);
         let mut old_rig = std::mem::replace(rig, conn.rig);
         // The adopted rig was opened READ-ONLY by the monitor (`PttMode::Vox`); give it the active
@@ -753,6 +815,7 @@ fn handoff_if_switched(
         state.force_audio_rebuild = true;
         *last_active = active;
     }
+    pending.store(false, Ordering::Relaxed);
 }
 
 /// The network outputs the loop emits to, borrowed for the loop's lifetime.
@@ -1081,7 +1144,13 @@ impl RadioLoop {
             // read-back is gated separately, so gating retune on manual PTT here is what made
             // "the VFO mirrors but modes won't switch" regress. Consume the one-shot "apply
             // now" flag only when we can act, so a click during a slot-TX is honored after it.
-            let can_retune = self.tx_until_ms.is_none() && !self.tuning_keyed;
+            // …and never while a radio switch is mid-flight (handoff deferred): the loop's rig
+            // is still the OLD radio, and the want-side dial/mode are already the NEW radio's —
+            // retuning here drives the old rig with the new radio's settings (the 2026-07-11
+            // "pill says Icom, CAT still controls the Yaesu" regression). The one-shot flags
+            // stay queued (consume-only-when-acting) and apply after the handoff lands.
+            let can_retune =
+                self.tx_until_ms.is_none() && !self.tuning_keyed && !self.handoff_deferred;
             let (want, dial, md, reprobe_req, force_retune, split_req, fm) = {
                 let mut eng = engine.lock().map_err(|e| e.to_string())?;
                 // FM repeater config (shift, band-offset magnitude, CTCSS) — applied below
@@ -1170,7 +1239,10 @@ impl RadioLoop {
             let mut audio_rebuilt = false;
             // A dual-radio switch forces the rebuild (a new radio's device must be opened even if the
             // name compares equal — e.g. two "system default"s); else rebuild only on a real change.
-            if std::mem::take(&mut self.force_audio_rebuild) || want.audio_differs(&self.applied) {
+            if !self.handoff_deferred
+                && (std::mem::take(&mut self.force_audio_rebuild)
+                    || want.audio_differs(&self.applied))
+            {
                 // The queued TX audio for a live over lives ENTIRELY in the old
                 // backend's output ring — replacing the backend discards it. If
                 // we're mid-transmission (a slot over, a tune carrier, or manual
@@ -1280,7 +1352,10 @@ impl RadioLoop {
                     }
                 }
             }
-            if want != self.applied {
+            if !self.handoff_deferred && want != self.applied {
+                // NEVER on a deferred tick: `rig` is still the OLD radio's connection, and
+                // claiming the NEW transport here poisons `rig_differs` — the handoff's
+                // fallback branch relies on it to open the new radio fresh.
                 self.applied = want;
             }
             // Reconcile the native RF panadapter (Flex VITA / Icom CI-V) to the ACTIVE radio's
@@ -3519,8 +3594,16 @@ mod tests {
             freq_misses: 0,
         }]));
         let mut last_active = 0u32;
+        let pending = std::sync::atomic::AtomicBool::new(false);
         engine.lock().unwrap().set_active_radio(r1); // operator switches to radio 1
-        handoff_if_switched(&engine, &pool, &mut rig, &mut state, &mut last_active);
+        handoff_if_switched(
+            &engine,
+            &pool,
+            &mut rig,
+            &mut state,
+            &mut last_active,
+            &pending,
+        );
 
         assert_eq!(last_active, r1, "active tracked to radio 1");
         assert!(
@@ -3545,6 +3628,367 @@ mod tests {
             p[0].transport.rigctld_port, 4532,
             "old active's transport preserved in the pool"
         );
+    }
+
+    /// A minimal in-test rigctld: answers every request line with "RPRT 0" and records each
+    /// received line. Enough for command-class verbs (F/M/T/\stop_morse) — exactly what the
+    /// contended-switch test needs to observe going to the OLD rig.
+    fn recording_rigctld_stub() -> (String, Arc<Mutex<Vec<String>>>) {
+        use std::io::{BufRead, BufReader, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        let seen: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let rec = seen.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(stream) = stream else { return };
+                let mut out = match stream.try_clone() {
+                    Ok(o) => o,
+                    Err(_) => return,
+                };
+                for line in BufReader::new(stream).lines() {
+                    let Ok(line) = line else { break };
+                    rec.lock().unwrap().push(line);
+                    if out.write_all(b"RPRT 0\n").is_err() {
+                        break;
+                    }
+                }
+            }
+        });
+        (addr, seen)
+    }
+
+    /// Arrange the standard two-radio switch scene: engine with radio 0 active + radio 1 LIVE
+    /// in the monitor pool (a control-bearing conn matching r1's profile transport).
+    fn switch_scene() -> (Arc<Mutex<Engine>>, MonitorPool, RadioLoop, u32, u16) {
+        let engine = Arc::new(Mutex::new(Engine::new("W9XYZ", "EN37", 0)));
+        let (r1, r1_transport, r1_port) = {
+            let mut e = engine.lock().unwrap();
+            let r1 = e.add_radio();
+            e.set_active_radio(0); // deterministic start: radio 0 active
+            let p = e
+                .settings()
+                .radios
+                .iter()
+                .find(|p| p.id == r1)
+                .unwrap()
+                .clone();
+            (r1, Transport::from_profile(&p), p.rigctld_port)
+        };
+        let mut state = loop_state();
+        state.applied = cat_transport(4532, None);
+        let pool: MonitorPool = Arc::new(Mutex::new(vec![MonitorConn {
+            id: r1,
+            transport: r1_transport,
+            rig: Rig::with_control(Some(format!("127.0.0.1:{r1_port}")), PttMode::Vox),
+            rigctld_proc: None,
+            last_poll: 0.0,
+            ticks: 0,
+            smeter_supported: None,
+            freq_misses: 0,
+        }]));
+        (engine, pool, state, r1, r1_port)
+    }
+
+    #[test]
+    fn deferred_handoff_never_claims_applied_and_the_fallback_still_rebuilds() {
+        // THE 2026-07-11 on-rig regression ("pill says Icom, CAT still controls the Yaesu"):
+        // while a handoff is DEFERRED (pool contended), a step() tick must not stamp
+        // `applied = want` — that poisons rig_differs, so when the handoff later lands in the
+        // FALLBACK branch (reconcile closed the new radio's conn first) the promised fresh
+        // rebuild never fires and the loop drives the OLD radio with the NEW radio's settings
+        // until the operator switches again.
+        let (engine, pool, mut state, r1, r1_port) = switch_scene();
+        let mut rig = Rig::vox();
+        let mut last_active = 0u32;
+        let pending = std::sync::atomic::AtomicBool::new(false);
+        let mut backend = MockBackend::new();
+        let (sinks, mut ra) = (no_sinks(), mock_reopen_audio());
+        let calls = std::cell::Cell::new(0u32);
+        let captured_port = std::cell::Cell::new(0u16);
+        let mut rr = |t: &Transport, _d: u64, _m: &str, _c: bool| {
+            calls.set(calls.get() + 1);
+            captured_port.set(t.rigctld_port);
+            (Rig::vox(), None, None, String::new())
+        };
+
+        // Act A: the switch lands while the monitor thread holds the pool → deferred.
+        let guard = pool.lock().unwrap();
+        engine.lock().unwrap().set_active_radio(r1);
+        handoff_if_switched(
+            &engine,
+            &pool,
+            &mut rig,
+            &mut state,
+            &mut last_active,
+            &pending,
+        );
+        assert!(state.handoff_deferred, "contended pool → handoff deferred");
+        assert_eq!(last_active, 0, "switch not yet completed");
+
+        // Act B: one deferred tick. The transport claim must NOT happen.
+        state
+            .step(
+                &engine,
+                &mut backend,
+                &mut rig,
+                &sinks,
+                1.0,
+                &mut ra,
+                &mut rr,
+            )
+            .unwrap();
+        assert_eq!(
+            state.applied.rigctld_port, 4532,
+            "a deferred tick must not claim the new radio's transport (the poison)"
+        );
+
+        // Act C: reconcile won the race and closed the new radio's conn → fallback path.
+        drop(guard);
+        pool.lock().unwrap().clear();
+        handoff_if_switched(
+            &engine,
+            &pool,
+            &mut rig,
+            &mut state,
+            &mut last_active,
+            &pending,
+        );
+        assert_eq!(last_active, r1, "fallback completed the switch intent");
+        assert!(
+            !state.handoff_deferred,
+            "completed handoff clears the deferral"
+        );
+
+        // Act D: the fallback's contract — step()'s rig_differs opens the new radio FRESH.
+        state
+            .step(
+                &engine,
+                &mut backend,
+                &mut rig,
+                &sinks,
+                2.0,
+                &mut ra,
+                &mut rr,
+            )
+            .unwrap();
+        assert_eq!(calls.get(), 1, "the fallback rebuild fired within one tick");
+        assert_eq!(
+            captured_port.get(),
+            r1_port,
+            "…and it opened the NEW radio's transport"
+        );
+    }
+
+    #[test]
+    fn handoff_deferred_never_survives_early_return_or_completion() {
+        // The deferral only ever protects the switch currently in flight: if the switch intent
+        // vanishes (operator flips back / band-routing bounces) the guard must vanish with it,
+        // or step() skips every future rig_differs rebuild forever.
+        let (engine, pool, mut state, r1, _r1_port) = switch_scene();
+        let mut rig = Rig::vox();
+        let mut last_active = 0u32;
+        let pending = std::sync::atomic::AtomicBool::new(false);
+
+        // Defer a switch to r1…
+        let guard = pool.lock().unwrap();
+        engine.lock().unwrap().set_active_radio(r1);
+        handoff_if_switched(
+            &engine,
+            &pool,
+            &mut rig,
+            &mut state,
+            &mut last_active,
+            &pending,
+        );
+        assert!(state.handoff_deferred);
+        // …then the intent vanishes before the handoff ever wins the lock.
+        engine.lock().unwrap().set_active_radio(0);
+        drop(guard);
+        handoff_if_switched(
+            &engine,
+            &pool,
+            &mut rig,
+            &mut state,
+            &mut last_active,
+            &pending,
+        );
+        assert!(
+            !state.handoff_deferred,
+            "a vanished switch intent must drop the deferral guard"
+        );
+
+        // And a COMPLETED handoff clears it too (pins the happy path).
+        engine.lock().unwrap().set_active_radio(r1);
+        let guard = pool.lock().unwrap();
+        handoff_if_switched(
+            &engine,
+            &pool,
+            &mut rig,
+            &mut state,
+            &mut last_active,
+            &pending,
+        );
+        assert!(state.handoff_deferred);
+        drop(guard);
+        handoff_if_switched(
+            &engine,
+            &pool,
+            &mut rig,
+            &mut state,
+            &mut last_active,
+            &pending,
+        );
+        assert_eq!(last_active, r1, "adopt completed");
+        assert!(
+            !state.handoff_deferred,
+            "completed adopt clears the deferral"
+        );
+    }
+
+    #[test]
+    fn handoff_refuses_a_conn_with_a_dead_daemon_and_reopens_fresh() {
+        // A monitor conn can hold a live TCP control channel over a DEAD CivDaemon (the 9700's
+        // flapping daemon, between reconcile passes). Adopting that zombie installs dead CAT as
+        // the active radio with `applied` matching — rig_differs would never rebuild it. The
+        // adopt gate must mirror reconcile's is_alive keep-gate and fall through to the
+        // fallback, whose fresh-open self-heals.
+        use crate::civ::engine::tests_support::FakeRadio;
+        let (engine, pool, mut state, r1, _r1_port) = switch_scene();
+        // A real native daemon over an in-memory radio whose I/O fails hard → engine exits.
+        let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = probe.local_addr().unwrap().port();
+        drop(probe);
+        let (mut radio, _push) = FakeRadio::new(0xA2);
+        radio.dead = true;
+        let daemon = crate::civ::broker::CivDaemon::start_with_io(Box::new(radio), 0xA2, port)
+            .expect("daemon starts (TCP binds) even though the radio I/O is dead");
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        let mut cat = CatDaemon::Native(daemon);
+        while cat.is_alive() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "dead-radio engine should exit within 2 s"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        {
+            // Swap the scene's live conn for the zombie shape: control-bearing rig, dead daemon.
+            let mut p = pool.lock().unwrap();
+            p[0].rig = Rig::with_control(Some(format!("127.0.0.1:{port}")), PttMode::Vox);
+            p[0].rigctld_proc = Some(cat);
+        }
+        let mut rig = Rig::vox();
+        let mut last_active = 0u32;
+        let pending = std::sync::atomic::AtomicBool::new(false);
+        engine.lock().unwrap().set_active_radio(r1);
+        handoff_if_switched(
+            &engine,
+            &pool,
+            &mut rig,
+            &mut state,
+            &mut last_active,
+            &pending,
+        );
+
+        assert_eq!(last_active, r1, "fallback completed the switch intent");
+        assert_eq!(
+            state.applied.rigctld_port, 4532,
+            "applied unchanged → step()'s rig_differs reopens the new radio FRESH"
+        );
+        assert!(
+            pool.lock().unwrap().is_empty(),
+            "the zombie conn was dropped (daemon reaped), not adopted"
+        );
+    }
+
+    #[test]
+    fn reconcile_never_closes_the_new_actives_conn_mid_switch() {
+        // Right after a switch the new active leaves reconcile's want-list, but its conn is
+        // exactly what the handoff adopts for the instant switch. Reconcile must leave it
+        // alone (the handoff's fallback drops it if stale — nothing leaks).
+        let (engine, pool, _state, r1, _r1_port) = switch_scene();
+        // Post-switch view: r1 is now active → want excludes it.
+        reconcile_pool(&pool, &[], r1, &engine);
+        assert_eq!(
+            pool.lock().unwrap().len(),
+            1,
+            "the new active's conn survives for the handoff to adopt"
+        );
+        // …but once some OTHER radio is active and r1 is genuinely unwanted, it IS closed.
+        reconcile_pool(&pool, &[], 0, &engine);
+        assert!(
+            pool.lock().unwrap().is_empty(),
+            "an unwanted non-active conn is still reaped as before"
+        );
+    }
+
+    #[test]
+    fn contended_switch_never_commands_the_old_rig_with_the_new_radios_settings() {
+        // While a switch is pending (deferred), the OLD rig must receive NO retune — the
+        // regression's literal symptom was the FTDX10 being driven with the 9700's dial — and
+        // the switch-unkey must run ONCE per switch intent, not once per 20 ms retry tick.
+        let (engine, pool, mut state, r1, r1_port) = switch_scene();
+        let (stub_addr, seen) = recording_rigctld_stub();
+        let mut rig = Rig::with_control(Some(stub_addr), PttMode::Cat);
+        let mut last_active = 0u32;
+        let pending = std::sync::atomic::AtomicBool::new(false);
+        let mut backend = MockBackend::new();
+        let (sinks, mut ra, mut rr) = (no_sinks(), mock_reopen_audio(), mock_reopen_rig());
+
+        // Five deferred retry ticks with the pool held.
+        let guard = pool.lock().unwrap();
+        engine.lock().unwrap().set_active_radio(r1);
+        for i in 0..5 {
+            handoff_if_switched(
+                &engine,
+                &pool,
+                &mut rig,
+                &mut state,
+                &mut last_active,
+                &pending,
+            );
+            assert!(state.handoff_deferred);
+            state
+                .step(
+                    &engine,
+                    &mut backend,
+                    &mut rig,
+                    &sinks,
+                    i as f64,
+                    &mut ra,
+                    &mut rr,
+                )
+                .unwrap();
+        }
+        {
+            let lines = seen.lock().unwrap();
+            assert!(
+                !lines
+                    .iter()
+                    .any(|l| l.starts_with("F ") || l.starts_with("M ")),
+                "old rig retuned/re-moded during the deferral: {lines:?}"
+            );
+            assert_eq!(
+                lines.iter().filter(|l| l.as_str() == "T 0").count(),
+                1,
+                "exactly ONE switch-unkey per switch intent: {lines:?}"
+            );
+        }
+
+        // Release the pool → the adopt lands within a tick.
+        drop(guard);
+        handoff_if_switched(
+            &engine,
+            &pool,
+            &mut rig,
+            &mut state,
+            &mut last_active,
+            &pending,
+        );
+        assert_eq!(last_active, r1, "adopt landed once the pool freed");
+        assert_eq!(state.applied.rigctld_port, r1_port);
+        assert!(!state.handoff_deferred);
     }
 
     #[test]
@@ -3621,7 +4065,15 @@ mod tests {
             freq_misses: 0,
         }]));
         let mut last_active = 0u32;
-        handoff_if_switched(&engine, &pool, &mut rig, &mut state, &mut last_active);
+        let pending = std::sync::atomic::AtomicBool::new(false);
+        handoff_if_switched(
+            &engine,
+            &pool,
+            &mut rig,
+            &mut state,
+            &mut last_active,
+            &pending,
+        );
 
         assert_eq!(last_active, r1, "switched to radio 1");
         assert_eq!(
@@ -3672,8 +4124,16 @@ mod tests {
             freq_misses: 0,
         }]));
         let mut last_active = 0u32;
+        let pending = std::sync::atomic::AtomicBool::new(false);
         engine.lock().unwrap().set_active_radio(r1);
-        handoff_if_switched(&engine, &pool, &mut rig, &mut state, &mut last_active);
+        handoff_if_switched(
+            &engine,
+            &pool,
+            &mut rig,
+            &mut state,
+            &mut last_active,
+            &pending,
+        );
 
         assert_eq!(
             last_active, r1,
@@ -3731,8 +4191,16 @@ mod tests {
             freq_misses: 0,
         }]));
         let mut last_active = 0u32;
+        let pending = std::sync::atomic::AtomicBool::new(false);
         engine.lock().unwrap().set_active_radio(r1);
-        handoff_if_switched(&engine, &pool, &mut rig, &mut state, &mut last_active);
+        handoff_if_switched(
+            &engine,
+            &pool,
+            &mut rig,
+            &mut state,
+            &mut last_active,
+            &pending,
+        );
         assert!(
             state.tx_until_ms.is_none(),
             "slot-TX state cleared → no stuck carrier in the pool"
@@ -3757,8 +4225,16 @@ mod tests {
         let mut rig = Rig::vox();
         let pool: MonitorPool = Arc::new(Mutex::new(Vec::new())); // empty pool
         let mut last_active = 0u32;
+        let pending = std::sync::atomic::AtomicBool::new(false);
         engine.lock().unwrap().set_active_radio(r1);
-        handoff_if_switched(&engine, &pool, &mut rig, &mut state, &mut last_active);
+        handoff_if_switched(
+            &engine,
+            &pool,
+            &mut rig,
+            &mut state,
+            &mut last_active,
+            &pending,
+        );
         assert_eq!(
             last_active, r1,
             "tracked the switch even with no pool conn (fallback to rebuild)"

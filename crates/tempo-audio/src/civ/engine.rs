@@ -382,6 +382,9 @@ pub(crate) mod tests_support {
         freq: u64,
         /// When true, drop every command silently (a dead radio).
         pub mute: bool,
+        /// When true, every read/write fails hard (a yanked cable) — the engine
+        /// classifies it Fatal and exits, driving `is_alive()` false.
+        pub dead: bool,
     }
     impl FakeRadio {
         pub fn new(addr: u8) -> (Self, Arc<Mutex<Vec<u8>>>) {
@@ -393,6 +396,7 @@ pub(crate) mod tests_support {
                     push_next: push.clone(),
                     freq: 145_000_000,
                     mute: false,
+                    dead: false,
                 },
                 push,
             )
@@ -412,6 +416,9 @@ pub(crate) mod tests_support {
     }
     impl Write for FakeRadio {
         fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            if self.dead {
+                return Err(io::Error::new(io::ErrorKind::BrokenPipe, "dead"));
+            }
             // FrameSplitter drops controller-originated frames as "echo", so parse raw.
             let mut raw = Vec::new();
             let mut cur = Vec::new();
@@ -450,6 +457,9 @@ pub(crate) mod tests_support {
     }
     impl Read for FakeRadio {
         fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            if self.dead {
+                return Err(io::Error::new(io::ErrorKind::BrokenPipe, "dead"));
+            }
             if let Ok(mut p) = self.push_next.lock() {
                 if !p.is_empty() {
                     self.outgoing.extend(p.drain(..));
