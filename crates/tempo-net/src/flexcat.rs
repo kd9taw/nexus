@@ -216,6 +216,19 @@ impl FlexCat {
             "no reply from Flex",
         ))
     }
+
+    /// Fire-and-forget: write a command WITHOUT consuming its reply, returning the sequence
+    /// number it was sent with. Use this when a single thread also needs [`recv`] to see the
+    /// async status stream — `command` would swallow those `S…` frames while waiting for its
+    /// reply, so the panadapter worker sends via `send` and reads replies + status through
+    /// `recv` instead. Reply matching (by the returned seq) is the caller's job.
+    pub fn send(&mut self, command: &str) -> std::io::Result<u32> {
+        let seq = self.seq;
+        self.seq = self.seq.wrapping_add(1).max(1);
+        self.stream
+            .write_all(encode_command(seq, command).as_bytes())?;
+        Ok(seq)
+    }
 }
 
 #[cfg(test)]

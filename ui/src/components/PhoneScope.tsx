@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { getSpectrumRow } from '../api'
 import { sampleLut } from '../colormaps'
 import { agcRange, bakeLut, normalize, resolveColormap } from '../waterfall'
@@ -68,6 +68,10 @@ export function PhoneScope({
   const paletteRef = useRef(palette)
   const activeRef = useRef(active)
   const lutRef = useRef<Uint8ClampedArray>(bakeLut(resolveColormap(palette, theme)))
+  // Which scope feed is live: '' / 'audio' = soundcard FFT, 'flex'/'civ' = a native RF panadapter.
+  // Lifted out of the draw loop (updated only when it changes) so the badge can render it.
+  const [source, setSource] = useState('')
+  const sourceRef = useRef('')
 
   txRef.current = transmitting
   themeRef.current = theme
@@ -154,6 +158,12 @@ export function PhoneScope({
       }
       const row = spec.row
       if (!row || row.length === 0) return
+      // Surface which feed is live (only re-render on a change, not every 30 Hz frame).
+      const src = spec.source ?? ''
+      if (src !== sourceRef.current) {
+        sourceRef.current = src
+        setSource(src)
+      }
       // Data-driven capture extent (DTO); fall back to the legacy constants for
       // older backends that don't report it.
       const rowLo = spec.loHz ?? 200
@@ -329,6 +339,18 @@ export function PhoneScope({
           />
         </div>
         <span className="ph-scope-smeter-label ph-scope-smeter-value">{sm ? sm.label : '—'}</span>
+        {(source === 'flex' || source === 'civ') && (
+          <span
+            className="ph-scope-src"
+            title={
+              source === 'flex'
+                ? 'Native FlexRadio panadapter (SmartSDR) — real RF spectrum, not the soundcard FFT'
+                : 'Native Icom CI-V scope — real RF spectrum, not the soundcard FFT'
+            }
+          >
+            {source === 'flex' ? 'FLEX RF' : 'CI-V RF'}
+          </span>
+        )}
       </div>
       <canvas ref={canvasRef} className="ph-scope-canvas" />
     </div>

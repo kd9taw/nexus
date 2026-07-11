@@ -731,6 +731,15 @@ struct RadioLoop {
     /// and skip the rebuild, leaving the OLD radio's sound-card stream running (the "audio never
     /// leaves the FTDX10" bug). Consumed (taken) in the step() audio-rebuild guard.
     force_audio_rebuild: bool,
+    /// The NATIVE RF panadapter worker (Flex SmartSDR VITA / Icom CI-V) for the ACTIVE radio, if
+    /// it has one. Reconciled each step from `native_spectrum_kind(want)`: started when the active
+    /// radio gains a native scope, dropped (threads stopped + pan removed) when it loses it or the
+    /// operator switches to a non-native rig. `None` = the universal audio-FFT scope. Inert unless
+    /// a Flex is the active radio with `flex_radio_ip` set.
+    spectrum_src: Option<crate::flexspectrum::FlexSpectrum>,
+    /// The (radio-model, network?) key the current `spectrum_src` was started for, so a switch to a
+    /// different native-scope rig tears down + restarts it, and same-radio ticks are a no-op.
+    spectrum_src_key: Option<(u32, bool)>,
     /// We wrote the current audio-error line with a voice-mic open failure, so we clear
     psk_spots: Vec<Spot>,
     last_psk_flush: f64,
@@ -825,6 +834,8 @@ impl RadioLoop {
             voice_mic_failed: false,
             monitor_reapply: false,
             force_audio_rebuild: false,
+            spectrum_src: None,
+            spectrum_src_key: None,
             err_owner: ErrOwner::None,
             psk_spots: Vec::new(),
             early_done_slot: None,
@@ -844,6 +855,44 @@ impl RadioLoop {
 
             last_fd_qsos: 0,
             clock_offset_ms: 0,
+        }
+    }
+
+    /// Start/stop the native RF panadapter worker to match the ACTIVE radio's capability
+    /// ([`native_spectrum_kind`]). Cheap when nothing changed (a key compare, no lock); only a
+    /// scope-rig transition touches threads. Only Flex is wired today — the Icom CI-V scope lands
+    /// with the serial engine; until then an Icom simply keeps the audio-FFT scope.
+    fn reconcile_spectrum_source(
+        &mut self,
+        engine: &Arc<Mutex<Engine>>,
+        rig_model: u32,
+        is_network: bool,
+    ) {
+        use crate::rigmodels::{native_spectrum_kind, SpectrumKind};
+        let conn = if is_network { "network" } else { "serial" };
+        let kind = native_spectrum_kind(rig_model, conn);
+        let key = kind.map(|_| (rig_model, is_network));
+        if key == self.spectrum_src_key {
+            return; // unchanged — no-op (the common case, every tick)
+        }
+        // The active radio's native-scope situation changed: tear down the old worker (its Drop
+        // stops the threads + removes the pan) before starting the new one.
+        self.spectrum_src = None;
+        self.spectrum_src_key = key;
+        if let Some(SpectrumKind::FlexVita) = kind {
+            // Read the Flex API IP + current dial once, at start (a later IP edit takes effect on the
+            // next radio re-select). Lock only on this rare transition, never per tick.
+            let (ip, dial_hz) = match engine.lock() {
+                Ok(e) => (
+                    e.settings().flex_radio_ip.trim().to_string(),
+                    (e.settings().dial_mhz * 1_000_000.0) as u64,
+                ),
+                Err(_) => return,
+            };
+            if !ip.is_empty() {
+                self.spectrum_src =
+                    crate::flexspectrum::FlexSpectrum::start(engine.clone(), ip, dial_hz).ok();
+            }
         }
     }
 
@@ -1118,6 +1167,10 @@ impl RadioLoop {
             if want != self.applied {
                 self.applied = want;
             }
+            // Reconcile the native RF panadapter (Flex VITA / Icom CI-V) to the ACTIVE radio's
+            // capability — cheap (a key compare) unless it just gained/lost/changed a native scope.
+            let (scope_model, scope_net) = (self.applied.rig_model, self.applied.is_network());
+            self.reconcile_spectrum_source(engine, scope_model, scope_net);
 
             // Live dial / mode retune — only while not keyed (rigs reject VFO
             // changes mid-TX); retried every loop until it sticks.
@@ -3190,6 +3243,32 @@ mod tests {
     }
     fn mock_reopen_rig() -> impl FnMut(&Transport, u64, &str, bool) -> RigOpen {
         |_t: &Transport, _d: u64, _m: &str, _coexist: bool| (Rig::vox(), None, None, String::new())
+    }
+
+    #[test]
+    fn spectrum_source_reconcile_gates_on_capability() {
+        // The native panadapter worker is started ONLY for a native-scope rig, and stays inert
+        // without the config it needs — so a Yaesu/Icom-serial station never spawns Flex threads.
+        let engine = Arc::new(Mutex::new(Engine::new("W9XYZ", "EN37", 0)));
+        let mut state = loop_state();
+
+        // A Yaesu FTDX10 (model 1042) has no native RF scope → nothing started.
+        state.reconcile_spectrum_source(&engine, 1042, false);
+        assert!(state.spectrum_src_key.is_none());
+        assert!(state.spectrum_src.is_none());
+
+        // A Flex (model 2036, network) IS a native-scope rig, but with no `flex_radio_ip` set the
+        // worker is inert — the key is remembered so ticks are a no-op, but no connection is made.
+        state.reconcile_spectrum_source(&engine, 2036, true);
+        assert_eq!(state.spectrum_src_key, Some((2036, true)));
+        assert!(
+            state.spectrum_src.is_none(),
+            "empty flex_radio_ip → no worker started (no network I/O)"
+        );
+
+        // Switching back to the Yaesu clears the key (would tear down a running worker).
+        state.reconcile_spectrum_source(&engine, 1042, false);
+        assert!(state.spectrum_src_key.is_none());
     }
 
     #[test]

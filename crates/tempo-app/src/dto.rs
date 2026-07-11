@@ -456,11 +456,18 @@ fn default_offset() -> f32 {
 #[serde(rename_all = "camelCase")]
 pub struct Spectrum {
     pub row: Vec<f32>,
-    /// The audio window the row spans (Hz) — so the UI never hardcodes it.
+    /// The window the row spans (Hz) — so the UI never hardcodes it. For the audio-FFT
+    /// scope this is the audio passband (0–4000 Hz); for a native RF panadapter it's the
+    /// absolute RF span. `f64` because an absolute VHF/UHF edge (e.g. 432.1 MHz) exceeds
+    /// `f32`'s exact-integer range (2^24 ≈ 16.7 MHz).
     #[serde(default)]
-    pub lo_hz: f32,
+    pub lo_hz: f64,
     #[serde(default)]
-    pub hi_hz: f32,
+    pub hi_hz: f64,
+    /// Where this row came from: `"audio"` (soundcard FFT), `"flex"` (SmartSDR VITA-49),
+    /// or `"civ"` (Icom CI-V scope) — lets the UI label a native panadapter. Empty = audio.
+    #[serde(default)]
+    pub source: String,
 }
 
 /// The operating mode of the live engine.

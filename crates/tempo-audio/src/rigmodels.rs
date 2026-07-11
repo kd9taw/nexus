@@ -194,10 +194,88 @@ pub fn rig_model_name(model: u32) -> Option<&'static str> {
         .map(|(_, name)| name)
 }
 
+/// The kind of NATIVE spectrum stream a radio can provide — the shared capability gate for
+/// the per-radio panadapter (Wave 7 Flex + Wave 8 Icom converge here). `None` (from
+/// [`native_spectrum_kind`]) means the universal audio-FFT scope is the only option.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpectrumKind {
+    /// Icom CI-V spectrum scope (command `0x27`) — requires Nexus to own the serial CI-V
+    /// port natively. Carries the rig's default CI-V bus address.
+    IcomCiv { civ_addr: u8 },
+    /// FlexRadio SmartSDR panadapter over VITA-49 UDP (the `sub pan` / `display pan` stream).
+    FlexVita,
+}
+
+/// Map a curated Hamlib model number to the Icom rig whose native CI-V scope Nexus supports.
+/// Only the 7300-family radios that actually expose the `0x27` scope stream are listed.
+fn icom_scope_model(model: u32) -> Option<crate::civ::commands::IcomModel> {
+    use crate::civ::commands::IcomModel::*;
+    Some(match model {
+        3073 => Ic7300,
+        3078 => Ic7610,
+        3081 => Ic9700,
+        3085 => Ic705,
+        3090 => Ic905,
+        _ => return None,
+    })
+}
+
+/// Classify what native spectrum stream a radio offers, given its Hamlib model number and
+/// its connection kind (`"serial"` / `"network"`). This is the single gate both native
+/// panadapter workers consult:
+/// - **Flex** (SmartSDR CAT 2036 / native 23005) over a **network** connection → `FlexVita`.
+/// - **Icom 7300/7610/9700/705/905** over a **serial** connection → `IcomCiv` (the scope
+///   needs the native CI-V serial owner; over network rigctld it isn't reachable).
+/// - Everything else (Xiegu, other Icoms, Yaesu, Kenwood, a network Icom) → `None`
+///   (audio-FFT fallback).
+pub fn native_spectrum_kind(model: u32, rig_conn: &str) -> Option<SpectrumKind> {
+    let is_network = rig_conn.eq_ignore_ascii_case("network");
+    match model {
+        2036 | 23005 if is_network => Some(SpectrumKind::FlexVita),
+        _ => {
+            if !is_network {
+                let m = icom_scope_model(model)?;
+                Some(SpectrumKind::IcomCiv {
+                    civ_addr: m.default_civ_addr(),
+                })
+            } else {
+                None
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::collections::HashSet;
+
+    #[test]
+    fn native_spectrum_capability_gate() {
+        // Flex over network → VITA panadapter.
+        assert_eq!(
+            native_spectrum_kind(2036, "network"),
+            Some(SpectrumKind::FlexVita)
+        );
+        assert_eq!(
+            native_spectrum_kind(23005, "network"),
+            Some(SpectrumKind::FlexVita)
+        );
+        // IC-9700 on serial → CI-V scope at the 9700's default address 0xA2.
+        assert_eq!(
+            native_spectrum_kind(3081, "serial"),
+            Some(SpectrumKind::IcomCiv { civ_addr: 0xA2 })
+        );
+        assert_eq!(
+            native_spectrum_kind(3073, "serial"),
+            Some(SpectrumKind::IcomCiv { civ_addr: 0x94 })
+        );
+        // A network Icom can't use the native serial CI-V scope → audio-FFT fallback.
+        assert_eq!(native_spectrum_kind(3081, "network"), None);
+        // Yaesu FTDX10 (no native spectrum stream) and an unlisted Icom → None.
+        assert_eq!(native_spectrum_kind(1042, "serial"), None);
+        assert_eq!(native_spectrum_kind(3013, "serial"), None); // IC-718: no scope
+    }
 
     #[test]
     fn table_is_non_empty_and_has_builtins() {

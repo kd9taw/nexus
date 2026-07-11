@@ -22,6 +22,11 @@
 //! at build time and a sound card at runtime).
 
 pub mod backend;
+pub mod civ;
+/// FlexRadio native panadapter orchestrator — needs tempo-net (SmartSDR/VITA parsers), so it
+/// rides the `device` feature like the rest of the station-side transport code.
+#[cfg(feature = "device")]
+pub mod flexspectrum;
 pub mod frames;
 pub mod monitor;
 pub mod port_prober;
