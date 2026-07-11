@@ -4434,19 +4434,27 @@ async fn open_panel_window(app: tauri::AppHandle, panel: String) -> Result<(), S
         (1140.0, 760.0)
     } else if slug == "bandmapPhone" || slug == "bandmapCw" {
         (420.0, 780.0)
+    } else if slug == "waterfall" {
+        (900.0, 300.0) // a wide, short monitoring strip
     } else {
         (760.0, 660.0)
     };
-    tauri::WebviewWindowBuilder::new(
+    let builder = tauri::WebviewWindowBuilder::new(
         &app,
         &label,
         tauri::WebviewUrl::App(format!("index.html?panel={slug}").into()),
     )
     .title(title)
     .inner_size(w, h)
-    .min_inner_size(420.0, 360.0)
-    .build()
-    .map_err(|e| e.to_string())?;
+    .min_inner_size(if slug == "waterfall" { 380.0 } else { 420.0 }, if slug == "waterfall" { 180.0 } else { 360.0 });
+    // The waterfall pop-out is a MONITORING strip: keep it on top so it survives
+    // working in other apps/sections — the whole point of tearing it off.
+    let builder = if slug == "waterfall" {
+        builder.always_on_top(true)
+    } else {
+        builder
+    };
+    builder.build().map_err(|e| e.to_string())?;
     Ok(())
 }
 
