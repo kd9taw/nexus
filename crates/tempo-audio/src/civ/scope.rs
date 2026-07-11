@@ -10,8 +10,13 @@
 //! BCD, frequencies/spans are BCD, and waveform points top out at `0xA0` — so the ordinary
 //! [`super::frame::FrameSplitter`] splits scope frames safely and hands them here.
 //!
-//! Byte layout follows the Icom CI-V reference (IC-7300/9700 family) as implemented by
-//! wfview; the on-rig IC-9700 session is the calibration gate before this leaves the flag.
+//! Byte layout per the official Icom CI-V reference (IC-7300 §19, command 27; shared by the
+//! 7300 family): waveform output streams only while `27 10` (scope ON) and `27 11` (wave
+//! data output) are both ON; each sweep is divided into 11 frames over USB, the 1st carrying
+//! only the header (`00`=center/`01`=fixed, frequency, span-or-edges, out-of-range — data
+//! omitted when out of range), the rest the points; data range 0–160, length 475; the span
+//! table (2500="2.5k" … 500000="500k") is the ± half-width. The manual's own example frame
+//! is a fixture test below. Remaining on-rig calibration: the IC-9700's main/sub behavior.
 
 use super::frame::{bcd_to_freq, Frame};
 
@@ -73,7 +78,9 @@ struct SweepHeader {
 /// in every later frame: waveform points, one byte each.
 fn parse_waveform(data: &[u8]) -> Option<(u32, u32, Option<SweepHeader>, &[u8])> {
     // data[0] = 0x00 sub-command, [1] = main(00)/sub(01) receiver, [2] = seq, [3] = total.
-    if data.len() < 4 || data[0] != 0x00 {
+    // MAIN receiver only: on a dual-watch IC-9700 the sub receiver's sweeps interleave on
+    // the same command — mixing the two bursts would corrupt both.
+    if data.len() < 4 || data[0] != 0x00 || data[1] != 0x00 {
         return None;
     }
     let seq = bcd_byte(data[2]);
@@ -254,6 +261,51 @@ mod tests {
         hdr.push(0x01); // OUT of range (mid-retune)
         assert!(asm.push(&wf_frame(1, 2, &hdr)).is_none());
         assert!(asm.push(&wf_frame(2, 2, &[1, 2, 3])).is_none(), "dropped");
+    }
+
+    #[test]
+    fn parses_the_manuals_own_example_header_frame() {
+        // The IC-7300 CI-V reference's worked example (§19, command 27 00):
+        //   27 00 | 00 | 01 | 11 | 01 | 00 00 00 14 00 | 00 00 35 14 00 | 00
+        // = main scope, division 1 of 11, FIXED mode, lower edge 14.000 MHz,
+        //   upper edge 14.350 MHz, in range — a fixed 20 m band scope.
+        let f = Frame {
+            to: 0xE0,
+            from: 0x94,
+            cmd: 0x27,
+            data: vec![
+                0x00, 0x00, 0x01, 0x11, 0x01, 0x00, 0x00, 0x00, 0x14, 0x00, 0x00, 0x00, 0x35, 0x14,
+                0x00, 0x00,
+            ],
+        };
+        let (seq, total, header, points) = parse_waveform(&f.data).expect("parses");
+        assert_eq!(seq, 1);
+        assert_eq!(total, 11, "BCD 0x11 = 11 divisions over USB");
+        let h = header.expect("first frame carries the header");
+        assert_eq!(h.lo_hz, 14_000_000.0);
+        assert_eq!(h.hi_hz, 14_350_000.0);
+        assert!(!h.out_of_range);
+        assert!(points.is_empty(), "the 1st division has no waveform data");
+    }
+
+    #[test]
+    fn sub_receiver_sweeps_are_ignored() {
+        // A dual-watch IC-9700 interleaves sub-receiver sweeps (main/sub byte 01) on the
+        // same command — mixing them into the main burst would corrupt both.
+        let mut asm = ScopeAssembler::new();
+        let mut data = vec![0x00, 0x01, 0x01, 0x02]; // sub receiver, seq 1 of 2
+        data.extend_from_slice(&center_header());
+        let sub = Frame {
+            to: 0xE0,
+            from: 0xA2,
+            cmd: 0x27,
+            data,
+        };
+        assert!(asm.push(&sub).is_none());
+        // A main-receiver burst still assembles cleanly around it.
+        assert!(asm.push(&wf_frame(1, 2, &center_header())).is_none());
+        assert!(asm.push(&sub).is_none());
+        assert!(asm.push(&wf_frame(2, 2, &[5, 6])).is_some());
     }
 
     #[test]

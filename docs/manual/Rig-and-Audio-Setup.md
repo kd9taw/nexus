@@ -132,6 +132,32 @@ If you run two rigs — for example an HF radio and a VHF/UHF radio on separate 
 
 ---
 
+## Native Icom CI-V (Early Access)
+
+For scope-capable Icoms (IC-7300, IC-7610, IC-9700, IC-705, IC-905) on a **serial** connection,
+Settings → Rig offers a **Native Icom CI-V** toggle (per radio, off by default). When on, Nexus
+drives the rig's CI-V protocol directly instead of launching Hamlib's `rigctld`:
+
+- **Real spectrum scope** — the waterfall shows the radio's own panadapter (the "CI-V RF" badge
+  appears on the scope) instead of decoded soundcard audio, with the true RF span.
+- **Instant dial tracking** — the rig pushes frequency/mode changes as you turn the knob
+  (CI-V Transceive), no polling delay.
+- **Full CAT** — frequency, mode (including USB-D for FT8), PTT, S-meter, RF power, CW keying,
+  split, RIT/ΔTX, and FM duplex/tone all run over the same native link. The CAT broker still
+  shares the radio with WSJT-X/N1MM as usual.
+
+Setup on the rig (Menu → Set → Connectors):
+
+1. **CI-V USB Baud Rate = 115200** and set Nexus's Baud to match. The scope waveform stream
+   needs the fast rate; below 57,600 Nexus stays CAT-only (no native scope).
+2. **CI-V Transceive = ON** for instant dial tracking.
+3. Leave the CI-V address at the factory default (Nexus uses the model's default).
+
+Turn the toggle off at any time to return to the classic Hamlib path — Save applies either way.
+Early access: validated per model as testers confirm; the IC-9700 is the first calibration target.
+
+---
+
 ## Audio Device Selection
 
 In Settings → Audio, select:
