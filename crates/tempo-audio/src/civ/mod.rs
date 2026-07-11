@@ -7,12 +7,19 @@
 //! panadapter Nexus must own the CI-V port itself.
 //!
 //! This module is layered so the protocol core is testable without any hardware:
-//! - [`frame`] — the pure CI-V frame + BCD codec layer (no I/O, no `serialport` dep;
-//!   builds and tests on every target). This is the foundation.
-//!
-//! The serial engine, command table, scope reassembler, and the rigctld-compatible
-//! broker are built on top of `frame` and land behind the `serial` feature.
+//! - [`frame`] — the pure CI-V frame + BCD codec layer (the foundation);
+//! - [`commands`] — the verb table (freq/mode/PTT/meters…) as pure encode/decode;
+//! - [`state`] — folds replies + transceive pushes into a live snapshot;
+//! - [`scope`] — reassembles `27 00` waveform bursts into normalized sweeps;
+//! - [`engine`] — the one thread that owns the CI-V byte stream, generic over
+//!   `Read + Write` so the whole path unit-tests against an in-memory fake radio;
+//! - [`broker`] — serves the rigctld text protocol on the radio's TCP port, backed by
+//!   the engine — so `Rig`, the monitors, and the handoff all work UNCHANGED. Only the
+//!   constructor that opens a real COM port needs the `serial` feature.
 
+pub mod broker;
 pub mod commands;
+pub mod engine;
 pub mod frame;
+pub mod scope;
 pub mod state;

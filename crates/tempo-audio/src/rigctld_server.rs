@@ -17,7 +17,11 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 
 /// The rig state the broker serves + the setters it relays. Implemented by Nexus's
-/// live rig bridge (real radio) and by a mock in tests.
+/// live rig bridge (real radio), the native CI-V daemon, and by a mock in tests.
+///
+/// The extended verbs below default to `None` = **not implemented** (`RPRT -11`), so an
+/// implementation that only fills in the core set behaves byte-identically to the
+/// pre-extension broker. `Some(true)` → `RPRT 0`, `Some(false)` → `RPRT -1`.
 pub trait RigBackend: Send + Sync {
     fn freq_hz(&self) -> u64;
     fn mode(&self) -> (String, u32); // (mode, passband Hz)
@@ -34,6 +38,60 @@ pub trait RigBackend: Send + Sync {
     fn set_ptt(&self, on: bool) -> bool;
     fn set_vfo(&self, _vfo: &str) -> bool {
         true
+    }
+    // ---- extended verbs (the full surface Nexus's own `Rig` client uses) ----
+    /// Read a level (`l NAME`). Return the reply VALUE line(s) without trailing newline
+    /// (e.g. `"-12"` for STRENGTH dB, `"0.50"` for RFPOWER 0..1).
+    fn level(&self, _name: &str) -> Option<String> {
+        None
+    }
+    /// Set a level (`L NAME VALUE`, e.g. `RFPOWER 0.5`, `KEYSPD 25`).
+    fn set_level(&self, _name: &str, _value: &str) -> Option<bool> {
+        None
+    }
+    /// Read a function state (`u TOKEN`) — `Some(on)` or `None` = unimplemented.
+    fn func(&self, _token: &str) -> Option<bool> {
+        None
+    }
+    /// Set a function (`U TOKEN 0|1`, e.g. RIT/XIT enable).
+    fn set_func(&self, _token: &str, _on: bool) -> Option<bool> {
+        None
+    }
+    /// Key CW from text (`b TEXT`).
+    fn send_morse(&self, _text: &str) -> Option<bool> {
+        None
+    }
+    /// Abort CW in progress (`\stop_morse`).
+    fn stop_morse(&self) -> Option<bool> {
+        None
+    }
+    /// Split on/off + TX VFO (`S 0|1 VFOB`).
+    fn set_split(&self, _on: bool, _tx_vfo: &str) -> Option<bool> {
+        None
+    }
+    /// Split TX frequency (`I <hz>`).
+    fn set_split_freq(&self, _hz: u64) -> Option<bool> {
+        None
+    }
+    /// RIT offset in Hz (`J <hz>`).
+    fn set_rit(&self, _hz: i32) -> Option<bool> {
+        None
+    }
+    /// XIT / ΔTX offset in Hz (`Z <hz>`).
+    fn set_xit(&self, _hz: i32) -> Option<bool> {
+        None
+    }
+    /// FM repeater shift (`R +|-|None`).
+    fn set_rptr_shift(&self, _shift: &str) -> Option<bool> {
+        None
+    }
+    /// FM repeater offset magnitude in Hz (`O <hz>`).
+    fn set_rptr_offset(&self, _hz: i64) -> Option<bool> {
+        None
+    }
+    /// CTCSS tone in tenths of Hz (`C 1000` = 100.0 Hz; 0 = off).
+    fn set_ctcss(&self, _tenths: u32) -> Option<bool> {
+        None
     }
 }
 
@@ -77,6 +135,15 @@ fn rprt(ok: bool) -> String {
     }
 }
 
+/// Map an extended-verb outcome: `None` = the backend doesn't implement it → Hamlib's
+/// `RPRT -11` (not implemented), otherwise RPRT 0/-1.
+fn rprt_ext(r: Option<bool>) -> String {
+    match r {
+        None => "RPRT -11\n".into(),
+        Some(ok) => rprt(ok),
+    }
+}
+
 /// Outcome of handling one request line.
 pub enum Handled {
     /// Write this back to the client.
@@ -87,16 +154,25 @@ pub enum Handled {
 
 /// Handle one rigctld request line against `backend`. Pure (apart from the backend
 /// calls) so the protocol is unit-testable. Implements the subset a NET-rigctl
-/// client (WSJT-X) uses: get/set freq (`f`/`F`), mode (`m`/`M`), PTT (`t`/`T`),
-/// VFO (`v`/`V`), split (`s`), plus `\dump_state`, `\chk_vfo`, `\get_powerstat`, `q`.
+/// client (WSJT-X) uses — get/set freq (`f`/`F`), mode (`m`/`M`), PTT (`t`/`T`),
+/// VFO (`v`/`V`), split (`s`), `\dump_state`, `\chk_vfo`, `\get_powerstat`, `q` —
+/// plus the extended verbs Nexus's own `Rig` client sends (levels `l`/`L`, funcs
+/// `u`/`U`, morse `b`/`\stop_morse`, split `S`/`I`, RIT/XIT `J`/`Z`, FM repeater
+/// `R`/`O`/`C`), which answer `RPRT -11` unless the backend implements them.
 pub fn handle_command(line: &str, backend: &dyn RigBackend) -> Handled {
     let line = line.trim();
+    // `b` (send_morse) takes the REST OF THE LINE as text — CW messages contain spaces, so
+    // dispatch it before the whitespace tokenizer below would split them.
+    if let Some(text) = line.strip_prefix("b ") {
+        return Handled::Reply(rprt_ext(backend.send_morse(text.trim())));
+    }
     match line {
         "" => Handled::Reply(String::new()),
         "\\dump_state" => Handled::Reply(DUMP_STATE.to_string()),
         // No VFO mode → the client sends commands without an explicit VFO argument.
         "\\chk_vfo" => Handled::Reply("CHKVFO 0\n".into()),
         "\\get_powerstat" => Handled::Reply("1\n".into()), // powered on
+        "\\stop_morse" => Handled::Reply(rprt_ext(backend.stop_morse())),
         "q" | "Q" => Handled::Close,
         _ => {
             let mut p = line.split_whitespace();
@@ -136,6 +212,68 @@ pub fn handle_command(line: &str, backend: &dyn RigBackend) -> Handled {
                         .unwrap_or(false),
                 ),
                 Some("s") => format!("{}\n{}\n", backend.split() as u8, backend.vfo()),
+                // ---- extended verbs (RPRT -11 when the backend doesn't implement them,
+                // exactly like the pre-extension broker) ----
+                Some("l") => match p.next().and_then(|n| backend.level(n)) {
+                    Some(v) => format!("{v}\n"),
+                    None => "RPRT -11\n".into(),
+                },
+                Some("L") => {
+                    let name = p.next().unwrap_or("");
+                    let value = p.next().unwrap_or("");
+                    if name.is_empty() || value.is_empty() {
+                        rprt(false)
+                    } else {
+                        rprt_ext(backend.set_level(name, value))
+                    }
+                }
+                Some("u") => match p.next().and_then(|t| backend.func(t)) {
+                    Some(on) => format!("{}\n", on as u8),
+                    None => "RPRT -11\n".into(),
+                },
+                Some("U") => {
+                    let token = p.next().unwrap_or("");
+                    match (token.is_empty(), p.next()) {
+                        (false, Some(v)) => rprt_ext(backend.set_func(token, v != "0")),
+                        _ => rprt(false),
+                    }
+                }
+                Some("S") => {
+                    let on = p.next().map(|s| s != "0");
+                    let tx_vfo = p.next().unwrap_or("VFOB");
+                    match on {
+                        Some(on) => rprt_ext(backend.set_split(on, tx_vfo)),
+                        None => rprt(false),
+                    }
+                }
+                Some("I") => rprt_ext(
+                    p.next()
+                        .and_then(|s| s.parse::<f64>().ok())
+                        .filter(|f| f.is_finite() && (0.0..=1e12).contains(f))
+                        .map_or(Some(false), |f| backend.set_split_freq(f.round() as u64)),
+                ),
+                Some("J") => rprt_ext(
+                    p.next()
+                        .and_then(|s| s.parse::<i32>().ok())
+                        .map_or(Some(false), |hz| backend.set_rit(hz)),
+                ),
+                Some("Z") => rprt_ext(
+                    p.next()
+                        .and_then(|s| s.parse::<i32>().ok())
+                        .map_or(Some(false), |hz| backend.set_xit(hz)),
+                ),
+                Some("R") => rprt_ext(p.next().map_or(Some(false), |s| backend.set_rptr_shift(s))),
+                Some("O") => rprt_ext(
+                    p.next()
+                        .and_then(|s| s.parse::<f64>().ok())
+                        .filter(|f| f.is_finite() && f.abs() <= 1e12)
+                        .map_or(Some(false), |f| backend.set_rptr_offset(f.round() as i64)),
+                ),
+                Some("C") => rprt_ext(
+                    p.next()
+                        .and_then(|s| s.parse::<u32>().ok())
+                        .map_or(Some(false), |t| backend.set_ctcss(t)),
+                ),
                 // Unknown command → Hamlib's "not implemented".
                 _ => "RPRT -11\n".into(),
             };
@@ -262,9 +400,10 @@ mod tests {
         assert_eq!(reply("T 1", &b), "RPRT 0\n");
         assert_eq!(reply("t", &b), "1\n");
         assert_eq!(reply("v", &b), "VFOA\n");
-        // Malformed set → error; unknown command → not-implemented.
+        // Malformed set → error; unknown command → not-implemented. (`Z` became the real
+        // XIT verb with the extended-verb dispatch, so use a genuinely unknown letter.)
         assert_eq!(reply("F notanumber", &b), "RPRT -1\n");
-        assert_eq!(reply("Z", &b), "RPRT -11\n");
+        assert_eq!(reply("G", &b), "RPRT -11\n");
         assert!(matches!(handle_command("q", &b), Handled::Close));
     }
 
@@ -311,6 +450,108 @@ mod tests {
         assert!(*b.ptt.lock().unwrap(), "T 1 (ON) must key the rig");
         // Malformed PTT arg → error, no key change.
         assert_eq!(reply("T x", &b), "RPRT -1\n");
+    }
+
+    #[test]
+    fn extended_verbs_default_to_not_implemented() {
+        // A backend that only fills in the CORE set (like the live CAT broker) must behave
+        // byte-identically to the pre-extension broker: every extended verb → RPRT -11.
+        let b = MockRig::default();
+        for cmd in [
+            "l STRENGTH",
+            "L RFPOWER 0.5",
+            "u RIT",
+            "U RIT 1",
+            "b CQ CQ DE W9XYZ",
+            "\\stop_morse",
+            "S 1 VFOB",
+            "I 14076000",
+            "J -50",
+            "Z 100",
+            "R +",
+            "O 600000",
+            "C 1000",
+        ] {
+            assert_eq!(reply(cmd, &b), "RPRT -11\n", "default for {cmd:?}");
+        }
+        // Malformed args on extended verbs → RPRT -1 (error), not -11.
+        assert_eq!(reply("J notanumber", &b), "RPRT -1\n");
+        assert_eq!(reply("L RFPOWER", &b), "RPRT -1\n");
+    }
+
+    /// A backend implementing the extended verbs (like the native CI-V daemon).
+    struct ExtRig {
+        base: MockRig,
+        morse: Mutex<Vec<String>>,
+        rit: Mutex<i32>,
+    }
+    impl RigBackend for ExtRig {
+        fn freq_hz(&self) -> u64 {
+            self.base.freq_hz()
+        }
+        fn mode(&self) -> (String, u32) {
+            self.base.mode()
+        }
+        fn ptt(&self) -> bool {
+            self.base.ptt()
+        }
+        fn set_freq(&self, hz: u64) -> bool {
+            self.base.set_freq(hz)
+        }
+        fn set_mode(&self, m: &str, p: u32) -> bool {
+            self.base.set_mode(m, p)
+        }
+        fn set_ptt(&self, on: bool) -> bool {
+            self.base.set_ptt(on)
+        }
+        fn level(&self, name: &str) -> Option<String> {
+            match name {
+                "STRENGTH" => Some("-12".to_string()),
+                "RFPOWER" => Some("0.50".to_string()),
+                _ => None,
+            }
+        }
+        fn set_level(&self, name: &str, _v: &str) -> Option<bool> {
+            Some(name == "RFPOWER" || name == "KEYSPD")
+        }
+        fn func(&self, token: &str) -> Option<bool> {
+            (token == "RIT").then_some(true)
+        }
+        fn send_morse(&self, text: &str) -> Option<bool> {
+            self.morse.lock().unwrap().push(text.to_string());
+            Some(true)
+        }
+        fn stop_morse(&self) -> Option<bool> {
+            Some(true)
+        }
+        fn set_rit(&self, hz: i32) -> Option<bool> {
+            *self.rit.lock().unwrap() = hz;
+            Some(true)
+        }
+    }
+
+    #[test]
+    fn extended_verbs_dispatch_to_an_implementing_backend() {
+        let b = ExtRig {
+            base: MockRig::default(),
+            morse: Mutex::new(Vec::new()),
+            rit: Mutex::new(0),
+        };
+        // Levels: `l` replies the value line; `L` acks.
+        assert_eq!(reply("l STRENGTH", &b), "-12\n");
+        assert_eq!(reply("l RFPOWER", &b), "0.50\n");
+        assert_eq!(reply("l NOSUCH", &b), "RPRT -11\n");
+        assert_eq!(reply("L RFPOWER 0.5", &b), "RPRT 0\n");
+        // Funcs.
+        assert_eq!(reply("u RIT", &b), "1\n");
+        assert_eq!(reply("u NOSUCH", &b), "RPRT -11\n");
+        // Morse keeps its spaces (the whole rest of the line is the message).
+        assert_eq!(reply("b CQ CQ DE W9XYZ K", &b), "RPRT 0\n");
+        assert_eq!(b.morse.lock().unwrap()[0], "CQ CQ DE W9XYZ K");
+        assert_eq!(reply("\\stop_morse", &b), "RPRT 0\n");
+        // RIT (negative offsets parse).
+        assert_eq!(reply("J -120", &b), "RPRT 0\n");
+        assert_eq!(*b.rit.lock().unwrap(), -120);
     }
 
     #[test]

@@ -7224,6 +7224,7 @@ pub fn run() {
         rig_conn: settings.rig_conn.clone(),
         rig_addr: settings.rig_addr.clone(),
         rigctld_port: settings.rigctld_port,
+        icom_native_cat: settings.icom_native_cat,
         broker_self_port: if settings.cat_broker {
             Some(settings.cat_broker_port)
         } else {

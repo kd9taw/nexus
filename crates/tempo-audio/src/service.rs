@@ -29,6 +29,60 @@ use crate::frames::RxRing;
 use crate::rig::{PttMode, Rig, SerialLine};
 use crate::rigctld_proc::{spawn_rigctld, RigctldProc};
 
+/// The daemon serving the rigctld protocol on a radio's TCP port: Hamlib's spawned
+/// `rigctld` (classic), or Nexus's own native CI-V daemon (`icom_native_cat` — same
+/// protocol on the same port, plus the scope waveform + transceive the Hamlib path
+/// can't deliver). Everything downstream (Rig, probe, handoff, monitors) is agnostic.
+enum CatDaemon {
+    Spawned(RigctldProc),
+    // Only constructed with the `serial` feature (the native daemon owns a COM port).
+    #[cfg_attr(not(feature = "serial"), allow(dead_code))]
+    Native(crate::civ::broker::CivDaemon),
+}
+
+impl CatDaemon {
+    fn is_alive(&mut self) -> bool {
+        match self {
+            CatDaemon::Spawned(p) => p.is_alive(),
+            CatDaemon::Native(d) => d.is_alive(),
+        }
+    }
+    /// The native daemon, when that's what this is (scope drain / enable).
+    fn native(&self) -> Option<&crate::civ::broker::CivDaemon> {
+        match self {
+            CatDaemon::Native(d) => Some(d),
+            CatDaemon::Spawned(_) => None,
+        }
+    }
+}
+
+/// The CI-V address to natively drive `t` at — `Some` only when the operator opted this
+/// radio into `icom_native_cat` AND it's a scope-capable Icom on a serial connection.
+fn native_civ_addr(t: &Transport) -> Option<u8> {
+    if !t.icom_native_cat || t.is_network() || t.rig_model == 0 {
+        return None;
+    }
+    crate::rigmodels::icom_scope_model(t.rig_model).map(|m| m.default_civ_addr())
+}
+
+/// Start the CAT daemon for `t` on its rigctld port: the native CI-V daemon when opted
+/// in (falling back to rigctld if the port/serial open fails), else Hamlib's rigctld.
+fn spawn_cat_daemon(t: &Transport, target: &str, network: bool) -> std::io::Result<CatDaemon> {
+    #[cfg(feature = "serial")]
+    if let Some(addr) = native_civ_addr(t) {
+        match crate::civ::broker::CivDaemon::start(&t.serial_port, t.baud, addr, t.rigctld_port) {
+            Ok(d) => return Ok(CatDaemon::Native(d)),
+            Err(e) => {
+                // Fall through to rigctld — CAT keeps working, just without the scope.
+                eprintln!("tempo-audio: native CI-V daemon failed ({e}); falling back to rigctld");
+            }
+        }
+    }
+    #[cfg(not(feature = "serial"))]
+    let _ = native_civ_addr(t); // native CI-V needs the serial feature; classic path below
+    spawn_rigctld(t.rig_model, target, t.baud, t.rigctld_port, network).map(CatDaemon::Spawned)
+}
+
 use tempo_app::dto::Tier;
 use tempo_app::settings::{RadioProfile, Settings};
 use tempo_core::message::Msg;
@@ -99,6 +153,9 @@ pub struct RadioConfig {
     pub rig_addr: String,
     /// Local TCP port Tempo runs rigctld on (and connects to).
     pub rigctld_port: u16,
+    /// Native Icom CI-V opt-in (Nexus owns the CI-V serial port + serves the rigctld
+    /// protocol itself — unlocks the rig's real scope waveform). Off = classic rigctld.
+    pub icom_native_cat: bool,
     /// The port our OWN CAT broker serves on (if enabled), so auto-coexist never
     /// connects Nexus to itself. `None` = broker off.
     pub broker_self_port: Option<u16>,
@@ -131,6 +188,7 @@ impl Default for RadioConfig {
             rig_conn: "serial".to_string(),
             rig_addr: String::new(),
             rigctld_port: 4532,
+            icom_native_cat: false,
             broker_self_port: None,
             dial_hz: 14_090_500,
             mode: "USB".to_string(),
@@ -322,7 +380,7 @@ struct MonitorConn {
     id: u32,
     transport: Transport,
     rig: Rig,
-    rigctld_proc: Option<RigctldProc>,
+    rigctld_proc: Option<CatDaemon>,
     last_poll: f64,
     ticks: u32,
     smeter_supported: Option<bool>,
@@ -341,6 +399,7 @@ impl Transport {
             rig_conn: p.rig_conn.clone(),
             rig_addr: p.rig_addr.clone(),
             rigctld_port: p.rigctld_port,
+            icom_native_cat: p.icom_native_cat,
             broker_self_port: None,
             audio_in: String::new(),
             audio_out: String::new(),
@@ -356,7 +415,7 @@ impl Transport {
 /// Open a READ-ONLY CAT connection for a monitor radio: launch its rigctld (or share an EXTERNAL one
 /// already on the port) and probe by reading the dial — but NEVER set freq/mode/PTT (a monitor must
 /// not disturb the radio the operator isn't focused on). Returns the Rig + daemon handle + cat_ok.
-fn open_monitor(t: &Transport) -> (Rig, Option<RigctldProc>, Option<bool>) {
+fn open_monitor(t: &Transport) -> (Rig, Option<CatDaemon>, Option<bool>) {
     if t.rig_model == 0 {
         return (Rig::vox(), None, None);
     }
@@ -373,7 +432,7 @@ fn open_monitor(t: &Transport) -> (Rig, Option<RigctldProc>, Option<bool>) {
     } else {
         (t.serial_port.as_str(), false)
     };
-    match spawn_rigctld(t.rig_model, target, t.baud, t.rigctld_port, network) {
+    match spawn_cat_daemon(t, target, network) {
         Ok(mut proc) => {
             std::thread::sleep(Duration::from_millis(700));
             if !proc.is_alive() {
@@ -602,6 +661,12 @@ fn handoff_if_switched(
         let conn = p.remove(idx);
         let old_rig = std::mem::replace(rig, conn.rig);
         let old_proc = state.rigctld_proc.take();
+        // The demoted radio becomes a monitor: stop its scope stream (the waveform would
+        // crowd the monitor's slow poll off the serial link). The adopted radio's stream
+        // is enabled by the active loop's per-tick drain.
+        if let Some(d) = old_proc.as_ref().and_then(CatDaemon::native) {
+            d.set_scope_enabled(false);
+        }
         let mut old_transport = std::mem::replace(&mut state.applied, conn.transport);
         // Monitor conns always carry `broker_self_port = None` (`from_profile`); strip it off the
         // demoted radio's transport too, so the monitor `reconcile` doesn't see `rig_differs` (which
@@ -683,7 +748,7 @@ struct RadioLoop {
     tune_phase: f32,
     tune_started_ms: Option<f64>,
     applied: Transport,
-    rigctld_proc: Option<RigctldProc>,
+    rigctld_proc: Option<CatDaemon>,
     last_dial: u64,
     last_mode: String,
     /// Consecutive failed `set_mode` attempts for the current target mode. Bounds the
@@ -805,7 +870,7 @@ struct RadioLoop {
 }
 
 impl RadioLoop {
-    fn new(applied: Transport, rigctld_proc: Option<RigctldProc>, cfg: &RadioConfig) -> Self {
+    fn new(applied: Transport, rigctld_proc: Option<CatDaemon>, cfg: &RadioConfig) -> Self {
         Self {
             cur_tier: Tier::Ft1,
             clock: SlotClock::ft1(),
@@ -860,8 +925,9 @@ impl RadioLoop {
 
     /// Start/stop the native RF panadapter worker to match the ACTIVE radio's capability
     /// ([`native_spectrum_kind`]). Cheap when nothing changed (a key compare, no lock); only a
-    /// scope-rig transition touches threads. Only Flex is wired today — the Icom CI-V scope lands
-    /// with the serial engine; until then an Icom simply keeps the audio-FFT scope.
+    /// scope-rig transition touches threads. Flex runs as a worker here; the Icom CI-V scope
+    /// streams through the radio's own `CatDaemon::Native` (drained right after this call), so
+    /// `IcomCiv` needs no worker — an Icom without the native daemon keeps the audio-FFT scope.
     fn reconcile_spectrum_source(
         &mut self,
         engine: &Arc<Mutex<Engine>>,
@@ -1171,6 +1237,25 @@ impl RadioLoop {
             // capability — cheap (a key compare) unless it just gained/lost/changed a native scope.
             let (scope_model, scope_net) = (self.applied.rig_model, self.applied.is_network());
             self.reconcile_spectrum_source(engine, scope_model, scope_net);
+            // Native CI-V scope: THE ACTIVE radio's daemon streams the rig's real panadapter.
+            // Enable is per-tick idempotent (an atomic store); monitors never enable it, so a
+            // backgrounded radio's serial link stays free for its slow poll. Rows land in the
+            // same engine slot as the Flex path, tagged "civ" (auto-fallback keeps working).
+            if let Some(d) = self.rigctld_proc.as_ref().and_then(CatDaemon::native) {
+                // The waveform stream needs a fast CI-V link (~7.5 KB/s of frames): below
+                // 57.6k it would starve CAT commands, so leave it off and CAT-only.
+                d.set_scope_enabled(self.applied.baud >= 57_600);
+                if let Some(sweep) = d.take_scope_row() {
+                    if let Ok(mut e) = engine.lock() {
+                        e.set_spectrum_rf(tempo_app::dto::Spectrum {
+                            row: sweep.row,
+                            lo_hz: sweep.lo_hz,
+                            hi_hz: sweep.hi_hz,
+                            source: "civ".into(),
+                        });
+                    }
+                }
+            }
 
             // Live dial / mode retune — only while not keyed (rigs reject VFO
             // changes mid-TX); retried every loop until it sticks.
@@ -2740,6 +2825,9 @@ struct Transport {
     /// host:port for a network rig (when `rig_conn == "network"`).
     rig_addr: String,
     rigctld_port: u16,
+    /// Native Icom CI-V opt-in for this radio (see `RadioProfile::icom_native_cat`) —
+    /// selects Nexus's own CI-V daemon instead of rigctld at the spawn sites.
+    icom_native_cat: bool,
     /// The port our OWN CAT broker is serving on (if enabled), so auto-coexist never
     /// connects Nexus to itself. `None` = broker off.
     broker_self_port: Option<u16>,
@@ -2767,6 +2855,7 @@ impl Transport {
             rig_conn: c.rig_conn.clone(),
             rig_addr: c.rig_addr.clone(),
             rigctld_port: c.rigctld_port,
+            icom_native_cat: c.icom_native_cat,
             broker_self_port: c.broker_self_port,
             audio_in: c.audio_in.clone(),
             audio_out: c.audio_out.clone(),
@@ -2788,6 +2877,7 @@ impl Transport {
             rig_model: s.rig_model,
             serial_port: s.serial_port.clone(),
             baud: s.baud,
+            icom_native_cat: s.icom_native_cat,
             rig_conn: s.rig_conn.clone(),
             rig_addr: s.rig_addr.clone(),
             rigctld_port: s.rigctld_port,
@@ -2816,6 +2906,7 @@ impl Transport {
             || self.rig_conn != o.rig_conn
             || self.rig_addr != o.rig_addr
             || self.rigctld_port != o.rigctld_port
+            || self.icom_native_cat != o.icom_native_cat
             || self.broker_self_port != o.broker_self_port
     }
 
@@ -2875,7 +2966,7 @@ fn mode_set_note(rig: &mut Rig, md: &str) -> String {
 /// The result of opening/probing a rig: `(rig, rigctld handle, cat_ok, detail)`.
 /// `cat_ok` is `Some(true/false)` for CAT/serial, `None` for VOX; the handle
 /// keeps the launched `rigctld` daemon alive (kill-on-drop).
-type RigOpen = (Rig, Option<RigctldProc>, Option<bool>, String);
+type RigOpen = (Rig, Option<CatDaemon>, Option<bool>, String);
 
 /// Build the [`Rig`] for a transport and report its connection status. For CAT,
 /// launches the bundled `rigctld`, sets the dial/mode, and probes by reading the
@@ -2975,7 +3066,7 @@ fn open_cat(
     } else {
         (t.serial_port.as_str(), false)
     };
-    match spawn_rigctld(t.rig_model, rig_target, t.baud, t.rigctld_port, network) {
+    match spawn_cat_daemon(t, rig_target, network) {
         Ok(proc) => {
             // Give the daemon a moment to bind its TCP port before connecting.
             std::thread::sleep(Duration::from_millis(700));
@@ -3690,6 +3781,7 @@ mod tests {
             rig_model: 1035,
             serial_port: "/dev/ttyUSB0".to_string(),
             baud: 38400,
+            icom_native_cat: false,
             rig_conn: "serial".to_string(),
             rig_addr: String::new(),
             rigctld_port,

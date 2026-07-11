@@ -168,6 +168,107 @@ pub fn set_rf_power(radio: u8, percent: u8) -> Frame {
     Frame::command(radio, 0x14, &[0x0A, hi, lo])
 }
 
+// ---- extended verbs (split / VFO / RIT / CW / repeater / data mode) ----
+
+/// Select a VFO (cmd `07`): `VFOA`/`VFOB` (also accepts `Main`/`Sub` for the IC-9700's
+/// main/sub bands). `None` for a name the rig has no equivalent for.
+pub fn select_vfo(radio: u8, vfo: &str) -> Option<Frame> {
+    let b = match vfo.to_ascii_uppercase().as_str() {
+        "VFOA" | "A" => 0x00,
+        "VFOB" | "B" => 0x01,
+        "MAIN" => 0xD0,
+        "SUB" => 0xD1,
+        _ => return None,
+    };
+    Some(Frame::command(radio, 0x07, &[b]))
+}
+/// Split on/off (cmd `0F`, data `00`/`01`).
+pub fn set_split(radio: u8, on: bool) -> Frame {
+    Frame::command(radio, 0x0F, &[u8::from(on)])
+}
+/// FM duplex (repeater shift) — shares cmd `0F`: `10` simplex, `11` DUP−, `12` DUP+.
+pub fn set_duplex(radio: u8, shift: &str) -> Frame {
+    let b = match shift {
+        "+" => 0x12,
+        "-" => 0x11,
+        _ => 0x10,
+    };
+    Frame::command(radio, 0x0F, &[b])
+}
+/// Set the UNSELECTED VFO's frequency (cmd `25 01`) — the split/duplex TX dial on the
+/// 7300 family without swapping VFOs.
+pub fn set_unselected_freq(radio: u8, hz: u64) -> Frame {
+    let mut data = vec![0x01];
+    data.extend_from_slice(&freq_to_bcd(hz));
+    Frame::command(radio, 0x25, &data)
+}
+/// RIT/ΔTX offset (cmd `21 00`): ±9.999 kHz as 2-byte little-endian BCD magnitude + sign
+/// byte (`00` = +, `01` = −). The offset register is shared by RIT and ΔTX.
+pub fn set_rit_offset(radio: u8, hz: i32) -> Frame {
+    let mag = hz.unsigned_abs().min(9_999);
+    let lo = ((((mag / 10) % 10) as u8) << 4) | ((mag % 10) as u8);
+    let hi = ((((mag / 1000) % 10) as u8) << 4) | (((mag / 100) % 10) as u8);
+    Frame::command(radio, 0x21, &[0x00, lo, hi, u8::from(hz < 0)])
+}
+/// RIT on/off (cmd `21 01`).
+pub fn set_rit_on(radio: u8, on: bool) -> Frame {
+    Frame::command(radio, 0x21, &[0x01, u8::from(on)])
+}
+/// ΔTX (Icom's XIT) on/off (cmd `21 02`).
+pub fn set_dtx_on(radio: u8, on: bool) -> Frame {
+    Frame::command(radio, 0x21, &[0x02, u8::from(on)])
+}
+/// Icom's per-frame CW text limit (cmd `17`) — longer messages are chunked.
+pub const MORSE_CHUNK: usize = 30;
+/// Key CW from text (cmd `17`, ASCII payload ≤ [`MORSE_CHUNK`] chars).
+pub fn send_morse(radio: u8, text: &str) -> Frame {
+    let ascii: Vec<u8> = text
+        .bytes()
+        .filter(u8::is_ascii)
+        .take(MORSE_CHUNK)
+        .collect();
+    Frame::command(radio, 0x17, &ascii)
+}
+/// Abort CW keying in progress (cmd `17` with the single byte `FF`).
+pub fn stop_morse(radio: u8) -> Frame {
+    Frame::command(radio, 0x17, &[0xFF])
+}
+/// Keyer speed (cmd `14 0C`): WPM 6–48 mapped onto the 0–255 level scale.
+pub fn set_keyer_speed_wpm(radio: u8, wpm: u32) -> Frame {
+    let wpm = wpm.clamp(6, 48);
+    let level = ((wpm - 6) * 255 / 42) as u16;
+    let [hi, lo] = level_to_bcd2(level);
+    Frame::command(radio, 0x14, &[0x0C, hi, lo])
+}
+/// Repeater (CTCSS) tone frequency (cmd `1B 00`), in tenths of Hz as 4-digit BCD
+/// (88.5 Hz → 0885).
+pub fn set_repeater_tone(radio: u8, tenths: u32) -> Frame {
+    let [hi, lo] = level_to_bcd2(tenths.min(9999) as u16);
+    Frame::command(radio, 0x1B, &[0x00, hi, lo])
+}
+/// TONE function on/off (cmd `16 42`) — transmit the repeater tone.
+pub fn set_tone_func(radio: u8, on: bool) -> Frame {
+    Frame::command(radio, 0x16, &[0x42, u8::from(on)])
+}
+/// DATA mode on/off (cmd `1A 06`): `on` selects USB-D/LSB-D (soundcard digital); the
+/// filter byte keeps the current selection when `None`.
+pub fn set_data_mode(radio: u8, on: bool, filter: Option<u8>) -> Frame {
+    let fil = filter.unwrap_or(if on { 0x01 } else { 0x00 });
+    Frame::command(radio, 0x1A, &[0x06, u8::from(on), fil])
+}
+/// Read the DATA mode state (cmd `1A 06`).
+pub fn read_data_mode(radio: u8) -> Frame {
+    Frame::command(radio, 0x1A, &[0x06])
+}
+/// Extract the DATA-mode state from a `1A 06` reply.
+pub fn parse_data_mode(f: &Frame) -> Option<bool> {
+    if f.cmd == 0x1A && f.data.first() == Some(&0x06) {
+        f.data.get(1).map(|&b| b != 0)
+    } else {
+        None
+    }
+}
+
 // ---- reply decoders ----
 
 /// Extract the frequency (Hz) from a `03` frequency report (or an unsolicited transceive

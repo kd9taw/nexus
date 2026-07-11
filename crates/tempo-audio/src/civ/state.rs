@@ -5,7 +5,7 @@
 //! routing layer.
 
 use super::commands::{
-    parse_freq, parse_mode, parse_ptt, parse_rf_power_raw, parse_smeter_raw, Mode,
+    parse_data_mode, parse_freq, parse_mode, parse_ptt, parse_rf_power_raw, parse_smeter_raw, Mode,
 };
 use super::frame::Frame;
 
@@ -19,6 +19,9 @@ pub struct CivState {
     pub ptt: Option<bool>,
     pub smeter_raw: Option<u16>,
     pub rf_power_raw: Option<u16>,
+    /// USB-D/LSB-D soundcard-digital mode (`1A 06`) — combined with `mode` to report
+    /// PKTUSB/PKTLSB the way the rest of Nexus expects.
+    pub data_mode: Option<bool>,
 }
 
 impl CivState {
@@ -48,6 +51,10 @@ impl CivState {
         }
         if let Some(p) = parse_rf_power_raw(f) {
             self.rf_power_raw = Some(p);
+            return true;
+        }
+        if let Some(d) = parse_data_mode(f) {
+            self.data_mode = Some(d);
             return true;
         }
         false
