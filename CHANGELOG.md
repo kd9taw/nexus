@@ -5,6 +5,34 @@ All notable changes to Nexus (formerly Tempo) are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **AI CW decoder is now THE decoder** — the neural-net (DeepCW) copy powers the CW
+  cockpit's DECODE pane as a flowing transcript with a Clear button; dramatically better
+  weak-signal copy. The CW copilot's call chips + guided next-step now read the AI copy.
+  The classic decoder remains as the automatic fallback (and supplies the WPM estimate).
+- **Customizable CW F-keys** — Settings ▸ Quick-reply Macros: edit each F1–F8 label +
+  template (N1MM-style; {MYCALL}/{RST}/{NAME}, ! = worked call). Keys keep their roles, so
+  the guided copilot's recommended-key highlight keeps working with custom text.
+- **Waterfall pop-out** — tear the FT8 waterfall off into its own always-on-top window.
+- **Resizable panels** — drag the FT8 waterfall height and the CW/Phone scope heights;
+  sizes persist.
+- **Live input spectrum in Settings audio** — confirms the right input device at a glance.
+- **Band Scope pane for Connect** — the active radio's spectrum on the map screen.
+
+### Fixed
+
+- **A stuck transmitter now recovers by itself.** A transient CAT failure could leave the
+  radio keyed with the app unaware (TX/RX light on until a radio reboot). PTT tracking is
+  now fail-safe, every teardown path force-unkeys, the native CI-V daemon sends a safety
+  key-up as it closes, and an idle self-heal retries key-up until the radio acknowledges.
+- **Tune on Icoms in SSB now makes RF** (DATA mode is engaged for the tune so the tone
+  modulates; plain USB takes TX audio from the mic jack).
+- Radio-switcher pill no longer flashes on a single slow poll; wedged native-CAT sessions
+  no longer freeze the UI; several native-daemon robustness fixes.
+
 ## [0.5.2] — 2026-07-11 — native panadapter (early access) + logger forwarding + watch list
 
 ### Added
