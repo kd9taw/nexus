@@ -11,6 +11,7 @@ members = [
     "crates/tempo-app",
     "crates/tempo-audio",
     "crates/tempo-net",
+    "crates/deepcw",
 ]
 
 [workspace.package]

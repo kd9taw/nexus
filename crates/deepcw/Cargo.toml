@@ -1,0 +1,17 @@
+[package]
+publish = false
+name = "deepcw"
+version = "0.1.0"
+edition.workspace = true
+license = "GPL-3.0-only"
+description = """Spike harness for the DeepCW low-SNR AI CW decoder: tract-onnx inference
+against the e04/deepcw-engine model + an SNR ladder comparing it to the existing Goertzel
+decoder. The MODEL itself (model.onnx, AGPL-3.0-only, (c) e04) is NOT committed — point
+DEEPCW_DIR at a checkout of https://github.com/e04/deepcw-engine ."""
+
+[dependencies]
+tempo-core = { path = "../tempo-core" }
+microfft = "0.6"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tract-onnx = "0.21"
