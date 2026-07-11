@@ -22,6 +22,7 @@ import { ChasePane } from '../prop/ChasePane'
 import { ChaseFeedPane } from '../prop/ChaseFeedPane'
 import { SatPassesPane } from '../prop/SatPassesPane'
 import { RotorPane } from '../prop/RotorPane'
+import { MiniSpectrum } from '../MiniSpectrum'
 import { ContestCalendarPane } from '../ContestCalendarPane'
 import { getContests } from '../../api'
 import { GetoutCompass } from '../prop/GetoutCompass'
@@ -509,6 +510,19 @@ export const PANES: PaneDef[] = [
     // Self-contained control surface — polls read_rotator while mounted and
     // hides itself (→ this Basic hint) when nothing answers.
     expert: () => <RotorPane />,
+  },
+  {
+    id: 'scope',
+    title: 'Band Scope',
+    category: 'b3',
+    basic: () =>
+      "A live spectrum of the active radio's passband — band noise and signals at a glance.",
+    expert: () => (
+      <MiniSpectrum
+        height={120}
+        idleHint="Flat — the radio's audio isn't reaching Nexus right now."
+      />
+    ),
   },
   {
     id: 'contests',

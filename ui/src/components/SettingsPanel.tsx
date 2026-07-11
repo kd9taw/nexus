@@ -45,6 +45,7 @@ import type { ConnEvent, CredStatus } from '../types'
 import { FrequencyControl } from './FrequencyControl'
 import { LevelMeter } from './LevelMeter'
 import { WatchlistPanel } from './WatchlistPanel'
+import { MiniSpectrum } from './MiniSpectrum'
 import type { Layout } from '../useLayout'
 import type { Scale } from '../useScale'
 import { SCALE_STEPS } from '../useScale'
@@ -2150,6 +2151,18 @@ export function SettingsPanel({
                   can't open, recording falls back to the input device (never silent).
                 </span>
               </label>
+
+              <div className="settings-field settings-audio-scope">
+                <span className="settings-label">Live input spectrum</span>
+                <MiniSpectrum
+                  height={84}
+                  idleHint="Flat — no audio on the selected input. Check the device above (radio on? right codec?)."
+                />
+                <span className="settings-hint">
+                  What the selected input hears, live — band noise should show as a moving
+                  floor. Confirms the RIGHT device before you leave Settings.
+                </span>
+              </div>
 
               <label className="settings-field">
                 <span className="settings-label">

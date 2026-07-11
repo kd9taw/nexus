@@ -13122,3 +13122,39 @@ select.settings-input {
   margin: calc(var(--space-1) * -1) 0;
   align-self: stretch;
 }
+
+/* --- MiniSpectrum: compact live spectrum (Settings audio check + Connect pane) --- */
+.mini-spectrum {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.mini-spectrum-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-size: var(--fs-small);
+}
+.mini-spectrum-src {
+  color: var(--accent);
+  letter-spacing: 0.06em;
+}
+.mini-spectrum-span {
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.mini-spectrum-canvas {
+  width: 100%;
+  display: block;
+  background: color-mix(in srgb, var(--bg) 70%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.mini-spectrum-idle {
+  color: var(--text-dim);
+  font-size: var(--fs-small);
+}
+.settings-audio-scope {
+  grid-column: 1 / -1;
+}
