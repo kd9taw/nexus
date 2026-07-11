@@ -21,6 +21,7 @@ import { pointRotatorAtCall, redecode, startCq, startQsoRecording, stopQsoRecord
 import { pushToast } from '../toast'
 import { RotorStrip } from './RotorStrip'
 import { Waterfall } from './Waterfall'
+import { Splitter } from './Splitter'
 import { buildHighlightMap, OperateDecodes } from './OperateDecodes'
 import { OperateQsoStrip } from './OperateQsoStrip'
 import { OperateRoster } from './OperateRoster'
@@ -165,6 +166,8 @@ export function OperateCockpit({
   active = true,
   companionAddr,
 }: Props) {
+  // Container the waterfall-height splitter measures + writes its CSS var on.
+  const bodyRef = useRef<HTMLDivElement>(null)
   const source = snap.radio.source
   const catOk = snap.radio.catOk
 
@@ -625,7 +628,7 @@ export function OperateCockpit({
         </span>
       </div>
 
-      <div className="cockpit-body">
+      <div className="cockpit-body" ref={bodyRef}>
         {/* Waterfall: a short full-width strip (not a tall column) — the spectrum
             is a glance tool; the real estate goes to the decode lists + roster. */}
         <section className="cockpit-waterfall panel">
@@ -646,6 +649,16 @@ export function OperateCockpit({
             active={active}
           />
         </section>
+        <Splitter
+          axis="y"
+          varName="--cockpit-wf-h"
+          target={bodyRef}
+          storageKey="nexus.split.operate.waterfall"
+          minPx={88}
+          maxPx={420}
+          defaultPct={22}
+          label="waterfall height"
+        />
 
         {/* Prominent operating bar: Call CQ / S&P / Now-sending / Resend / Tx5. */}
         <OperateQsoStrip

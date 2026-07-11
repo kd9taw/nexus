@@ -6647,6 +6647,7 @@ select optgroup {
   height: 22vh;
   min-height: 120px;
   max-height: 220px;
+  /* Per-cockpit resizable heights land below (.cw-cockpit/.phone-cockpit overrides). */
   display: flex;
   flex-direction: column;
   padding: var(--space-2);
@@ -10192,8 +10193,9 @@ select.settings-input {
 /* Waterfall: a SHORT full-width strip (a glance tool), not a tall column — the
    real estate goes to the decode lists + roster below. */
 .cockpit-waterfall {
-  flex: 0 0 22%;
-  max-height: 190px;
+  /* Height is operator-resizable (the Splitter under it drives --cockpit-wf-h and
+     clamps 88–420 px); 22% stays the untouched default. */
+  flex: 0 0 var(--cockpit-wf-h, 22%);
   min-height: 88px;
   display: flex;
   overflow: hidden;
@@ -13099,4 +13101,24 @@ select.settings-input {
 }
 .cw-macro-text {
   flex: 1;
+}
+
+/* --- Operator-resizable sub-panels (Splitter.tsx) --- */
+/* Per-cockpit scope heights: scoped vars so dragging one cockpit's scope never
+   resizes the other (they share .ph-scope-panel). The splitter clamps 100–420 px. */
+.cw-cockpit .ph-scope-panel {
+  height: var(--cw-scope-h, 22vh);
+  max-height: none;
+}
+.phone-cockpit .ph-scope-panel {
+  height: var(--ph-scope-h, 22vh);
+  max-height: none;
+}
+/* Horizontal (height-dragging) splitter variant of the workspace .pane-splitter. */
+.pane-splitter.horizontal {
+  cursor: row-resize;
+  width: auto;
+  height: 8px;
+  margin: calc(var(--space-1) * -1) 0;
+  align-self: stretch;
 }

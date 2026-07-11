@@ -3,6 +3,7 @@ import type { AppSnapshot, FieldDayStatus, SpotRow } from '../types'
 import { PhoneScope } from './PhoneScope'
 import { BandStrip } from './BandStrip'
 import { TuningStrip } from './TuningStrip'
+import { Splitter } from './Splitter'
 import { PalettePicker } from './PalettePicker'
 import { BandPicker } from './BandPicker'
 import { VoiceKeyer } from './VoiceKeyer'
@@ -84,6 +85,8 @@ export function PhoneCockpit({ snap, theme, pendingWork, onConsumeWork, onSnap, 
   // Wheel-to-tune over the bandscope, sharing the tuning strip's step selector.
   const [tuneStep, setTuneStep] = useState(100)
   const scopeRef = useRef<HTMLDivElement>(null)
+  // Cockpit root: the scope-height splitter measures + writes its CSS var here.
+  const cockpitRef = useRef<HTMLElement>(null)
   useWheelTune(scopeRef, {
     dialMhz: snap.radio.dialMhz,
     sideband: snap.radio.sideband || 'USB',
@@ -229,7 +232,7 @@ export function PhoneCockpit({ snap, theme, pendingWork, onConsumeWork, onSnap, 
   }, [lock])
 
   return (
-    <main className="layout single phone-cockpit">
+    <main className="layout single phone-cockpit" ref={cockpitRef}>
       <div className="ph-bar">
         <div className="ph-mode-pick" role="group" aria-label="Phone mode">
           {(['AUTO', 'USB', 'LSB', 'FM'] as const).map((m) => {
@@ -422,6 +425,16 @@ export function PhoneCockpit({ snap, theme, pendingWork, onConsumeWork, onSnap, 
           />
         </div>
       </section>
+      <Splitter
+        axis="y"
+        varName="--ph-scope-h"
+        target={cockpitRef}
+        storageKey="nexus.split.phone.scope"
+        minPx={100}
+        maxPx={420}
+        defaultPct={22}
+        label="scope height"
+      />
 
       {(() => {
           // Only funcs the rig actually reports (non-null) render — capability-gated, no dead buttons.

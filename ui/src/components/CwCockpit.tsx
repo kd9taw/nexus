@@ -5,6 +5,7 @@ import { PalettePicker } from './PalettePicker'
 import { BandPicker } from './BandPicker'
 import { BandStrip } from './BandStrip'
 import { TuningStrip } from './TuningStrip'
+import { Splitter } from './Splitter'
 import { LogEntry } from './LogEntry'
 import {
   getSettings,
@@ -125,6 +126,8 @@ export function CwCockpit({
   // engine ~1.4 Hz (the decode reads a multi-second ring, so faster adds no detail).
   const [decoded, setDecoded] = useState<{ text: string; wpm: number }>({ text: '', wpm: 0 })
   const decodeRef = useRef<HTMLDivElement>(null)
+  // Cockpit root: the scope-height splitter measures + writes its CSS var here.
+  const cockpitRef = useRef<HTMLElement>(null)
   // Decode sensitivity for the internal pitch decoder (now WPM-estimation + AI-off
   // fallback only — the slider left with the classic pane; the stored value still applies).
   const sensitivityRef = useRef<number>(
@@ -339,7 +342,7 @@ export function CwCockpit({
   }, [])
 
   return (
-    <main className="layout single cw-cockpit">
+    <main className="layout single cw-cockpit" ref={cockpitRef}>
       <div className="cw-bar">
         <span
           className="cw-mode-badge"
@@ -482,6 +485,16 @@ export function CwCockpit({
           markerHz={pitch}
         />
       </section>
+      <Splitter
+        axis="y"
+        varName="--cw-scope-h"
+        target={cockpitRef}
+        storageKey="nexus.split.cw.scope"
+        minPx={100}
+        maxPx={420}
+        defaultPct={22}
+        label="scope height"
+      />
 
       {/* DSP toggles (NB/NR/Notch) — capability-gated; only funcs the rig reports render. */}
       {(() => {
