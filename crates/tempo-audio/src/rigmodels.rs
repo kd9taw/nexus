@@ -208,7 +208,7 @@ pub enum SpectrumKind {
 
 /// Map a curated Hamlib model number to the Icom rig whose native CI-V scope Nexus supports.
 /// Only the 7300-family radios that actually expose the `0x27` scope stream are listed.
-fn icom_scope_model(model: u32) -> Option<crate::civ::commands::IcomModel> {
+pub(crate) fn icom_scope_model(model: u32) -> Option<crate::civ::commands::IcomModel> {
     use crate::civ::commands::IcomModel::*;
     Some(match model {
         3073 => Ic7300,

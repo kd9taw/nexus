@@ -1769,6 +1769,29 @@ export function SettingsPanel({
                 <span className="settings-hint">Port Nexus launches rigctld on.</span>
               </label>
 
+              {form.rigConn !== 'network' &&
+                /IC-?\s?(7300|7610|9700|705|905)\b/i.test(form.rigModelName ?? '') && (
+                  <label className="settings-field">
+                    <span className="settings-label">Native Icom CI-V (early access)</span>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={form.icomNativeCat ?? false}
+                      className={`toggle${form.icomNativeCat ? ' on' : ''}`}
+                      onClick={() => updateBool('icomNativeCat', !form.icomNativeCat)}
+                    >
+                      <span className="toggle-knob" />
+                    </button>
+                    <span className="settings-hint">
+                      Nexus drives this Icom's CI-V directly instead of launching rigctld —
+                      unlocking the rig's real spectrum scope in the waterfall ("CI-V RF") and
+                      instant dial tracking. Set the rig's CI-V USB baud rate to 115200 (Menu ▸
+                      Connectors) and match Baud above. Save to apply; turn off any time to
+                      return to the classic Hamlib path.
+                    </span>
+                  </label>
+                )}
+
               <div className="settings-field">
                 <span className="settings-label">Antenna rotator</span>
                 {(() => {

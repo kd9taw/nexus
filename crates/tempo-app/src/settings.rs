@@ -134,6 +134,10 @@ pub struct Settings {
     /// IP `192.168.1.50:4992`). Ignored for serial.
     #[serde(default)]
     pub rig_addr: String,
+    /// Native Icom CI-V for the active radio (flat mirror of the profile field — see
+    /// [`RadioProfile::icom_native_cat`]). Default off.
+    #[serde(default)]
+    pub icom_native_cat: bool,
     /// DEPRECATED / ignored. Digital now ALWAYS forces the DATA submode (like Phone/CW
     /// force their mode), so this opt-out is no longer consulted by
     /// [`rig_mode`](Self::rig_mode). Kept only so older settings files still deserialize.
@@ -696,6 +700,11 @@ pub struct RadioProfile {
     pub rig_addr: String,
     /// UNIQUE across enabled profiles (validated) — each radio's own rigctld TCP port.
     pub rigctld_port: u16,
+    /// Native Icom CI-V: Nexus itself owns this radio's serial CI-V port (instead of
+    /// launching rigctld) and serves the same protocol on `rigctld_port` — unlocking the
+    /// rig's real spectrum-scope waveform + instant transceive dial tracking. Only honored
+    /// for a scope-capable Icom on a serial connection; off (default) = classic rigctld.
+    pub icom_native_cat: bool,
     // --- audio (a rig's own RX codec) ---
     pub audio_in: String,
     pub audio_out: String,
@@ -731,6 +740,7 @@ impl Default for RadioProfile {
             rig_conn: "serial".to_string(),
             rig_addr: String::new(),
             rigctld_port: 4532,
+            icom_native_cat: false,
             audio_in: String::new(),
             audio_out: String::new(),
             tx_level: 0.9,
@@ -812,6 +822,7 @@ impl Default for Settings {
             baud: 38400,
             rig_conn: "serial".to_string(),
             rig_addr: String::new(),
+            icom_native_cat: false,
             set_rig_mode: true, // force the DATA submode for digital, so sections set the rig
             operating_mode: OperatingMode::Digital, // digital obeys; phone/CW force
             license_class: LicenseClass::Open, // no TX lockout until the operator declares a class
@@ -952,6 +963,7 @@ impl Settings {
             rig_conn: self.rig_conn.clone(),
             rig_addr: self.rig_addr.clone(),
             rigctld_port: self.rigctld_port,
+            icom_native_cat: self.icom_native_cat,
             audio_in: self.audio_in.clone(),
             audio_out: self.audio_out.clone(),
             tx_level: self.tx_level,
@@ -1113,6 +1125,7 @@ impl Settings {
         self.rig_conn = p.rig_conn;
         self.rig_addr = p.rig_addr;
         self.rigctld_port = p.rigctld_port;
+        self.icom_native_cat = p.icom_native_cat;
         self.audio_in = p.audio_in;
         self.audio_out = p.audio_out;
         self.tx_level = p.tx_level;
@@ -1138,6 +1151,7 @@ impl Settings {
             rig_conn,
             rig_addr,
             rigctld_port,
+            icom_native_cat,
             audio_in,
             audio_out,
             tx_level,
@@ -1154,6 +1168,7 @@ impl Settings {
             self.rig_conn.clone(),
             self.rig_addr.clone(),
             self.rigctld_port,
+            self.icom_native_cat,
             self.audio_in.clone(),
             self.audio_out.clone(),
             self.tx_level,
@@ -1171,6 +1186,7 @@ impl Settings {
             p.rig_conn = rig_conn;
             p.rig_addr = rig_addr;
             p.rigctld_port = rigctld_port;
+            p.icom_native_cat = icom_native_cat;
             p.audio_in = audio_in;
             p.audio_out = audio_out;
             p.tx_level = tx_level;

@@ -1492,6 +1492,9 @@ export interface Settings {
    * Nexus obeys whatever mode the rig is already in (max compatibility). */
   /** TCP port that rigctld listens on / Tempo launches it with. */
   rigctldPort: number
+  /** Native Icom CI-V: Nexus owns the CI-V serial port itself (real scope waveform +
+   * instant dial tracking) instead of launching rigctld. Per-radio; default off. */
+  icomNativeCat: boolean
   /** Antenna rotator: rotctld daemon `host:port` (empty = no rotator). */
   /** Integrated rotator: Hamlib rotator model # (0 = none) + serial port +
    * baud — Nexus launches the bundled rotctld itself, like the rig. */
@@ -1741,6 +1744,9 @@ export interface RadioProfile {
   rigConn: string
   rigAddr: string
   rigctldPort: number
+  /** Native Icom CI-V: Nexus owns the CI-V serial port itself (real scope waveform +
+   * instant dial tracking) instead of launching rigctld. Per-radio; default off. */
+  icomNativeCat: boolean
   audioIn: string
   audioOut: string
   txLevel: number

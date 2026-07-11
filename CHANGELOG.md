@@ -5,6 +5,23 @@ All notable changes to Nexus (formerly Tempo) are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — native panadapter program (`native-scope` branch)
+
+### Added
+
+- **Native Icom CI-V (early access, off by default)** — a per-radio toggle in Settings ▸ Rig
+  for scope-capable Icoms (IC-7300 / 7610 / 9700 / 705 / 905) on a serial connection. Nexus
+  drives the rig's CI-V directly instead of launching Hamlib's rigctld: the waterfall shows
+  the radio's **real spectrum scope** ("CI-V RF" badge) instead of soundcard audio, and dial
+  tracking becomes instant (the rig pushes frequency changes as you turn the knob). All CAT —
+  frequency, mode (incl. USB-D for FT8), PTT, S-meter, power, CW keying, split, RIT, FM
+  repeater duplex/tone — runs over the same native link. Requires the rig's CI-V USB baud at
+  115200 for the scope stream (lower rates stay CAT-only). Turn the toggle off any time to
+  return to the classic Hamlib path.
+- **FlexRadio native panadapter** — when the active radio is a Flex (SmartSDR, network CAT)
+  with its radio IP set, the waterfall streams the radio's true RF FFT ("FLEX RF" badge),
+  with automatic fallback to the audio scope if the stream drops.
+
 ## [0.5.1] — 2026-07-10 — dual-radio on-rig fixes
 
 On-rig fixes from testing 0.5.0 with an FTDX10 + IC-9700 (HF + VHF on separate antennas).
