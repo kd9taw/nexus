@@ -24,10 +24,12 @@ asserting it.
 ### WSJT-X — Joe Taylor (K1JT) and the WSJT Development Group
 License: **GNU GPL, version 3** (GPLv3).
 
-Nexus's modem library, `libft1/`, is derived from WSJT-X. The WSJT-X
-reference source is **referenced read-only at build time** (its `lib/`
-sources are compiled into `libft1` from an external checkout) and is **not
-redistributed in this repository**. From WSJT-X, `libft1` reuses:
+Nexus's modem library, `libft1/`, is derived from WSJT-X. The WSJT-X-derived
+sources are **vendored in this repository** at `libft1/vendor/wsjtx/` — the
+complete corresponding source (GPL §6) for the modem compiled into the Nexus
+binary: a ~70-file subset of WSJT-X's `lib/` (no Qt/GUI code), with KD9TAW's
+modifications marked and the full provenance documented in
+`libft1/vendor/wsjtx/README.md`. From WSJT-X, `libft1` reuses:
 
 - the **77-bit message packing/unpacking** (`packjt77`, used via `unpack77`
   in `libft1/ft1_cabi.f90`), so Chat / QSO / Field Day forms carry the same
