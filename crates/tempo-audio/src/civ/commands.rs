@@ -250,6 +250,12 @@ pub fn set_repeater_tone(radio: u8, tenths: u32) -> Frame {
 pub fn set_tone_func(radio: u8, on: bool) -> Frame {
     Frame::command(radio, 0x16, &[0x42, u8::from(on)])
 }
+/// FM repeater offset frequency (cmd `0D` set / `0C` read): 3-byte little-endian BCD in
+/// 100 Hz units (600 kHz → `00 60 00`). The 10 MHz digit only applies on 1200 MHz.
+pub fn set_rptr_offset(radio: u8, hz: u64) -> Frame {
+    let bcd = freq_to_bcd(hz / 100);
+    Frame::command(radio, 0x0D, &bcd[..3])
+}
 /// DATA mode on/off (cmd `1A 06`): `on` selects USB-D/LSB-D (soundcard digital); the
 /// filter byte keeps the current selection when `None`.
 pub fn set_data_mode(radio: u8, on: bool, filter: Option<u8>) -> Frame {
@@ -465,6 +471,20 @@ mod tests {
         assert!(
             (smeter_db_rel_s9(0) + 54.0).abs() < 0.001,
             "raw 0 = S0 = -54 dB"
+        );
+    }
+
+    #[test]
+    fn repeater_offset_matches_the_official_example() {
+        // IC-9700 CI-V reference: 600 kHz offset → cmd 0D data 00 60 00 (3-byte LE BCD,
+        // 100 Hz units).
+        let f = set_rptr_offset(0xA2, 600_000);
+        assert_eq!(f.cmd, 0x0D);
+        assert_eq!(f.data, vec![0x00, 0x60, 0x00]);
+        // 5 MHz (70 cm convention) → 00 00 05.
+        assert_eq!(
+            set_rptr_offset(0xA2, 5_000_000).data,
+            vec![0x00, 0x00, 0x05]
         );
     }
 

@@ -93,15 +93,22 @@ fn parse_waveform(data: &[u8]) -> Option<(u32, u32, Option<SweepHeader>, &[u8])>
         if data.len() < 16 {
             return None;
         }
-        let fixed = data[4] != 0x00;
+        // Mode byte: 00=Center, 01=Fixed, 02=Scroll-C (center-style fields),
+        // 03=Scroll-F (fixed-style fields). Anything newer/unknown → drop the sweep
+        // rather than misread its fields.
+        let center_style = match data[4] {
+            0x00 | 0x02 => true,
+            0x01 | 0x03 => false,
+            _ => return None,
+        };
         let a = bcd_to_freq(&data[5..10]) as f64;
         let b = bcd_to_freq(&data[10..15]) as f64;
-        let (lo, hi) = if fixed {
-            // Fixed mode: lower edge, upper edge.
-            (a, b)
-        } else {
-            // Center mode: center frequency ± span (the span value is the ± half-width).
+        let (lo, hi) = if center_style {
+            // Center: center frequency ± span (the span value is the ± half-width).
             (a - b, a + b)
+        } else {
+            // Fixed: lower edge, upper edge.
+            (a, b)
         };
         let header = SweepHeader {
             lo_hz: lo,
@@ -306,6 +313,33 @@ mod tests {
         assert!(asm.push(&wf_frame(1, 2, &center_header())).is_none());
         assert!(asm.push(&sub).is_none());
         assert!(asm.push(&wf_frame(2, 2, &[5, 6])).is_some());
+    }
+
+    #[test]
+    fn scroll_modes_parse_with_their_base_styles_and_unknown_modes_drop() {
+        // Mode 02 = Scroll-C carries CENTER-style fields (center ± span); 03 = Scroll-F
+        // carries FIXED-style edges; an unknown mode byte must drop, not misread.
+        let mut asm = ScopeAssembler::new();
+        let mut hdr = vec![0x02]; // Scroll-C
+        hdr.extend_from_slice(&freq_to_bcd(145_000_000));
+        hdr.extend_from_slice(&freq_to_bcd(25_000));
+        hdr.push(0x00);
+        assert!(asm.push(&wf_frame(1, 2, &hdr)).is_none());
+        let sweep = asm
+            .push(&wf_frame(2, 2, &[1, 2]))
+            .expect("scroll-C assembles");
+        assert_eq!(sweep.lo_hz, 144_975_000.0, "center-style math for Scroll-C");
+        assert_eq!(sweep.hi_hz, 145_025_000.0);
+
+        let mut bad = vec![0x07]; // unknown future mode
+        bad.extend_from_slice(&freq_to_bcd(145_000_000));
+        bad.extend_from_slice(&freq_to_bcd(25_000));
+        bad.push(0x00);
+        assert!(asm.push(&wf_frame(1, 2, &bad)).is_none());
+        assert!(
+            asm.push(&wf_frame(2, 2, &[1, 2])).is_none(),
+            "unknown mode dropped"
+        );
     }
 
     #[test]

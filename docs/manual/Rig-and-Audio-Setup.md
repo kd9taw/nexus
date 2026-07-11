@@ -148,10 +148,11 @@ drives the rig's CI-V protocol directly instead of launching Hamlib's `rigctld`:
 
 Setup on the rig (Menu → Set → Connectors):
 
-1. **CI-V USB Baud Rate = 115200** and set Nexus's Baud to match. The scope waveform stream
+1. **CI-V USB Port = "Unlink from [REMOTE]"** — required for scope data over USB.
+2. **CI-V USB Baud Rate = 115200** and set Nexus's Baud to match. The scope waveform stream
    needs the fast rate; below 57,600 Nexus stays CAT-only (no native scope).
-2. **CI-V Transceive = ON** for instant dial tracking.
-3. Leave the CI-V address at the factory default (Nexus uses the model's default).
+3. **CI-V Transceive = ON** for instant dial tracking (not required for the scope itself).
+4. Leave the CI-V address at the factory default (Nexus uses the model's default).
 
 Turn the toggle off at any time to return to the classic Hamlib path — Save applies either way.
 Early access: validated per model as testers confirm; the IC-9700 is the first calibration target.

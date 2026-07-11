@@ -210,6 +210,12 @@ impl RigBackend for CivBackend {
         Some(self.ack(commands::set_duplex(self.addr, shift)))
     }
 
+    fn set_rptr_offset(&self, hz: i64) -> Option<bool> {
+        // Cmd 0D, 3-byte BCD in 100 Hz units (confirmed IC-9700 ref: 600 kHz → 00 60 00).
+        // The offset magnitude is unsigned; direction comes from the duplex shift (`R`).
+        Some(self.ack(commands::set_rptr_offset(self.addr, hz.unsigned_abs())))
+    }
+
     fn set_ctcss(&self, tenths: u32) -> Option<bool> {
         if tenths == 0 {
             return Some(self.ack(commands::set_tone_func(self.addr, false)));
@@ -218,8 +224,6 @@ impl RigBackend for CivBackend {
         let func = self.ack(commands::set_tone_func(self.addr, true));
         Some(tone && func)
     }
-    // set_rptr_offset stays unimplemented (RPRT -11): the offset command needs on-rig
-    // verification; the 9700's auto-repeater supplies the offset in practice.
 }
 
 /// The running native daemon: the CI-V serial engine + a stoppable rigctld TCP server.
