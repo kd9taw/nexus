@@ -5,7 +5,7 @@ All notable changes to Nexus (formerly Tempo) are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] — native panadapter program (`native-scope` branch)
+## [0.5.2] — 2026-07-11 — native panadapter (early access) + logger forwarding + watch list
 
 ### Added
 
@@ -21,6 +21,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **FlexRadio native panadapter** — when the active radio is a Flex (SmartSDR, network CAT)
   with its radio IP set, the waterfall streams the radio's true RF FFT ("FLEX RF" badge),
   with automatic fallback to the audio scope if the stream drops.
+- **Watch list** — tell Nexus the calls, prefixes (`VP8*`), or entities you're hunting
+  (Settings ▸ Alerts) and a decode or spot of one fires the loudest alert tier, above
+  needed/new-DXCC.
+- **N3FJP ACLog forwarding for everyday logging** — every QSO you log can now push to N3FJP
+  ACLog in real time (not just Field Day), with duplicate protection.
+- **Cloudlog / Wavelog forwarding** — log each QSO straight to your self-hosted
+  Cloudlog/Wavelog instance (URL + station profile + API key in Settings ▸ Logging).
+- **"My coverage" map layer** — shade the globe by where you've been heard/worked, by grid
+  square or CQ zone, as a proper toggleable map layer with its own opacity.
 
 ## [0.5.1] — 2026-07-10 — dual-radio on-rig fixes
 
