@@ -909,6 +909,11 @@ export async function cwDecode(sensitivity: number): Promise<CwDecodeResult> {
   return invoke<CwDecodeResult>('cw_decode', { sensitivity })
 }
 
+/** Toggle the AI CW decoder (beta). Persisted; returns the fresh snapshot. */
+export async function setAiCw(on: boolean): Promise<AppSnapshot> {
+  return invoke<AppSnapshot>('set_ai_cw', { on })
+}
+
 /** Clear the streaming CW decoder's accumulated transcript. */
 export async function cwClear(): Promise<void> {
   return invoke('cw_clear')

@@ -3510,6 +3510,17 @@ fn cw_decode(state: State<'_, SharedEngine>, sensitivity: f32) -> Result<CwDecod
     })
 }
 
+/// Toggle the AI CW decoder (beta) — persisted; the decode thread + audio ring follow it.
+#[tauri::command]
+fn set_ai_cw(state: State<'_, SharedEngine>, on: bool) -> Result<AppSnapshot, String> {
+    let mut eng = state.lock().map_err(|e| e.to_string())?;
+    eng.set_ai_cw_enabled(on);
+    if let Err(e) = eng.settings().save(&settings_path()) {
+        eprintln!("tempo: failed to persist ai-cw toggle: {e}");
+    }
+    Ok(eng.snapshot())
+}
+
 /// Clear the streaming CW decoder's accumulated transcript (the cockpit's Clear button).
 #[tauri::command]
 fn cw_clear(state: State<'_, SharedEngine>) -> Result<(), String> {
@@ -7615,6 +7626,26 @@ pub fn run() {
         });
     }
 
+    // AI CW decoder thread (beta): DeepCW model over the engine's 15 s CW audio ring.
+    // The model ships as an app resource next to the exe (like the bundled hamlib);
+    // missing model = an honest "model not installed" status, nothing else affected.
+    #[cfg(feature = "radio")]
+    {
+        let dir = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+            .map(|exe_dir| {
+                let bundled = exe_dir.join("resources").join("deepcw");
+                if bundled.is_dir() {
+                    bundled
+                } else {
+                    exe_dir.join("deepcw")
+                }
+            })
+            .unwrap_or_else(|| std::path::PathBuf::from("resources/deepcw"));
+        tempo_audio::aicw::spawn_ai_cw(engine.clone(), dir);
+    }
+
     // CAT broker: let other apps (WSJT-X / N1MM / loggers) share the radio THROUGH
     // Nexus over the rigctld protocol. Localhost-only (never expose the rig to the
     // network). Boot-time start when enabled; toggling needs a restart for now.
@@ -7689,6 +7720,7 @@ pub fn run() {
             point_rotator_at_call,
             read_rotator,
             cw_decode,
+            set_ai_cw,
             cw_clear,
             preview_cw,
             cw_skim,

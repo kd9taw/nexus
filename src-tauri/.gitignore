@@ -8,3 +8,8 @@
 /icons/*.png
 /icons/*.icns
 /icons/*.ico
+
+# The DeepCW AI CW model (AGPL-3.0, (c) e04) is staged here for bundling but NOT
+# committed — see resources/deepcw/README.md for provenance + how to fetch it.
+/resources/deepcw/*.onnx
+/resources/deepcw/*.onnx.json

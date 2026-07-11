@@ -158,6 +158,10 @@ pub struct Settings {
     pub winkeyer_port: String,
     /// CW sidetone / keyed-tone pitch in Hz (soundcard keyer + UI marker). Default 600.
     pub cw_pitch_hz: f32,
+    /// AI CW decoder (DeepCW model, beta): a second, neural-net copy of the CW audio in
+    /// the cockpit next to the classic decoder. Off by default; needs the bundled model.
+    #[serde(default)]
+    pub ai_cw_enabled: bool,
     /// Local TCP port Tempo uses for rigctld (it spawns rigctld on this port).
     pub rigctld_port: u16,
     /// Antenna rotator, the INTEGRATED way: a Hamlib rotator model number
@@ -829,6 +833,7 @@ impl Default for Settings {
             cw_keyer: CwKeyerBackend::Cat, // rig keyer via send_morse (zero hardware)
             winkeyer_port: String::new(),
             cw_pitch_hz: 600.0,
+            ai_cw_enabled: false,
             rigctld_port: 4532,
             rotator_model: 0,
             rotator_port: String::new(),

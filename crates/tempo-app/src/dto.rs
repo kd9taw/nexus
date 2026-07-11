@@ -1303,6 +1303,24 @@ impl From<tempo_core::hrdlog::HrdLogPush> for HrdLogPushResultDto {
     }
 }
 
+/// AI CW decoder state for the CW cockpit (beta side panel).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AiCwStatus {
+    pub enabled: bool,
+    /// "listening…" / "model not installed" / "" (decoding normally).
+    pub status: String,
+    pub lines: Vec<AiCwLine>,
+}
+
+/// One AI-CW window decode: the text + how many seconds ago the window completed.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiCwLine {
+    pub age_secs: u32,
+    pub text: String,
+}
+
 /// The full application snapshot the UI renders from.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1321,6 +1339,9 @@ pub struct AppSnapshot {
     /// Peg-lock state (band selection won't auto-switch when true).
     #[serde(default)]
     pub radio_pegged: bool,
+    /// AI CW decoder (beta): enabled flag, status line, recent window decodes.
+    #[serde(default)]
+    pub ai_cw: AiCwStatus,
     pub link: LinkState,
     pub stations: Vec<Station>,
     pub conversations: Vec<Conversation>,

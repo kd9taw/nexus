@@ -377,6 +377,13 @@ pub struct Engine {
     /// A longer rolling RX-audio ring (several seconds) — the batch per-channel decode
     /// behind the wideband CW skimmer (the 4096-sample waterfall window is too short).
     cw_audio: Vec<f32>,
+    /// A 15 s rolling RX-audio ring for the AI CW decoder (the DeepCW model's window).
+    /// Fed only while `settings.ai_cw_enabled` — empty (zero cost) otherwise.
+    ai_cw_audio: Vec<f32>,
+    /// The AI CW decoder's recent window decodes, newest last (each ~one 15 s window).
+    ai_cw_lines: std::collections::VecDeque<(Instant, String)>,
+    /// AI CW decoder status for the UI ("listening…", "model not installed", …).
+    ai_cw_status: String,
     /// Streaming single-signal CW decoder at the operator's pitch. Fed incrementally so it
     /// accumulates a PERSISTENT transcript (the batch decoder re-read the ring each poll,
     /// so its text churned and the last characters vanished within seconds).
@@ -422,6 +429,8 @@ const SPECTRUM_WINDOW: usize = 4096;
 /// CW-decode RX ring: ~6 s at 12 kHz — long enough for a full callsign exchange at the
 /// speeds an operator reads, short enough that the per-poll decode stays cheap.
 const CW_WINDOW: usize = 72_000;
+/// The AI CW decoder's ring: 15 s at 12 kHz — exactly the DeepCW model's decode window.
+const AI_CW_WINDOW: usize = 180_000;
 /// Per-QSO WAV ring: ~60 s at 12 kHz — captures the exchange around a logged contact.
 const QSO_WAV_WINDOW: usize = 720_000;
 
@@ -607,6 +616,9 @@ impl Engine {
             spectrum_cache: None,
             spectrum_rf: None,
             cw_audio: Vec::new(),
+            ai_cw_audio: Vec::new(),
+            ai_cw_lines: std::collections::VecDeque::new(),
+            ai_cw_status: String::new(),
             cw_stream: tempo_core::cw_decode::CwStreamDecoder::new(ft1::SAMPLE_RATE, 600.0),
             qso_audio: Vec::new(),
             cat_status: (None, String::new()),
@@ -3480,6 +3492,17 @@ impl Engine {
             let drop = self.cw_audio.len() - CW_WINDOW;
             self.cw_audio.drain(0..drop);
         }
+        // The AI CW decoder's longer ring (15 s — the model's window) fills only while
+        // the feature is on, so everyone else pays nothing.
+        if self.settings.ai_cw_enabled {
+            self.ai_cw_audio.extend_from_slice(samples);
+            if self.ai_cw_audio.len() > AI_CW_WINDOW {
+                let drop = self.ai_cw_audio.len() - AI_CW_WINDOW;
+                self.ai_cw_audio.drain(0..drop);
+            }
+        } else if !self.ai_cw_audio.is_empty() {
+            self.ai_cw_audio.clear();
+        }
         // Feed the streaming CW decoder (retune first, cheaply, if the operator moved the
         // marker pitch) — it keeps a persistent transcript across polls + window slides.
         self.cw_stream.retune(self.settings.cw_pitch_hz);
@@ -3507,6 +3530,34 @@ impl Engine {
         tempo_core::cw_decode::CwDecode {
             text: self.cw_stream.transcript().to_string(),
             wpm: self.cw_stream.wpm(),
+        }
+    }
+
+    /// A full 15 s AI-CW window when the ring has filled, else `None` (the decode thread
+    /// polls this; a brief lock + copy, decode happens off-lock).
+    pub fn ai_cw_window(&self) -> Option<Vec<f32>> {
+        (self.ai_cw_audio.len() >= AI_CW_WINDOW).then(|| self.ai_cw_audio.clone())
+    }
+
+    /// Append one AI-CW window decode (newest last, bounded history).
+    pub fn push_ai_cw_line(&mut self, text: String) {
+        self.ai_cw_lines.push_back((Instant::now(), text));
+        while self.ai_cw_lines.len() > 12 {
+            self.ai_cw_lines.pop_front();
+        }
+    }
+
+    /// AI CW decoder status line for the cockpit ("listening…", "model not installed"…).
+    pub fn set_ai_cw_status(&mut self, s: &str) {
+        self.ai_cw_status = s.to_string();
+    }
+
+    /// Toggle the AI CW decoder (persisted setting; the decode thread + ring follow it).
+    pub fn set_ai_cw_enabled(&mut self, on: bool) {
+        self.settings.ai_cw_enabled = on;
+        if !on {
+            self.ai_cw_lines.clear();
+            self.ai_cw_status.clear();
         }
     }
 
@@ -3944,6 +3995,18 @@ impl Engine {
         // model), so `catOk`/`smeterDb` are None for them.
         s.active_radio_id = self.settings.active_radio;
         s.radio_pegged = self.settings.radio_pegged;
+        s.ai_cw = crate::dto::AiCwStatus {
+            enabled: self.settings.ai_cw_enabled,
+            status: self.ai_cw_status.clone(),
+            lines: self
+                .ai_cw_lines
+                .iter()
+                .map(|(t, text)| crate::dto::AiCwLine {
+                    age_secs: t.elapsed().as_secs() as u32,
+                    text: text.clone(),
+                })
+                .collect(),
+        };
         if self.settings.radios.len() > 1 {
             s.radios = self
                 .settings

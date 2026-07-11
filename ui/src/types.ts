@@ -1794,6 +1794,8 @@ export interface AppSnapshot {
   activeRadioId?: number
   /** Peg-lock: band selection won't auto-switch the active radio when true. */
   radioPegged?: boolean
+  /** AI CW decoder (beta): toggle state, status line, recent 15 s-window decodes. */
+  aiCw: { enabled: boolean; status: string; lines: { ageSecs: number; text: string }[] }
   link: LinkState
   stations: Station[]
   conversations: Conversation[]

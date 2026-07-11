@@ -45,7 +45,8 @@
       "icons/icon.ico"
     ],
     "resources": [
-      "resources/hamlib/*"
+      "resources/hamlib/*",
+      "resources/deepcw/*"
     ],
     "windows": {
       "webviewInstallMode": {

@@ -16,6 +16,9 @@ device = ["dep:cpal", "dep:tempo-net"]
 # Serial PTT + COM-port enumeration via `serialport`. OFF by default: the
 # headless workspace build has no libudev. The station PC enables it.
 serial = ["dep:serialport"]
+# The AI CW decoder thread (DeepCW model via tract). Pure Rust; pulled in by the
+# station build (src-tauri `radio`). The model itself is an app resource, not a dep.
+ai-cw = ["dep:deepcw"]
 
 [dependencies]
 tempo-app = { path = "../tempo-app" }
@@ -24,6 +27,7 @@ tempo-core = { path = "../tempo-core" }
 hound = "3.5"
 cpal = { version = "0.15", optional = true }
 serialport = { version = "4", optional = true }
+deepcw = { path = "../deepcw", optional = true }
 tempo-net = { path = "../tempo-net", optional = true }
 
 # Windows-only: assign the launched rigctld to a Job Object so the OS kills it

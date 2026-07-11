@@ -72,4 +72,4 @@ custom-protocol = ["tauri/custom-protocol"]
 # the platform audio dev libs at build time (ALSA/CoreAudio/WASAPI) and a sound
 # card (+ optional rigctld) at runtime. Without it the shell serves app state but
 # does not key the radio — useful for UI work.
-radio = ["dep:tempo-audio", "tempo-audio/device", "tempo-audio/serial"]
+radio = ["dep:tempo-audio", "tempo-audio/device", "tempo-audio/serial", "tempo-audio/ai-cw"]

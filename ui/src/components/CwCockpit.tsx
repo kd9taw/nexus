@@ -13,6 +13,7 @@ import {
   stopCw,
   cwDecode,
   cwClear,
+  setAiCw,
   selectPeer,
   previewCw,
   pointRotatorAtCall,
@@ -619,6 +620,43 @@ export function CwCockpit({
         <div className="cw-decode-text" ref={decodeRef}>
           {decoded.text ? decoded.text : <span className="cw-decode-idle">listening…</span>}
         </div>
+      </div>
+
+      <div
+        className="cw-decode cw-ai-panel"
+        title="AI CW decoder (beta) — a neural-net copy of the same audio, one line per 15-second window. Much better weak-signal copy than the classic decoder; needs the bundled DeepCW model."
+      >
+        <div className="cw-decode-head">
+          <span className="cw-decode-label">AI COPY</span>
+          <span className="cw-ai-beta">beta</span>
+          {snap.aiCw?.enabled && snap.aiCw.status && (
+            <span className="cw-ai-status">{snap.aiCw.status}</span>
+          )}
+          <button
+            type="button"
+            role="switch"
+            aria-checked={snap.aiCw?.enabled ?? false}
+            className={`toggle${snap.aiCw?.enabled ? ' on' : ''}`}
+            onClick={() => void setAiCw(!(snap.aiCw?.enabled ?? false))}
+            title={snap.aiCw?.enabled ? 'Turn the AI decoder off' : 'Turn the AI decoder on'}
+          >
+            <span className="toggle-knob" />
+          </button>
+        </div>
+        {snap.aiCw?.enabled && (
+          <div className="cw-decode-text cw-ai-lines">
+            {snap.aiCw.lines.length === 0 ? (
+              <span className="cw-decode-idle">{snap.aiCw.status || 'listening…'}</span>
+            ) : (
+              snap.aiCw.lines.map((l, i) => (
+                <div key={i} className="cw-ai-line">
+                  <span className="cw-ai-age">{l.ageSecs}s</span>
+                  {l.text}
+                </div>
+              ))
+            )}
+          </div>
+        )}
       </div>
 
       {sent.length > 0 && (

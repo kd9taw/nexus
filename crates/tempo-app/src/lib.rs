@@ -624,6 +624,7 @@ impl AppState {
         conversations.sort_by(|a, b| a.peer.cmp(&b.peer));
 
         AppSnapshot {
+            ai_cw: crate::dto::AiCwStatus::default(),
             mycall: self.mycall.clone(),
             mygrid: self.mygrid.clone(),
             // Mode + per-mode status are owned by the Engine; default here and

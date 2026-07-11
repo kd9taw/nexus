@@ -43,6 +43,8 @@ pub mod usbrig;
 pub mod voice;
 pub mod winkeyer;
 
+#[cfg(all(feature = "device", feature = "ai-cw"))]
+pub mod aicw;
 #[cfg(feature = "device")]
 pub mod device;
 #[cfg(feature = "device")]
