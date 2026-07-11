@@ -89,6 +89,39 @@ pub fn spectrogram(audio: &[f32], m: &Metadata) -> (Vec<f32>, usize) {
     (out, frames)
 }
 
+/// Greedy CTC best-path collapse with per-character timing: each emitted character
+/// carries the moment (seconds into the clip) of its first frame — the basis for
+/// stitching overlapping windows into one transcript without re-emitting text.
+pub fn greedy_ctc_timed(
+    log_probs: &[f32],
+    time: usize,
+    classes: usize,
+    clip_secs: f32,
+    m: &Metadata,
+) -> Vec<(f32, String)> {
+    let mut decoded = Vec::new();
+    let mut previous: Option<usize> = None;
+    for t in 0..time {
+        let row = &log_probs[t * classes..(t + 1) * classes];
+        let best = row
+            .iter()
+            .enumerate()
+            .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
+            .map(|(i, _)| i)
+            .unwrap_or(m.blank_index);
+        if best == m.blank_index {
+            previous = None;
+            continue;
+        }
+        if previous != Some(best) {
+            let at = (t as f32 + 0.5) / time as f32 * clip_secs;
+            decoded.push((at, m.chars[best].clone()));
+        }
+        previous = Some(best);
+    }
+    decoded
+}
+
 /// Greedy CTC best-path collapse: drop blanks (resetting the repeat tracker), merge repeats.
 pub fn greedy_ctc(log_probs: &[f32], time: usize, classes: usize, m: &Metadata) -> String {
     let mut decoded = String::new();
@@ -158,9 +191,23 @@ impl DeepCw {
         })
     }
 
+    /// Decode with per-character timestamps (seconds into the clip) — for stitching
+    /// overlapping live windows into one transcript.
+    pub fn decode_timed(&self, audio: &[f32]) -> Result<Vec<(f32, String)>, String> {
+        let clip_secs = audio.len() as f32 / self.meta.sample_rate as f32;
+        let (t, classes, flat) = self.run(audio)?;
+        Ok(greedy_ctc_timed(&flat, t, classes, clip_secs, &self.meta))
+    }
+
     /// Decode a mono clip already at the model's sample rate (3200 Hz). Builds the tract
     /// plan for this clip's frame count (fine for offline/spike use).
     pub fn decode(&self, audio: &[f32]) -> Result<String, String> {
+        let (t, classes, flat) = self.run(audio)?;
+        Ok(greedy_ctc(&flat, t, classes, &self.meta))
+    }
+
+    /// Run inference: returns `(time_steps, classes, flattened log_probs)`.
+    fn run(&self, audio: &[f32]) -> Result<(usize, usize, Vec<f32>), String> {
         let bins = self.meta.spectrogram_frequency_bins;
         let (spec, frames) = spectrogram(audio, &self.meta);
         // tract needs CONCRETE dims here (a Range node can't type-infer over a symbolic
@@ -202,7 +249,7 @@ impl DeepCw {
             return Err(format!("unexpected output shape {shape:?}"));
         }
         let flat: Vec<f32> = view.iter().copied().collect();
-        Ok(greedy_ctc(&flat, shape[1], shape[2], &self.meta))
+        Ok((shape[1], shape[2], flat))
     }
 }
 

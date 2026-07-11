@@ -1310,14 +1310,7 @@ pub struct AiCwStatus {
     pub enabled: bool,
     /// "listening…" / "model not installed" / "" (decoding normally).
     pub status: String,
-    pub lines: Vec<AiCwLine>,
-}
-
-/// One AI-CW window decode: the text + how many seconds ago the window completed.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AiCwLine {
-    pub age_secs: u32,
+    /// The rolling stitched transcript (overlapping windows deduplicated by time).
     pub text: String,
 }
 

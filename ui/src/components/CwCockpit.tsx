@@ -124,6 +124,8 @@ export function CwCockpit({
   // engine ~1.4 Hz (the decode reads a multi-second ring, so faster adds no detail).
   const [decoded, setDecoded] = useState<{ text: string; wpm: number }>({ text: '', wpm: 0 })
   const decodeRef = useRef<HTMLDivElement>(null)
+  // AI transcript autoscroll (mirrors the classic decode pane).
+  const aiRef = useRef<HTMLDivElement>(null)
   // Operator decode sensitivity (0..1; 0.5 = original gates). Higher catches weaker/off-pitch
   // marks the single-pitch decoder otherwise drops. A ref feeds the fixed-deps poll loop without
   // restarting the interval on every slider nudge.
@@ -146,6 +148,10 @@ export function CwCockpit({
     const el = decodeRef.current
     if (el) el.scrollTop = el.scrollHeight
   }, [decoded.text])
+  useEffect(() => {
+    const el = aiRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [snap.aiCw?.text])
   // TX echo — what we've actually transmitted (macros expanded), polled alongside the decode.
   const [sent, setSent] = useState<string[]>([])
   const sentRef = useRef<HTMLDivElement>(null)
@@ -644,16 +650,11 @@ export function CwCockpit({
           </button>
         </div>
         {snap.aiCw?.enabled && (
-          <div className="cw-decode-text cw-ai-lines">
-            {snap.aiCw.lines.length === 0 ? (
-              <span className="cw-decode-idle">{snap.aiCw.status || 'listening…'}</span>
+          <div className="cw-decode-text" ref={aiRef}>
+            {snap.aiCw.text ? (
+              snap.aiCw.text
             ) : (
-              snap.aiCw.lines.map((l, i) => (
-                <div key={i} className="cw-ai-line">
-                  <span className="cw-ai-age">{l.ageSecs}s</span>
-                  {l.text}
-                </div>
-              ))
+              <span className="cw-decode-idle">{snap.aiCw.status || 'listening…'}</span>
             )}
           </div>
         )}

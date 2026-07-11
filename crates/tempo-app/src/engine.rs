@@ -380,8 +380,12 @@ pub struct Engine {
     /// A 15 s rolling RX-audio ring for the AI CW decoder (the DeepCW model's window).
     /// Fed only while `settings.ai_cw_enabled` — empty (zero cost) otherwise.
     ai_cw_audio: Vec<f32>,
-    /// The AI CW decoder's recent window decodes, newest last (each ~one 15 s window).
-    ai_cw_lines: std::collections::VecDeque<(Instant, String)>,
+    /// The AI CW decoder's rolling transcript (window decodes stitched by absolute
+    /// stream time — no re-emitted overlap). Bounded; oldest text drains off the front.
+    ai_cw_text: String,
+    /// Total samples ever fed to the AI-CW ring — the absolute stream clock the decode
+    /// thread stitches windows with. Resets when the feature turns off.
+    ai_cw_fed: u64,
     /// AI CW decoder status for the UI ("listening…", "model not installed", …).
     ai_cw_status: String,
     /// Streaming single-signal CW decoder at the operator's pitch. Fed incrementally so it
@@ -617,7 +621,8 @@ impl Engine {
             spectrum_rf: None,
             cw_audio: Vec::new(),
             ai_cw_audio: Vec::new(),
-            ai_cw_lines: std::collections::VecDeque::new(),
+            ai_cw_text: String::new(),
+            ai_cw_fed: 0,
             ai_cw_status: String::new(),
             cw_stream: tempo_core::cw_decode::CwStreamDecoder::new(ft1::SAMPLE_RATE, 600.0),
             qso_audio: Vec::new(),
@@ -3496,12 +3501,14 @@ impl Engine {
         // the feature is on, so everyone else pays nothing.
         if self.settings.ai_cw_enabled {
             self.ai_cw_audio.extend_from_slice(samples);
+            self.ai_cw_fed += samples.len() as u64;
             if self.ai_cw_audio.len() > AI_CW_WINDOW {
                 let drop = self.ai_cw_audio.len() - AI_CW_WINDOW;
                 self.ai_cw_audio.drain(0..drop);
             }
         } else if !self.ai_cw_audio.is_empty() {
             self.ai_cw_audio.clear();
+            self.ai_cw_fed = 0;
         }
         // Feed the streaming CW decoder (retune first, cheaply, if the operator moved the
         // marker pitch) — it keeps a persistent transcript across polls + window slides.
@@ -3533,17 +3540,25 @@ impl Engine {
         }
     }
 
-    /// A full 15 s AI-CW window when the ring has filled, else `None` (the decode thread
-    /// polls this; a brief lock + copy, decode happens off-lock).
-    pub fn ai_cw_window(&self) -> Option<Vec<f32>> {
-        (self.ai_cw_audio.len() >= AI_CW_WINDOW).then(|| self.ai_cw_audio.clone())
+    /// A full 15 s AI-CW window when the ring has filled, else `None`. Returns the
+    /// window plus the ABSOLUTE sample index of its end (the stream clock the decode
+    /// thread stitches with). Brief lock + copy; the decode happens off-lock.
+    pub fn ai_cw_window(&self) -> Option<(Vec<f32>, u64)> {
+        (self.ai_cw_audio.len() >= AI_CW_WINDOW).then(|| (self.ai_cw_audio.clone(), self.ai_cw_fed))
     }
 
-    /// Append one AI-CW window decode (newest last, bounded history).
-    pub fn push_ai_cw_line(&mut self, text: String) {
-        self.ai_cw_lines.push_back((Instant::now(), text));
-        while self.ai_cw_lines.len() > 12 {
-            self.ai_cw_lines.pop_front();
+    /// Append newly-stitched AI-CW transcript text (already deduplicated by the decode
+    /// thread's absolute-time cursor). Bounded; oldest text drains off the front.
+    pub fn push_ai_cw_text(&mut self, text: &str) {
+        self.ai_cw_text.push_str(text);
+        const CAP: usize = 1500;
+        if self.ai_cw_text.len() > CAP {
+            let cut = self.ai_cw_text.len() - CAP;
+            // Drain on a char boundary.
+            let cut = (cut..self.ai_cw_text.len())
+                .find(|&i| self.ai_cw_text.is_char_boundary(i))
+                .unwrap_or(0);
+            self.ai_cw_text.drain(0..cut);
         }
     }
 
@@ -3556,8 +3571,9 @@ impl Engine {
     pub fn set_ai_cw_enabled(&mut self, on: bool) {
         self.settings.ai_cw_enabled = on;
         if !on {
-            self.ai_cw_lines.clear();
+            self.ai_cw_text.clear();
             self.ai_cw_status.clear();
+            self.ai_cw_fed = 0;
         }
     }
 
@@ -3998,14 +4014,7 @@ impl Engine {
         s.ai_cw = crate::dto::AiCwStatus {
             enabled: self.settings.ai_cw_enabled,
             status: self.ai_cw_status.clone(),
-            lines: self
-                .ai_cw_lines
-                .iter()
-                .map(|(t, text)| crate::dto::AiCwLine {
-                    age_secs: t.elapsed().as_secs() as u32,
-                    text: text.clone(),
-                })
-                .collect(),
+            text: self.ai_cw_text.clone(),
         };
         if self.settings.radios.len() > 1 {
             s.radios = self

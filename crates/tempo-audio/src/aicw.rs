@@ -35,10 +35,18 @@ pub fn spawn_ai_cw(engine: Arc<Mutex<Engine>>, model_dir: std::path::PathBuf) {
         .expect("spawn ai-cw");
 }
 
+/// Don't emit characters from the last second of a window: the model has no right
+/// context there yet; the next (overlapping) window decodes that region reliably.
+const TAIL_GUARD_SECS: f64 = 1.0;
+
 fn run(engine: Arc<Mutex<Engine>>, model_dir: std::path::PathBuf) {
     let mut model: Option<deepcw::DeepCw> = None;
     let mut last_model_try: Option<Instant> = None;
     let mut last_decode: Option<Instant> = None;
+    // The transcript cursor, in ABSOLUTE stream seconds (fed samples / 12 kHz): characters
+    // at or before this moment are already emitted. Windows overlap 9 s; this is what
+    // keeps the overlap from re-printing.
+    let mut emitted_until: f64 = 0.0;
     loop {
         if SHUTDOWN.load(std::sync::atomic::Ordering::Relaxed) {
             return;
@@ -50,6 +58,7 @@ fn run(engine: Arc<Mutex<Engine>>, model_dir: std::path::PathBuf) {
             Err(_) => false,
         };
         if !on {
+            emitted_until = 0.0; // ring + stream clock reset when the feature is off
             continue;
         }
         // Lazy model load, with a retry backoff and an honest status.
@@ -75,25 +84,42 @@ fn run(engine: Arc<Mutex<Engine>>, model_dir: std::path::PathBuf) {
         if !due {
             continue;
         }
-        // A full 15 s window, copied under a brief lock; decode runs off-lock.
+        // A full 15 s window + the absolute stream position of its end, copied under a
+        // brief lock; decode runs off-lock.
         let window = match engine.lock() {
             Ok(e) => e.ai_cw_window(),
             Err(_) => None,
         };
-        let Some(window) = window else {
+        let Some((window, fed)) = window else {
             set_status(&engine, "listening…");
             continue;
         };
         last_decode = Some(Instant::now());
+        let win_secs = window.len() as f64 / 12_000.0;
+        let end_abs = fed as f64 / 12_000.0;
+        let start_abs = end_abs - win_secs;
+        if emitted_until < start_abs || emitted_until > end_abs {
+            emitted_until = start_abs; // first window, or the stream clock reset
+        }
         let ai = model.as_ref().unwrap();
         let audio_3200 = deepcw::resample_linear(&window, 12_000, ai.meta.sample_rate);
-        match ai.decode(&audio_3200) {
-            Ok(text) => {
-                let text = text.trim().to_string();
+        match ai.decode_timed(&audio_3200) {
+            Ok(chars) => {
+                // Stitch: only characters NEWER than the cursor and older than the tail
+                // guard (the guarded second re-decodes with full context next window).
+                let cutoff = end_abs - TAIL_GUARD_SECS;
+                let mut fresh = String::new();
+                for (t_rel, ch) in &chars {
+                    let t_abs = start_abs + *t_rel as f64;
+                    if t_abs > emitted_until && t_abs <= cutoff {
+                        fresh.push_str(ch);
+                    }
+                }
+                emitted_until = cutoff.max(emitted_until);
                 if let Ok(mut e) = engine.lock() {
                     e.set_ai_cw_status("");
-                    if !text.is_empty() {
-                        e.push_ai_cw_line(text);
+                    if !fresh.trim().is_empty() {
+                        e.push_ai_cw_text(&fresh);
                     }
                 }
             }
