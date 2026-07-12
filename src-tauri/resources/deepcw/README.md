@@ -24,3 +24,11 @@ Semantics are unchanged (folding only bakes shapes/constants). Distributing the
 model alongside Nexus is permitted: GPLv3 §13 ↔ AGPLv3 §13 allow the combination;
 see NOTICE. If these files are absent the AI CW panel reports "model not
 installed" and everything else works normally.
+
+## License
+
+The model is **AGPL-3.0-only, © e04**. The full license text ships next to the
+model as `LICENSE.AGPL-3.0.txt` (in this folder), so it travels with the binary as
+AGPLv3 §4 requires. The **corresponding source** for the model is the upstream
+repository above; Nexus's only modification is the constant-folding shown here. The
+inference/stitching code that calls the model is original Nexus code (GPL-3.0-only).

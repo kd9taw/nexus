@@ -191,8 +191,10 @@ The web UI (`ui/`, Vite + React + TypeScript) depends on:
 - **world-atlas** (offline basemap package; ISC) — its `countries-50m` /
   `countries-110m` geometry derives from **Natural Earth** (**public domain**).
   No map tiles or network map services are used.
-- **us-atlas** (build-time source for `grid_state.bin`; ISC) — see the WAS
-  grid-state note above.
+- **us-atlas** (ISC) — the `states-10m` TopoJSON is bundled in the UI to draw the
+  Connect map's US state borders, and is also the build-time source for
+  `grid_state.bin`. Its geometry derives from **US Census Bureau** cartographic
+  boundary files (**public domain**); see the WAS grid-state note above.
 - **Lucide** icons via `lucide-react` — **ISC** (© Lucide contributors; based
   on Feather Icons, MIT).
 - **Radix UI** primitives `@radix-ui/react-dialog`, `-dropdown-menu`, `-toast`,
@@ -272,4 +274,7 @@ repository, and Nexus's modification (constant-folding the graph at the fixed
 Per GPLv3 §13/AGPLv3 §13 the combination is conveyed under both licenses'
 terms; the classic decoder remains as the automatic fallback if the model is
 absent. The inference and stitching code around the model is original Nexus
-code (GPL-3.0).
+code (GPL-3.0). The **full AGPL-3.0 license text ships with the model** at
+`resources/deepcw/LICENSE.AGPL-3.0.txt` (bundled in the installer), so the
+model's license travels with the binary as AGPLv3 §4 requires; the model's
+corresponding source is the upstream e04/deepcw-engine repository above.
