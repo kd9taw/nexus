@@ -21,6 +21,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sizes persist.
 - **Live input spectrum in Settings audio** — confirms the right input device at a glance.
 - **Band Scope pane for Connect** — the active radio's spectrum on the map screen.
+- **Connect globe upgrade** — US state borders (read which state a spot or your QTH is in),
+  a clear "you are here" QTH marker, and a moodier night-earth globe so the colored spots
+  stand out. All in the universal 2D map (a high-fidelity 3D mode is planned for later).
+- **Prominent band picker** — the CW/Phone band selector is now a large, band-colored
+  control (matching the map's per-band spot colors) so your operating band reads at a glance.
 
 ### Fixed
 
