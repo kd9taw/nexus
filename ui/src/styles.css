@@ -1332,6 +1332,29 @@ button.nb-chip:hover {
   color: var(--text-dim);
   font-size: 0.9rem;
 }
+/* Spin on/off, overlaid on the globe (top-right). */
+.globe3d-spin {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 3px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--bg-elev-2) 80%, transparent);
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.globe3d-spin:hover {
+  border-color: var(--accent);
+}
+.globe3d-spin.active {
+  color: var(--accent);
+  border-color: var(--accent);
+}
 .connect-map > .map-view {
   flex: 1;
 }

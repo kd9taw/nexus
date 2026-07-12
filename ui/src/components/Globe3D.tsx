@@ -46,6 +46,7 @@ export default function Globe3D({ myGrid, spots, selectedCall, onSelectCall, sho
   const [size, setSize] = useState({ w: 0, h: 0 })
   const [ready, setReady] = useState(false)
   const [ok] = useState(webglOk)
+  const [spin, setSpin] = useState(true) // idle auto-rotate; on by default, operator-toggleable
 
   // Measure the container BEFORE paint so the globe is never sized to the whole window
   // (react-globe.gl's default when width/height are undefined) — that was painting over
@@ -121,11 +122,14 @@ export default function Globe3D({ myGrid, spots, selectedCall, onSelectCall, sho
     try {
       // Day/night: a warm directional light at the subsolar point + a low ambient so
       // the night side isn't pure black. Replaces globe.gl's camera-following light.
-      const sun = new THREE.DirectionalLight('#fff2dc', 2.1)
+      const sun = new THREE.DirectionalLight('#fff2dc', 1.7)
       const ss = subsolarPoint(Date.now())
       const p = g.getCoords(ss.lat, ss.lon, 2)
       sun.position.set(p.x, p.y, p.z)
-      g.lights([new THREE.AmbientLight('#20304a', 0.55), sun])
+      // Ambient is bright enough that the NIGHT side is still readable (dark land +
+      // coasts/states), not near-black — the day/night gradient stays, but geography
+      // never disappears. (The Black Marble city-lights layer will enrich it further.)
+      g.lights([new THREE.AmbientLight('#5a6577', 1.15), sun])
       // Starfield: a shell of points around the scene (no texture asset needed).
       const N = 1400
       const pos = new Float32Array(N * 3)
@@ -143,9 +147,8 @@ export default function Globe3D({ myGrid, spots, selectedCall, onSelectCall, sho
       // Bloom so spots/arcs/lights glow.
       const bloom = new UnrealBloomPass(new THREE.Vector2(size.w || 1, size.h || 1), 0.9, 0.6, 0.1)
       g.postProcessingComposer().addPass(bloom)
-      // Gentle idle auto-rotate; stops the moment the operator drags/zooms.
-      const controls = g.controls() as { autoRotate: boolean; autoRotateSpeed: number }
-      controls.autoRotate = true
+      // Gentle idle auto-rotate speed; the on/off state is driven by the spin effect.
+      const controls = g.controls() as { autoRotateSpeed: number }
       controls.autoRotateSpeed = 0.3
     } catch (e) {
       // eslint-disable-next-line no-console
@@ -159,6 +162,13 @@ export default function Globe3D({ myGrid, spots, selectedCall, onSelectCall, sho
     if (!g || !ready || !qth) return
     g.pointOfView({ lat: qth.lat, lng: qth.lon, altitude: 2.2 }, 0)
   }, [ready, qth])
+
+  // Drive idle auto-rotate from the operator's spin toggle.
+  useEffect(() => {
+    const g = globeRef.current
+    if (!g || !ready) return
+    ;(g.controls() as { autoRotate: boolean }).autoRotate = spin
+  }, [ready, spin])
 
   // Keep the day/night light following the sun (~1 min cadence, cheap).
   useEffect(() => {
@@ -185,6 +195,14 @@ export default function Globe3D({ myGrid, spots, selectedCall, onSelectCall, sho
 
   return (
     <div ref={wrapRef} className="globe3d-wrap">
+      <button
+        type="button"
+        className={`globe3d-spin${spin ? ' active' : ''}`}
+        onClick={() => setSpin((s) => !s)}
+        title={spin ? 'Stop the globe spinning' : 'Spin the globe'}
+      >
+        {spin ? '⏸ Spin' : '▶ Spin'}
+      </button>
       {size.w > 0 && size.h > 0 && (
         <Globe
           ref={globeRef}
@@ -218,9 +236,9 @@ export default function Globe3D({ myGrid, spots, selectedCall, onSelectCall, sho
           pathStroke={0.4}
           ringsData={rings}
           ringColor={() => '#4ea1ff'}
-          ringMaxRadius={4}
-          ringPropagationSpeed={1.4}
-          ringRepeatPeriod={1400}
+          ringMaxRadius={1.6}
+          ringPropagationSpeed={0.7}
+          ringRepeatPeriod={2600}
         />
       )}
     </div>
