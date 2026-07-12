@@ -21,6 +21,10 @@ warn() { printf '  \033[33m!\033[0m %s\n' "$*"; }
 die()  { printf '\n\033[31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Official-build secrets (e.g. CLUBLOG_API_KEY, baked in via option_env!) live OUTSIDE the
+# repo so they're never committed — ClubLog requires the key stay out of the public source.
+# shellcheck disable=SC1091
+[ -f "$HOME/.nexus-build.env" ] && source "$HOME/.nexus-build.env"
 export PATH="$HOME/.local/bin:$PATH"     # picks up a pip-installed ninja, if any
 TARGET=x86_64-pc-windows-gnu
 FFTW_VER=3.3.10

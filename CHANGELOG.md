@@ -5,6 +5,16 @@ All notable changes to Nexus (formerly Tempo) are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] — 2026-07-12 — Club Log upload enabled
+
+### Added
+
+- **Club Log realtime upload** is now active in the official builds — the app's developer
+  API key is baked in, so you just add your own Club Log email + application password (and
+  callsign if it differs) in Settings and enable auto-upload; each logged QSO is pushed to
+  Club Log in real time. (The developer key is injected at build time and never committed to
+  source, per Club Log's terms.)
+
 ## [0.7.0] — 2026-07-12 — Optional 3-D WebGL Connect globe
 
 ### Added
