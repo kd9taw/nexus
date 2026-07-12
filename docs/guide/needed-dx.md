@@ -6,7 +6,7 @@ right now, ranked by what it's worth to *your* log. It's the answer to "there ar
 so you can trust the answer: every row carries the **evidence** that the path to
 that station is real for *you*, not for a superstation two time zones away.
 
-![TODO screenshot: the Needed board — ranked rows with need chips and evidence lines](img/TODO-needed-board.png)
+<!-- TODO: capture screenshot — the Needed board — ranked rows with need chips and evidence lines -->
 
 ## The tour
 
@@ -33,7 +33,7 @@ believes the station is reachable from your QTH:
 Spots age out at 15 minutes, and each row shows its age, so you're never chasing
 a station that left twenty minutes ago.
 
-![TODO screenshot: a single row with its need chip, distance, and evidence line](img/TODO-needed-row.png)
+<!-- TODO: capture screenshot — a single row with its need chip, distance, and evidence line -->
 
 ## Reading an evidence line
 

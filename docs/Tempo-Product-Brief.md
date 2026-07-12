@@ -104,7 +104,7 @@ We'd rather under-promise. Here's exactly where things stand:
 
 ## Become a tester
 
-This is an open invitation to the club. If you have an HF station and a soundcard-mode workflow, you can move this project from "promising in simulation" to a real answer on the air.
+This is an open invitation. If you have an HF station and a soundcard-mode workflow, you can move this project from "promising in simulation" to a real answer on the air.
 
 **You're a good fit if you:**
 - Run Windows and a CAT- or VOX-controllable HF rig (Hamlib's 57-model dropdown, serial RTS/DTR, or VOX).
@@ -121,9 +121,9 @@ This is an open invitation to the club. If you have an HF station and a soundcar
 
 - **Download for Windows (latest release):** https://sourceforge.net/projects/nexus-ham-radio/files/latest/download
 - **Source, issues & feedback:** https://github.com/kd9taw/nexus
-- **Direct contact:** kd9taw@protonmail.com — or grab Seth at the club meeting.
+- **Direct contact:** kd9taw@protonmail.com
 
-The best feedback is a GitHub issue with your **rig, band, observed SNR, and decode result** — but an email or a note after the meeting works too.
+The best feedback is a GitHub issue with your **rig, band, observed SNR, and decode result** — but an email works too.
 
 > If you've ever wished a weak-signal keyboard QSO moved at the speed of an actual conversation — get on the air and help us find out whether FT1 delivers.
 

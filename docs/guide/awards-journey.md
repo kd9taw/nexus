@@ -9,7 +9,7 @@ firsts, ladders, collections, and personal bests. Both read straight from your
 Awards is an opt-in section, nudged on after your first QSO. Turn it on any time
 in [Settings ▸ Features](settings-reference.md#features).
 
-![TODO screenshot: the Awards tab — DXCC slots, Honor Roll countdown, WAS/WAZ](img/TODO-awards-official.png)
+<!-- TODO: capture screenshot — the Awards tab — DXCC slots, Honor Roll countdown, WAS/WAZ -->
 
 ## Awards — the official programs
 
@@ -37,7 +37,7 @@ between QSO 1 and QSO 100 — but it credits an imported logbook immediately, so
 veteran importing years of ADIF sees their history light up at once. It's
 **local-only**: no accounts, no network, no decaying daily streaks.
 
-![TODO screenshot: the Journey tab — XP/level hero card, Firsts, ladders, feats](img/TODO-journey-board.png)
+<!-- TODO: capture screenshot — the Journey tab — XP/level hero card, Firsts, ladders, feats -->
 
 What's on the board:
 

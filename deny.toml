@@ -1,7 +1,7 @@
 # cargo-deny — supply-chain + license gate (CI: EmbarkStudios/cargo-deny-action).
 # Allow-list enumerated from the real dependency tree (default + `live` features,
 # 146 packages); copyleft (LGPL/BSL) appears only inside OR expressions so it is
-# intentionally NOT allowed. See tasks/specs/ci-quality-floor.md.
+# intentionally NOT allowed.
 
 [graph]
 # Check the whole graph including optional features (e.g. propagation `live`).

@@ -14,7 +14,7 @@ A settings switch turns the event on and the app reshapes for it: the exchange
 grammar, a live countdown that knows the real date rules, per-(call, band,
 mode-class) dupe checking, and a scoreboard.
 
-![TODO screenshot: Field Day mode — exchange entry, countdown, live scoreboard](img/TODO-fieldday-view.png)
+<!-- TODO: capture screenshot — Field Day mode — exchange entry, countdown, live scoreboard -->
 
 ### Set it up first
 
@@ -69,7 +69,7 @@ Configure N3FJP and N1MM in
 The hunter is for **finding activators, not running activations**. It polls the
 official feeds (pota.app and SOTAwatch) every 60 s.
 
-![TODO screenshot: the POTA/SOTA hunter — spot list with NEW PARK and BAND OPEN badges](img/TODO-pota-hunter.png)
+<!-- TODO: capture screenshot — the POTA/SOTA hunter — spot list with NEW PARK and BAND OPEN badges -->
 
 ### The tour
 

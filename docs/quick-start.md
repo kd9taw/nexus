@@ -27,7 +27,7 @@ Run the installer. Because the binaries are cross-compiled and **unsigned**,
 Windows SmartScreen shows a blue *"Windows protected your PC"* dialog. This is
 expected. Click **More info**, then **Run anyway**.
 
-![TODO screenshot: Windows SmartScreen "Windows protected your PC" dialog with More info expanded, showing the Run anyway button](img/TODO-smartscreen.png)
+<!-- TODO: capture screenshot — Windows SmartScreen "Windows protected your PC" dialog with More info expanded, showing the Run anyway button -->
 
 If you would rather verify the download first, the release page publishes a
 `SHA-256` for each installer — see [Install & Verify](install.md#verify-the-download).
@@ -47,7 +47,7 @@ everything location-based: the propagation map, satellite passes, DXpedition
 windows, and the range rings all compute from it. Four characters (e.g. `EN52`)
 is plenty; the field turns red if it isn't a valid Maidenhead locator.
 
-![TODO screenshot: wizard step 1 "Who's on the air?" with callsign and grid filled in](img/TODO-wizard-station.png)
+<!-- TODO: capture screenshot — wizard step 1 "Who's on the air?" with callsign and grid filled in -->
 
 ### Step 2 — Your rig
 
@@ -73,7 +73,7 @@ Then click **Test CAT**. Nexus saves what you've entered, starts its bundled
 is working. If it fails, [Troubleshooting → CAT](troubleshooting.md#cat--rig-control)
 walks through the usual causes.
 
-![TODO screenshot: wizard step 2 "How does the radio connect?" after Detect found a rig, with the detected row selected and Test CAT showing a frequency](img/TODO-wizard-rig-detected.png)
+<!-- TODO: capture screenshot — wizard step 2 "How does the radio connect?" after Detect found a rig, with the detected row selected and Test CAT showing a frequency -->
 
 ### Step 3 — Your goals
 
@@ -87,7 +87,7 @@ Finally, declare your **license class** (Technician / General / Amateur Extra, o
 software refuses to key outside your privileges, including the 2026 60 m rules.
 It's a safety net, not a substitute for knowing your license.
 
-![TODO screenshot: wizard step 3 "What do you mostly want to do?" with goal cards, mode toggles, and license class](img/TODO-wizard-goals.png)
+<!-- TODO: capture screenshot — wizard step 3 "What do you mostly want to do?" with goal cards, mode toggles, and license class -->
 
 Click through, and Nexus drops you into the digital cockpit.
 
@@ -99,7 +99,7 @@ Out of the box the dial sits at **14.074 MHz** (FT8, 20 m), decode depth is
 **Deep**, and the decoder listens across **200–2900 Hz**. Decoding runs every RX
 slot automatically — there is no Monitor toggle to forget.
 
-![TODO screenshot: the digital cockpit with waterfall, a full Band Activity list, the QSO strip, and the Classic/Roster toggle — callouts on each](img/TODO-cockpit-tour.png)
+<!-- TODO: capture screenshot — the digital cockpit with waterfall, a full Band Activity list, the QSO strip, and the Classic/Roster toggle — callouts on each -->
 
 The three things to know:
 
@@ -136,7 +136,7 @@ A **single click** just fills the DX Call/Grid fields without transmitting.
 `Esc` halts TX instantly. `F4` clears the DX call, `F6` re-decodes the last period
 for a second look.
 
-![TODO screenshot: the cockpit mid-QSO — a station worked from Band Activity, the sequencer stepping through the exchange, the outgoing TX line highlighted](img/TODO-cockpit-qso.png)
+<!-- TODO: capture screenshot — the cockpit mid-QSO — a station worked from Band Activity, the sequencer stepping through the exchange, the outgoing TX line highlighted -->
 
 Two reassurances while you find your feet:
 
@@ -162,7 +162,7 @@ zone, which outranks a new band, and so on. What makes it trustworthy is the
 and how long ago. One click there QSYs the rig to the right band, mode, and
 frequency and opens the matching cockpit.
 
-![TODO screenshot: the Needed board with several ranked rows, each showing its evidence line ("heard by K9LC (EN52, 26 km), 4 min ago")](img/TODO-needed-evidence.png)
+<!-- TODO: capture screenshot — the Needed board with several ranked rows, each showing its evidence line ("heard by K9LC (EN52, 26 km), 4 min ago") -->
 
 ---
 

@@ -24,7 +24,7 @@ bridge and a USB Audio Codec over a single cable.
    that support it; set the rig's menu and Nexus to the same value.
 5. **Save**, then **Test CAT**. A green frequency read-back confirms CAT.
 
-![TODO screenshot: Yaesu FTDX10 detected in the Rig/CAT tab](img/TODO-yaesu-detect.png)
+<!-- TODO: capture screenshot — Yaesu FTDX10 detected in the Rig/CAT tab -->
 
 ### The two-COM-port gotcha
 

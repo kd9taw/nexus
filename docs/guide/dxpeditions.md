@@ -10,7 +10,7 @@ DXpeditions is an opt-in section. Turn it on in the first-run wizard or in
 [Settings ▸ Features](settings-reference.md#features). It never touches the rig
 on its own — it's a board; working a station happens through the cockpits.
 
-![TODO screenshot: the DXpeditions board — active now, upcoming calendar, need status](img/TODO-dxped-board.png)
+<!-- TODO: capture screenshot — the DXpeditions board — active now, upcoming calendar, need status -->
 
 ## The tour
 
@@ -24,7 +24,7 @@ Hover a day's chip for that day's best band and window. This is your own station
 forecast, not a generic one — it uses your propagation engine choice from
 [Settings ▸ Connections](settings-reference.md#connections).
 
-![TODO screenshot: a week-planner strip with per-day best-shot colors and a hover chip](img/TODO-dxped-weekplanner.png)
+<!-- TODO: capture screenshot — a week-planner strip with per-day best-shot colors and a hover chip -->
 
 ## Core workflows
 

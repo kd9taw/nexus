@@ -1375,8 +1375,7 @@ impl Engine {
 
     /// Queue CW to transmit. `text` is an F-key macro template OR literal type-ahead;
     /// it's expanded with the current QSO context (mycall/name/grid + the worked call +
-    /// a 599 report) and the radio loop keys it via `rig.send_morse`. See
-    /// `tasks/specs/cw-operating.md`.
+    /// a 599 report) and the radio loop keys it via `rig.send_morse`.
     /// Expand a CW macro template with the live QSO context (mycall/name/grid + the worked
     /// call via `!` + a 599 report). Shared by [`Self::send_cw`] and [`Self::preview_cw`] so
     /// the cockpit's "what F2 will send" preview matches exactly what gets sent.

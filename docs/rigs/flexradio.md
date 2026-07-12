@@ -42,9 +42,9 @@ your Flex you need:
    card in the path.
 4. **Save**, then **Test CAT**.
 
-![TODO screenshot: FlexRadio discovered on the LAN with the Use this button](img/TODO-flex-discover.png)
+<!-- TODO: capture screenshot — FlexRadio discovered on the LAN with the Use this button -->
 
-![TODO screenshot: Network Address 127.0.0.1:5002 with the Pair DAX audio button](img/TODO-flex-dax-pair.png)
+<!-- TODO: capture screenshot — Network Address 127.0.0.1:5002 with the Pair DAX audio button -->
 
 ---
 

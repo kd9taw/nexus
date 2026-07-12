@@ -42,7 +42,7 @@ pub enum LicenseClass {
 /// How CW is transmitted. **Cat** = the rig's own keyer via Hamlib `send_morse` (rig
 /// in CW; zero extra hardware, but CAT-latency feel). **Soundcard** = the app keys an
 /// audio tone via the sound card (rig in USB; works on any rig). WinKeyer (a hardware
-/// keyer) comes later. See `tasks/specs/cw-operating.md`.
+/// keyer) comes later.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum CwKeyerBackend {
@@ -535,8 +535,8 @@ pub struct Settings {
     /// Editable quick-reply macros per mode (the Composer chips).
     pub macros: Macros,
 
-    /// Phone voice-keyer message slots (F-key → recorded 12 kHz mono WAV). See
-    /// `tasks/specs/voice-keyer.md`. Defaulted to six labelled-but-empty casual slots.
+    /// Phone voice-keyer message slots (F-key → recorded 12 kHz mono WAV).
+    /// Defaulted to six labelled-but-empty casual slots.
     #[serde(default = "default_voice_messages")]
     pub voice_messages: Vec<VoiceMessage>,
 }

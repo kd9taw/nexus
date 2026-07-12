@@ -26,7 +26,7 @@ much like a modern Icom.
 3. Set **Baud** to match the rig's CI-V / CAT menu.
 4. **Save**, then **Test CAT**.
 
-![TODO screenshot: Xiegu X6100 detected over USB-C with built-in audio](img/TODO-xiegu-x6100-detect.png)
+<!-- TODO: capture screenshot — Xiegu X6100 detected over USB-C with built-in audio -->
 
 ### G90 / X5105 — CP210x bridge, pick the model yourself
 
@@ -47,7 +47,7 @@ the model yourself:
    device in **Settings ▸ Audio**.
 5. Set **Baud** to match the rig's menu, **Save**, then **Test CAT**.
 
-![TODO screenshot: Xiegu G90 with CP210x port detected and model picked manually](img/TODO-xiegu-g90-manual.png)
+<!-- TODO: capture screenshot — Xiegu G90 with CP210x port detected and model picked manually -->
 
 ---
 

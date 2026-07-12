@@ -12,7 +12,7 @@ The tabs, in the order they appear:
 [Connections](#connections) · [Confirmations](#confirmations) ·
 [Features](#features) · [Workspace](#workspace) · [Field Day](#field-day)
 
-![TODO screenshot: the Settings panel with its eleven tabs across the top](img/TODO-settings-tabs.png)
+<!-- TODO: capture screenshot — the Settings panel with its eleven tabs across the top -->
 
 ---
 

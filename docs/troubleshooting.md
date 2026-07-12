@@ -68,7 +68,7 @@ waits ~1.3 s, and reads the dial frequency. A real frequency back (e.g.
    or start Nexus with the rig already powered on. Slow serial rigs are otherwise
    handled fine once connected.
 
-![TODO screenshot: Settings ▸ Rig / CAT after a successful Test CAT, showing the read-back dial frequency](img/TODO-test-cat.png)
+<!-- TODO: capture screenshot — Settings ▸ Rig / CAT after a successful Test CAT, showing the read-back dial frequency -->
 
 ### The rig won't change mode when I switch sections (FTDX10-class)
 
@@ -171,7 +171,7 @@ If you can hear signals by ear but Nexus decodes nothing, check in order:
 5. **Clock sync** (below) — a slot that's off by more than about a second produces
    no decodes at all.
 
-![TODO screenshot: the top-bar level meter sitting in the green zone during receive](img/TODO-audio-levels.png)
+<!-- TODO: capture screenshot — the top-bar level meter sitting in the green zone during receive -->
 
 ### Clock / time sync
 
@@ -227,7 +227,7 @@ them before assuming something's broken:
 - Your **callsign must be set** (3–10 characters, at least one letter and one
   digit) before the PSK Reporter subscription starts at all.
 
-![TODO screenshot: the Now-Bar feed pills distinguishing a "connected" (quiet) feed from a "reconnecting" one](img/TODO-nowbar-feeds.png)
+<!-- TODO: capture screenshot — the Now-Bar feed pills distinguishing a "connected" (quiet) feed from a "reconnecting" one -->
 
 ---
 
@@ -251,7 +251,7 @@ events). When an upload "isn't working," this log shows the actual server respon
 which is what separates a credential problem from a service outage or a changed
 web page. Check it before assuming the worst.
 
-![TODO screenshot: Settings ▸ Connectors showing the Connections log with recent upload events and their outcomes](img/TODO-connections-log.png)
+<!-- TODO: capture screenshot — Settings ▸ Connectors showing the Connections log with recent upload events and their outcomes -->
 
 ---
 

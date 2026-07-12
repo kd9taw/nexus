@@ -11,7 +11,7 @@ not.
 CW is an opt-in section. Turn it on in the first-run wizard's "which modes?"
 step or in [Settings ▸ Features](settings-reference.md#features).
 
-![TODO screenshot: the CW cockpit — macros, WPM control, AF scope, log strip](img/TODO-cw-cockpit.png)
+<!-- TODO: capture screenshot — the CW cockpit — macros, WPM control, AF scope, log strip -->
 
 ## The tour
 
@@ -46,7 +46,7 @@ chips.
 **The AF scope** is a narrow 300–1100 Hz display with a hairline drawn at your
 sidetone pitch, so you can zero-beat a station by ear and eye.
 
-![TODO screenshot: the eight F-key macro buttons with the recommended-next highlight](img/TODO-cw-macros.png)
+<!-- TODO: capture screenshot — the eight F-key macro buttons with the recommended-next highlight -->
 
 ## Macros
 

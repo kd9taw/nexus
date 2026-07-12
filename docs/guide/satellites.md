@@ -9,7 +9,7 @@ Satellites is an opt-in section. Turn it on in the first-run wizard or in
 [Settings ▸ Features](settings-reference.md#features). It needs your grid set in
 [Settings ▸ Station](settings-reference.md#station) to compute passes.
 
-![TODO screenshot: the Satellites pass list with a favorite starred and its polar plot](img/TODO-satellites-list.png)
+<!-- TODO: capture screenshot — the Satellites pass list with a favorite starred and its polar plot -->
 
 ## The tour
 
@@ -28,7 +28,7 @@ You can also drop a **Satellite Passes** pane into the [Connect](connect.md) gri
 for an at-a-glance next-passes list beside the map, and turn on the
 **Satellites (amateur)** map layer to watch the birds move in real time.
 
-![TODO screenshot: the polar plot of a pass with the AOS/LOS direction and max elevation](img/TODO-satellites-polar.png)
+<!-- TODO: capture screenshot — the polar plot of a pass with the AOS/LOS direction and max elevation -->
 
 ## Core workflows
 

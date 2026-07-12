@@ -1,6 +1,6 @@
 //! CW keyer text: F-key macro expansion + cut numbers, shared by the keyer back-ends
-//! (CAT `send_morse`, soundcard, WinKeyer). Pure + deterministic — see
-//! `tasks/specs/cw-operating.md`. Casual/ragchew vocabulary (no contest serial/exchange).
+//! (CAT `send_morse`, soundcard, WinKeyer). Pure + deterministic.
+//! Casual/ragchew vocabulary (no contest serial/exchange).
 
 /// The substitutions available to a CW macro. All borrowed; empty fields expand to "".
 #[derive(Debug, Clone, Copy, Default)]

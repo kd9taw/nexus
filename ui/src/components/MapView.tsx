@@ -2,7 +2,7 @@
 // operator's grid, drawn on Canvas2D with d3-geo (no tiles, no WebGL). Beam
 // headings are true radials; range rings are real great-circle distance. Colors
 // route through the shared tokens (status/need) and the colormap LUT, so color
-// means one thing app-wide. See tasks/specs/UI-map.md.
+// means one thing app-wide.
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { geoPath, type GeoPermissibleObjects } from 'd3-geo'
 import { RotateCcw } from 'lucide-react'

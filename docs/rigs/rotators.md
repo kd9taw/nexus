@@ -23,7 +23,7 @@ Everything lives in **Settings ▸ Rig / CAT ▸ Antenna rotator**:
 
 That's it — no separate daemon, no hand-run commands.
 
-![TODO screenshot: Antenna rotator model, port, and baud in the Rig/CAT tab](img/TODO-rotator-settings.png)
+<!-- TODO: capture screenshot — Antenna rotator model, port, and baud in the Rig/CAT tab -->
 
 ### No hardware? Test with the dummy
 
@@ -81,7 +81,7 @@ Once it's configured and answering, rotator control appears throughout the app:
   responding" at a glance.
 - **↗ on Needed-board rows** — point the antenna at a spotted station.
 
-![TODO screenshot: Connect compass pane showing 312°T (316°M) with the slew rose](img/TODO-rotator-compass.png)
+<!-- TODO: capture screenshot — Connect compass pane showing 312°T (316°M) with the slew rose -->
 
 ---
 
@@ -94,7 +94,7 @@ rotator it falls back to azimuth tracking (no elevation), which is the right
 behavior for a typical az rotator working low-orbit birds. Combined with an
 IC-9700 (see [icom.md](icom.md)), this is a complete hands-off satellite station.
 
-![TODO screenshot: satellite pass with the rotor auto-tracking az/el](img/TODO-rotator-sat-track.png)
+<!-- TODO: capture screenshot — satellite pass with the rotor auto-tracking az/el -->
 
 ---
 

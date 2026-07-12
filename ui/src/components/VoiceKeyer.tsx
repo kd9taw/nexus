@@ -24,7 +24,7 @@ interface Props {
  * Phone voice keyer (casual) — F1–F6 message slots, each a recorded 12 kHz mono WAV played
  * to the rig with PTT keyed for the message (the same TX path the soundcard CW keyer uses).
  * Click a slot or press its F-key to play; ● records from the input device; ⤓ imports a
- * `.wav`; ✕ clears; Esc / ■ Stop aborts. See `tasks/specs/voice-keyer.md`.
+ * `.wav`; ✕ clears; Esc / ■ Stop aborts.
  */
 export function VoiceKeyer({ txEnabled, keyed }: Props) {
   const [msgs, setMsgs] = useState<VoiceMessage[]>([])

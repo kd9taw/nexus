@@ -1,8 +1,7 @@
 # Nexus Design System
 
 > Living design-system doc. **Stage A (color language + token architecture) is verified & locked** (2026-06-05).
-> Spacing/type/density/chrome/honest-state detail lives in `tasks/specs/UI-P0-foundation.md`.
-> Authoritative token values: `ui/design/tokens.generated.json` · visual + CVD proof: `ui/design/proof.png`
+> Authoritative token values: `ui/design/tokens.generated.json`
 > · verifier (the gate): `ui/design/verify.mjs` (`node ui/design/verify.mjs`).
 
 ## Token architecture (3 tiers, OKLCH, dark-first)
@@ -70,11 +69,10 @@ Applied **identically** across roster dots, map, log/awards badges, decode rows,
 Machado-2009 CVD simulation (deuteranopia/protanopia/tritanopia, severity 1.0, in linear RGB), OKLab ΔE distances,
 and the salience ordering. Gates: text/status contrast · good↔bad CVD ΔE ≥ 0.06 · need-set unique glyphs + colour
 ΔE ≥ 0.03 · **glyph uniqueness across all 17 roles** · **ATNO loudest need** · **alert-critical never buried**.
-De-emphasis states are exempt from the 3:1 floor by design. The proof sheet (`proof.png`) renders every role under
-normal + all three CVD types, per theme, for visual sign-off.
+De-emphasis states are exempt from the 3:1 floor by design.
 
-### Adversarial-review record (what a skeptical second pass caught, and the fix)
-A focused adversarial review found gaps the first gate was structurally blind to — all now fixed and gated:
+### CVD edge cases the gate enforces
+These color-collision cases are fixed and gated:
 - **`tx` == `alert-critical`** (byte-identical in light/amber) → split: critical is a distinct bright orange + filled
   ⚑ chip; documented form-based distinction; gate added.
 - **Amber `alert-critical` was nearly the dimmest role** → forced bright (L 0.82); "never buried" gate added.
@@ -90,7 +88,7 @@ Named LUTs (data + sampler in `ui/src/colormaps.ts`, Stage-A deliverable): **inf
 the current non-monotonic `t*t`/`t*t*t` waterfall palette). Consumed by P1 (waterfall) / P2 (map) / the likelihood
 heatmap.
 
-## Open Stage-A implementation items (post sign-off)
+## Beyond the color language
 Spacing ladder, type scale, density system (`data-density` guided/standard/dense), reduced-motion, the Radix chrome kit
-+ Lucide, honest-state provenance, and the WCAG-2.2 pass — all specified in `tasks/specs/UI-P0-foundation.md`. This doc
++ Lucide, honest-state provenance, and the WCAG-2.2 pass are tracked separately. This doc
 covers the **color language + token architecture** that gates everything else.

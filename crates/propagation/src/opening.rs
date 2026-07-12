@@ -6,7 +6,6 @@
 //!
 //! Everything here is **pure** — `now` is always a parameter (no wall clock) so
 //! the whole pipeline is deterministic and unit-testable with synthetic spots.
-//! See `tasks/specs/opening-detection.md`.
 //!
 //! Data-availability constraints that shape v1 (verified against the live feed):
 //! - The PSK Reporter MQTT feed is **topic-only → `snr: None`** for every spot,

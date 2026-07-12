@@ -18,7 +18,7 @@ string, so **Detect my radio** usually identifies the exact radio in one scan.
    same value on both sides).
 5. **Save**, then **Test CAT** for a frequency read-back.
 
-![TODO screenshot: Icom IC-7300 auto-detected with model, port, and audio filled](img/TODO-icom-detect.png)
+<!-- TODO: capture screenshot — Icom IC-7300 auto-detected with model, port, and audio filled -->
 
 ### The IC-7300 class — one cable, done
 
@@ -50,7 +50,7 @@ The IC-9700 is the classic satellite radio, and Nexus has a matching workflow:
 For SO-50 / ISS-class FM/SSB work, set the 9700 up once here and let the pass
 scheduler and rotor tracking do the pointing.
 
-![TODO screenshot: IC-9700 satellite pass with rotor auto-track and polar plot](img/TODO-icom-9700-sat.png)
+<!-- TODO: capture screenshot — IC-9700 satellite pass with rotor auto-track and polar plot -->
 
 ---
 

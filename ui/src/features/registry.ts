@@ -3,7 +3,7 @@
 // A "feature" is either a SECTION (a nav destination / View) or a CAPABILITY
 // (a cross-cutting behaviour like the Now-Bar or the gamification layer). Each
 // carries the metadata the toggle system, profiles, and the (future) goal-driven
-// wizard + adaptive reveal all resolve against. See tasks/specs/feature-modularity.md.
+// wizard + adaptive reveal all resolve against.
 //
 // This module is pure data + pure helpers (no React, no storage) so it is fully
 // unit-testable in node.

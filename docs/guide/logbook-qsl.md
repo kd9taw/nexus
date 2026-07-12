@@ -7,7 +7,7 @@ both first-class), name/QTH, notes, POTA/SOTA references, and a per-QSO upload
 state for every online service — so "what has actually been uploaded where"
 survives restarts.
 
-![TODO screenshot: the logbook table with the QSL column and confirmation marks](img/TODO-logbook-table.png)
+<!-- TODO: capture screenshot — the logbook table with the QSL column and confirmation marks -->
 
 ## The tour
 
@@ -29,7 +29,7 @@ beside the search box filters to contacts without an award-eligible (LoTW/paper)
 confirmation — a QSL you've *requested* but not received still counts as
 unconfirmed and stays in that list.
 
-![TODO screenshot: the QSL column tooltip explaining L / C / E eligibility](img/TODO-logbook-qsl-tooltip.png)
+<!-- TODO: capture screenshot — the QSL column tooltip explaining L / C / E eligibility -->
 
 ## Core workflows
 

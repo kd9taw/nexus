@@ -10,7 +10,7 @@ logbook and license privileges wired in.
 Phone is an opt-in section. Turn it on in the first-run wizard's "which modes?"
 step or in [Settings ▸ Features](settings-reference.md#features).
 
-![TODO screenshot: the Phone cockpit — dial read-back, bandscope, PTT, voice keyer](img/TODO-phone-cockpit.png)
+<!-- TODO: capture screenshot — the Phone cockpit — dial read-back, bandscope, PTT, voice keyer -->
 
 ## The tour
 
@@ -28,7 +28,7 @@ zoom the view to the part of the passband you care about.
 knob and the slider tracks it (it won't sit lying at 100%). Your drags win while
 you're dragging.
 
-![TODO screenshot: the bandscope with the Full / Voice / Low / High span chips](img/TODO-phone-bandscope.png)
+<!-- TODO: capture screenshot — the bandscope with the Full / Voice / Low / High span chips -->
 
 ## Core workflows
 

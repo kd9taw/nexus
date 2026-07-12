@@ -1,7 +1,7 @@
 //! Pure helpers for LoTW upload via a TQSL shell-out — the offline, unit-testable
 //! core (arg building, exit-code classification, binary-location candidates, and
 //! stderr sanitization). The actual `std::process::Command` spawn lives in the
-//! Tauri command layer (it can't run headless). See `tasks/specs/lotw-upload.md`.
+//! Tauri command layer (it can't run headless).
 //!
 //! Nexus never handles the LoTW certificate or any secret — TQSL owns all of that;
 //! we pass only a non-secret Station Location name.

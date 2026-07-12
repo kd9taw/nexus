@@ -3,7 +3,7 @@
 //! "no matching QSO" errors for *manual* fixing; this turns the data we already
 //! have (the reconcile `OrphanConfirmation` list, the source-aware
 //! `confirmed`/`award_confirmed` split, the per-QSO credit fields) into a ranked,
-//! actionable per-QSO explanation. See `tasks/specs/confirmation-diagnostics.md`.
+//! actionable per-QSO explanation.
 //!
 //! Pure (no network, no clock — `now` is a parameter), like [`crate::reconcile`].
 //!

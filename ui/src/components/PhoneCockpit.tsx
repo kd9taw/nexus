@@ -44,7 +44,7 @@ interface Props {
  * Phone (voice) operating cockpit — casual/ragchew. The voice is the signal, so the
  * app does rig control + PTT + logging (you talk into the rig's mic; the live-mic
  * audio bridge + voice keyer land in P3-b/c). Entering forces USB/LSB by band (the
- * rig-mode keystone, wired in App). See `tasks/specs/phone-operating.md`.
+ * rig-mode keystone, wired in App).
  */
 /** Expert DSP-function toggles. `key` matches the RadioStatus field + the set_rig_func name; the
  * cockpit only renders those the rig reports as supported (field non-null), so no dead buttons. */

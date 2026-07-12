@@ -12,7 +12,7 @@ band is "open" when stations near *you* are demonstrably heard both ways, not
 when one big station far away has a good morning. Modelled data is always
 labelled "modelled"; the UI never dresses an estimate as a measurement.
 
-![TODO screenshot: Connect — the shaded 3-D globe with panes wrapped around it](img/TODO-connect-overview.png)
+<!-- TODO: capture screenshot — Connect — the shaded 3-D globe with panes wrapped around it -->
 
 ## The tour
 
@@ -51,7 +51,7 @@ of the app.
 Four **intent presets** — Chase DX, POTA/SOTA, Ragchew, 6m/VHF — configure the
 whole surface in one tap.
 
-![TODO screenshot: the Layers menu open, showing greyline / aurora / satellites / PCA](img/TODO-connect-layers.png)
+<!-- TODO: capture screenshot — the Layers menu open, showing greyline / aurora / satellites / PCA -->
 
 ### The pane grid
 
@@ -89,7 +89,7 @@ The default Basic layout puts the conditions reference on the left, the flagship
 **Chase** pane and Band Outlook on the right, and a live "now" ticker (Openings,
 Space Wx, Getting Out) across the bottom.
 
-![TODO screenshot: a pane's corner picker open, and the Basic / Expert toggle](img/TODO-connect-pane-picker.png)
+<!-- TODO: capture screenshot — a pane's corner picker open, and the Basic / Expert toggle -->
 
 ## Core workflows
 

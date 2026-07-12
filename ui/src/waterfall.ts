@@ -1,7 +1,7 @@
 // Pure, testable waterfall render helpers — the perceptual + visual-AGC core
 // extracted from Waterfall.tsx so the hot path (per-pixel color) is an integer
 // LUT index, not a per-pixel sampleLut call, and so the math is unit-tested
-// independently of the canvas. See tasks/specs/waterfall-flagship.md.
+// independently of the canvas.
 
 import { sampleLut, type ColormapName } from './colormaps'
 

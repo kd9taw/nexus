@@ -54,7 +54,7 @@ Compare the printed hash against the value on the release page — they must mat
 exactly (case doesn't matter). If they differ, delete the file and download again
 from the official source above.
 
-![TODO screenshot: the GitHub release page showing the Nexus installer asset and its published SHA-256 checksum](img/TODO-release-page.png)
+<!-- TODO: capture screenshot — the GitHub release page showing the Nexus installer asset and its published SHA-256 checksum -->
 
 ---
 
@@ -67,7 +67,7 @@ which is exactly why the SHA-256 check above is worth doing.
 
 Click **More info**, then **Run anyway**.
 
-![TODO screenshot: Windows SmartScreen "Windows protected your PC" dialog with More info expanded, showing the Run anyway button](img/TODO-smartscreen.png)
+<!-- TODO: capture screenshot — Windows SmartScreen "Windows protected your PC" dialog with More info expanded, showing the Run anyway button -->
 
 If you would rather avoid the prompt entirely, you can
 [build from source](manual/Building-from-Source.md) instead.

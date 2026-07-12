@@ -3,7 +3,7 @@
 //! drives the login handshake + spot extraction over an incremental byte stream;
 //! [`run`] is the TCP/reconnect glue; [`SpotBuffer`] holds recent spots for the
 //! need-scorer. The session/buffer/`pump` logic is fully unit-tested (no socket);
-//! `run` is the thin live-socket wrapper. See tasks/specs/live-feeds-phase.md §3.
+//! `run` is the thin live-socket wrapper.
 
 use std::collections::VecDeque;
 use std::io::{Read, Write};

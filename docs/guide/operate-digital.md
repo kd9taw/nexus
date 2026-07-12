@@ -12,7 +12,7 @@ This is the cockpit you land in when the mode switch (top of the left rail) is
 set to **FT8/FT4**. Flip it to **Tempo** for the FT1/DX1 chat cockpit, covered
 [at the end of this page](#the-tempo-chat-layer-ft1dx1).
 
-![TODO screenshot: the Operate cockpit — waterfall, Band Activity, QSO strip](img/TODO-operate-cockpit.png)
+<!-- TODO: capture screenshot — the Operate cockpit — waterfall, Band Activity, QSO strip -->
 
 ## The tour
 
@@ -39,7 +39,7 @@ annotations stock WSJT-X never had:
 **Tune**, **Stop TX**, **Hold Tx** — beside **Call CQ** and **S&P**. (These live
 in the QSO strip in this view; Phone and CW keep the cluster in the top bar.)
 
-![TODO screenshot: a decode row showing country, B4, new-DXCC tag, and L mark](img/TODO-operate-decode-row.png)
+<!-- TODO: capture screenshot — a decode row showing country, B4, new-DXCC tag, and L mark -->
 
 **Classic ↔ Roster.** A single toggle switches the layout:
 
@@ -51,7 +51,7 @@ in the QSO strip in this view; Phone and CW keep the cluster in the top bar.)
 Use Classic when you want the familiar WSJT-X message-by-message control; use
 Roster when you're scanning a busy band for the one call worth working.
 
-![TODO screenshot: the Classic ↔ Roster toggle, roster layout shown](img/TODO-operate-roster.png)
+<!-- TODO: capture screenshot — the Classic ↔ Roster toggle, roster layout shown -->
 
 ## Core workflows
 

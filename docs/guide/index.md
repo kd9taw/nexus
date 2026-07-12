@@ -10,7 +10,7 @@ WSJT-X's behavior; the newest features are fresh from the bench. Where a feature
 is experimental or a number comes from simulation rather than the air, these
 pages say so.
 
-![TODO screenshot: the Nexus main window with the left nav rail labelled](img/TODO-app-overview.png)
+<!-- TODO: capture screenshot — the Nexus main window with the left nav rail labelled -->
 
 ## How the app is laid out
 
