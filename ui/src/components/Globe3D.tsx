@@ -17,7 +17,15 @@ import { subsolarPoint, usStateBorders, flareField, flareRScale, destinationPoin
 import { getAurora, getPca, getSatellites, getLog } from '../api'
 import cqzonesUrl from '../data/cqzones.geojson?url'
 import { MapInsightRail } from './prop/MapInsightRail'
-import type { PropagationSnapshot, PathPrediction, MufStation, AuroraPoint, PcaView, SatView } from '../types'
+import type {
+  PropagationSnapshot,
+  PathPrediction,
+  MufStation,
+  AuroraPoint,
+  PcaView,
+  SatView,
+  Station,
+} from '../types'
 
 const EARTH_KM = 6371 // for altKm → globe-radius altitude units
 
@@ -170,6 +178,8 @@ interface Props {
   muf?: MufStation[]
   /** GOES long-band X-ray flux (W/m²) — drives the flare D-RAP layer. */
   xrayLong?: number | null
+  /** The operator's own decoded stations (the 'My decodes' layer). */
+  stations?: Station[]
   /** Draw US state borders (default on, matching the 2-D map). */
   showStates?: boolean
 }
@@ -197,6 +207,7 @@ export default function Globe3D({
   activeBand,
   muf,
   xrayLong,
+  stations,
   showStates = true,
 }: Props) {
   const spots = useMemo(() => prop?.spots ?? [], [prop])
@@ -233,6 +244,8 @@ export default function Globe3D({
     rings: true,
     cqzones: false,
     coverage: false,
+    decodes: true,
+    dxped: false,
   })
 
   // Measure the container BEFORE paint so the globe is never sized to the whole window
@@ -672,6 +685,39 @@ export default function Globe3D({
     )
   }, [ready, qth, show.rings, show.cqzones, show.coverage, cqzones, workedGrids])
 
+  // My decodes + DXpeditions as distinct point clouds.
+  useEffect(() => {
+    const g = globeRef.current
+    if (!g || !ready) return
+    syncCloud(
+      g,
+      cloudsRef.current,
+      'decodes',
+      show.decodes
+        ? (stations ?? []).flatMap((s) => {
+            const ll = s.grid ? gridToLatLon(s.grid) : null
+            return ll ? [{ lat: ll.lat, lng: ll.lon, rgb: [0.87, 0.91, 0.96] as RGB, alt: 0.004 }] : []
+          })
+        : [],
+      6,
+      show.decodes,
+    )
+    const cards = prop?.dxpeditions?.workableNow ?? []
+    syncCloud(
+      g,
+      cloudsRef.current,
+      'dxped',
+      show.dxped && qth
+        ? cards.map((c) => {
+            const d = destinationPoint(qth, c.bearingDeg, c.distanceKm)
+            return { lat: d.lat, lng: d.lon, rgb: [1, 0.62, 0.24] as RGB, alt: 0.006 }
+          })
+        : [],
+      8,
+      show.dxped,
+    )
+  }, [ready, qth, show.decodes, show.dxped, stations, prop])
+
   if (!ok) {
     return (
       <div className="globe3d-fallback">
@@ -697,7 +743,9 @@ export default function Globe3D({
           {(
             [
               ['spots', 'Spots'],
+              ['decodes', 'My decodes'],
               ['arcs', 'Heard-me arcs'],
+              ['dxped', 'DXpeditions'],
               ['heat', 'Band heat'],
               ['flare', 'Flare blackout'],
               ['aurora', 'Aurora'],

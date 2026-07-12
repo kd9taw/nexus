@@ -400,6 +400,7 @@ export function ConnectView({
                   activeBand={focusBand}
                   muf={muf}
                   xrayLong={xrayLong}
+                  stations={stations}
                 />
               </Suspense>
             ) : (
