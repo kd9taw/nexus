@@ -13,8 +13,9 @@ import earthUrl from '../assets/earth-relief.webp'
 import earthNightUrl from '../assets/earth-night.webp'
 import { gridToLatLon } from '../grid'
 import { bandColor } from '../bandColors'
-import { subsolarPoint, usStateBorders, flareField, flareRScale, destinationPoint } from '../mapGeo'
-import { getAurora, getPca, getSatellites } from '../api'
+import { subsolarPoint, usStateBorders, flareField, flareRScale, destinationPoint, rangeRing } from '../mapGeo'
+import { getAurora, getPca, getSatellites, getLog } from '../api'
+import cqzonesUrl from '../data/cqzones.geojson?url'
 import { MapInsightRail } from './prop/MapInsightRail'
 import type { PropagationSnapshot, PathPrediction, MufStation, AuroraPoint, PcaView, SatView } from '../types'
 
@@ -95,6 +96,37 @@ function syncCloud(
   pts.visible = true
 }
 
+/** Create/update a line-overlay layer (range rings, CQ zones) as a Group of THREE.Lines. */
+function syncLines(
+  g: GlobeMethods,
+  store: Record<string, THREE.Group>,
+  key: string,
+  polylines: [number, number][][], // each = [lat, lng][]
+  color: string,
+  opacity: number,
+  visible: boolean,
+  alt = 0.002,
+) {
+  const prev = store[key]
+  if (prev) {
+    g.scene().remove(prev)
+    prev.traverse((o) => (o as THREE.Line).geometry?.dispose?.())
+    delete store[key]
+  }
+  if (!visible || polylines.length === 0) return
+  const grp = new THREE.Group()
+  const mat = new THREE.LineBasicMaterial({ color, transparent: true, opacity })
+  for (const line of polylines) {
+    const pts = line.map(([la, lo]) => {
+      const c = g.getCoords(la, lo, alt)
+      return new THREE.Vector3(c.x, c.y, c.z)
+    })
+    if (pts.length > 1) grp.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), mat))
+  }
+  store[key] = grp
+  g.scene().add(grp)
+}
+
 const lerp = (a: number, b: number, t: number) => a + (b - a) * Math.max(0, Math.min(1, t))
 /** Fire palette for the flare D-RAP HAF (MHz): yellow (low) → deep red (high). */
 const flareRgb = (haf: number): RGB => {
@@ -171,6 +203,7 @@ export default function Globe3D({
   const wrapRef = useRef<HTMLDivElement>(null)
   const globeRef = useRef<GlobeMethods | undefined>(undefined)
   const cloudsRef = useRef<Record<string, THREE.Points>>({})
+  const linesRef = useRef<Record<string, THREE.Group>>({})
   const satGroupRef = useRef<THREE.Group | null>(null)
   const satMarkersRef = useRef<Record<string, THREE.Object3D>>({})
   const [size, setSize] = useState({ w: 0, h: 0 })
@@ -182,6 +215,8 @@ export default function Globe3D({
   const [auroraPts, setAuroraPts] = useState<AuroraPoint[]>([])
   const [pca, setPca] = useState<PcaView | null>(null)
   const [sats, setSats] = useState<SatView | null>(null)
+  const [cqzones, setCqzones] = useState<[number, number][][]>([]) // each zone → boundary lines
+  const [workedGrids, setWorkedGrids] = useState<{ lat: number; lon: number }[]>([])
   // Toggleable 3-D layers. Default-on mirrors the 2-D map (aurora off by default).
   const [show, setShow] = useState({
     spots: true,
@@ -195,6 +230,9 @@ export default function Globe3D({
     heat: true,
     grid: false,
     sats: false,
+    rings: true,
+    cqzones: false,
+    coverage: false,
   })
 
   // Measure the container BEFORE paint so the globe is never sized to the whole window
@@ -552,6 +590,88 @@ export default function Globe3D({
     return () => clearInterval(id)
   }, [show.sats, sats])
 
+  // CQ-zone boundaries (self-fetch the bundled GeoJSON while the layer is on).
+  useEffect(() => {
+    if (!show.cqzones) {
+      setCqzones([])
+      return
+    }
+    let live = true
+    fetch(cqzonesUrl)
+      .then((r) => r.json())
+      .then((gj: { features?: { geometry: { type: string; coordinates: unknown } }[] }) => {
+        if (!live) return
+        const lines: [number, number][][] = []
+        for (const f of gj.features ?? []) {
+          const geom = f.geometry
+          const polys =
+            geom.type === 'MultiPolygon'
+              ? (geom.coordinates as [number, number][][][])
+              : geom.type === 'Polygon'
+                ? [geom.coordinates as [number, number][][]]
+                : []
+          for (const poly of polys) for (const ring of poly) lines.push(ring.map(([lo, la]) => [la, lo]))
+        }
+        setCqzones(lines)
+      })
+      .catch(() => {})
+    return () => {
+      live = false
+    }
+  }, [show.cqzones])
+
+  // My coverage: worked 4-char grids from the log (self-fetch while the layer is on).
+  useEffect(() => {
+    if (!show.coverage) {
+      setWorkedGrids([])
+      return
+    }
+    let live = true
+    getLog()
+      .then((log) => {
+        if (!live) return
+        const grids = new Set<string>()
+        for (const q of log) {
+          const gr = (q.grid ?? '').trim().toUpperCase()
+          if (gr.length >= 4) grids.add(gr.slice(0, 4))
+        }
+        const pts: { lat: number; lon: number }[] = []
+        grids.forEach((gr) => {
+          const ll = gridToLatLon(gr)
+          if (ll) pts.push({ lat: ll.lat, lon: ll.lon })
+        })
+        setWorkedGrids(pts)
+      })
+      .catch(() => {})
+    return () => {
+      live = false
+    }
+  }, [show.coverage])
+
+  // Sync the cartographic line/point overlays (range rings, CQ zones, coverage).
+  useEffect(() => {
+    const g = globeRef.current
+    if (!g || !ready) return
+    const ringLines: [number, number][][] = []
+    if (show.rings && qth) {
+      for (const km of [1000, 3000, 5000, 10000]) {
+        const gc = rangeRing(qth, km) as unknown as { coordinates?: [number, number][][] }
+        const ring = gc.coordinates?.[0]
+        if (ring) ringLines.push(ring.map(([lo, la]) => [la, lo]))
+      }
+    }
+    syncLines(g, linesRef.current, 'rings', ringLines, '#4ea1ff', 0.4, show.rings)
+    syncLines(g, linesRef.current, 'cqzones', cqzones, '#e0a94d', 0.5, show.cqzones)
+    syncCloud(
+      g,
+      cloudsRef.current,
+      'coverage',
+      workedGrids.map((w) => ({ lat: w.lat, lng: w.lon, rgb: [0.3, 0.64, 1] as RGB, alt: 0.001 })),
+      4,
+      show.coverage,
+    )
+  }, [ready, qth, show.rings, show.cqzones, show.coverage, cqzones, workedGrids])
+
   if (!ok) {
     return (
       <div className="globe3d-fallback">
@@ -584,6 +704,9 @@ export default function Globe3D({
               ['muf', 'MUF'],
               ['pca', 'Polar cap (PCA)'],
               ['sats', 'Satellites'],
+              ['rings', 'Range rings'],
+              ['cqzones', 'CQ zones'],
+              ['coverage', 'My coverage'],
               ['states', 'US states'],
               ['grid', 'Graticule'],
               ['lights', 'City lights'],

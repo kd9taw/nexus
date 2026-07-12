@@ -23,6 +23,7 @@ import { getPathOutlook, getBandOutlook, getGettingOut, getSpaceWxScales, getKc2
 import type { DxpedWindow } from '../types'
 import { effectiveXray } from '../flareAlert'
 import { latLonToGrid } from '../grid'
+import { gpuCapableForGlobe } from '../gpu'
 import { MapView, type MapIntent } from './MapView'
 // The 3-D WebGL globe is LAZY-loaded: three.js only downloads when an operator turns on
 // 3-D mode, so the 2-D default (which runs anywhere) never pays for it.
@@ -97,11 +98,16 @@ export function ConnectView({
       /* ignore */
     }
   }
-  // 2-D (default, universal) vs the opt-in 3-D WebGL globe. Persisted; off by default so
-  // the map always starts on the everywhere-compatible 2-D renderer.
+  // 2-D (universal) vs the 3-D WebGL globe. The operator's explicit choice is persisted and
+  // always wins; on FIRST run (no saved choice) we default to 3-D only if this machine's GPU
+  // can actually handle it (gpuCapableForGlobe) — capable PCs get the good globe out of the
+  // box, low-end/software renderers stay on the everywhere-compatible 2-D map.
   const [map3d, setMap3d] = useState<boolean>(() => {
     try {
-      return localStorage.getItem('nexus.connect.map3d') === '1'
+      const saved = localStorage.getItem('nexus.connect.map3d')
+      if (saved === '1') return true
+      if (saved === '0') return false
+      return gpuCapableForGlobe()
     } catch {
       return false
     }
