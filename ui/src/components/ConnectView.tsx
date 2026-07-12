@@ -385,9 +385,13 @@ export function ConnectView({
               >
                 <Globe3D
                   myGrid={myGrid}
-                  spots={prop?.spots ?? []}
+                  prop={prop}
                   selectedCall={selectedCall}
                   onSelectCall={onSelectCall}
+                  expert={expert}
+                  outlook={selectedCall ? pathPred : bandOutlook}
+                  onBandClick={toggleFocusBand}
+                  activeBand={focusBand}
                 />
               </Suspense>
             ) : (

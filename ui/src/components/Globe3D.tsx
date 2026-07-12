@@ -14,17 +14,26 @@ import earthNightUrl from '../assets/earth-night.webp'
 import { gridToLatLon } from '../grid'
 import { bandColor } from '../bandColors'
 import { subsolarPoint, usStateBorders } from '../mapGeo'
-import type { MapSpot } from '../types'
+import { MapInsightRail } from './prop/MapInsightRail'
+import type { PropagationSnapshot, PathPrediction } from '../types'
 
 interface Props {
   /** The operator's Maidenhead grid — places + frames the QTH. */
   myGrid: string
-  /** Located live spots (same array the 2-D map uses). */
-  spots: MapSpot[]
+  /** The propagation snapshot (spots + the on-map insight rail's data). */
+  prop: PropagationSnapshot | null | undefined
   /** The selected station's call (drives the highlighted arc), or null. */
   selectedCall: string | null
   /** Click a spot → select it (same handler as the 2-D map). */
   onSelectCall: (call: string | null) => void
+  /** Expert mode (the insight rail shows full data). */
+  expert?: boolean
+  /** Path/band outlook for the insight rail's MUF ceiling. */
+  outlook?: PathPrediction | null
+  /** Focus a band from the insight rail. */
+  onBandClick?: (band: string) => void
+  /** The currently focused band. */
+  activeBand?: string | null
   /** Draw US state borders (default on, matching the 2-D map). */
   showStates?: boolean
 }
@@ -41,7 +50,18 @@ function webglOk(): boolean {
   }
 }
 
-export default function Globe3D({ myGrid, spots, selectedCall, onSelectCall, showStates = true }: Props) {
+export default function Globe3D({
+  myGrid,
+  prop,
+  selectedCall,
+  onSelectCall,
+  expert,
+  outlook,
+  onBandClick,
+  activeBand,
+  showStates = true,
+}: Props) {
+  const spots = useMemo(() => prop?.spots ?? [], [prop])
   const wrapRef = useRef<HTMLDivElement>(null)
   const globeRef = useRef<GlobeMethods | undefined>(undefined)
   const [size, setSize] = useState({ w: 0, h: 0 })
@@ -210,6 +230,17 @@ export default function Globe3D({ myGrid, spots, selectedCall, onSelectCall, sho
       >
         {spin ? '⏸ Spin' : '▶ Spin'}
       </button>
+      {/* The same on-map insight rail (openings / band advisor / MUF) the 2-D map shows —
+          overlaid on the right, so the 3-D globe has the same operating windows. */}
+      {prop && (
+        <MapInsightRail
+          prop={prop}
+          expert={expert}
+          outlook={outlook}
+          onBandClick={onBandClick}
+          activeBand={activeBand}
+        />
+      )}
       {size.w > 0 && size.h > 0 && (
         <Globe
           ref={globeRef}
