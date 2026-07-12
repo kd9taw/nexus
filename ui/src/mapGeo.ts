@@ -13,8 +13,9 @@ import {
   type GeoProjection,
   type GeoPermissibleObjects,
 } from 'd3-geo'
-import { feature } from 'topojson-client'
+import { feature, mesh } from 'topojson-client'
 import countriesTopo from 'world-atlas/countries-50m.json'
+import statesTopo from 'us-atlas/states-10m.json'
 import type { LatLon } from './grid'
 
 export type Projection = 'globe' | 'aeqd' | 'world'
@@ -40,6 +41,19 @@ export function basemap(): GeoPermissibleObjects {
     basemapCache = feature(topo, topo.objects.countries) as unknown as GeoPermissibleObjects
   }
   return basemapCache
+}
+
+/** US state boundaries (us-atlas 10m, lon/lat) as a single-line mesh — shared borders
+ * drawn once (no doubled strokes). A core operating layer: an op needs to read which
+ * STATE a spot/QTH is in, not just the coastline. Decoded once. */
+let statesCache: GeoPermissibleObjects | null = null
+export function usStateBorders(): GeoPermissibleObjects {
+  if (!statesCache) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const topo = statesTopo as any
+    statesCache = mesh(topo, topo.objects.states) as unknown as GeoPermissibleObjects
+  }
+  return statesCache
 }
 
 /** A 20°×10° graticule (Maidenhead field boundaries) as a GeoJSON object. */

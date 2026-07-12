@@ -28,6 +28,7 @@ import { satChasingSet, toggleSatChasing } from '../features/satChase'
 import { gridToLatLon, haversineKm, bearingDeg, magneticDeg, type LatLon } from '../grid'
 import {
   basemap,
+  usStateBorders,
   graticule,
   makeProjection,
   project,
@@ -204,6 +205,7 @@ type LayerKey =
   | 'coverage'
   | 'sats'
   | 'coast'
+  | 'states'
   | 'grid'
   | 'rings'
   | 'heat'
@@ -229,6 +231,7 @@ const DEFAULT_LAYERS: Record<LayerKey, Layer> = {
   // event (S1+), so the default-on layer draws nothing on a quiet sun.
   pca: { label: 'Proton polar cap (PCA)', visible: true, opacity: 0.8 },
   coast: { label: 'Coastlines', visible: true, opacity: 0.85 },
+  states: { label: 'US states', visible: true, opacity: 0.55 },
   grid: { label: 'Grid (20°×10°)', visible: true, opacity: 0.5 },
   gridLabels: { label: 'Grid labels (AA…RR)', visible: false, opacity: 0.7 },
   cqzones: { label: 'CQ zones', visible: false, opacity: 0.6 },
@@ -260,8 +263,11 @@ const RINGS_KM = [1000, 3000, 5000, 10000]
 // wireframe. Deliberately theme-agnostic and dark (like HamClock/Geochron), so it
 // looks intentional in any UI theme. Tuned for the dark dashboard.
 const MAP_OCEAN = '#0f2334' // deep sea
-const MAP_LAND = '#364a3c' // muted continental green
+const MAP_LAND = '#364a3c' // muted continental green (flat World/AEQD maps)
+const MAP_LAND_GLOBE = '#1c2b2a' // darker landmass on the globe — a moody night-earth so
+// the colored spots + arcs are what pop (the cover-photo look, minus the busy city lights)
 const MAP_COAST = '#6f8a98' // coastline / borders, visible but quiet
+const MAP_STATE = '#4d6675' // US state interior borders — quieter than coast, still readable
 const MAP_RIM = '#2a4254' // the globe's edge (AEQD reads as a sphere)
 // Globe (orthographic) 3D shading: a lit ocean highlight toward the top-left light
 // source, deepening to a dark limb, plus an atmospheric rim glow and a star field —
@@ -794,12 +800,13 @@ export function MapView({
       ctx.globalAlpha = 1
       // Atmosphere: a soft blue halo just outside the limb, drawn BEFORE the body so
       // the sphere covers the inner half and only the outer glow shows.
-      const atmo = ctx.createRadialGradient(gcx, gcy, gR * 0.92, gcx, gcy, gR * 1.14)
+      const atmo = ctx.createRadialGradient(gcx, gcy, gR * 0.9, gcx, gcy, gR * 1.19)
       atmo.addColorStop(0, 'rgba(104, 168, 226, 0)')
-      atmo.addColorStop(0.5, MAP_ATMO)
+      atmo.addColorStop(0.42, 'rgba(120, 182, 240, 0.32)')
+      atmo.addColorStop(0.6, MAP_ATMO) // brightest right at the limb
       atmo.addColorStop(1, 'rgba(104, 168, 226, 0)')
       ctx.beginPath()
-      ctx.arc(gcx, gcy, gR * 1.14, 0, Math.PI * 2)
+      ctx.arc(gcx, gcy, gR * 1.19, 0, Math.PI * 2)
       ctx.fillStyle = atmo
       ctx.fill()
     }
@@ -857,7 +864,7 @@ export function MapView({
       // Filled-vector land (the AEQD beam map, or World with relief off).
       ctx.beginPath()
       path(basemap())
-      ctx.fillStyle = MAP_LAND
+      ctx.fillStyle = isGlobe ? MAP_LAND_GLOBE : MAP_LAND
       ctx.fill()
       if (layers.coast.visible) {
         ctx.globalAlpha = layers.coast.opacity
@@ -866,6 +873,18 @@ export function MapView({
         ctx.stroke()
         ctx.globalAlpha = 1
       }
+    }
+    // US state borders — a CORE operating layer: an op reads which STATE a spot or
+    // their own QTH sits in (WAS, state QSOs), not just the coastline. A single-line
+    // mesh (shared borders once), thin + quiet so it adds detail without burying spots.
+    if (layers.states.visible) {
+      ctx.globalAlpha = layers.states.opacity
+      ctx.beginPath()
+      path(usStateBorders())
+      ctx.strokeStyle = MAP_STATE
+      ctx.lineWidth = 0.5
+      ctx.stroke()
+      ctx.globalAlpha = 1
     }
     // Globe limb darkening: deepen the sphere toward its edge (over ocean AND land)
     // so the curvature reads as 3-D. Clipped to the disc; drawn under greyline/spots
@@ -1472,11 +1491,50 @@ export function MapView({
       ctx.globalAlpha = 1
     }
 
-    // Own station marker (on top).
+    // Own station marker (on top) — a clear "you are here" QTH locus, one of the two
+    // things an operator must read at a glance. A soft glow + two concentric rings +
+    // crosshair make it unmistakable against the spot firehose, without animation
+    // (a low-end shack PC redraws this every frame free).
     if (c) {
+      const accent = cssVar('--accent')
+      ctx.save()
+      // Additive glow halo so the QTH reads as "lit" even over a busy area.
+      ctx.globalCompositeOperation = 'lighter'
+      const glow = ctx.createRadialGradient(c[0], c[1], 0, c[0], c[1], 16)
+      glow.addColorStop(0, accent)
+      glow.addColorStop(1, fadeStop('#4ea1ff'))
+      ctx.globalAlpha = 0.35
+      ctx.fillStyle = glow
+      ctx.beginPath()
+      ctx.arc(c[0], c[1], 16, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.restore()
+      // Two faint locus rings (the "you are here" target).
+      ctx.strokeStyle = accent
+      ctx.globalAlpha = 0.5
+      ctx.lineWidth = 1
+      for (const rr of [8, 12]) {
+        ctx.beginPath()
+        ctx.arc(c[0], c[1], rr, 0, Math.PI * 2)
+        ctx.stroke()
+      }
+      // Crosshair ticks.
+      ctx.globalAlpha = 0.7
+      ctx.beginPath()
+      ctx.moveTo(c[0] - 14, c[1])
+      ctx.lineTo(c[0] - 6, c[1])
+      ctx.moveTo(c[0] + 6, c[1])
+      ctx.lineTo(c[0] + 14, c[1])
+      ctx.moveTo(c[0], c[1] - 14)
+      ctx.lineTo(c[0], c[1] - 6)
+      ctx.moveTo(c[0], c[1] + 6)
+      ctx.lineTo(c[0], c[1] + 14)
+      ctx.stroke()
+      ctx.globalAlpha = 1
+      // The solid center dot with a dark outline for contrast on any basemap.
       ctx.beginPath()
       ctx.arc(c[0], c[1], 4, 0, Math.PI * 2)
-      ctx.fillStyle = cssVar('--accent')
+      ctx.fillStyle = accent
       ctx.fill()
       ctx.strokeStyle = cssVar('--bg')
       ctx.lineWidth = 1.5
