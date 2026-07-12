@@ -8,7 +8,7 @@ Connect is Nexus's unified situational-awareness surface: a live Canvas2D world 
 
 Three projections are available via the toolbar toggle:
 
-- **Orthographic globe** — drag to spin, scroll wheel to zoom; rendered with Canvas2D 3-D shading (170-point star field, atmospheric rim gradient, ocean gradient, limb vignette). No WebGL required.
+- **Orthographic globe** — drag to spin, scroll wheel to zoom; rendered with Canvas2D 3-D shading (170-point star field, atmospheric rim glow, ocean gradient, limb vignette, and a darker "night-earth" landmass so the colored spots and arcs stand out). No WebGL required — the globe runs on any PC, including integrated graphics. (A high-fidelity WebGL 3-D mode for higher-end machines is planned as an opt-in option.)
 - **Azimuthal-equidistant beam map** — true great-circle headings and range rings from your QTH. Bearing and distance to any selected station are read directly off the rings.
 - **Equirectangular world view** — flat projection with a shaded-relief basemap (Natural Earth I 50 m, public domain, bundled offline as a 2048×1024 WebP).
 
@@ -26,12 +26,13 @@ The astronomical terminator is computed from wall time and drawn as four stacked
 
 ## Layers
 
-Twelve independently toggleable layers are available. Per-layer opacity sliders are exposed in **Expert mode** only. Default-on layers:
+Independently toggleable layers are available. Per-layer opacity sliders are exposed in **Expert mode** only. Default-on layers:
 
 | Layer | Default |
 |---|---|
 | Day/night greyline | on |
 | Coastlines | on |
+| US states | on |
 | 20×10° graticule | on |
 | Range rings | on |
 | Band-heat aura | on |
@@ -48,6 +49,12 @@ Twelve independently toggleable layers are available. Per-layer opacity sliders 
 **MUF heatmap** — a 10°×15° global grid of MUF(3000 km) values derived from solar flux index and solar elevation, colored with the inferno colormap from 7 to 35 MHz. This is a modelled estimate, not a measured value. Off by default.
 
 **Aurora oval** — fetches NOAA SWPC OVATION aurora probability nowcast (≥8% probability, 2° resolution) with a 10-minute cache; colored green (low) to red (high). Only fetched while the layer is toggled on.
+
+**US states** — US state borders (from the bundled us-atlas 10 m dataset), drawn as thin, quiet lines so you can read which state a spot — or your own QTH — is in, without burying the spot dots. Toggleable like any other layer.
+
+### Your QTH
+
+Your own station is marked with a clear "you are here" locus — a soft glow, two concentric rings, and a crosshair around a center dot in the accent color — so home is unmistakable against the live-spot firehose. Its position comes from your Maidenhead grid (set in Settings); on the beam map every heading and range ring is measured from it.
 
 ---
 

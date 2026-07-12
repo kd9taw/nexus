@@ -29,6 +29,10 @@ Nexus polls the rig via rigctld every 750 ms and mirrors the VFO frequency into 
 
 The rig model and port are set in Settings; the default rigctld port is **4532** (Hamlib NET rigctl default). If your rig is not yet configured (`rig_model: 0`), the dial display shows no value.
 
+## Band selection
+
+A prominent **band picker** in the cockpit header shows your current band. It is a large, bold control colored by the active band (matching the per-band colors on the Connect map), so what band you're on reads at a glance across the room. Picking a band parks the VFO at the **start of your licensed phone segment** on that band; it lists only the bands your license class permits in phone. If the current frequency/mode is outside your privileges, a **🔒 TX locked** chip appears next to it.
+
 ## Bandscope
 
 The scope sits below the cockpit header and updates at approximately **30 Hz** (33 ms per row) — nearly 4× faster than the FT8 waterfall. Under the OS `prefers-reduced-motion` flag it falls back to 100 ms per row.

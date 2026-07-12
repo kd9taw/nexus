@@ -39,6 +39,8 @@ Entering the CW section commands the rig via CAT before any transmit:
 
 The mode is re-asserted on section entry even if the frequency has not changed. You do not need a separate mode button. TX is armed automatically on CW section entry (`tx_enabled = true`), consistent with a live-key rig. The FT8 auto-sequencer never applies to CW.
 
+A prominent **band picker** in the cockpit header shows and selects your band. It is a large, bold control colored by the active band (matching the Connect map's per-band spot colors), so your operating band reads at a glance. Selecting a band parks the VFO at the **start of your licensed CW segment** on that band and lists only bands your license class permits for CW. A **🔒 TX locked** chip appears when the current frequency/mode is outside your privileges.
+
 ---
 
 ## Speed Control
