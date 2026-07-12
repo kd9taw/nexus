@@ -124,6 +124,14 @@ derives from **US Census Bureau** cartographic boundary files (a work of the
 US government, **public domain**). Regenerate with
 `node scripts/gen-grid-state.mjs`.
 
+### Map / globe textures
+`ui/src/assets/earth-relief.webp` (the flat map's shaded-relief basemap) derives from
+**Natural Earth I** raster (Tom Patterson / Natural Earth), **public domain**.
+`ui/src/assets/earth-night.webp` (the 3-D globe's dimmed city-lights layer) is a
+downscaled **NASA "Black Marble" / Earth at Night** composite (NASA Earth Observatory),
+a work of the US government — **public domain**. Neither is a map-tile service; both are
+bundled offline.
+
 ### CQ zone boundaries
 `ui/src/data/cqzones.geojson` is from HB9HIL's hamradio-zones-geojson
 (<https://github.com/HB9HIL/hamradio-zones-geojson>), **MIT** (© 2024 HB9HIL);

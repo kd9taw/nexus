@@ -10,6 +10,7 @@ import * as THREE from 'three'
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js'
 import Globe, { type GlobeMethods } from 'react-globe.gl'
 import earthUrl from '../assets/earth-relief.webp'
+import earthNightUrl from '../assets/earth-night.webp'
 import { gridToLatLon } from '../grid'
 import { bandColor } from '../bandColors'
 import { subsolarPoint, usStateBorders } from '../mapGeo'
@@ -85,7 +86,7 @@ export default function Globe3D({ myGrid, spots, selectedCall, onSelectCall, sho
         startLng: qth.lon,
         endLat: s.lat,
         endLng: s.lon,
-        color: s.call === selectedCall ? '#ffffff' : s.heardMe ? GETTING_OUT : bandColor(s.band),
+        color: s.call === selectedCall ? '#a9d4ff' : s.heardMe ? GETTING_OUT : bandColor(s.band),
       }))
   }, [spots, selectedCall, qth])
 
@@ -103,13 +104,20 @@ export default function Globe3D({ myGrid, spots, selectedCall, onSelectCall, sho
   // night-earth mood. Built here (not via a ref getter — react-globe.gl takes it as a
   // prop) so it's ready before first paint. Lit by the subsolar light set up below.
   const globeMat = useMemo(() => {
-    const tex = new THREE.TextureLoader().load(earthUrl)
-    tex.colorSpace = THREE.SRGBColorSpace
+    const loader = new THREE.TextureLoader()
+    const day = loader.load(earthUrl)
+    day.colorSpace = THREE.SRGBColorSpace
+    const night = loader.load(earthNightUrl)
+    night.colorSpace = THREE.SRGBColorSpace
     return new THREE.MeshPhongMaterial({
-      map: tex,
-      color: new THREE.Color('#33443f'), // multiplies the texture → dark landmass/ocean
-      emissive: new THREE.Color('#05080e'),
-      shininess: 6,
+      map: day,
+      color: new THREE.Color('#28323d'), // cool dark blue-grey — moody, less green than the raw relief
+      // City lights as a DIMMED emissive glow: brightest on the dark (night) side, washed
+      // out by the sun on the day side. This is the "dark earth, less lights" look.
+      emissiveMap: night,
+      emissive: new THREE.Color('#ffffff'),
+      emissiveIntensity: 0.6,
+      shininess: 4,
     })
   }, [])
 
@@ -126,10 +134,9 @@ export default function Globe3D({ myGrid, spots, selectedCall, onSelectCall, sho
       const ss = subsolarPoint(Date.now())
       const p = g.getCoords(ss.lat, ss.lon, 2)
       sun.position.set(p.x, p.y, p.z)
-      // Ambient is bright enough that the NIGHT side is still readable (dark land +
-      // coasts/states), not near-black — the day/night gradient stays, but geography
-      // never disappears. (The Black Marble city-lights layer will enrich it further.)
-      g.lights([new THREE.AmbientLight('#5a6577', 1.15), sun])
+      // Enough ambient that the night side reads (dark land + coasts + the city lights),
+      // but low enough that the lights aren't washed out — a moonlit night, not daylight.
+      g.lights([new THREE.AmbientLight('#4a5566', 0.7), sun])
       // Starfield: a shell of points around the scene (no texture asset needed).
       const N = 1400
       const pos = new Float32Array(N * 3)
@@ -145,7 +152,7 @@ export default function Globe3D({ myGrid, spots, selectedCall, onSelectCall, sho
       )
       g.scene().add(stars)
       // Bloom so spots/arcs/lights glow.
-      const bloom = new UnrealBloomPass(new THREE.Vector2(size.w || 1, size.h || 1), 0.9, 0.6, 0.1)
+      const bloom = new UnrealBloomPass(new THREE.Vector2(size.w || 1, size.h || 1), 0.6, 0.7, 0.2)
       g.postProcessingComposer().addPass(bloom)
       // Gentle idle auto-rotate speed; the on/off state is driven by the spin effect.
       const controls = g.controls() as { autoRotateSpeed: number }
