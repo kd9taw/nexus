@@ -484,6 +484,12 @@ pub struct Settings {
     /// LoTW **upload** Station Location name (the `-l` arg passed to TQSL). Non-
     /// secret; TQSL owns the certificate. Empty = upload not configured.
     pub lotw_station_location: String,
+    /// Sign LoTW uploads from the location EMBEDDED in the ADIF (STATION_CALLSIGN /
+    /// MY_GRIDSQUARE) instead of a named TQSL Station Location — for travelers who set
+    /// TQSL to "use the location in the ADIF file" and never create station locations.
+    /// When true, the `-l` arg is omitted and `lotw_station_location` isn't required.
+    #[serde(default)]
+    pub lotw_use_adif_location: bool,
     /// Optional path to the `tqsl` binary (overrides auto-detect). Empty = search
     /// the OS default locations + PATH.
     pub tqsl_path: String,
@@ -1054,6 +1060,7 @@ impl Default for Settings {
             lotw_username: String::new(),
             lotw_last_qsl: String::new(),
             lotw_station_location: String::new(),
+            lotw_use_adif_location: false,
             tqsl_path: String::new(),
             eqsl_username: String::new(),
             eqsl_last_sync: String::new(),

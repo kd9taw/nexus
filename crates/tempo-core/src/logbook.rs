@@ -707,6 +707,33 @@ pub fn adif_record(r: &QsoRecord) -> String {
     out
 }
 
+/// Like [`adif_record`] but with the operator's `STATION_CALLSIGN` + `MY_GRIDSQUARE` inserted —
+/// required for LoTW to sign against the location EMBEDDED IN THE ADIF (TQSL's "use the location
+/// in the ADIF file" mode), the traveling-operator workflow where no named TQSL Station Location
+/// exists. Blank identity fields are skipped. Only used on the LoTW upload path, so ordinary ADIF
+/// export is unchanged.
+pub fn adif_record_with_station(r: &QsoRecord, station_call: &str, my_grid: &str) -> String {
+    let base = adif_record(r);
+    let mut extra = String::new();
+    let call = station_call.trim();
+    let grid = my_grid.trim();
+    if !call.is_empty() {
+        extra.push_str(&field("STATION_CALLSIGN", call));
+    }
+    if !grid.is_empty() {
+        extra.push_str(&field("MY_GRIDSQUARE", grid));
+    }
+    if extra.is_empty() {
+        return base;
+    }
+    // Insert the station fields just before the record terminator (`<EOR>` is ASCII, so the
+    // byte offset from an uppercased search is valid on the original string).
+    match base.to_ascii_uppercase().rfind("<EOR>") {
+        Some(pos) => format!("{}{}{}", &base[..pos], extra, &base[pos..]),
+        None => format!("{base}{extra}"),
+    }
+}
+
 /// Emit the ADIF fields for one OTA side. SOTA uses its dedicated `*_SOTA_REF` field;
 /// every other program (POTA, WWFF) uses the generic `SIG`/`SIG_INFO` pair. Empty
 /// when not activating/hunting that side.
@@ -1056,6 +1083,29 @@ mod tests {
             upload: Default::default(),
             ota: Default::default(),
         }
+    }
+
+    #[test]
+    fn adif_record_with_station_injects_my_fields_before_eor() {
+        let r = rec("W1AW", "20m", 1_700_000_000);
+        let out = adif_record_with_station(&r, "KD9TAW", "EN61");
+        assert!(
+            out.contains("<STATION_CALLSIGN:6>KD9TAW"),
+            "station call emitted: {out}"
+        );
+        assert!(
+            out.contains("<MY_GRIDSQUARE:4>EN61"),
+            "operator grid emitted: {out}"
+        );
+        // The station fields go INSIDE the record (before its <EOR> terminator).
+        let eor = out.to_ascii_uppercase().rfind("<EOR>").unwrap();
+        assert!(
+            out[..eor].contains("STATION_CALLSIGN"),
+            "inside the record, not after"
+        );
+        assert_eq!(out.matches("<EOR>").count(), 1, "still exactly one record");
+        // Blank identity → unchanged from the plain record (named-location mode).
+        assert_eq!(adif_record_with_station(&r, "", ""), adif_record(&r));
     }
 
     #[test]

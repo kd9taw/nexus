@@ -11,21 +11,12 @@ import {
   markQslSent,
   purgeLog,
   qrzLookup,
+  saveTextToDownloads,
   syncLotwReport,
   uploadLotwReport,
 } from '../api'
 import { pushToast, withErrorToast } from '../toast'
 import { qrzPushQso, clublogPushQso, hrdlogPushQso } from '../api'
-
-/** Trigger a browser download of `text` as a file (no server round-trip). */
-function downloadText(filename: string, text: string, mime: string): void {
-  const url = URL.createObjectURL(new Blob([text], { type: mime }))
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  a.click()
-  URL.revokeObjectURL(url)
-}
 
 interface Props {
   /** Default band / freq / mode for new manual entries (from the radio). */
@@ -158,7 +149,8 @@ export function Logbook({
     setQrzBusy(false)
     if (r) {
       if (r.grid && !draft.grid.trim()) setField('grid', r.grid)
-      if (r.name && !draft.name.trim()) setField('name', r.name)
+      const preferredName = r.nickname || r.name
+      if (preferredName && !draft.name.trim()) setField('name', preferredName)
       const detail = [r.name, r.grid && `grid ${r.grid}`, r.state].filter(Boolean).join(' · ')
       const note = r.grid ? '' : ' · grid/state need a QRZ subscription'
       pushToast(`QRZ ${r.call}: ${detail || r.country || 'found'}${note}`, 'info')
@@ -517,10 +509,11 @@ export function Logbook({
               withErrorToast(async () => {
                 const text = await exportGeneralLog('adif')
                 const stamp = new Date().toISOString().slice(0, 10)
-                downloadText(`nexus-log-${stamp}.adi`, text, 'text/plain')
+                const path = await saveTextToDownloads(`nexus-log-${stamp}.adi`, text)
+                pushToast(`Exported ${log.length} QSOs → ${path}`, 'success')
               }, 'Export failed')
             }
-            title="Download the whole logbook as an ADIF file"
+            title="Save the whole logbook as an ADIF file in your Downloads folder"
           >
             Export ADIF
           </button>
@@ -532,10 +525,11 @@ export function Logbook({
               withErrorToast(async () => {
                 const text = await exportGeneralLog('csv')
                 const stamp = new Date().toISOString().slice(0, 10)
-                downloadText(`nexus-log-${stamp}.csv`, text, 'text/csv')
+                const path = await saveTextToDownloads(`nexus-log-${stamp}.csv`, text)
+                pushToast(`Exported ${log.length} QSOs → ${path}`, 'success')
               }, 'Export failed')
             }
-            title="Download the whole logbook as a CSV spreadsheet"
+            title="Save the whole logbook as a CSV spreadsheet in your Downloads folder"
           >
             Export CSV
           </button>

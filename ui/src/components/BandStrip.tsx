@@ -1,5 +1,5 @@
 import type { SpotRow } from '../types'
-import { bandRangeForLabel } from '../band'
+import { bandRangeForLabel, cwRangeForLabel } from '../band'
 
 interface Props {
   /** Current operating band label (e.g. "20m"). */
@@ -47,7 +47,14 @@ export function BandStrip({
   onWorkSpot,
   onPopOut,
 }: Props) {
-  const range = bandRangeForLabel(band)
+  // In the CW cockpit, clip the strip to the band's CW sub-band (band bottom → CW top) so it shows
+  // ONLY the CW portion; the Phone cockpit still spans the whole allocation. But only while the dial
+  // is actually IN that segment — if the operator tunes above CW top (into the data/phone part) fall
+  // back to the whole band so the "you are here" marker isn't clamped to the right edge (misreading
+  // their position). Also falls back if the band has no distinct CW segment defined.
+  const cwRange = spotMode === 'CW' ? cwRangeForLabel(band) : null
+  const dialInCw = cwRange != null && dialMhz >= cwRange.lo && dialMhz <= cwRange.hi
+  const range = (dialInCw ? cwRange : null) ?? bandRangeForLabel(band)
   if (!range) return null
   const modeLabel = spotMode === 'CW' ? 'CW' : 'SSB'
 
@@ -55,9 +62,8 @@ export function BandStrip({
     .filter((s) => s.mode === spotMode && s.band === band)
     .sort((a, b) => a.freqMhz - b.freqMhz)
 
-  // Span the WHOLE band so every part of it is visible and clickable — activity clustering (CW at
-  // the band bottom, SSB up top) is meaningful information, not a bug to zoom away. The phone
-  // segment is shaded so the voice portion still reads at a glance within the full scale.
+  // Span the selected range (whole band for Phone, the CW sub-band for CW) so every part of it is
+  // visible and clickable. The phone segment is shaded so the voice portion still reads at a glance.
   const lo = range.lo
   const hi = range.hi
   const span = Math.max(hi - lo, 1e-6)

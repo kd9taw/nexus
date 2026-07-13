@@ -608,6 +608,12 @@ export async function exportGeneralLog(format: 'adif' | 'csv'): Promise<string> 
   return invoke<string>('export_general_log', { format })
 }
 
+/** Write text to the operator's Downloads folder; returns the full saved path. Reliable in a
+ *  WebView2 window where a browser `<a download>` blob may silently fail. */
+export async function saveTextToDownloads(filename: string, text: string): Promise<string> {
+  return invoke<string>('save_text_to_downloads', { filename, text })
+}
+
 /**
  * Switch the top-level operating mode (and operator role). Returns the fresh
  * snapshot so callers can render the new mode immediately.
@@ -1054,6 +1060,10 @@ export async function lookupParkLive(reference: string): Promise<Park> {
 export async function parksCount(): Promise<number> {
   return invoke<number>('parks_count')
 }
+/** How many parks the operator imported from their Hunted Parks.CSV (0 = none). */
+export async function huntedParksCount(): Promise<number> {
+  return invoke<number>('hunted_parks_count')
+}
 /** Import a park directory from CSV text the operator downloaded. Returns the park count. */
 export async function importParksCsv(csv: string): Promise<number> {
   return invoke<number>('import_parks_csv', { csv })
@@ -1061,6 +1071,11 @@ export async function importParksCsv(csv: string): Promise<number> {
 /** Download + cache the current POTA all-parks list for offline search. Returns the park count. */
 export async function downloadParks(): Promise<number> {
   return invoke<number>('download_parks')
+}
+/** Import the operator's POTA "Hunted Parks.CSV" so those parks count as worked (drives the NEW
+ * PARK badge, including CW hunts the log can't know). Returns the imported park count. */
+export async function importHuntedParksCsv(csv: string): Promise<number> {
+  return invoke<number>('import_hunted_parks_csv', { csv })
 }
 
 /**

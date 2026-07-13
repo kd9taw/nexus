@@ -233,6 +233,11 @@ pub struct Engine {
     /// POTA/SOTA references already in the log (hunter side, `ota.their_ref`)
     /// — drives the NEW PARK badge like worked_entities drives new-DXCC.
     worked_parks: HashSet<String>,
+    /// Park references the operator imported from their POTA "Hunted Parks.CSV"
+    /// (uppercased). Unioned into `park_worked` so hunts made on CW — where the
+    /// park ref is never in the exchange, so the log can't know it — still count
+    /// as worked. Persisted by the shell; seeded on import + at startup.
+    hunted_parks_import: HashSet<String>,
     /// Pending HUNT target (program, normalized ref, activator call, set-at
     /// unix): set by a one-click hunt; the next QSO logged with that call
     /// auto-tags SIG/SIG_INFO (their_*) and the pend clears. Expires after
@@ -590,6 +595,7 @@ impl Engine {
             worked_entities: HashSet::new(),
             worked_grids: HashSet::new(),
             worked_parks: HashSet::new(),
+            hunted_parks_import: HashSet::new(),
             pending_hunt: None,
             qso_report_sent: None,
             pending_log: None,
@@ -2216,9 +2222,30 @@ impl Engine {
             .map(|(p, r, c, _)| (p.clone(), r.clone(), c.clone()))
     }
 
-    /// True when this POTA/SOTA reference is already in the log (hunter side).
+    /// True when this POTA/SOTA reference is already worked — either in the log
+    /// (hunter side) OR in the operator's imported POTA "Hunted Parks.CSV" (which
+    /// covers CW hunts the log can't know about, since the park ref isn't exchanged).
     pub fn park_worked(&self, reference: &str) -> bool {
-        self.worked_parks.contains(&reference.trim().to_uppercase())
+        let key = reference.trim().to_uppercase();
+        self.worked_parks.contains(&key) || self.hunted_parks_import.contains(&key)
+    }
+
+    /// Seed the imported hunted-parks set from a POTA "Hunted Parks.CSV" (the shell
+    /// parses the reference column). Replaces the set wholesale (a re-import is the
+    /// full current picture). References are uppercased to match `park_worked`.
+    pub fn set_hunted_parks_import(&mut self, refs: impl IntoIterator<Item = String>) {
+        self.hunted_parks_import = refs
+            .into_iter()
+            .filter_map(|r| {
+                let r = r.trim().to_uppercase();
+                (!r.is_empty()).then_some(r)
+            })
+            .collect();
+    }
+
+    /// How many parks the operator has imported from their Hunted Parks.CSV.
+    pub fn hunted_parks_import_count(&self) -> usize {
+        self.hunted_parks_import.len()
     }
 
     /// Recompute the worked-entity and worked-grid sets from the logbook. Cheap
@@ -2251,6 +2278,26 @@ impl Engine {
     /// Manually add a contact to the logbook (the UI "Log QSO" button). Adds in
     /// memory and appends to the ADIF file if a log path is set.
     pub fn log_qso(&mut self, mut rec: QsoRecord) {
+        // Duplicate-contact guard — the LAST line of defense against logging the same
+        // QSO twice. The per-Station `qso_logged` latch only blocks a re-log within ONE
+        // Station, and `call_station_ctx` resets it on every invocation, so one contact
+        // seeded repeatedly (a double-click, or a companion auto-replying to a single
+        // RR73/73 decode across cycles) would otherwise append identical records AND
+        // enqueue an upload for each — the phantom-triplicate bug. Skip when the same
+        // call+band+mode is already in the log within a few minutes: tight enough that
+        // it can never block a legitimate later re-work (that's minutes/hours later, or
+        // a different band), coarse enough to catch a burst of identical seeds. Covers
+        // every path into the log (auto, cockpit button, manual Logbook, companion).
+        const DEDUP_WINDOW_SECS: u64 = 300;
+        let is_dup = self.logbook.records().iter().any(|r| {
+            tempo_core::message::same_call(&r.call, &rec.call)
+                && r.band.eq_ignore_ascii_case(&rec.band)
+                && r.mode.eq_ignore_ascii_case(&rec.mode)
+                && rec.when_unix.abs_diff(r.when_unix) <= DEDUP_WINDOW_SECS
+        });
+        if is_dup {
+            return;
+        }
         // Resolve the DXCC entity (country) if the record doesn't already carry one
         // — so manually-logged contacts get a country too, not just auto-QSOs.
         if rec.country.is_none() {
@@ -2717,9 +2764,21 @@ impl Engine {
     pub fn lotw_upload_adif(&self, indices: &[usize]) -> String {
         let recs = self.logbook.records();
         let mut out = tempo_core::logbook::adif_header();
+        // In ADIF-location mode, stamp each record with STATION_CALLSIGN + MY_GRIDSQUARE so TQSL
+        // can sign from the ADIF (no named `-l` location). Named-location mode is byte-identical
+        // to before (no MY_ fields), so existing uploads are unchanged.
+        let adif_loc = self.settings.lotw_use_adif_location;
+        let call = self.settings.mycall.clone();
+        let grid = self.settings.mygrid.clone();
         for &i in indices {
             if let Some(r) = recs.get(i) {
-                out.push_str(&tempo_core::logbook::adif_record(r));
+                if adif_loc {
+                    out.push_str(&tempo_core::logbook::adif_record_with_station(
+                        r, &call, &grid,
+                    ));
+                } else {
+                    out.push_str(&tempo_core::logbook::adif_record(r));
+                }
             }
         }
         out
@@ -5095,10 +5154,22 @@ impl Engine {
                 // the log entirely. But Confirming alone fires the instant the RR73 is
                 // QUEUED, before it's actually transmitted; require tx_count >= 1 so we
                 // only log once that closing roger has genuinely gone on the air (the
-                // contact isn't real until your RR73 is sent). Done is unconditional —
-                // by then everything has been exchanged. (qso_logged guards the double.)
+                // contact isn't real until your RR73 is sent).
+                //
+                // Done requires a REPORT to have been exchanged: `call_station` can
+                // SYNTHESIZE a Done straight from a single decoded RR73/73 addressed to
+                // us (qso.rs `Station::start`) with no exchange at all — a double-click
+                // on that line, or a companion app auto-replying to it across several
+                // cycles. Such a seed carries neither a received nor a sent report, so
+                // without this each one auto-logged a phantom QSO that never happened
+                // (the "3 identical calls I never worked" report). A real completion
+                // always exchanged reports, so this never blocks one. Mirrors the manual
+                // `log_current_qso` guard. (qso_logged guards the same-Station double;
+                // `log_qso` dedups as the final net, since call_station resets it.)
+                let report_exchanged =
+                    station.rx_report.is_some() || self.qso_report_sent.is_some();
                 let loggable = match station.state {
-                    QsoState::Done => true,
+                    QsoState::Done => report_exchanged,
                     QsoState::Confirming => station.tx_count >= 1,
                     _ => false,
                 };
@@ -7690,6 +7761,75 @@ mod tests {
             upload: Default::default(),
             ota: Default::default(),
         }
+    }
+
+    #[test]
+    fn imported_hunted_parks_count_as_worked() {
+        // A CW hunt never carries the park ref in the exchange, so the log can't know it —
+        // the imported Hunted Parks.CSV set fills that gap for the NEW PARK badge.
+        let mut e = Engine::new("K2DEF", "FN31", 0);
+        assert!(!e.park_worked("US-1234"), "unknown park starts un-worked");
+        e.set_hunted_parks_import(vec!["us-1234".into(), "US-5678".into(), "  ".into()]);
+        assert_eq!(e.hunted_parks_import_count(), 2, "blank refs are dropped");
+        assert!(e.park_worked("US-1234"), "case-insensitive match");
+        assert!(e.park_worked(" us-5678 "), "trims + uppercases the query");
+        assert!(!e.park_worked("US-9999"), "an un-imported park stays new");
+        // A re-import replaces the set wholesale (the CSV is the full current picture).
+        e.set_hunted_parks_import(vec!["US-9999".into()]);
+        assert!(e.park_worked("US-9999") && !e.park_worked("US-1234"));
+    }
+
+    #[test]
+    fn log_qso_dedups_a_repeated_identical_contact() {
+        // The phantom-triplicate safety net: seeding the same contact repeatedly
+        // (a double-click, or a companion auto-replying to one RR73/73 decode
+        // across cycles) must append it ONCE, not once per seed.
+        let mut e = Engine::new("K2DEF", "FN31", 0);
+        e.log_qso(qrec("T22TT", "30m"));
+        e.log_qso(qrec("T22TT", "30m"));
+        e.log_qso(qrec("T22TT", "30m"));
+        assert_eq!(e.get_log().len(), 1, "3 identical seeds → 1 logged QSO");
+
+        // A different band, a different call, and the same call well outside the
+        // dedup window are all legitimately distinct and MUST still log.
+        e.log_qso(qrec("T22TT", "20m")); // different band
+        e.log_qso(qrec("W1AW", "30m")); // different call
+        let mut later = qrec("T22TT", "30m");
+        later.when_unix = 3600; // an hour on — a genuine re-work, not a dupe
+        e.log_qso(later);
+        assert_eq!(
+            e.get_log().len(),
+            4,
+            "distinct band / call / time still log"
+        );
+    }
+
+    #[test]
+    fn a_lone_rr73_seed_never_auto_logs_a_phantom_qso() {
+        // The root-cause guard for the phantom bug: double-clicking (or a companion
+        // auto-replying to) a decoded "<us> <dx> RR73" runs Station::start straight
+        // into Done with NO transmission and no report exchanged. That must not
+        // auto-log a contact we never actually made.
+        let mut e = Engine::new("W9XYZ", "EN37", 0);
+        e.set_tier(Tier::Ft8);
+        assert!(e.settings().auto_log, "auto_log on by default");
+        // The DX's RR73 addressed to us appears in the decodes...
+        e.ingest_decodes_for_test(&[dec_snr("W9XYZ T22TT RR73", -10)], 1);
+        // ...and we "work" it (double-click / companion Reply) — seeds Done, tx_count 0.
+        e.call_station_ctx(
+            "T22TT",
+            None,
+            Some("W9XYZ T22TT RR73"),
+            Some(-10),
+            Some(400.0),
+        );
+        assert!(e.snapshot().qso.is_some(), "the seed started a QSO station");
+        // The next ingest runs the auto-log check.
+        e.ingest_decodes_for_test(&[], 3);
+        assert!(
+            e.get_log().is_empty(),
+            "a Done synthesized from a lone RR73 (no TX, no report) must not auto-log"
+        );
     }
 
     /// PARITY GUARD for the `fd_rules` refactor: `fd_score` + the snapshot

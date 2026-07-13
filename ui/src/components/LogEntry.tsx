@@ -335,7 +335,10 @@ export function LogEntry({
     setQrzBusy(false)
     if (!r) return
     if (logCallRef.current.trim().toUpperCase() !== call.toUpperCase()) return
-    if (r.name) setLogName((v) => (v.trim() ? v : r.name ?? ''))
+    // Prefer the operator's QRZ nickname over their full name when they set one —
+    // hams want to be greeted by it (operator input is still never clobbered).
+    const preferredName = r.nickname || r.name
+    if (preferredName) setLogName((v) => (v.trim() ? v : preferredName))
     if (r.qth) setLogQth((v) => (v.trim() ? v : r.qth ?? ''))
     if (r.grid) setLogGrid((v) => (v.trim() ? v : r.grid ?? ''))
     if (r.state) setLogState((v) => (v.trim() ? v : r.state ?? ''))
@@ -543,6 +546,9 @@ export function LogEntry({
           >
             Log FD
           </button>
+          <button type="button" className="le-qrz" onClick={reset} title="Clear the log fields">
+            Clear
+          </button>
         </div>
 
         {logCall.trim() !== '' && !fdExchangeOk && (
@@ -635,6 +641,9 @@ export function LogEntry({
         />
         <button type="button" className="le-log-btn" onClick={logIt} disabled={!logCall.trim()}>
           Log
+        </button>
+        <button type="button" className="le-qrz" onClick={reset} title="Clear the log fields">
+          Clear
         </button>
       </div>
 

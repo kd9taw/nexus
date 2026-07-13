@@ -92,6 +92,21 @@ export function DetachedPanel({ panel }: { panel: string }) {
   useMotion()
   const [snap, setSnap] = useState<AppSnapshot | null>(null)
   const [settings, setSettings] = useState<Settings | null>(null)
+  // Waterfall pop-out ⇄ dock: while this torn-off waterfall window lives, the main cockpit hides
+  // its docked copy so the decode lists + roster get the room. On close (or unmount) we clear the
+  // flag; the main window's `storage` listener then re-docks automatically. The main cockpit also
+  // has an always-visible manual "re-dock" as the fallback if this never fires.
+  useEffect(() => {
+    if (panel !== 'waterfall') return
+    const KEY = 'nexus.waterfall.detached'
+    localStorage.setItem(KEY, '1')
+    const clear = () => localStorage.setItem(KEY, '0')
+    window.addEventListener('beforeunload', clear)
+    return () => {
+      clear()
+      window.removeEventListener('beforeunload', clear)
+    }
+  }, [panel])
   const [prop, setProp] = useState<PropagationSnapshot | null>(null)
   const [needAlerts, setNeedAlerts] = useState<NeedAlert[]>([])
   const [bandPlan, setBandPlan] = useState<BandChannel[]>([])

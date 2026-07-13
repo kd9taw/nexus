@@ -674,9 +674,9 @@ export function CwCockpit({
           <span className="cw-decode-label">DECODE</span>
           <span className="cw-ai-beta">AI</span>
           {decoded.wpm > 0 && <span className="cw-decode-wpm">{decoded.wpm} WPM</span>}
-          {snap.aiCw?.enabled && snap.aiCw.status && (
-            <span className="cw-ai-status">{snap.aiCw.status}</span>
-          )}
+          {/* Toggle is parked next to the label cluster on the LEFT and stays put — it must
+              render BEFORE the (optional) AI status, or the status's auto-margin would shove
+              the toggle to mid-row whenever the status text comes and goes. */}
           <button
             type="button"
             role="switch"
@@ -691,6 +691,9 @@ export function CwCockpit({
           >
             <span className="toggle-knob" />
           </button>
+          {snap.aiCw?.enabled && snap.aiCw.status && (
+            <span className="cw-ai-status">{snap.aiCw.status}</span>
+          )}
           <button
             className="cw-decode-clear"
             onClick={() => {

@@ -48,3 +48,29 @@ export function bandRangeForLabel(label: string): { lo: number; hi: number } | n
   const r = BAND_RANGES.find((b) => b.label === label)
   return r ? { lo: r.lo, hi: r.hi } : null
 }
+
+// The top of each band's CW sub-band (MHz) — the "CW portion" boundary, kept in
+// sync with the backend band plan (`model.rs` `hf_segment` cw_top; VHF weak-signal
+// CW windows 50.0–50.1 / 144.0–144.1). The CW sub-band is [band bottom, CW top).
+const CW_TOP: Record<string, number> = {
+  '160m': 1.81,
+  '80m': 3.57,
+  '40m': 7.04,
+  '30m': 10.13,
+  '20m': 14.07,
+  '17m': 18.095,
+  '15m': 21.07,
+  '12m': 24.915,
+  '10m': 28.07,
+  '6m': 50.1,
+  '2m': 144.1,
+}
+
+/** The [lo, hi] MHz edges of a band's CW sub-band (band bottom → CW top), or null if the band
+ * has no distinct CW segment. Lets the CW cockpit's band strip show ONLY the CW portion of the
+ * band instead of spanning the whole allocation. */
+export function cwRangeForLabel(label: string): { lo: number; hi: number } | null {
+  const top = CW_TOP[label]
+  const r = BAND_RANGES.find((b) => b.label === label)
+  return top !== undefined && r ? { lo: r.lo, hi: top } : null
+}

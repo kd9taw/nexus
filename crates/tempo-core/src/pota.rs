@@ -196,6 +196,12 @@ impl ParkIndex {
         self.parks.is_empty()
     }
 
+    /// Every park reference in the index (uppercased). Used to seed the "hunted parks"
+    /// worked-set from an imported POTA "Hunted Parks.CSV".
+    pub fn references(&self) -> Vec<String> {
+        self.parks.iter().map(|p| p.reference.clone()).collect()
+    }
+
     /// Search by reference (prefix match) or name (substring), case-insensitive. Reference-prefix
     /// matches rank ahead of name matches. Returns up to `limit` results.
     pub fn search(&self, query: &str, limit: usize) -> Vec<Park> {

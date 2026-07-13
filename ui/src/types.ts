@@ -1123,6 +1123,8 @@ export interface SpotRow {
 export interface QrzLookup {
   call: string
   name: string | null
+  /** QRZ nickname — shown in place of the full name when set (null for HamQTH). */
+  nickname: string | null
   qth: string | null
   grid: string | null
   state: string | null
@@ -1679,6 +1681,9 @@ export interface Settings {
   /** LoTW upload Station Location name (the TQSL -l arg). Non-secret. Empty =
    *  upload not configured. */
   lotwStationLocation: string
+  /** Sign LoTW uploads from the location embedded in the ADIF (STATION_CALLSIGN /
+   *  MY_GRIDSQUARE) instead of a named TQSL Station Location — for travelers. */
+  lotwUseAdifLocation: boolean
   /** Optional path to the tqsl binary (overrides auto-detect). */
   tqslPath: string
   /** eQSL account username (callsign or login). Password is in the OS keychain

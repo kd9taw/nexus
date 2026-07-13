@@ -1248,13 +1248,17 @@ button.nb-chip:hover {
   background: linear-gradient(90deg, #000004, #781c6d, #cf4446, #ed6925, #fcffa4);
 }
 
-@media (max-width: 1040px) {
-  .prop-grid {
-    grid-template-columns: 1fr;
-  }
-  .swx-strip {
-    grid-template-columns: repeat(2, 1fr);
-  }
+/* Reflow on EFFECTIVE (zoom-adjusted) width, not raw @media — the UI zoom is
+   `zoom: var(--ui-zoom)` on the non-root `.app`, so a raw `@media (max-width)`
+   sees the UNZOOMED window width and mis-fires at 110%+ (the Connect tab break).
+   Mirrors the `.connect` grid's [data-viewport] approach. `sm` = effW < 1100. */
+[data-viewport='sm'] .prop-grid,
+[data-viewport='xs'] .prop-grid {
+  grid-template-columns: 1fr;
+}
+[data-viewport='sm'] .swx-strip,
+[data-viewport='xs'] .swx-strip {
+  grid-template-columns: repeat(2, 1fr);
 }
 
 /* =========================================================================
@@ -11825,10 +11829,11 @@ select.settings-input {
   grid-template-columns: minmax(0, 1.4fr) minmax(300px, 1fr);
   gap: var(--gap);
 }
-@media (max-width: 900px) {
-  .prop-grid {
-    grid-template-columns: 1fr;
-  }
+/* Zoom-safe single-column collapse (see the [data-viewport] note above) — a raw
+   @media here mis-fired under `.app` zoom and broke the Connect layout at 110%. */
+[data-viewport='sm'] .prop-grid,
+[data-viewport='xs'] .prop-grid {
+  grid-template-columns: 1fr;
 }
 .prop-side {
   display: flex;
@@ -13312,7 +13317,6 @@ select.settings-input {
 .cw-ai-status {
   color: var(--text-dim);
   font-size: var(--fs-small);
-  margin-left: auto;
 }
 .cw-ai-panel .toggle {
   margin-left: var(--space-2);
@@ -13343,7 +13347,6 @@ select.settings-input {
 .cw-ai-status {
   color: var(--text-dim);
   font-size: var(--fs-small);
-  margin-left: auto;
 }
 .cw-ai-panel .toggle {
   margin-left: var(--space-2);
@@ -13380,6 +13383,23 @@ select.settings-input {
 }
 .wf-popout:hover {
   color: var(--text);
+}
+/* Slim placeholder shown in the docked slot while the waterfall is popped out — clicking it
+   brings the waterfall back. Keeps the freed vertical space minimal (the point of popping out). */
+.wf-redock {
+  width: 100%;
+  padding: var(--space-1) var(--space-2);
+  background: var(--bg-raised, rgba(0, 0, 0, 0.25));
+  color: var(--text-dim);
+  border: 1px dashed var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: var(--fs-small);
+  text-align: center;
+}
+.wf-redock:hover {
+  color: var(--text);
+  border-color: var(--accent);
 }
 .detached-waterfall {
   display: flex;

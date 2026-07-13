@@ -3816,6 +3816,27 @@ export function SettingsPanel({
                 </label>
 
                 <label className="settings-field">
+                  <span className="settings-label">Sign from ADIF location (travelers)</span>
+                  <span className="settings-input-row">
+                    <input
+                      type="checkbox"
+                      checked={!!form.lotwUseAdifLocation}
+                      onChange={(e) => updateBool('lotwUseAdifLocation', e.target.checked)}
+                      aria-label="Sign LoTW uploads from the ADIF location"
+                    />
+                    <span className="settings-hint">
+                      Turn on if you set TQSL to <em>"use the location in the ADIF file"</em> and don't create
+                      named Station Locations (handy if you travel). Nexus then stamps your call + grid
+                      (STATION_CALLSIGN / MY_GRIDSQUARE) into the upload and omits the <code>-l</code> argument,
+                      so TQSL signs from those and the Station Location above isn't required.{' '}
+                      <strong>The whole batch is signed from your current grid above</strong>, so if you operate
+                      from more than one location, upload <em>before</em> you move — otherwise earlier contacts
+                      are signed with the new grid.
+                    </span>
+                  </span>
+                </label>
+
+                <label className="settings-field">
                   <span className="settings-label">TQSL path (optional)</span>
                   <input
                     className="settings-input"
@@ -3971,8 +3992,10 @@ export function SettingsPanel({
                     </button>
                   </div>
                   <span className="settings-hint">
-                    Stored in the OS keychain, never on disk. <strong>Grid &amp; state require a QRZ XML
-                    subscription</strong> — free accounts return only name/address/country.
+                    Your QRZ.com login password — <strong>this is what powers callbook lookups</strong>{' '}
+                    (name, QTH, grid), and it is separate from the Logbook API key below (that key only
+                    uploads QSOs). Stored in the OS keychain, never on disk. Grid &amp; state need a QRZ
+                    XML subscription; free accounts return only name/address/country.
                   </span>
                 </label>
 

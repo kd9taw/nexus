@@ -14,8 +14,10 @@ import {
   clearActivation,
   getActivation,
   parksCount,
+  huntedParksCount,
   downloadParks,
   importParksCsv,
+  importHuntedParksCsv,
 } from '../api'
 import { pushToast, withErrorToast } from '../toast'
 import { bandFromKhz, spotModeClass } from '../otaHunt'
@@ -85,8 +87,16 @@ export function PotaSotaView({ snap, onHunt, onSnap }: Props) {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   // Band filter — set of band strings; empty = All.
   const [bandFilter, setBandFilter] = useState<string[]>([])
-  // Mode filter — a display-mode string or 'All'.
-  const [modeFilter, setModeFilter] = useState<string>('All')
+  // Mode filter — a display-mode string or 'All'. Defaults to 'All' so phone/SSB
+  // hunters (the POTA majority) see every spot out of the box, and REMEMBERS the
+  // operator's last choice across reloads — so a CW hunter sets 'CW' once and it
+  // sticks, without hiding SSB activity from everyone else on first run.
+  const [modeFilter, setModeFilter] = useState<string>(
+    () => localStorage.getItem('nexus.ota.modeFilter') ?? 'All',
+  )
+  useEffect(() => {
+    localStorage.setItem('nexus.ota.modeFilter', modeFilter)
+  }, [modeFilter])
 
   const loadSpots = useCallback(async (p: Program) => {
     setLoading(true)
@@ -192,9 +202,17 @@ export function PotaSotaView({ snap, onHunt, onSnap }: Props) {
   const [parkN, setParkN] = useState(0)
   const [parkBusy, setParkBusy] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
+  // Imported "Hunted Parks.CSV" — marks parks worked so new-park flags are right on CW hunts.
+  const [huntedN, setHuntedN] = useState(0)
+  const huntedFileRef = useRef<HTMLInputElement>(null)
   useEffect(() => {
     void parksCount()
       .then(setParkN)
+      .catch(() => {})
+    // Re-hydrate the imported-hunted-parks count so the button reflects a prior import after a
+    // restart (the worked-set itself is reloaded from cache on the Rust side at startup).
+    void huntedParksCount()
+      .then(setHuntedN)
       .catch(() => {})
   }, [])
   const handleDownloadParks = async () => {
@@ -215,6 +233,21 @@ export function PotaSotaView({ snap, onHunt, onSnap }: Props) {
       pushToast(`Imported ${n.toLocaleString()} parks`, 'success')
     } catch (e) {
       pushToast(`Import failed: ${String(e)}`, 'error')
+    } finally {
+      setParkBusy(false)
+    }
+  }
+
+  const handleImportHuntedFile = async (file: File) => {
+    setParkBusy(true)
+    try {
+      const csv = await file.text()
+      const n = await importHuntedParksCsv(csv)
+      setHuntedN(n)
+      pushToast(`Imported ${n.toLocaleString()} hunted parks — new-park flags updated`, 'success')
+      void loadSpots(program) // refresh NEW PARK badges against the new worked-set
+    } catch (e) {
+      pushToast(`Hunted-parks import failed: ${String(e)}`, 'error')
     } finally {
       setParkBusy(false)
     }
@@ -329,6 +362,15 @@ export function PotaSotaView({ snap, onHunt, onSnap }: Props) {
         <button type="button" className="pota-parklist-import" onClick={() => fileRef.current?.click()} disabled={parkBusy}>
           Import CSV
         </button>
+        <button
+          type="button"
+          className="pota-parklist-import"
+          onClick={() => huntedFileRef.current?.click()}
+          disabled={parkBusy}
+          title="Import your POTA 'Hunted Parks.CSV' (from your POTA stats page) so worked parks show correctly — the park number isn't in a CW exchange, so your log alone can't know it"
+        >
+          {huntedN > 0 ? `Hunted ✓ (${huntedN.toLocaleString()})` : 'Import Hunted Parks'}
+        </button>
         <input
           ref={fileRef}
           type="file"
@@ -337,6 +379,17 @@ export function PotaSotaView({ snap, onHunt, onSnap }: Props) {
           onChange={(e) => {
             const f = e.target.files?.[0]
             if (f) void handleImportFile(f)
+            e.target.value = ''
+          }}
+        />
+        <input
+          ref={huntedFileRef}
+          type="file"
+          accept=".csv,text/csv"
+          style={{ display: 'none' }}
+          onChange={(e) => {
+            const f = e.target.files?.[0]
+            if (f) void handleImportHuntedFile(f)
             e.target.value = ''
           }}
         />

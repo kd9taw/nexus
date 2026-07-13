@@ -50,7 +50,15 @@ so Detect fills the port and driver but you pick the model from the dropdown.
 **CW keyer choice matters.** On the **CAT keyer** or a **WinKeyer**, the rig goes
 to CW. On the **soundcard keyer**, Nexus keeps the rig in USB/LSB and synthesizes
 sidetone through the TX audio path — don't manually flip the rig to CW there, or
-the tone won't pass. Nexus sets the right mode on section entry.
+the tone won't pass. Nexus sets the right mode on section entry. On the CAT keyer,
+Nexus keys CW through the rig's **internal keyer** (Hamlib `send_morse`) — that's
+what produces the RF, so a controller that only asserts TX (PTT) without driving
+the keyer will key up but put out no power.
+
+**FT-891 / FT-991 — turn OFF the CW Beacon.** Because Nexus keys the rig's internal
+keyer, if the **CW Beacon** (auto-repeat) is enabled in the radio's menu your keyed
+macro repeats on the beacon interval instead of sending once. Disable the CW Beacon
+in the rig menu before sending macros. (Same on the **FT-991/991A** and similar Yaesu.)
 
 → Full guide: <https://sourceforge.net/p/nexus-ham-radio/code/ci/main/tree/docs/rigs/yaesu.md>
 
@@ -95,6 +103,12 @@ like WSJT-X's two-instance pattern.
 **Key gotcha.** The **SmartSDR native** model (23005) is alpha-grade and failed on
 real hardware — nothing auto-picks it. Use the SmartSDR CAT path (model 2036 at
 `127.0.0.1:5002`), which is the one that works.
+
+**RIGCTLD TCP Port = 4532.** In **Settings ▸ Rig ▸ Advanced**, the **RIGCTLD TCP
+Port** should be the default **4532** (Hamlib's standard). If a Flex connects for
+one operator but not another — a "can't reach the radio's CAT link" error — check
+this is 4532; a non-default value left over from a multi-radio setup is the usual
+cause. (Only change it deliberately when running two radios at once.)
 
 → Full guide: <https://sourceforge.net/p/nexus-ham-radio/code/ci/main/tree/docs/rigs/flexradio.md>
 

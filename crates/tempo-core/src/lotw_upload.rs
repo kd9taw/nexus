@@ -10,21 +10,26 @@ use std::path::PathBuf;
 
 use crate::logbook::UploadOutcome;
 
-/// Build the TQSL argv to SIGN + UPLOAD an ADIF file against a named Station
-/// Location: `-d` (no date dialog), `-u` (upload), `-x` (batch/exit),
-/// `-a compliant` (silently skip dupes/out-of-range), `-l <location>`, then the
-/// input path. Pure + testable; the caller prepends the resolved `tqsl` binary.
-pub fn tqsl_args(station_location: &str, adif_path: &str) -> Vec<String> {
-    vec![
+/// Build the TQSL argv to SIGN + UPLOAD an ADIF file: `-d` (no date dialog), `-u`
+/// (upload), `-x` (batch/exit), `-a compliant` (silently skip dupes/out-of-range),
+/// then the input path. When `station_location` is `Some`, sign against that NAMED
+/// Station Location (`-l <name>`); when `None`, OMIT `-l` so TQSL signs from the
+/// location embedded in the ADIF (STATION_CALLSIGN/MY_GRIDSQUARE) — the traveler
+/// workflow. Pure + testable; the caller prepends the resolved `tqsl` binary.
+pub fn tqsl_args(station_location: Option<&str>, adif_path: &str) -> Vec<String> {
+    let mut args = vec![
         "-d".into(),
         "-u".into(),
         "-x".into(),
         "-a".into(),
         "compliant".into(),
-        "-l".into(),
-        station_location.into(),
-        adif_path.into(),
-    ]
+    ];
+    if let Some(loc) = station_location {
+        args.push("-l".into());
+        args.push(loc.into());
+    }
+    args.push(adif_path.into());
+    args
 }
 
 /// Map a TQSL process exit code (+ its stderr) to an [`UploadOutcome`], or `None`
@@ -137,7 +142,7 @@ mod tests {
 
     #[test]
     fn args_sign_and_upload() {
-        let a = tqsl_args("Home FT8", "/tmp/x.adi");
+        let a = tqsl_args(Some("Home FT8"), "/tmp/x.adi");
         assert_eq!(
             a,
             vec![
@@ -151,6 +156,14 @@ mod tests {
                 "/tmp/x.adi"
             ]
         );
+    }
+
+    #[test]
+    fn args_omit_location_for_adif_signing() {
+        // Traveler mode: no `-l`, so TQSL signs from the location embedded in the ADIF.
+        let a = tqsl_args(None, "/tmp/x.adi");
+        assert_eq!(a, vec!["-d", "-u", "-x", "-a", "compliant", "/tmp/x.adi"]);
+        assert!(!a.iter().any(|s| s == "-l"), "no -l in ADIF-location mode");
     }
 
     #[test]

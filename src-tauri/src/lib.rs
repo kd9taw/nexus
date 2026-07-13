@@ -3015,6 +3015,35 @@ fn export_general_log(state: State<'_, SharedEngine>, format: String) -> Result<
     Ok(eng.export_logbook(&format))
 }
 
+/// Write export text to a file in the operator's Downloads folder and return the FULL saved path.
+/// The Logbook "Export ADIF/CSV" buttons use this instead of a webview `<a download>` blob — that
+/// browser trick is unreliable in a WebView2 window (a synchronous URL revoke can abort the write,
+/// and a silent save to an unknown folder gives the operator no confidence it worked). A real Rust
+/// write to a known path, echoed back as a toast, is dependable and visible. `filename` is reduced
+/// to its bare name so it can never escape Downloads.
+#[tauri::command]
+fn save_text_to_downloads(
+    app: tauri::AppHandle,
+    filename: String,
+    text: String,
+) -> Result<String, String> {
+    use tauri::Manager;
+    let name = std::path::Path::new(&filename)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .filter(|n| !n.is_empty())
+        .ok_or("Invalid file name")?;
+    let dir = app
+        .path()
+        .download_dir()
+        .or_else(|_| app.path().home_dir())
+        .map_err(|e| format!("Could not locate your Downloads folder: {e}"))?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join(name);
+    std::fs::write(&path, text).map_err(|e| format!("Could not write {}: {e}", path.display()))?;
+    Ok(path.display().to_string())
+}
+
 /// Transmit an open broadcast (FT8-style "to all") free-text message.
 #[tauri::command]
 fn broadcast(state: State<'_, SharedEngine>, text: String) -> Result<AppSnapshot, String> {
@@ -5348,7 +5377,7 @@ fn get_credentials_status(state: State<'_, SharedEngine>) -> Result<Vec<CredStat
             identity: lotw_user,
         },
         CredStatus {
-            connector: "QRZ XML".into(),
+            connector: "QRZ callbook (name/QTH)".into(),
             stored: has(qrz_keychain()),
             identity: qrz_user.clone(),
         },
@@ -5867,9 +5896,14 @@ async fn upload_lotw_report_impl(
     // Brief lock: read config + build the batch + ADIF, then release before spawn.
     let (batch, adif, location, tqsl_path) = {
         let eng = state.lock().map_err(|e| e.to_string())?;
+        let use_adif_location = eng.settings().lotw_use_adif_location;
         let location = eng.settings().lotw_station_location.trim().to_string();
-        if location.is_empty() {
-            return Err("Set your LoTW Station Location in Settings before uploading.".into());
+        // A named Station Location is required UNLESS the operator signs from the ADIF
+        // (travelers who never create TQSL station locations).
+        if location.is_empty() && !use_adif_location {
+            return Err("Set your LoTW Station Location in Settings before uploading (or enable \
+                        \"sign from ADIF location\" if you don't create TQSL station locations)."
+                .into());
         }
         let batch = indices.unwrap_or_else(|| eng.lotw_unsent_indices());
         if batch.is_empty() {
@@ -5881,6 +5915,8 @@ async fn upload_lotw_report_impl(
         }
         let adif = eng.lotw_upload_adif(&batch);
         let tqsl_path = eng.settings().tqsl_path.clone();
+        // None in ADIF-location mode → tqsl_args omits `-l`.
+        let location = (!use_adif_location).then_some(location);
         (batch, adif, location, tqsl_path)
     };
 
@@ -5915,7 +5951,7 @@ async fn upload_lotw_report_impl(
 
     // Resolve + run TQSL one-shot, capturing its result.
     let tqsl = resolve_tqsl(&tqsl_path);
-    let args = tempo_core::lotw_upload::tqsl_args(&location, &path_str);
+    let args = tempo_core::lotw_upload::tqsl_args(location.as_deref(), &path_str);
     let mut cmd = std::process::Command::new(&tqsl);
     cmd.args(&args);
     #[cfg(windows)]
@@ -6213,11 +6249,19 @@ async fn qrz_lookup(
     };
 
     let not_found = || format!("{} is not in the callbook.", call.to_uppercase());
+    // Did any callbook actually RUN? A username set with no stored password means
+    // the query is silently skipped — without this flag that lands on `not_found()`
+    // below and misreports a *missing credential* as "not in the callbook" (the
+    // "N6HU is not in the callbook, but he IS on QRZ" bug: QRZ was never queried
+    // because the QRZ *password* wasn't set — people commonly set only the separate
+    // Logbook API key, which the callbook lookup never uses).
+    let mut queried_any = false;
 
     // 1) QRZ first, when configured (username + stored password). A missing username,
     //    a missing password, or a QRZ "not found" all fall through to HamQTH below.
     if !qrz_username.is_empty() {
         if let Ok(password) = qrz_keychain()?.get_password() {
+            queried_any = true;
             if let Some(dto) =
                 qrz_lookup_attempt(&call, &qrz_username, &password, qrz_session.inner())?
             {
@@ -6230,6 +6274,7 @@ async fn qrz_lookup(
     //    name/grid/us_state, so callsign lookup works without a QRZ subscription.
     if !hamqth_username.is_empty() {
         if let Ok(password) = hamqth_keychain()?.get_password() {
+            queried_any = true;
             if let Some(dto) =
                 hamqth_lookup_attempt(&call, &hamqth_username, &password, hamqth_session.inner())?
             {
@@ -6243,6 +6288,22 @@ async fn qrz_lookup(
     // Neither callbook produced a record.
     if qrz_username.is_empty() && hamqth_username.is_empty() {
         Err("Set your QRZ or HamQTH username in Settings first.".to_string())
+    } else if !queried_any {
+        // A username IS set but no password is stored, so no lookup actually ran.
+        // Name the exact fix instead of pretending the call wasn't found.
+        let mut which = Vec::new();
+        if !qrz_username.is_empty() {
+            which.push("QRZ");
+        }
+        if !hamqth_username.is_empty() {
+            which.push("HamQTH");
+        }
+        Err(format!(
+            "Callbook lookup needs your {} password — add it in Settings ▸ Logbook & QSL. \
+             For QRZ this is your QRZ.com login password, NOT the Logbook API key (that key \
+             only uploads QSOs).",
+            which.join(" or ")
+        ))
     } else {
         Err(not_found())
     }
@@ -7150,6 +7211,16 @@ fn parks_count(parks: State<'_, SharedParks>) -> Result<usize, String> {
     Ok(parks.lock().map_err(|e| e.to_string())?.len())
 }
 
+/// How many parks the operator has imported from their Hunted Parks.CSV (0 = none). Lets the UI
+/// show the imported count after a restart (the set itself is reloaded from cache at startup).
+#[tauri::command]
+fn hunted_parks_count(state: State<'_, SharedEngine>) -> Result<usize, String> {
+    Ok(state
+        .lock()
+        .map_err(|e| e.to_string())?
+        .hunted_parks_import_count())
+}
+
 /// Import a park directory from CSV text the operator downloaded (the HRD workflow). Caches it and
 /// swaps in the new index. Returns the park count. Always works regardless of the download URL.
 #[tauri::command]
@@ -7161,6 +7232,47 @@ fn import_parks_csv(parks: State<'_, SharedParks>, csv: String) -> Result<usize,
     let n = idx.len();
     let _ = std::fs::write(parks_cache_path(), &csv); // cache; failure is non-fatal
     *parks.lock().map_err(|e| e.to_string())? = idx;
+    Ok(n)
+}
+
+/// Where the imported POTA "Hunted Parks.CSV" is cached (beside settings.json), so the hunter's
+/// worked-park set survives restarts. Losing it is harmless (re-import from the POTA stats page).
+fn hunted_parks_cache_path() -> PathBuf {
+    settings_path()
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("hunted_parks.csv")
+}
+
+/// Load the cached Hunted Parks.CSV (if any) into the engine at startup. Best-effort.
+fn load_hunted_parks_cache(engine: &SharedEngine) {
+    if let Ok(csv) = std::fs::read_to_string(hunted_parks_cache_path()) {
+        let refs = tempo_core::pota::ParkIndex::parse_csv(&csv).references();
+        if let Ok(mut eng) = engine.lock() {
+            eng.set_hunted_parks_import(refs);
+        }
+    }
+}
+
+/// Import the operator's POTA "Hunted Parks.CSV" (from the POTA stats page) to mark those parks as
+/// worked. This is the honest source for the NEW PARK badge on CW hunts: the park reference is
+/// never in a CW exchange, so it never reaches the log — the log alone can't know the park was
+/// worked. Caches the file and replaces the imported set (a re-import is the full current picture).
+#[tauri::command]
+fn import_hunted_parks_csv(engine: State<'_, SharedEngine>, csv: String) -> Result<usize, String> {
+    let refs = tempo_core::pota::ParkIndex::parse_csv(&csv).references();
+    if refs.is_empty() {
+        return Err(
+            "No parks parsed — is this a POTA Hunted Parks CSV (needs a 'reference' column)?".into(),
+        );
+    }
+    let n = refs.len();
+    let _ = std::fs::write(hunted_parks_cache_path(), &csv); // cache; failure is non-fatal
+    engine
+        .lock()
+        .map_err(|e| e.to_string())?
+        .set_hunted_parks_import(refs);
     Ok(n)
 }
 
@@ -7509,6 +7621,9 @@ pub fn run() {
     // Local park directory — load the cached CSV (if any) so offline search works from launch.
     let parks: SharedParks = Arc::new(Mutex::new(tempo_core::pota::ParkIndex::default()));
     load_parks_cache(&parks);
+    // Seed the imported hunted-parks worked-set (POTA "Hunted Parks.CSV") so new-park flags
+    // are right from launch — including CW hunts the log can't know about.
+    load_hunted_parks_cache(&engine);
     let region_paths = SharedRegionPaths(Arc::new(Mutex::new(propagation::LiveSpots::new(
         propagation::REGION_SPOT_CAP,
     ))));
@@ -7850,6 +7965,7 @@ pub fn run() {
             set_settings,
             export_log,
             export_general_log,
+            save_text_to_downloads,
             broadcast,
             get_serial_ports,
             get_audio_devices,
@@ -7981,7 +8097,9 @@ pub fn run() {
             get_ota_spots,
             search_parks,
             parks_count,
+            hunted_parks_count,
             import_parks_csv,
+            import_hunted_parks_csv,
             download_parks,
             lookup_park,
             lookup_park_live,

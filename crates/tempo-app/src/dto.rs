@@ -1174,6 +1174,9 @@ impl From<tempo_core::diagnostics::DiagnosticsReport> for DiagnosticsReportDto {
 pub struct QrzLookupDto {
     pub call: String,
     pub name: Option<String>,
+    /// QRZ `<nickname>` — the operator's preferred short name; the UI shows it in
+    /// place of the full name when present. `None` for HamQTH (no such field).
+    pub nickname: Option<String>,
     pub qth: Option<String>,
     pub grid: Option<String>,
     pub state: Option<String>,
@@ -1190,6 +1193,7 @@ impl From<tempo_core::qrz::QrzLookup> for QrzLookupDto {
         QrzLookupDto {
             call: r.call,
             name: r.name,
+            nickname: r.nickname,
             qth: r.qth,
             grid: r.grid,
             state: r.state,
@@ -1211,6 +1215,7 @@ impl From<tempo_core::hamqth::HamQthLookup> for QrzLookupDto {
         QrzLookupDto {
             call: r.call,
             name: r.name,
+            nickname: None, // HamQTH has no nickname field
             qth: r.qth,
             grid: r.grid,
             state: r.state,

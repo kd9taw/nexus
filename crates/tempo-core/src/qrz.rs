@@ -87,6 +87,9 @@ impl QrzSession {
 pub struct QrzLookup {
     pub call: String,
     pub name: Option<String>,
+    /// QRZ `<nickname>` — the operator's preferred short/first name when they set one.
+    /// Preferred over `name` for display when present (operators want to be greeted by it).
+    pub nickname: Option<String>,
     /// City (QRZ `addr2`).
     pub qth: Option<String>,
     pub grid: Option<String>,
@@ -166,6 +169,7 @@ pub fn parse_callsign(xml: &str) -> Option<QrzLookup> {
     Some(QrzLookup {
         call,
         name,
+        nickname: tag(xml, "nickname"),
         qth: tag(xml, "addr2"),
         grid: tag(xml, "grid"),
         state: tag(xml, "state"),
@@ -516,6 +520,21 @@ mod tests {
         assert!(r.grid.is_none(), "free tier has no grid");
         assert!(r.state.is_none(), "free tier has no state");
         assert_eq!(r.country.as_deref(), Some("United States"));
+    }
+
+    #[test]
+    fn parses_the_nickname_when_present() {
+        let with = "<Callsign><call>W1XYZ</call><name_fmt>John Public</name_fmt>\
+                    <nickname>Johnny</nickname></Callsign>";
+        let r = parse_callsign(with).unwrap();
+        assert_eq!(r.name.as_deref(), Some("John Public"));
+        assert_eq!(r.nickname.as_deref(), Some("Johnny"), "nickname is parsed");
+        // Absent → None, so the UI falls back to the full name.
+        let without = parse_callsign(
+            "<Callsign><call>W1XYZ</call><name_fmt>John Public</name_fmt></Callsign>",
+        )
+        .unwrap();
+        assert!(without.nickname.is_none());
     }
 
     #[test]

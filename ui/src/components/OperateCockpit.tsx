@@ -252,6 +252,33 @@ export function OperateCockpit({
   // Session-only ignore set (Alt-double-click a decode/roster row).
   const [ignored, setIgnored] = useState<ReadonlySet<string>>(() => new Set())
 
+  // Waterfall pop-out: when the waterfall is torn off into its own window, unmount the docked
+  // copy so the decode lists + roster reclaim the space (that's the whole point of popping it
+  // out). Synced across windows by a persisted flag + the `storage` event, so closing the
+  // pop-out re-docks automatically; a manual "re-dock" placeholder is the always-there fallback.
+  // The flag is app-global (one waterfall pop-out), so in the rare two-main-window case both
+  // main windows share it — an acceptable limitation for a single-pop-out feature. A stale flag
+  // from a crash-while-popped-out is cleared on the next main-window boot (see main.tsx).
+  const [wfDetached, setWfDetached] = useState(
+    () => localStorage.getItem('nexus.waterfall.detached') === '1',
+  )
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === 'nexus.waterfall.detached') setWfDetached(e.newValue === '1')
+    }
+    window.addEventListener('storage', onStorage)
+    return () => window.removeEventListener('storage', onStorage)
+  }, [])
+  const popOutWaterfall = () => {
+    localStorage.setItem('nexus.waterfall.detached', '1')
+    setWfDetached(true)
+    void openPanelWindow('waterfall')
+  }
+  const redockWaterfall = () => {
+    localStorage.setItem('nexus.waterfall.detached', '0')
+    setWfDetached(false)
+  }
+
   // RPT = the DX's current heard SNR (case-insensitive), −10 when unheard.
   const dxSnr = snrForCall(snap.stations, dxCall)
   const msgs = useMemo(
@@ -631,34 +658,47 @@ export function OperateCockpit({
       <div className="cockpit-body" ref={bodyRef}>
         {/* Waterfall: a short full-width strip (not a tall column) — the spectrum
             is a glance tool; the real estate goes to the decode lists + roster. */}
-        <section className="cockpit-waterfall panel">
+        {wfDetached ? (
           <button
             type="button"
-            className="wf-popout"
-            onClick={() => void openPanelWindow('waterfall')}
-            title="Pop the waterfall out into its own window (drag to another monitor)"
+            className="wf-redock"
+            onClick={redockWaterfall}
+            title="The waterfall is in its own window — click to bring it back here"
           >
-            ⧉
+            ⧉ Waterfall popped out — click to re-dock
           </button>
-          <Waterfall
-            transmitting={snap.radio.transmitting}
-            rxOffsetHz={snap.radio.rxOffsetHz}
-            txOffsetHz={snap.radio.txOffsetHz}
-            theme={theme}
-            onTune={onTune}
-            active={active}
-          />
-        </section>
-        <Splitter
-          axis="y"
-          varName="--cockpit-wf-h"
-          target={bodyRef}
-          storageKey="nexus.split.operate.waterfall"
-          minPx={88}
-          maxPx={420}
-          defaultPct={22}
-          label="waterfall height"
-        />
+        ) : (
+          <>
+            <section className="cockpit-waterfall panel">
+              <button
+                type="button"
+                className="wf-popout"
+                onClick={popOutWaterfall}
+                title="Pop the waterfall out into its own window (frees this space; drag to another monitor)"
+              >
+                ⧉
+              </button>
+              <Waterfall
+                transmitting={snap.radio.transmitting}
+                rxOffsetHz={snap.radio.rxOffsetHz}
+                txOffsetHz={snap.radio.txOffsetHz}
+                theme={theme}
+                onTune={onTune}
+                active={active}
+              />
+            </section>
+            <Splitter
+              axis="y"
+              varName="--cockpit-wf-h"
+              target={bodyRef}
+              storageKey="nexus.split.operate.waterfall"
+              minPx={88}
+              maxPx={420}
+              defaultPct={22}
+              label="waterfall height"
+            />
+          </>
+        )}
 
         {/* Prominent operating bar: Call CQ / S&P / Now-sending / Resend / Tx5. */}
         <OperateQsoStrip

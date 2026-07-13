@@ -5,10 +5,21 @@ All notable changes to Nexus (formerly Tempo) are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.8.3] — 2026-07-13 — CW/POTA fixes + phantom-log guard
 
 ### Fixed
 
+- **Logbook "Export ADIF/CSV" reliably saves a file.** It now writes the export straight to your
+  Downloads folder and shows the exact saved path, instead of a browser-style download that could
+  silently fail in the app window. (Audited every Logbook button in the process — the rest were fine.)
+- **The CW decoder's AI on/off switch stays put.** It no longer jumps from mid-row to the left when
+  the AI decoder's status text appears and clears — it's parked next to the DECODE label.
+- **No more phantom or duplicate auto-logged QSOs.** A single decoded `RR73`/`73` addressed to you —
+  from a double-click, or a companion app auto-replying across cycles — could log a "completed" QSO you
+  never actually worked, and with no duplicate guard the same contact could be logged (and uploaded)
+  more than once. Auto-log now requires real evidence the contact happened (you transmitted *and* a
+  signal report was exchanged), and a duplicate guard blocks logging the same call/band/mode twice in a
+  short window — across every path into the log (auto, cockpit button, manual, companion).
 - **CAT errors now name the actual fault instead of blaming the mode.** A failed mode change used to
   always read *"rig rejected PKTUSB"*, even when the real problem was the CAT connection. It now tells
   the three faults apart: *"can't reach the radio's CAT link"* when nothing is listening (rigctld or
@@ -17,6 +28,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   wrong CAT port or model, serial baud mismatch, or SmartSDR not actually connected to the radio — the
   *"rig reply incomplete"* case); and *"rig rejected …"* only for a true rejection, where the radio
   answered but has no such mode (e.g. no DATA/PKT submode).
+- **A clearer message when a QRZ callbook lookup has no password.** Looking up a call with a QRZ
+  username set but no QRZ *password* stored used to report *"… is not in the callbook"* — even for calls
+  that clearly are. It now says the lookup needs your QRZ password, and points out that the callbook
+  lookup uses your QRZ.com login password, not the separate Logbook API key (a common mix-up). The
+  Settings row is relabelled **"QRZ callbook (name/QTH)"** to match.
+- **The Connect tab no longer breaks its layout at 110%+ UI zoom.** Its propagation panes now reflow on
+  the zoom-adjusted width like the rest of the app.
+
+### Added
+
+- **Clear button on the log form** — one click resets the fields and returns focus to the callsign.
+- **QRZ nickname** is shown in place of the full name when the operator has set one on QRZ.
+- **CW cockpit Band Activity shows only the CW portion** of the band, instead of the whole allocation.
+- **POTA/SOTA spot mode-filter is remembered** across sessions — pick CW (or SSB, FT8…) once and it
+  sticks. Defaults to All so phone hunters see every spot out of the box.
+- **Import your POTA "Hunted Parks.CSV"** (from the POTA stats page) to drive the NEW PARK flags — so
+  hunts made on CW, where the park number never reaches your log, still show as worked.
+- **Waterfall pop-out frees the main-window space** — the docked waterfall unmounts while it's popped
+  out, and re-docks when you close the pop-out (or via an always-there "re-dock" button).
+- **LoTW "sign from the ADIF location"** (Settings ▸ Rig/LoTW) — for travelers who set TQSL to use the
+  location in the ADIF and never create named Station Locations. Nexus stamps `STATION_CALLSIGN` /
+  `MY_GRIDSQUARE` into the upload and omits the `-l` argument. Default stays named-location.
 
 ## [0.8.2] — 2026-07-13 — Settings declutter + upload/credential hardening
 
