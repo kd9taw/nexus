@@ -5,6 +5,65 @@ All notable changes to Nexus (formerly Tempo) are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.1] — 2026-07-12 — Field Day run fix + audit hardening
+
+A fast-follow after a full white-box QA + security audit of 0.8.0.
+
+### Improved
+
+- **Ultra-rare grids are now unmistakable.** An open-water (rover/maritime/DXpedition-only) grid gets
+  a loud, glowing **💎 ULTRA** pill on the primary line of the Call Roster and in the band-activity
+  feed — the old marker was a tiny ◆◆ that was easy to miss — and it now persists through the whole
+  QSO, not just the CQ. Rare grids stay a quiet marker so the boards don't become confetti.
+- **The Call Roster shows every reason a station is worth working.** It previously showed only the
+  single top need; it now shows one chip per need form (new-DXCC, band, zone, grid…), matching the
+  band-activity feed.
+- **Focus returns to the callsign field after you log a contact** in the CW and Phone cockpits, so
+  you can type the next call immediately (rapid logging / a Field Day run).
+- **Settings are easier to navigate.** The two most overloaded screens are now grouped: **Operating**
+  is split into Transmit & Sequencing / Auto-CQ & Caller Selection / Logging Behavior / Decoder /
+  Station Housekeeping, and **Confirmations** is renamed **Logbook & QSL** with a section per service
+  (LoTW · eQSL · QRZ · HamQTH · ClubLog · HRDLog · Cloudlog) — and Cloudlog is no longer stranded in
+  the Field Day tab.
+
+### Fixed
+
+- **Field Day RUN mode now works a whole run.** A running station (calling CQ FD) worked exactly
+  ONE contact and then went silent. It now returns to calling CQ after each logged QSO (and
+  Search-&-Pounce returns to listening), so you can actually run a pileup.
+- **A corrupt or crafted ADIF file can no longer crash the app.** A stray multibyte character in a
+  date/time field, or a bogus field length, could panic or hang the log parser (taking TX/RX/CAT
+  down until restart). Malformed records are now read safely — this covers imported logs and
+  downloaded LoTW/eQSL reports.
+- **A CAT-sharing client that drops mid-transmit now unkeys the rig.** If WSJT-X or N1MM crashed
+  or closed while keyed through Nexus's rig broker, the radio could stay transmitting; a dropped
+  broker connection now fail-safe unkeys.
+- **CW stops cleanly on Monitor / TX-off** — queued CW no longer survives to key the rig when you
+  re-enable transmit.
+- **Completed QSOs aren't lost with "Auto-log QSOs" off** — the cockpit's Log QSO button now
+  captures the finished contact instead of it being discarded.
+- **Field Day Cabrillo export** stamps each QSO with its own band's frequency (a multi-band log
+  used to write one frequency on every line).
+- **Field Day log** no longer flags legal multi-band / multi-mode contacts of the same station as
+  duplicates.
+- **eQSL upload** failures are now labeled "eQSL" (they were mislabeled "QRZ").
+- **Cloudlog / Wavelog upload** reports a real failure instead of a false "✓" when the instance
+  rejects a record, and requires the API key + station id up front.
+- **A "Spots" section you enable in Settings is now reachable** from the navigation rail.
+- Assorted correctness: manual Field Day entry requires a valid ARRL/RAC section (no phantom
+  multiplier); the WAS "by US state" stats and the "New state" needed-tag only count US contacts;
+  "First DX" unlocks on your first foreign entity even before a domestic one; a manual rotor slew
+  halts an active satellite track instead of fighting it; the "Contesting" setup goal lands on a
+  reachable view; and the CW/Phone keyboard shortcuts read your live transmit-allowed state.
+
+### Security
+
+No critical or remotely-exploitable issues were found in the audit; these are defense-in-depth on
+a single-user desktop app. Hardened the ADIF parser (UTF-8 char-boundary panic + integer-overflow
+DoS), the LoTW upload temp file (unique unpredictable name, no symlink-follow, removed after use),
+Cloudlog HTTPS + no-redirect enforcement (matching every other connector), and sanitized the band
+value used in the debug period-WAV filename. Bumped `anyhow` to clear an advisory.
+
 ## [0.8.0] — 2026-07-12 — Field Day mode, readable light theme, and operating fixes
 
 ### Added

@@ -6,7 +6,15 @@
 // rotator is configured (PaneFrame falls back to the Basic hint) — honesty:
 // a needle with no rotctld behind it would be an ornament.
 import { useEffect, useRef, useState } from 'react'
-import { getDeclination, pointRotator, readRotator, stopRotator } from '../../api'
+import {
+  getDeclination,
+  getSatTrackStatus,
+  pointRotator,
+  readRotator,
+  stopRotator,
+  stopSatTrack,
+} from '../../api'
+import type { SatTrackStatus } from '../../types'
 import { magneticDeg } from '../../grid'
 import { pushToast } from '../../toast'
 
@@ -26,11 +34,15 @@ export function RotorPane() {
   const [target, setTarget] = useState<number | null>(null)
   const [entry, setEntry] = useState('')
   const [declination, setDeclination] = useState<number | null>(null)
+  // Satellite auto-track owning the rotor right now (Satellites section's loop).
+  // Shown so the operator knows WHY the needle moves on its own — and so a manual
+  // slew/STOP halts the LOOP, not just one command the loop's next 3 s tick redoes.
+  const [satTrack, setSatTrack] = useState<SatTrackStatus | null>(null)
   const alive = useRef(true)
 
   useEffect(() => {
     alive.current = true
-    const load = () =>
+    const load = () => {
       readRotator()
         .then((v) => {
           if (alive.current) setAz(v)
@@ -38,6 +50,12 @@ export function RotorPane() {
         .catch(() => {
           if (alive.current) setAz(null)
         })
+      getSatTrackStatus()
+        .then((t) => {
+          if (alive.current) setSatTrack(t)
+        })
+        .catch(() => {})
+    }
     load()
     const id = window.setInterval(load, 2_000)
     getDeclination()
@@ -54,9 +72,15 @@ export function RotorPane() {
   const slew = (deg: number) => {
     const d = ((Math.round(deg) % 360) + 360) % 360
     setTarget(d)
-    pointRotator(d).catch((e) =>
-      pushToast(`Rotator: ${e instanceof Error ? e.message : e}`, 'error'),
-    )
+    // ALWAYS stop the sat track first (no-op when idle): while a track owns the
+    // rotor the loop re-commands az/el every 3 s, so a bare pointRotator would be
+    // reverted within one tick. Halt the loop, then take the rotor manually.
+    stopSatTrack()
+      .then(() => {
+        setSatTrack(null)
+        return pointRotator(d)
+      })
+      .catch((e) => pushToast(`Rotator: ${e instanceof Error ? e.message : e}`, 'error'))
   }
 
   const needle = (deg: number, len: number) => {
@@ -113,6 +137,14 @@ export function RotorPane() {
             {Math.round(az)}°T
             {mag != null && <span className="rotor-mag"> {mag}°M</span>}
           </div>
+          {satTrack && (
+            <div
+              className="rotor-slewing"
+              title={`Auto-tracking ${satTrack.name} (${satTrack.state}) — the Satellites section owns the rotor until LOS; a manual slew or STOP halts it`}
+            >
+              ⟳ {satTrack.name}
+            </div>
+          )}
           {target != null && Math.abs(((target - az + 540) % 360) - 180) > 2 && (
             <div className="rotor-slewing" title="Commanded heading — the needle is on its way">
               → {target}°
@@ -139,9 +171,17 @@ export function RotorPane() {
               type="button"
               className="rotor-stop"
               onClick={() =>
-                stopRotator().catch((e) =>
-                  pushToast(`Rotator stop: ${e instanceof Error ? e.message : e}`, 'error'),
-                )
+                // Stop the track first (no-op when idle): the satTrack poll is up to
+                // 2 s stale, and a bare rotor stop mid-pass would be undone by the
+                // loop's next 3 s tick. Belt-and-braces halt.
+                stopSatTrack()
+                  .then(() => {
+                    setSatTrack(null)
+                    return stopRotator()
+                  })
+                  .catch((e) =>
+                    pushToast(`Rotator stop: ${e instanceof Error ? e.message : e}`, 'error'),
+                  )
               }
               title="Stop rotation NOW"
             >

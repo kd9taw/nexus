@@ -216,11 +216,15 @@ pub fn score(
             tags.push(NeedTag::NewGrid);
         }
     }
-    // State need — a never-worked US state (WAS), independent of the entity (like a
-    // grid/zone). Only when the caller resolved the heard station to a valid US state
-    // (a callsign lookup); the worked-states set holds canonical (valid_state) codes.
+    // State need — a never-worked US state (WAS). Gate on a US-family entity like
+    // the sibling paths (awards.rs / dxped.rs) do: non-US subdivision codes collide
+    // with US postal codes (Australian "WA", Brazilian "SC"/"PA", Canadian provinces),
+    // so a resolved state on a foreign entity must NOT count toward WAS. The
+    // worked-states set holds canonical (valid_state) codes.
     if let Some(s) = st {
-        if !worked_states.contains(s) {
+        if matches!(info.entity, "United States" | "Alaska" | "Hawaii")
+            && !worked_states.contains(s)
+        {
             tags.push(NeedTag::NewState);
         }
     }

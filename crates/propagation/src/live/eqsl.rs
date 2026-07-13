@@ -51,6 +51,36 @@ pub fn fetch_inbox(inbox_url: &str) -> Result<String, String> {
     get_text(&client, &adi_url)
 }
 
+/// POST a `name=value` form body — the eQSL `ImportADIF` upload. Same HTTPS +
+/// no-redirect + redacted-error discipline as [`fetch_inbox`]. ⚠️ The `body`
+/// carries the eQSL password, so it must NEVER be logged; errors are redacted and
+/// carry an "eQSL:" prefix (previously this borrowed the QRZ transport, so eQSL
+/// failures surfaced mislabeled as "QRZ: …").
+pub fn post_form(url: &str, body: String) -> Result<String, String> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(60))
+        .user_agent(UA)
+        .https_only(true)
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|_| "eQSL: HTTP client initialization failed".to_string())?;
+    let resp = client
+        .post(url)
+        .header(
+            reqwest::header::CONTENT_TYPE,
+            "application/x-www-form-urlencoded",
+        )
+        .body(body)
+        .send()
+        .map_err(redact)?;
+    let status = resp.status();
+    if !status.is_success() {
+        return Err(format!("eQSL: server returned HTTP {}", status.as_u16()));
+    }
+    resp.text()
+        .map_err(|_| "eQSL: could not read the response body".to_string())
+}
+
 /// A single GET returning the body text, with status check and **redacted** errors.
 fn get_text(client: &reqwest::blocking::Client, url: &str) -> Result<String, String> {
     let resp = client.get(url).send().map_err(redact)?;

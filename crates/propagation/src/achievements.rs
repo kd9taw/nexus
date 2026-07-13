@@ -33,6 +33,9 @@ pub struct AchievementStats {
     pub qsos: u32,
     pub confirmed_qsos: u32,
     pub dxcc_worked: u32,
+    /// Distinct DXCC entities worked OTHER than the operator's own — the honest
+    /// "have you worked DX yet" signal (dxcc_worked includes home).
+    pub dx_entities_worked: u32,
     pub dxcc_confirmed: u32,
     pub slots_confirmed: u32,
     /// Most-wanted (DXpedition-grade) entities worked — entities you essentially
@@ -127,8 +130,8 @@ pub fn evaluate(s: &AchievementStats) -> Vec<Achievement> {
             "First DX",
             "Work your first DX entity",
             "DXCC",
-            dw,
-            2,
+            s.dx_entities_worked,
+            1,
             true,
         ),
         // --- DXpeditions (most-wanted, DXpedition-only entities) ---
@@ -284,6 +287,7 @@ mod tests {
             qsos: 120,
             confirmed_qsos: 90,
             dxcc_worked: 60,
+            dx_entities_worked: 59,
             dxcc_confirmed: 45,
             slots_confirmed: 150,
             rare_worked: 3,
@@ -325,6 +329,7 @@ mod tests {
             qsos: 0,
             confirmed_qsos: 0,
             dxcc_worked: 0,
+            dx_entities_worked: 0,
             dxcc_confirmed: 0,
             slots_confirmed: 0,
             rare_worked: 0,
@@ -342,6 +347,7 @@ mod tests {
             qsos: 5000,
             confirmed_qsos: 5000,
             dxcc_worked: dc,
+            dx_entities_worked: dc,
             dxcc_confirmed: dc,
             slots_confirmed: 0,
             rare_worked: 0,

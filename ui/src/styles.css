@@ -2915,6 +2915,11 @@ button.nb-chip:hover {
 [data-theme='light'] .rarity-gem.ultra {
   color: #7e22ce;
 }
+[data-theme='light'] {
+  /* darker violet/amber so the pill ink clears 4.5:1 on the white panel */
+  --rarity-ultra: #7e22ce;
+  --rarity-rare: #9d6300;
+}
 [data-theme='light'] .decode-row.own-tx .decode-msg {
   color: #7a5d00;
 }
@@ -4080,6 +4085,39 @@ select optgroup {
 }
 .rarity-gem.ultra {
   color: #c084fc; /* violet — open water: rover/maritime/DXpedition-only */
+}
+
+/* Grid-rarity PILL — the ULTRA tier graduates from the tiny ◆◆ gem to a loud,
+   glowing "💎 ULTRA" pill so an open-water grid is unmistakable at a glance and
+   ties back to the "💎 ULTRA-RARE" alert toast. RARE stays the quiet gem — the
+   boards must not become confetti. Tokens are --rarity-* (outside the guarded
+   --need-*/--band-* namespaces). Violet matches the map halo + the ◆◆ gem. */
+:root {
+  --rarity-ultra: #c084fc;
+  --rarity-rare: #f5a524;
+}
+.rarity-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: var(--space-1);
+  padding: 2px var(--space-2);
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.rarity-chip.ultra {
+  color: var(--rarity-ultra);
+  background: color-mix(in srgb, var(--rarity-ultra) 24%, transparent);
+  border: 1px solid color-mix(in srgb, var(--rarity-ultra) 70%, transparent);
+  /* the "big thing" glow — RARE never gets this */
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--rarity-ultra) 55%, transparent),
+    0 0 8px color-mix(in srgb, var(--rarity-ultra) 45%, transparent);
 }
 
 /* Award-need badge on a roster card — what's worth working about this station.

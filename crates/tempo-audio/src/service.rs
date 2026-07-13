@@ -2558,10 +2558,16 @@ impl RadioLoop {
                             secs.rem_euclid(60),
                         );
                         // WSJT-X-style stamp + the band for at-a-glance sorting.
-                        let name = format!(
-                            "{y:04}{mo:02}{d:02}_{h:02}{m:02}{sec:02}_{}.wav",
-                            eng.settings().band
-                        );
+                        // Sanitize band first: settings.band is a free-form string
+                        // from settings.json, and a value containing a path
+                        // separator or ".." would make `join` escape periods_dir.
+                        let band: String = eng
+                            .settings()
+                            .band
+                            .chars()
+                            .filter(|c| c.is_ascii_alphanumeric())
+                            .collect();
+                        let name = format!("{y:04}{mo:02}{d:02}_{h:02}{m:02}{sec:02}_{band}.wav");
                         let path = std::path::Path::new(&dir).join(name);
                         if let Err(e) = crate::voice::write_wav_12k(&path, frame) {
                             eng.set_audio_error(Some(format!("period WAV save failed: {e}")));

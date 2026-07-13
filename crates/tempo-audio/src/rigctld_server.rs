@@ -282,6 +282,19 @@ pub fn handle_command(line: &str, backend: &dyn RigBackend) -> Handled {
     }
 }
 
+/// Detect a rigctld PTT-set request — `T <n>` (short) or `\set_ptt <n>` (long) —
+/// and return the requested key state (`n != 0` is key-down; only 0 is key-up),
+/// so a connection can fail-safe unkey on drop. `None` = not a PTT-set line.
+fn parse_ptt_set(line: &str) -> Option<bool> {
+    let mut t = line.split_whitespace();
+    match t.next() {
+        Some("T") | Some("\\set_ptt") => {
+            t.next().and_then(|s| s.parse::<i32>().ok()).map(|v| v != 0)
+        }
+        _ => None,
+    }
+}
+
 /// Serve one client connection until EOF or `q`. Each line is one request.
 pub fn serve_connection(stream: TcpStream, backend: Arc<dyn RigBackend>) {
     let mut writer = match stream.try_clone() {
@@ -289,8 +302,15 @@ pub fn serve_connection(stream: TcpStream, backend: Arc<dyn RigBackend>) {
         Err(_) => return,
     };
     let reader = BufReader::new(stream);
+    // Track this connection's PTT so a dropped/EOF'd broker client (WSJT-X or N1MM
+    // crashing / closing mid-transmit) can't leave the rig keyed forever — the
+    // original code only ever unkeyed on an explicit `T 0`.
+    let mut asserted_ptt = false;
     for line in reader.lines() {
         let Ok(line) = line else { break };
+        if let Some(v) = parse_ptt_set(&line) {
+            asserted_ptt = v;
+        }
         match handle_command(&line, backend.as_ref()) {
             Handled::Reply(r) => {
                 if !r.is_empty() && writer.write_all(r.as_bytes()).is_err() {
@@ -299,6 +319,12 @@ pub fn serve_connection(stream: TcpStream, backend: Arc<dyn RigBackend>) {
             }
             Handled::Close => break,
         }
+    }
+    // Connection ended with PTT still asserted by this client → fail-safe unkey.
+    // `set_ptt(false)` (broker_ptt(false)) is always honored and idempotent, so
+    // this is safe even if Nexus itself is not transmitting.
+    if asserted_ptt {
+        backend.set_ptt(false);
     }
 }
 
@@ -433,6 +459,17 @@ mod tests {
             last,
             "a rejected F must not move the dial"
         );
+    }
+
+    #[test]
+    fn ptt_set_parser_tracks_key_state_for_failsafe_unkey() {
+        // Any non-zero key-down state is "asserted" (matches the T handler); 0 is up.
+        assert_eq!(parse_ptt_set("T 1"), Some(true));
+        assert_eq!(parse_ptt_set("T 3"), Some(true)); // ON_DATA (WSJT-X rear audio)
+        assert_eq!(parse_ptt_set("T 0"), Some(false));
+        assert_eq!(parse_ptt_set("\\set_ptt 1"), Some(true)); // long form
+        assert_eq!(parse_ptt_set("F 14074000"), None); // unrelated command
+        assert_eq!(parse_ptt_set("T"), None); // malformed → don't change state
     }
 
     #[test]

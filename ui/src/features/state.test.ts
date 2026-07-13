@@ -131,7 +131,9 @@ describe('feature state transitions', () => {
   })
 
   it('landingFor follows the profile, custom → operate', () => {
-    expect(landingFor(applyProfile('contest'))).toBe('fieldDay')
+    // contest lands on 'operate', NOT 'fieldDay' — Field Day visibility is gated
+    // by the fdActive master switch, so its landing must be a master-free view.
+    expect(landingFor(applyProfile('contest'))).toBe('operate')
     expect(landingFor(applyProfile('vhf'))).toBe('connect')
     expect(
       landingFor({ profile: 'custom', enabled: applyProfile('dx').enabled, dismissedReveals: [] }),

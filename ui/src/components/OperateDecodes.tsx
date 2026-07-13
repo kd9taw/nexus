@@ -13,7 +13,7 @@ import {
 } from '../decodeHistory'
 import { gridFromMessage, isIgnored } from '../txMessages'
 import { StateBlock } from './StateBlock'
-import { RarityGem } from './RarityGem'
+import { RarityChip } from './RarityChip'
 
 /** JTAlert UDP highlight entry — bg/fg may be null/missing. */
 export interface HighlightEntry {
@@ -405,7 +405,7 @@ export function OperateDecodes({
                       HARQ·RV{d.rv}
                     </span>
                   )}
-                  <RarityGem rarity={d.gridRarity} />
+                  <RarityChip rarity={d.gridRarity} />
                   {d.lotwUser && (
                     <span
                       className="lotw-mark"

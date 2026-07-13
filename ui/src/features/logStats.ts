@@ -71,6 +71,27 @@ function tallyByCI(
   return out
 }
 
+// WAS is a US-only award. Mirror crates/propagation/src/awards.rs: gate on a
+// US-family DXCC entity (United States / Alaska / Hawaii, resolved into
+// `q.country`) so foreign subdivision codes that collide with US postal codes
+// (e.g. Australian "WA" = Western Australia, Brazilian "SC"/"PA") don't pollute
+// the breakdown, then canonicalize to one of the 50 valid WAS codes. Mapping to
+// the canonical code also folds casing, so "ct" and "CT" land in one bucket.
+const US_ENTITIES = new Set(['UNITED STATES', 'ALASKA', 'HAWAII'])
+const WAS_STATES = new Set([
+  'AK', 'AL', 'AR', 'AZ', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA', 'HI', 'IA', 'ID', 'IL', 'IN', 'KS',
+  'KY', 'LA', 'MA', 'MD', 'ME', 'MI', 'MN', 'MO', 'MS', 'MT', 'NC', 'ND', 'NE', 'NH', 'NJ', 'NM',
+  'NV', 'NY', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC', 'SD', 'TN', 'TX', 'UT', 'VA', 'VT', 'WA', 'WI',
+  'WV', 'WY',
+])
+
+/** ADIF STATE → a valid WAS code, but only for US-family entities. `null` otherwise. */
+function wasState(q: LoggedQso): string | null {
+  if (!US_ENTITIES.has(q.country?.trim().toUpperCase() ?? '')) return null
+  const code = q.state?.trim().toUpperCase()
+  return code && WAS_STATES.has(code) ? code : null
+}
+
 /** Map → Tally[] sorted by count descending (ties broken by label for stability). */
 function byCountDesc(m: Map<string, number>): Tally[] {
   return [...m.entries()]
@@ -121,7 +142,7 @@ export function computeLogStats(log: LoggedQso[]): LogStats {
     byBand: byCountDesc(tallyBy(log, (q) => q.band)),
     byMode: byCountDesc(tallyBy(log, (q) => q.mode)),
     byYear,
-    byState: byCountDesc(tallyBy(log, (q) => q.state)),
+    byState: byCountDesc(tallyBy(log, wasState)),
     topEntities: entities.slice(0, 12),
     hourUtc,
     qsl,

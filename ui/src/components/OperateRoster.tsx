@@ -9,7 +9,7 @@ import { gridToLatLon, haversineKm, bearingDeg, distanceLabel, bearingLabel, mag
 import { getDeclination } from '../api'
 import { NEED_CHIP } from '../features/needVisuals'
 import { isIgnored } from '../txMessages'
-import { RarityGem } from './RarityGem'
+import { RarityChip } from './RarityChip'
 
 interface Props {
   stations: Station[]
@@ -257,7 +257,7 @@ export function OperateRoster({
                 <span className="or-country">{s.country ?? '—'}</span>
                 <span className="or-gridc">
                   {s.grid ?? '—'}
-                  <RarityGem rarity={s.gridRarity} />
+                  <RarityChip rarity={s.gridRarity} />
                 </span>
                 <span className="or-dist">{distanceLabel(myGrid, s.grid) ?? '—'}</span>
                 <span

@@ -7,6 +7,7 @@ import {
   Plane,
   Satellite,
   Target,
+  Rss,
   MessageSquare,
   Tent,
   Trees,
@@ -99,9 +100,10 @@ const CW: Item = {
 // `operate` and `chat` are NOT here — they live in the Digital group above as FT8/FT4
 // and Tempo. ('qso' stays retired from the nav; the Digital cockpit sequences inline.)
 // 'band' (Broadcasts) and 'log' (Field Log) have been removed — deleted sections.
-const ITEMS: Item[] = [
+export const ITEMS: Item[] = [
   { id: 'connect', label: 'Connect', icon: Radar, title: 'Connect — THE map: grayline globe + live spots + openings + propagation, with click-to-work' },
   { id: 'needed', label: 'Needed', icon: Target, title: 'Needed — what you still need that\'s on the air now; single-click to QSY' },
+  { id: 'spots', label: 'Spots', icon: Rss, title: 'Spots — every cluster/RBN spot on the air (the raw firehose); filter by band/mode' },
   { id: 'dxped', label: 'DXped', icon: Plane, title: 'DXpeditions — active now, the forward calendar, and what you need from each' },
   { id: 'sats', label: 'Satellites', icon: Satellite, title: 'Satellites — pass times over your grid, favorites, polar plots, and rotor tracking' },
   { id: 'logbook', label: 'Logbook', icon: BookOpen, title: 'Logbook — your ADIF contacts' },

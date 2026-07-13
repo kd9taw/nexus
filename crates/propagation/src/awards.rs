@@ -216,11 +216,21 @@ pub struct Awards {
     confirmed_states: HashSet<&'static str>,
     worked_state_band: HashSet<(&'static str, Band)>,
     confirmed_state_band: HashSet<(&'static str, Band)>,
+    /// The operator's own DXCC entity (resolved from mycall), so DX-oriented
+    /// achievements can count entities OTHER than home. None until set.
+    home_entity: Option<&'static str>,
 }
 
 impl Awards {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Record the operator's own callsign so DX-oriented achievements ("First DX")
+    /// count entities OTHER than home. Without it, a US op whose only worked entity
+    /// is foreign would never unlock "First DX". Safe to call zero or many times.
+    pub fn set_home_call(&mut self, call: &str) {
+        self.home_entity = dxcc::resolve(call).map(|i| i.entity);
     }
 
     /// Fold one logged contact in. `band` is an ADIF band label ("20m"); `mode`
@@ -470,10 +480,19 @@ impl Awards {
             number_one_needed: current_total.saturating_sub(confirmed_dxcc),
         };
 
+        // "DX" = distinct worked entities other than the operator's own, so the
+        // "First DX" milestone unlocks on the first genuinely-foreign entity even
+        // if no home-entity QSO has been logged yet.
+        let dx_entities_worked = self
+            .worked_entity
+            .iter()
+            .filter(|e| self.home_entity != Some(**e))
+            .count() as u32;
         let achievements = achievements::evaluate(&AchievementStats {
             qsos: self.qsos as u32,
             confirmed_qsos: self.confirmed_qsos as u32,
             dxcc_worked: self.worked_entity.len() as u32,
+            dx_entities_worked,
             dxcc_confirmed: confirmed_dxcc as u32,
             slots_confirmed: self.confirmed_slot.len() as u32,
             rare_worked: rare_worked as u32,

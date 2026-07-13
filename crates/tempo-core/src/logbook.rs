@@ -782,8 +782,12 @@ fn parse_adif(text: &str) -> Vec<QsoRecord> {
             .next()
             .and_then(|l| l.trim().parse().ok())
             .unwrap_or(0);
-        let val = body.get(i..i + len).unwrap_or("").to_string();
-        i += len;
+        // `len` is attacker-controllable (from a crafted `<NAME:len>`); use saturating
+        // arithmetic so a huge value can't overflow `i + len` (release: wrap → i jumps
+        // backwards → infinite loop) — it just clamps past the end and stops the scan.
+        let end = i.saturating_add(len);
+        let val = body.get(i..end).unwrap_or("").to_string();
+        i = end;
         cur.insert(name, val);
     }
     records
@@ -791,14 +795,17 @@ fn parse_adif(text: &str) -> Vec<QsoRecord> {
 
 fn record_from(f: &std::collections::HashMap<String, String>) -> Option<QsoRecord> {
     let call = f.get("CALL")?.clone();
+    // Slice with `.get()` (not `s[a..b]`): the field value is arbitrary UTF-8 from the
+    // file, so a multibyte char inside the fixed date/time offsets would panic on a raw
+    // byte slice — `.get()` returns None on a non-char-boundary and falls back instead.
     let (y, mo, d) = f
         .get("QSO_DATE")
         .filter(|s| s.len() >= 8)
         .map(|s| {
             (
-                s[0..4].parse::<i32>().unwrap_or(1970),
-                s[4..6].parse::<u32>().unwrap_or(1),
-                s[6..8].parse::<u32>().unwrap_or(1),
+                s.get(0..4).and_then(|x| x.parse().ok()).unwrap_or(1970),
+                s.get(4..6).and_then(|x| x.parse().ok()).unwrap_or(1),
+                s.get(6..8).and_then(|x| x.parse().ok()).unwrap_or(1),
             )
         })
         .unwrap_or((1970, 1, 1));
@@ -807,9 +814,9 @@ fn record_from(f: &std::collections::HashMap<String, String>) -> Option<QsoRecor
         .filter(|s| s.len() >= 6)
         .map(|t| {
             (
-                t[0..2].parse::<u32>().unwrap_or(0),
-                t[2..4].parse::<u32>().unwrap_or(0),
-                t[4..6].parse::<u32>().unwrap_or(0),
+                t.get(0..2).and_then(|x| x.parse().ok()).unwrap_or(0),
+                t.get(2..4).and_then(|x| x.parse().ok()).unwrap_or(0),
+                t.get(4..6).and_then(|x| x.parse().ok()).unwrap_or(0),
             )
         })
         .unwrap_or((0, 0, 0));
@@ -832,9 +839,9 @@ fn record_from(f: &std::collections::HashMap<String, String>) -> Option<QsoRecor
         via: f.get("QSL_SENT_VIA").and_then(|v| QslVia::from_code(v)),
         date_unix: f.get("QSLSDATE").filter(|s| s.len() >= 8).map(|s| {
             let (sy, smo, sd) = (
-                s[0..4].parse::<i32>().unwrap_or(1970),
-                s[4..6].parse::<u32>().unwrap_or(1),
-                s[6..8].parse::<u32>().unwrap_or(1),
+                s.get(0..4).and_then(|x| x.parse().ok()).unwrap_or(1970),
+                s.get(4..6).and_then(|x| x.parse().ok()).unwrap_or(1),
+                s.get(6..8).and_then(|x| x.parse().ok()).unwrap_or(1),
             );
             unix_from_ymdhms(sy, smo, sd, 0, 0, 0)
         }),
@@ -1426,6 +1433,27 @@ mod tests {
         let mut lb2 = Logbook::new();
         lb2.add(none);
         assert!(!lb2.adif().contains("<STATE"));
+    }
+
+    #[test]
+    fn adif_parser_is_panic_and_dos_safe() {
+        // A2: a field length near usize::MAX must not overflow `i + len` (would panic in
+        // debug / wrap into an infinite loop in release). Must simply terminate.
+        let overflow = "<CALL:4>TEST<NOTE:18446744073709551615>x<EOR>";
+        let _ = parse_adif(overflow);
+
+        // A1: a multibyte char straddling a fixed TIME_ON byte offset must not panic.
+        // "0é12345" is 8 bytes; the old t[0..2] slice cut through 'é' → panic.
+        let multibyte = "<CALL:4>TEST<QSO_DATE:8>20240704<TIME_ON:8>0é12345<EOR>";
+        let recs = parse_adif(multibyte);
+        assert_eq!(recs.len(), 1);
+        assert_eq!(recs[0].call, "TEST");
+
+        // Regression: a normal record still parses cleanly.
+        let ok = "<CALL:6>KD9TAW<QSO_DATE:8>20240704<TIME_ON:6>131500<BAND:3>20M<MODE:3>FT8<EOR>";
+        let recs = parse_adif(ok);
+        assert_eq!(recs.len(), 1);
+        assert_eq!(recs[0].call, "KD9TAW");
     }
 
     #[test]

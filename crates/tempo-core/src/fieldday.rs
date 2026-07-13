@@ -362,8 +362,11 @@ impl FieldDayLog {
                 "PH" => "PH",
                 _ => "DG",
             };
+            // Per-QSO frequency from ITS band; the passed dial is only a fallback
+            // for a QSO logged with an unrecognized/blank band.
+            let freq = band_to_cabrillo_khz(&q.band).unwrap_or(freq_khz);
             s.push_str(&format!(
-                "QSO: {freq_khz} {mo} {date} {time} {} {} {} {} {} {}\n",
+                "QSO: {freq} {mo} {date} {time} {} {} {} {} {} {}\n",
                 self.mycall, self.myexch.class, self.myexch.section, q.call, q.class, q.section
             ));
         }
@@ -377,6 +380,31 @@ fn now_unix() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
+}
+
+/// A band-representative frequency in kHz for the Cabrillo QSO line. Field Day
+/// isn't scored by frequency, and we only store the band per contact — so a
+/// multi-band log must stamp each row with ITS band, not the single dial the
+/// export happened to be sitting on. `None` for an unrecognized band → caller's
+/// fallback.
+fn band_to_cabrillo_khz(band: &str) -> Option<u32> {
+    Some(match band.trim().to_ascii_lowercase().as_str() {
+        "160m" => 1800,
+        "80m" => 3500,
+        "60m" => 5330,
+        "40m" => 7000,
+        "30m" => 10100,
+        "20m" => 14000,
+        "17m" => 18068,
+        "15m" => 21000,
+        "12m" => 24890,
+        "10m" => 28000,
+        "6m" => 50000,
+        "2m" => 144000,
+        "1.25m" => 222000,
+        "70cm" => 420000,
+        _ => return None,
+    })
 }
 
 /// Unix seconds → ("yyyy-mm-dd", "hhmm") in UTC for two Cabrillo fields.
@@ -512,6 +540,26 @@ impl FieldDayStation {
 
     pub fn after_tx(&mut self) {
         if self.state == FdState::Done {
+            self.pending = None;
+        }
+    }
+
+    /// Return a finished station (`Done`, closing frame already sent) to its
+    /// starting posture so it works the NEXT contact instead of going silent
+    /// after a single QSO — Run → back to calling CQ FD, S&P → back to
+    /// listening. The contest log is kept, so it remains the dupe/score source.
+    pub fn rearm(&mut self, running: bool) {
+        self.dxcall = None;
+        self.peer_exch = None;
+        if running {
+            self.state = FdState::CallingCq;
+            self.pending = Some(Msg::Cq {
+                de: self.mycall().to_string(),
+                grid: self.mygrid.clone(),
+                dir: "FD".to_string(),
+            });
+        } else {
+            self.state = FdState::Listening;
             self.pending = None;
         }
     }
@@ -733,8 +781,9 @@ mod tests {
         );
         assert!(log.log_at("K1ABC", "2A", "CT", 4, 1_782_583_500));
         let cab = log.cabrillo(14074);
+        // Frequency is band-derived (20m → 14000 kHz), not the passed dial.
         assert!(
-            cab.contains("QSO: 14074 DG 2026-06-27 1805 W9XYZ 3A WI K1ABC 2A CT"),
+            cab.contains("QSO: 14000 DG 2026-06-27 1805 W9XYZ 3A WI K1ABC 2A CT"),
             "real date/time on the QSO line (ARRL submission requires it): {cab}"
         );
         assert!(!cab.contains("----------"), "no placeholder when stamped");
@@ -820,6 +869,23 @@ mod tests {
     }
 
     #[test]
+    fn cabrillo_frequency_is_per_qso_band_not_the_export_dial() {
+        // Each row's frequency comes from the QSO's own band, not the single dial
+        // the export happened to pass (which stamped every row before the fix).
+        let mut log = FieldDayLog::new("W9XYZ", Exchange::new("3A", "WI"), "20m");
+        assert!(log.log_at("K1ABC", "2A", "CT", 1, 1_782_583_500)); // 20m
+        let cab = log.cabrillo(99999); // dial fallback must NOT appear for a known band
+        assert!(
+            cab.contains("QSO: 14000 "),
+            "20m QSO stamped 14000 kHz: {cab}"
+        );
+        assert!(
+            !cab.contains("QSO: 99999 "),
+            "the export dial is not stamped on a known band"
+        );
+    }
+
+    #[test]
     fn worked_sections_returns_the_distinct_set_sorted() {
         let mut log = FieldDayLog::new("W9XYZ", Exchange::new("3A", "WI"), "20M");
         assert!(log.log("K2DEF", "3A", "IL", 1));
@@ -862,6 +928,35 @@ mod tests {
             FdState::AwaitExchange,
             "S&P answers a directed FD CQ"
         );
+    }
+
+    #[test]
+    fn running_station_rearms_and_works_a_second_caller() {
+        // Regression for the RUN dead-end: a running station worked exactly one
+        // contact and then went silent (Done, no return to CQ). It must re-arm.
+        let mut run = FieldDayStation::running("W9XYZ", "EN37", Exchange::new("3A", "WI"), "20M");
+        run.observe(&[dec("W9XYZ K2DEF 2A IL")], 0); // caller's exchange
+        assert_eq!(run.state, FdState::AwaitConfirm);
+        run.observe(&[dec("W9XYZ K2DEF RR73")], 1); // caller confirms → we log
+        assert_eq!(run.state, FdState::Done);
+        assert_eq!(run.log.qso_count(), 1);
+        assert!(run.done(), "closed after the first QSO");
+
+        // The fix: the engine re-arms a `done()` RUN station back to calling CQ.
+        run.rearm(true);
+        assert_eq!(run.state, FdState::CallingCq);
+        assert!(
+            run.outgoing().unwrap().to_text().contains("CQ FD"),
+            "back on CQ FD after re-arm"
+        );
+
+        // It now works a SECOND caller, and the first is still a dupe (the
+        // in-station contest log survived the re-arm).
+        run.observe(&[dec("W9XYZ N0ABC 1D MN")], 2);
+        assert_eq!(run.state, FdState::AwaitConfirm, "answers the next caller");
+        run.observe(&[dec("W9XYZ N0ABC RR73")], 3);
+        assert_eq!(run.log.qso_count(), 2, "second contact logs after re-arm");
+        assert!(run.log.is_dupe("K2DEF"), "first caller remains a dupe");
     }
 
     #[test]

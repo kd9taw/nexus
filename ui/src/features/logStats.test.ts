@@ -45,6 +45,22 @@ describe('computeLogStats', () => {
     expect(s.byState).toEqual([{ label: 'CT', count: 2 }]) // DL1ABC's blank state dropped
   })
 
+  it('WAS by-state folds casing and excludes foreign subdivision codes', () => {
+    const s2 = computeLogStats([
+      qso({ call: 'W1AW', country: 'United States', state: 'CT' }),
+      qso({ call: 'K2B', country: 'United States', state: 'ct' }), // an external logger's lowercase code
+      qso({ call: 'KH6RS', country: 'Hawaii', state: 'HI' }), // separate DXCC entity, still WAS
+      qso({ call: 'VK6ABC', country: 'Australia', state: 'WA' }), // Western Australia, NOT Washington
+      qso({ call: 'PY2XYZ', country: 'Brazil', state: 'SC' }), // Santa Catarina, NOT South Carolina
+    ])
+    // "ct"/"CT" merge into one CT bucket; HI counts; foreign WA/SC excluded by the US-entity gate.
+    expect(s2.byState).toEqual([
+      { label: 'CT', count: 2 },
+      { label: 'HI', count: 1 },
+    ])
+    expect(s2.byState.some((t) => t.label === 'WA')).toBe(false)
+  })
+
   it('by year chronological', () => {
     expect(s.byYear).toEqual([
       { label: '2025', count: 1 },

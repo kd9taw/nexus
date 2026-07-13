@@ -44,7 +44,7 @@ interface LogRowMeta {
   qso: FieldDayQso
   /** first appearance of this section in the log = a new multiplier */
   isNewSection: boolean
-  /** the same call appears more than once in the log = a dupe */
+  /** the same (call, band, mode) appears more than once in the log = a rule dupe */
   isDupe: boolean
 }
 
@@ -71,20 +71,23 @@ function downloadText(filename: string, text: string, mime: string): void {
 
 /**
  * Annotate each log entry with multiplier / dupe state. Sections are marked the
- * first time they appear (scanning oldest -> newest); a call is a dupe if it
- * appears more than once anywhere in the log.
+ * first time they appear (scanning oldest -> newest). A QSO is a dupe only when
+ * the same station is worked twice on the same band AND mode — matching the Rust
+ * FD dupe key (call, band, mode class), which permits the same call once per
+ * band per mode (e.g. W1AW on 20m and 40m are two legal contacts).
  */
-function annotate(log: FieldDayQso[]): LogRowMeta[] {
+export function annotate(log: FieldDayQso[]): LogRowMeta[] {
   const seenSections = new Set<string>()
-  const callCounts = new Map<string, number>()
-  for (const q of log) callCounts.set(q.call, (callCounts.get(q.call) ?? 0) + 1)
+  const dupeKey = (q: FieldDayQso) => `${q.call}|${q.band}|${q.mode ?? ''}`
+  const dupeCounts = new Map<string, number>()
+  for (const q of log) dupeCounts.set(dupeKey(q), (dupeCounts.get(dupeKey(q)) ?? 0) + 1)
   return log.map((q) => {
     const isNewSection = !seenSections.has(q.section)
     seenSections.add(q.section)
     return {
       qso: q,
       isNewSection,
-      isDupe: (callCounts.get(q.call) ?? 0) > 1,
+      isDupe: (dupeCounts.get(dupeKey(q)) ?? 0) > 1,
     }
   })
 }

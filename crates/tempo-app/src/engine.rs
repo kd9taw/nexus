@@ -3516,7 +3516,13 @@ impl Engine {
             self.tx_watchdog = false;
             self.tx_watchdog_start = None;
         } else {
-            // Muting transmit also drops anything queued.
+            // Muting transmit also drops anything queued — including CW. Without
+            // clearing cw_queue + arming cw_abort, a macro fired while Monitor is
+            // off (or a CQ still draining) survives and unexpectedly keys the rig
+            // the moment TX is re-enabled (tx_enabled starts false at launch), and
+            // any in-flight CW keeps sending. Mirror halt_tx's CW stop.
+            self.cw_queue.clear();
+            self.cw_abort = true;
             self.tx_queue.clear();
             self.broadcast_queue.clear();
             self.app.set_transmitting(false);
@@ -4309,6 +4315,16 @@ impl Engine {
                     .as_ref()
                     .map(|e| !self.worked_entities.contains(e))
                     .unwrap_or(false);
+                // Rarity: prefer the grid on THIS frame, but on report/R/RR73/73
+                // frames (which carry no grid) fall back to the sender's grid
+                // remembered in the roster — so an ULTRA-rare station keeps its
+                // badge through the whole QSO, not just on its CQ. (Backfills only
+                // the rarity marker; the row's own `grid` text stays unchanged.)
+                let grid_rarity = self.rarity_of(grid.or_else(|| {
+                    from.as_deref()
+                        .and_then(|c| self.app.inbox.roster.get(c))
+                        .and_then(|h| h.grid.as_deref())
+                }));
                 DecodeRow {
                     lotw_user: self.lotw_user(from.as_deref()),
                     from,
@@ -4323,7 +4339,7 @@ impl Engine {
                     new_dxcc,
                     new_grid,
                     grid: grid.filter(|g| !g.is_empty()).map(str::to_string),
-                    grid_rarity: self.rarity_of(grid),
+                    grid_rarity,
                     // WSJT-X decode markers: trailing 'a' = AP-assisted decode,
                     // '?' = low-confidence (qual below the stock 0.17 line).
                     ap: d.nap > 0,
@@ -5036,15 +5052,23 @@ impl Engine {
                     _ => false,
                 };
                 if loggable && !self.qso_logged {
-                    self.qso_logged = true;
-                    completed = Some((
-                        station.dxcall.clone().unwrap_or_default(),
-                        station.dxgrid.clone(),
-                        station.rx_report,
-                    ));
+                    // Only CLAIM the contact (which drives auto-log and the CQ-run
+                    // resume) when Auto-log is on. With it off, leave qso_logged
+                    // false so the completed QSO stays capturable by the cockpit
+                    // "Log QSO" button (log_current_qso) — otherwise it is silently
+                    // discarded and the button no-ops. Logging it there sets
+                    // qso_logged, so a CQ run resumes on the next slot.
+                    if self.settings.auto_log {
+                        self.qso_logged = true;
+                        completed = Some((
+                            station.dxcall.clone().unwrap_or_default(),
+                            station.dxgrid.clone(),
+                            station.rx_report,
+                        ));
+                    }
                 }
             }
-            Mode::FieldDay { station, .. } => {
+            Mode::FieldDay { station, running } => {
                 let state_before = station.state;
                 let count_before = station.log.qso_count();
                 station.observe(decodes, slot);
@@ -5052,6 +5076,17 @@ impl Engine {
                 // The FD sequencer logged a contact this slot → journal it
                 // (after the match — persist_fd_log needs `self` unborrowed).
                 fd_logged = station.log.qso_count() > count_before;
+                // Run/S&P resilience: once the contact is fully closed (Done and
+                // the closing frame has gone out, so `done()` is true), re-arm to
+                // work the NEXT station instead of transmitting nothing forever —
+                // the FD analogue of Mode::Qso's resume_cq. Keeps the in-station
+                // contest log so dupes are still caught. Run re-arms instantly
+                // (the happy path reaches Done with no pending); S&P re-arms on
+                // the slot after its final RR73 is sent.
+                if station.done() {
+                    station.rearm(*running);
+                    sequence_advanced = true;
+                }
             }
         }
         if fd_logged {
@@ -7008,6 +7043,29 @@ mod tests {
             .unwrap();
         assert_eq!(row.grid_rarity, None);
         assert_eq!(row.grid.as_deref(), Some("FN42"), "grid still carried");
+    }
+
+    #[test]
+    fn rarity_backfills_onto_gridless_frames_from_the_roster() {
+        // An ultra-rare station's CQ carries its grid, but its follow-up
+        // report/RR73 frames do not. The rarity badge must persist across the
+        // whole QSO by falling back to the grid remembered in the roster — so the
+        // ULTRA pill doesn't vanish on the row the operator is watching mid-QSO.
+        let mut e = Engine::new("W9XYZ", "EN37", 0);
+        e.set_grid_rarity_resolver(|_g| Some(3)); // water-world → ultra
+        e.ingest_decodes_for_test(&[dec_snr("CQ K1ABC FN42", -5)], 1); // grid learned
+        e.ingest_decodes_for_test(&[dec_snr("W9XYZ K1ABC -10", -5)], 2); // report, no grid
+        let s = e.snapshot();
+        let report = s
+            .recent_decodes
+            .iter()
+            .find(|d| d.from.as_deref() == Some("K1ABC") && d.grid.is_none())
+            .expect("gridless report row from K1ABC");
+        assert_eq!(
+            report.grid_rarity,
+            Some(crate::dto::GridRarity::UltraRare),
+            "rarity backfilled from the roster grid on a gridless frame"
+        );
     }
 
     #[test]

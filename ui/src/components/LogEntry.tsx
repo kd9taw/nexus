@@ -2,8 +2,17 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { AppSnapshot, FieldDayStatus, LoggedQso } from '../types'
 import { fdLogManual, getLog, logQso, lookupPark, lookupParkLive, qrzLookup, searchParks, type Park } from '../api'
 import { callHistory, entitySlots, isNewEntity } from '../features/callHistory'
+import { ARRL_SECTIONS_BY_DIVISION } from '../features/arrlSections'
 import { RecallPanel } from './RecallPanel'
 import { pushToast, withErrorToast } from '../toast'
+
+// Valid ARRL/RAC Field Day section codes, derived once from the canonical section universe —
+// the same source the Settings section picker validates against. A manual FD contact must carry
+// a REAL section: FieldDayLog::sections() scores DISTINCT section strings, so a blank logged as
+// the literal '?' would inflate the section multiplier (a fake score).
+const FD_SECTION_CODES = new Set(
+  ARRL_SECTIONS_BY_DIVISION.flatMap((d) => d.sections).map((s) => s.code),
+)
 
 interface Props {
   snap: AppSnapshot
@@ -86,6 +95,9 @@ export function LogEntry({
   const [qrzBusy, setQrzBusy] = useState(false)
   const [allLog, setAllLog] = useState<LoggedQso[]>([])
   const rstRef = useRef<HTMLInputElement>(null)
+  // The callsign field (FD + standard layouts share this ref — only one is mounted
+  // at a time), so a completed log can snap focus back for the next contact.
+  const callInputRef = useRef<HTMLInputElement>(null)
 
   // FD-specific: class + section, defaulting from the last entry / fieldDay status.
   const [fdClass, setFdClass] = useState(() => fieldDay?.myClass ?? '')
@@ -371,16 +383,30 @@ export function LogEntry({
     setLogImage(null)
     setLogParkRef('')
     // Keep fdClass/fdSection across resets for speed in FD runs.
+    // Snap focus back to the callsign field so the operator can type the next
+    // contact immediately (rapid logging / a Field Day run), like WSJT-X/N1MM.
+    // rAF so it lands after the cleared value re-renders. Only the mounted layout's
+    // input (FD or standard) holds the ref, so this always hits the visible field.
+    requestAnimationFrame(() => callInputRef.current?.focus())
   }
+
+  // FD exchange gate: class + section are MANDATORY exchange elements. Never substitute '?' for a
+  // blank (it would fake a section multiplier) — the manual log is blocked until class is present
+  // AND section is a real ARRL/RAC code (validated against the same universe as Settings).
+  const fdExchangeOk =
+    fdClass.trim() !== '' && FD_SECTION_CODES.has(fdSection.trim().toUpperCase())
 
   const logIt = async () => {
     const call = logCall.trim().toUpperCase()
     if (!call) return
 
     if (fdActive) {
-      // FD path: fdLogManual rejects on band+mode dupe.
-      const cls = fdClass.trim().toUpperCase() || '?'
-      const sec = fdSection.trim().toUpperCase() || '?'
+      // FD path: fdLogManual rejects on band+mode dupe. Class + section are MANDATORY — never log
+      // a blank as the literal '?' (it would inflate the section multiplier), so bail until the
+      // exchange is complete and the section is a real ARRL/RAC code.
+      if (!fdExchangeOk) return
+      const cls = fdClass.trim().toUpperCase()
+      const sec = fdSection.trim().toUpperCase()
       const fmode = fdMode ?? 'PH'
       const r = await withErrorToast(
         () => fdLogManual(call, cls, sec, fmode),
@@ -473,6 +499,7 @@ export function LogEntry({
           <label className="le-fd-field le-fd-field-call">
             <span className="le-fd-cap">Call</span>
             <input
+              ref={callInputRef}
               className="settings-input mono le-fd-input le-fd-input-call"
               value={logCall}
               onChange={(e) => setLogCall(e.target.value.toUpperCase())}
@@ -512,11 +539,19 @@ export function LogEntry({
             type="button"
             className="le-log-btn le-fd-log-btn"
             onClick={logIt}
-            disabled={!logCall.trim()}
+            disabled={!logCall.trim() || !fdExchangeOk}
           >
             Log FD
           </button>
         </div>
+
+        {logCall.trim() !== '' && !fdExchangeOk && (
+          <div className="le-fd-hint" role="alert">
+            {fdClass.trim() === ''
+              ? 'Enter their Field Day class to log.'
+              : `Section "${fdSection.trim() || '—'}" isn't a known ARRL/RAC section — required to log.`}
+          </div>
+        )}
       </div>
     )
   }
@@ -545,6 +580,7 @@ export function LogEntry({
 
       <div className="le-row">
         <input
+          ref={callInputRef}
           className="settings-input mono le-call"
           value={logCall}
           onChange={(e) => {

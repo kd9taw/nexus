@@ -206,7 +206,7 @@ const SETTINGS_TABS: { id: SettingsTab; label: string }[] = [
   { id: 'frequencies', label: 'Frequencies' },
   { id: 'alerts', label: 'Alerts' },
   { id: 'connections', label: 'Connections' },
-  { id: 'confirmations', label: 'Confirmations' },
+  { id: 'confirmations', label: 'Logbook & QSL' },
   { id: 'features', label: 'Features' },
   { id: 'workspace', label: 'Workspace' },
   { id: 'fieldday', label: 'Field Day' },
@@ -2396,501 +2396,524 @@ export function SettingsPanel({
           {tab === 'operating' && (
           <fieldset className="settings-section">
             <legend>Operating</legend>
-            <div className="settings-grid">
-              <div className="settings-field">
-                <label className="settings-label" htmlFor="station-power">
-                  Station power (W)
-                </label>
-                <input
-                  id="station-power"
-                  className="settings-input"
-                  type="number"
-                  min="0"
-                  step="1"
-                  inputMode="decimal"
-                  value={form.stationPowerW ?? ''}
-                  placeholder="e.g. 100"
-                  onChange={(e) => {
-                    markDirty()
-                    const raw = e.target.value.trim()
-                    const num = raw === '' ? null : Number(raw)
-                    setForm((prev) =>
-                      prev
-                        ? {
-                            ...prev,
-                            stationPowerW:
-                              num !== null && Number.isNaN(num) ? prev.stationPowerW : num,
-                          }
-                        : prev,
-                    )
-                  }}
-                />
-                <span className="settings-hint">
-                  Your transmit power in watts — unlocks the Journey miles-per-watt &amp; QRP feats.
-                  Leave blank if unknown.
-                </span>
-              </div>
+            <div className="settings-featgroup">
+              <span className="settings-featgroup-title">Transmit &amp; Sequencing</span>
+              <div className="settings-grid">
+                <div className="settings-field">
+                  <label className="settings-toggle">
+                    <span className="settings-label">Transmit period — Tx 1st (even)</span>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={form.txEven}
+                      className={`toggle${form.txEven ? ' on' : ''}`}
+                      onClick={() => updateBool('txEven', !form.txEven)}
+                    >
+                      <span className="toggle-knob" />
+                    </button>
+                  </label>
+                  <span className="settings-hint">
+                    On = transmit in the even/1st T/R slots; off = odd/2nd. The two stations in a QSO
+                    must pick <strong>opposite</strong> periods. Also on the top bar (Tx 1st / Tx 2nd).
+                  </span>
+                </div>
 
-              <div className="settings-field">
-                <label className="settings-toggle">
-                  <span className="settings-label">Journey — track a weekly streak</span>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={!!form.journeyStreakEnabled}
-                    className={`toggle${form.journeyStreakEnabled ? ' on' : ''}`}
-                    onClick={() => updateBool('journeyStreakEnabled', !form.journeyStreakEnabled)}
-                  >
-                    <span className="toggle-knob" />
-                  </button>
-                </label>
-                <span className="settings-hint">
-                  Off by default. A gentle &ldquo;weeks on the air&rdquo; counter on the Journey
-                  board — never a daily streak, never a penalty for a break.
-                </span>
-              </div>
-
-              <div className="settings-field">
-                <label className="settings-toggle">
-                  <span className="settings-label">Beacon — announce presence (CQ)</span>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={form.beacon}
-                    className={`toggle${form.beacon ? ' on' : ''}`}
-                    onClick={() => updateBool('beacon', !form.beacon)}
-                  >
-                    <span className="toggle-knob" />
-                  </button>
-                </label>
-                <span className="settings-hint">
-                  Off = passive (hunt &amp; pounce): Nexus listens and only transmits when you act.
-                  On = periodically calls CQ to announce you&apos;re on frequency.
-                </span>
-              </div>
-
-              <div className="settings-field">
-                <label className="settings-toggle">
-                  <span className="settings-label">IR-HARQ — combine retransmissions</span>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={form.harqEnabled}
-                    className={`toggle${form.harqEnabled ? ' on' : ''}`}
-                    onClick={() => updateBool('harqEnabled', !form.harqEnabled)}
-                  >
-                    <span className="toggle-knob" />
-                  </button>
-                </label>
-                <span className="settings-hint">
-                  On (default) = a weak frame that fails is recovered by joint-combining its
-                  retransmissions (RV0+RV1+RV2), and unacknowledged QSO overs escalate redundancy.
-                  Off = RV0-only (each frame decoded on its own).
-                </span>
-              </div>
-
-              <div className="settings-field">
-                <label className="settings-toggle">
-                  <span className="settings-label">Transmit period — Tx 1st (even)</span>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={form.txEven}
-                    className={`toggle${form.txEven ? ' on' : ''}`}
-                    onClick={() => updateBool('txEven', !form.txEven)}
-                  >
-                    <span className="toggle-knob" />
-                  </button>
-                </label>
-                <span className="settings-hint">
-                  On = transmit in the even/1st T/R slots; off = odd/2nd. The two stations in a QSO
-                  must pick <strong>opposite</strong> periods. Also on the top bar (Tx 1st / Tx 2nd).
-                </span>
-              </div>
-
-              <label className="settings-field">
-                <span className="settings-label">Tx Watchdog (min)</span>
-                <input
-                  className="settings-input"
-                  type="number"
-                  inputMode="numeric"
-                  min="0"
-                  value={String(form.txWatchdogMin)}
-                  placeholder="6"
-                  onChange={(e) => update('txWatchdogMin', e.target.value)}
-                  autoComplete="off"
-                />
-                <span className="settings-hint">Auto-halt TX after this many minutes (0 = off).</span>
-              </label>
-
-              <div className="settings-field">
-                <label className="settings-toggle">
-                  <span className="settings-label">Auto-log QSOs</span>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={form.autoLog}
-                    className={`toggle${form.autoLog ? ' on' : ''}`}
-                    onClick={() => updateBool('autoLog', !form.autoLog)}
-                  >
-                    <span className="toggle-knob" />
-                  </button>
-                </label>
-                <span className="settings-hint">Automatically log completed contacts to the ADIF logbook.</span>
-              </div>
-
-              <div className="settings-field">
-                <label className="settings-toggle">
-                  <span className="settings-label">Prompt before logging</span>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={!!form.promptToLog}
-                    className={`toggle${form.promptToLog ? ' on' : ''}`}
-                    onClick={() => updateBool('promptToLog', !form.promptToLog)}
-                  >
-                    <span className="toggle-knob" />
-                  </button>
-                </label>
-                <span className="settings-hint">
-                  Show a confirm-and-edit popup when a QSO completes instead of logging silently
-                  (WSJT-X “Prompt me to log QSO”). No effect unless Auto-log is on.
-                </span>
-              </div>
-
-              <div className="settings-field">
-                <label className="settings-toggle">
-                  <span className="settings-label">Roger with RRR (not RR73)</span>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={!!form.preferRrr}
-                    className={`toggle${form.preferRrr ? ' on' : ''}`}
-                    onClick={() => updateBool('preferRrr', !form.preferRrr)}
-                  >
-                    <span className="toggle-knob" />
-                  </button>
-                </label>
-                <span className="settings-hint">
-                  Acknowledge the final report with a bare RRR (partner still owes a 73) instead of
-                  the combined RR73. Off = RR73 (modern FT8 practice).
-                </span>
-              </div>
-
-              <div className="settings-field">
-                <label>
-                  <span className="settings-label">Stop CQ after N calls</span>
-                  <input
-                    className="settings-input"
-                    type="number"
-                    min={1}
-                    max={99}
-                    value={form.cqMaxCalls ?? ''}
-                    placeholder="keep calling"
-                    onChange={(e) => updateNullableNum('cqMaxCalls', e.target.value, 1)}
-                  />
-                </label>
-                <span className="settings-hint">
-                  Blank = WSJT-X behavior: CQ repeats until you stop it (the TX watchdog is the
-                  backstop). Set a number to auto-stop an unanswered CQ run after that many calls.
-                </span>
-              </div>
-
-              <div className="settings-field">
-                <label>
-                  <span className="settings-label">Auto-CQ: drop a silent caller after N overs</span>
-                  <input
-                    className="settings-input"
-                    type="number"
-                    min={0}
-                    max={99}
-                    value={form.cqStallOvers ?? ''}
-                    placeholder="3"
-                    onChange={(e) => updateNullableNum('cqStallOvers', e.target.value, 0)}
-                  />
-                </label>
-                <span className="settings-hint">
-                  During an Auto-CQ run, if a station answers then goes silent, abandon it and
-                  return to calling CQ after this many unanswered overs. Blank = 3; 0 = never
-                  abandon (wait for you, like stock WSJT-X).
-                </span>
-              </div>
-
-              <div className="settings-field">
-                <span className="settings-label">Best caller (auto-CQ pick)</span>
-                <div className="settings-input-row">
-                  <select
-                    className="settings-input"
-                    value={form.bestCaller || 'first'}
-                    onChange={(e) => update('bestCaller', e.target.value)}
-                  >
-                    <option value="first">First to answer (default)</option>
-                    <option value="strongest">Strongest signal</option>
-                    <option value="farthest">Farthest away</option>
-                    <option value="cq_first">Prefer CQ callers</option>
-                  </select>
+                <label className="settings-field">
+                  <span className="settings-label">Tx Watchdog (min)</span>
                   <input
                     className="settings-input"
                     type="number"
                     inputMode="numeric"
-                    value={form.bestCallerMinSnr ?? ''}
-                    placeholder="min SNR dB (optional)"
-                    onChange={(e) => updateNullableNum('bestCallerMinSnr', e.target.value, -30)}
-                    aria-label="Minimum SNR (dB) to consider when picking the best caller"
+                    min="0"
+                    value={String(form.txWatchdogMin)}
+                    placeholder="6"
+                    onChange={(e) => update('txWatchdogMin', e.target.value)}
+                    autoComplete="off"
                   />
+                  <span className="settings-hint">Auto-halt TX after this many minutes (0 = off).</span>
+                </label>
+
+                <div className="settings-field">
+                  <label className="settings-toggle">
+                    <span className="settings-label">Disable TX after sending 73</span>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={form.disableTxAfter73 !== false}
+                      className={`toggle${form.disableTxAfter73 !== false ? ' on' : ''}`}
+                      onClick={() => updateBool('disableTxAfter73', form.disableTxAfter73 === false)}
+                    >
+                      <span className="toggle-knob" />
+                    </button>
+                  </label>
+                  <span className="settings-hint">
+                    After your final 73 goes out, Enable TX drops — working the next station is a
+                    deliberate arm (WSJT-X default). A CQ run is unaffected: it returns to CQ.
+                  </span>
                 </div>
-                <span className="settings-hint">
-                  When several stations answer your CQ, which to work first.
-                </span>
-              </div>
 
-              <div className="settings-field">
-                <label className="settings-toggle">
-                  <span className="settings-label">Disable TX after sending 73</span>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={form.disableTxAfter73 !== false}
-                    className={`toggle${form.disableTxAfter73 !== false ? ' on' : ''}`}
-                    onClick={() => updateBool('disableTxAfter73', form.disableTxAfter73 === false)}
-                  >
-                    <span className="toggle-knob" />
-                  </button>
-                </label>
-                <span className="settings-hint">
-                  After your final 73 goes out, Enable TX drops — working the next station is a
-                  deliberate arm (WSJT-X default). A CQ run is unaffected: it returns to CQ.
-                </span>
-              </div>
+                <div className="settings-field">
+                  <label className="settings-toggle">
+                    <span className="settings-label">Double-click arms TX</span>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={form.doubleClickSetsTx !== false}
+                      className={`toggle${form.doubleClickSetsTx !== false ? ' on' : ''}`}
+                      onClick={() => updateBool('doubleClickSetsTx', form.doubleClickSetsTx === false)}
+                    >
+                      <span className="toggle-knob" />
+                    </button>
+                  </label>
+                  <span className="settings-hint">
+                    Double-clicking a station enables TX so the answer goes straight out (WSJT-X
+                    "double-click on call sets Tx enable"). Off = you arm TX yourself each time.
+                  </span>
+                </div>
 
-              <div className="settings-field">
-                <label className="settings-toggle">
-                  <span className="settings-label">CW ID after 73</span>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={form.cwIdAfter73 === true}
-                    className={`toggle${form.cwIdAfter73 === true ? ' on' : ''}`}
-                    onClick={() => updateBool('cwIdAfter73', form.cwIdAfter73 !== true)}
-                  >
-                    <span className="toggle-knob" />
-                  </button>
-                </label>
-                <span className="settings-hint">
-                  Keys your callsign in CW once the final 73 has fully left the air (stock
-                  WSJT-X option, default off). Uses the normal CW keying path — PTT + tone —
-                  after the FT8 over, never on top of it.
-                </span>
+                <div className="settings-field">
+                  <label>
+                    <span className="settings-label">Tune timeout (s)</span>
+                    <input
+                      className="settings-input"
+                      type="number"
+                      min={1}
+                      max={120}
+                      value={form.tuneTimeoutSecs || 12}
+                      onChange={(e) => {
+                        // '' must mean "back to the 12 s default" — the generic
+                        // numeric coercion turned a cleared field into a saved 0.
+                        markDirty()
+                        const n = e.target.value === '' ? 12 : Math.max(1, Number(e.target.value) || 12)
+                        setForm((prev) => (prev ? { ...prev, tuneTimeoutSecs: n } : prev))
+                      }}
+                    />
+                  </label>
+                  <span className="settings-hint">
+                    Auto-release the tune carrier after this many seconds — never leave a key-down
+                    unattended.
+                  </span>
+                </div>
               </div>
+            </div>
 
-              <div className="settings-field">
-                <label className="settings-toggle">
-                  <span className="settings-label">Double-click arms TX</span>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={form.doubleClickSetsTx !== false}
-                    className={`toggle${form.doubleClickSetsTx !== false ? ' on' : ''}`}
-                    onClick={() => updateBool('doubleClickSetsTx', form.doubleClickSetsTx === false)}
-                  >
-                    <span className="toggle-knob" />
-                  </button>
-                </label>
-                <span className="settings-hint">
-                  Double-clicking a station enables TX so the answer goes straight out (WSJT-X
-                  "double-click on call sets Tx enable"). Off = you arm TX yourself each time.
-                </span>
+            <div className="settings-featgroup">
+              <span className="settings-featgroup-title">Auto-CQ &amp; Caller Selection</span>
+              <div className="settings-grid">
+                <div className="settings-field">
+                  <label>
+                    <span className="settings-label">Stop CQ after N calls</span>
+                    <input
+                      className="settings-input"
+                      type="number"
+                      min={1}
+                      max={99}
+                      value={form.cqMaxCalls ?? ''}
+                      placeholder="keep calling"
+                      onChange={(e) => updateNullableNum('cqMaxCalls', e.target.value, 1)}
+                    />
+                  </label>
+                  <span className="settings-hint">
+                    Blank = WSJT-X behavior: CQ repeats until you stop it (the TX watchdog is the
+                    backstop). Set a number to auto-stop an unanswered CQ run after that many calls.
+                  </span>
+                </div>
+
+                <div className="settings-field">
+                  <label>
+                    <span className="settings-label">Auto-CQ: drop a silent caller after N overs</span>
+                    <input
+                      className="settings-input"
+                      type="number"
+                      min={0}
+                      max={99}
+                      value={form.cqStallOvers ?? ''}
+                      placeholder="3"
+                      onChange={(e) => updateNullableNum('cqStallOvers', e.target.value, 0)}
+                    />
+                  </label>
+                  <span className="settings-hint">
+                    During an Auto-CQ run, if a station answers then goes silent, abandon it and
+                    return to calling CQ after this many unanswered overs. Blank = 3; 0 = never
+                    abandon (wait for you, like stock WSJT-X).
+                  </span>
+                </div>
+
+                <div className="settings-field">
+                  <span className="settings-label">Best caller (auto-CQ pick)</span>
+                  <div className="settings-input-row">
+                    <select
+                      className="settings-input"
+                      value={form.bestCaller || 'first'}
+                      onChange={(e) => update('bestCaller', e.target.value)}
+                    >
+                      <option value="first">First to answer (default)</option>
+                      <option value="strongest">Strongest signal</option>
+                      <option value="farthest">Farthest away</option>
+                      <option value="cq_first">Prefer CQ callers</option>
+                    </select>
+                    <input
+                      className="settings-input"
+                      type="number"
+                      inputMode="numeric"
+                      value={form.bestCallerMinSnr ?? ''}
+                      placeholder="min SNR dB (optional)"
+                      onChange={(e) => updateNullableNum('bestCallerMinSnr', e.target.value, -30)}
+                      aria-label="Minimum SNR (dB) to consider when picking the best caller"
+                    />
+                  </div>
+                  <span className="settings-hint">
+                    When several stations answer your CQ, which to work first.
+                  </span>
+                </div>
               </div>
+            </div>
 
-              <div className="settings-field">
-                <label className="settings-toggle">
-                  <span className="settings-label">Clear DX call after logging</span>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={!!form.clearDxAfterLog}
-                    className={`toggle${form.clearDxAfterLog ? ' on' : ''}`}
-                    onClick={() => updateBool('clearDxAfterLog', !form.clearDxAfterLog)}
-                  >
-                    <span className="toggle-knob" />
-                  </button>
-                </label>
-                <span className="settings-hint">
-                  Wipe the DX Call / DX Grid fields once a contact is logged (WSJT-X option,
-                  off by default).
-                </span>
+            <div className="settings-featgroup">
+              <span className="settings-featgroup-title">Logging Behavior</span>
+              <div className="settings-grid">
+                <div className="settings-field">
+                  <label className="settings-toggle">
+                    <span className="settings-label">Auto-log QSOs</span>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={form.autoLog}
+                      className={`toggle${form.autoLog ? ' on' : ''}`}
+                      onClick={() => updateBool('autoLog', !form.autoLog)}
+                    >
+                      <span className="toggle-knob" />
+                    </button>
+                  </label>
+                  <span className="settings-hint">Automatically log completed contacts to the ADIF logbook.</span>
+                </div>
+
+                <div className="settings-field">
+                  <label className="settings-toggle">
+                    <span className="settings-label">Prompt before logging</span>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={!!form.promptToLog}
+                      className={`toggle${form.promptToLog ? ' on' : ''}`}
+                      onClick={() => updateBool('promptToLog', !form.promptToLog)}
+                    >
+                      <span className="toggle-knob" />
+                    </button>
+                  </label>
+                  <span className="settings-hint">
+                    Show a confirm-and-edit popup when a QSO completes instead of logging silently
+                    (WSJT-X “Prompt me to log QSO”). No effect unless Auto-log is on.
+                  </span>
+                </div>
+
+                <div className="settings-field">
+                  <label className="settings-toggle">
+                    <span className="settings-label">Roger with RRR (not RR73)</span>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={!!form.preferRrr}
+                      className={`toggle${form.preferRrr ? ' on' : ''}`}
+                      onClick={() => updateBool('preferRrr', !form.preferRrr)}
+                    >
+                      <span className="toggle-knob" />
+                    </button>
+                  </label>
+                  <span className="settings-hint">
+                    Acknowledge the final report with a bare RRR (partner still owes a 73) instead of
+                    the combined RR73. Off = RR73 (modern FT8 practice).
+                  </span>
+                </div>
+
+                <div className="settings-field">
+                  <label className="settings-toggle">
+                    <span className="settings-label">Clear DX call after logging</span>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={!!form.clearDxAfterLog}
+                      className={`toggle${form.clearDxAfterLog ? ' on' : ''}`}
+                      onClick={() => updateBool('clearDxAfterLog', !form.clearDxAfterLog)}
+                    >
+                      <span className="toggle-knob" />
+                    </button>
+                  </label>
+                  <span className="settings-hint">
+                    Wipe the DX Call / DX Grid fields once a contact is logged (WSJT-X option,
+                    off by default).
+                  </span>
+                </div>
               </div>
+            </div>
 
-              <div className="settings-field">
-                <label>
-                  <span className="settings-label">Tune timeout (s)</span>
+            <div className="settings-featgroup">
+              <span className="settings-featgroup-title">Decoder</span>
+              <div className="settings-grid">
+                <div className="settings-field">
+                  <span className="settings-label">Decode depth</span>
+                  <div className="theme-switcher" role="group" aria-label="Decode depth">
+                    {([1, 2, 3] as const).map((d) => (
+                      <button
+                        key={d}
+                        type="button"
+                        className={`theme-chip${(form.decodeDepth ?? 3) === d ? ' active' : ''}`}
+                        aria-pressed={(form.decodeDepth ?? 3) === d}
+                        onClick={() => {
+                          markDirty()
+                          setForm((prev) => (prev ? { ...prev, decodeDepth: d } : prev))
+                        }}
+                      >
+                        {d === 1 ? 'Fast' : d === 2 ? 'Normal' : 'Deep'}
+                      </button>
+                    ))}
+                  </div>
+                  <span className="settings-hint">
+                    Deep finds the most signals (WSJT-X default); Fast saves CPU on old hardware.
+                  </span>
+                </div>
+
+                <div className="settings-field">
+                  <span className="settings-label">Decoder passband (Hz)</span>
+                  <div className="settings-input-row">
+                    <label className="settings-inline-label">
+                      <span>F low</span>
+                      <input
+                        id="decode-flow"
+                        className="settings-input"
+                        type="number"
+                        inputMode="numeric"
+                        min={200}
+                        max={2900}
+                        step={1}
+                        value={form.decodeFLowHz ?? 200}
+                        aria-label="Decoder F low (Hz)"
+                        onChange={(e) => {
+                          if (e.target.value === '') return // mid-edit clear: keep the prior value
+                          markDirty()
+                          const raw = Number(e.target.value)
+                          const clamped = Math.max(200, Math.min(2900, Math.round(raw)))
+                          setForm((prev) =>
+                            prev
+                              ? { ...prev, decodeFLowHz: clamped }
+                              : prev,
+                          )
+                        }}
+                        onBlur={() => {
+                          setForm((prev) => {
+                            if (!prev) return prev
+                            const lo = prev.decodeFLowHz ?? 200
+                            const hi = prev.decodeFHighHz ?? 2900
+                            if (lo >= hi) return { ...prev, decodeFLowHz: Math.min(lo, hi - 1) }
+                            return prev
+                          })
+                        }}
+                      />
+                    </label>
+                    <label className="settings-inline-label">
+                      <span>F high</span>
+                      <input
+                        id="decode-fhigh"
+                        className="settings-input"
+                        type="number"
+                        inputMode="numeric"
+                        min={200}
+                        max={2900}
+                        step={1}
+                        value={form.decodeFHighHz ?? 2900}
+                        aria-label="Decoder F high (Hz)"
+                        onChange={(e) => {
+                          if (e.target.value === '') return // mid-edit clear: keep the prior value
+                          markDirty()
+                          const raw = Number(e.target.value)
+                          const clamped = Math.max(200, Math.min(2900, Math.round(raw)))
+                          setForm((prev) =>
+                            prev
+                              ? { ...prev, decodeFHighHz: clamped }
+                              : prev,
+                          )
+                        }}
+                        onBlur={() => {
+                          setForm((prev) => {
+                            if (!prev) return prev
+                            const lo = prev.decodeFLowHz ?? 200
+                            const hi = prev.decodeFHighHz ?? 2900
+                            if (hi <= lo) return { ...prev, decodeFHighHz: Math.max(hi, lo + 1) }
+                            return prev
+                          })
+                        }}
+                      />
+                    </label>
+                  </div>
+                  <span className="settings-hint">
+                    Restrict the decoder&apos;s search range — useful with narrow filters or strong
+                    close-in QRM. Default 200–2900 Hz (full passband).
+                  </span>
+                </div>
+
+                <div className="settings-field">
+                  <span className="settings-label">DXpedition mode</span>
+                  <div className="theme-switcher" role="group" aria-label="DXpedition mode">
+                    {([
+                      { value: 'none' as const, label: 'Off' },
+                      { value: 'hound' as const, label: 'Hound' },
+                    ]).map((op) => (
+                      <button
+                        key={op.value}
+                        type="button"
+                        className={`theme-chip${(form.specialOp ?? 'none') === op.value ? ' active' : ''}`}
+                        aria-pressed={(form.specialOp ?? 'none') === op.value}
+                        onClick={() => {
+                          markDirty()
+                          setForm((prev) => prev ? { ...prev, specialOp: op.value } : prev)
+                        }}
+                      >
+                        {op.label}
+                      </button>
+                    ))}
+                  </div>
+                  <span className="settings-hint">
+                    Off = normal FT8/FT4 operation. Hound = DXpedition pile-up discipline (calls
+                    above 1000 Hz; your report auto-moves to the Fox&apos;s frequency).
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div className="settings-featgroup">
+              <span className="settings-featgroup-title">Station Housekeeping</span>
+              <div className="settings-grid">
+                <div className="settings-field">
+                  <label className="settings-toggle">
+                    <span className="settings-label">Journey — track a weekly streak</span>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={!!form.journeyStreakEnabled}
+                      className={`toggle${form.journeyStreakEnabled ? ' on' : ''}`}
+                      onClick={() => updateBool('journeyStreakEnabled', !form.journeyStreakEnabled)}
+                    >
+                      <span className="toggle-knob" />
+                    </button>
+                  </label>
+                  <span className="settings-hint">
+                    Off by default. A gentle &ldquo;weeks on the air&rdquo; counter on the Journey
+                    board — never a daily streak, never a penalty for a break.
+                  </span>
+                </div>
+
+                <div className="settings-field">
+                  <label className="settings-toggle">
+                    <span className="settings-label">Beacon — announce presence (CQ)</span>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={form.beacon}
+                      className={`toggle${form.beacon ? ' on' : ''}`}
+                      onClick={() => updateBool('beacon', !form.beacon)}
+                    >
+                      <span className="toggle-knob" />
+                    </button>
+                  </label>
+                  <span className="settings-hint">
+                    Off = passive (hunt &amp; pounce): Nexus listens and only transmits when you act.
+                    On = periodically calls CQ to announce you&apos;re on frequency.
+                  </span>
+                </div>
+
+                <div className="settings-field">
+                  <label className="settings-toggle">
+                    <span className="settings-label">IR-HARQ — combine retransmissions</span>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={form.harqEnabled}
+                      className={`toggle${form.harqEnabled ? ' on' : ''}`}
+                      onClick={() => updateBool('harqEnabled', !form.harqEnabled)}
+                    >
+                      <span className="toggle-knob" />
+                    </button>
+                  </label>
+                  <span className="settings-hint">
+                    On (default) = a weak frame that fails is recovered by joint-combining its
+                    retransmissions (RV0+RV1+RV2), and unacknowledged QSO overs escalate redundancy.
+                    Off = RV0-only (each frame decoded on its own).
+                  </span>
+                </div>
+
+                <div className="settings-field">
+                  <label className="settings-toggle">
+                    <span className="settings-label">CW ID after 73</span>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={form.cwIdAfter73 === true}
+                      className={`toggle${form.cwIdAfter73 === true ? ' on' : ''}`}
+                      onClick={() => updateBool('cwIdAfter73', form.cwIdAfter73 !== true)}
+                    >
+                      <span className="toggle-knob" />
+                    </button>
+                  </label>
+                  <span className="settings-hint">
+                    Keys your callsign in CW once the final 73 has fully left the air (stock
+                    WSJT-X option, default off). Uses the normal CW keying path — PTT + tone —
+                    after the FT8 over, never on top of it.
+                  </span>
+                </div>
+
+                <div className="settings-field">
+                  <label className="settings-toggle">
+                    <span className="settings-label">Clock check (NTP)</span>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={form.clockCheck}
+                      className={`toggle${form.clockCheck ? ' on' : ''}`}
+                      onClick={() => updateBool('clockCheck', !form.clockCheck)}
+                    >
+                      <span className="toggle-knob" />
+                    </button>
+                  </label>
+                  <span className="settings-hint">
+                    Periodically check your PC clock against an NTP server and show the offset in the
+                    top bar. FT1/DX1 are slot-timed to UTC — keep it within ~0.5 s (NTP / time.is;
+                    off-grid: GPS). Turn off for fully-offline operation (no network calls).
+                  </span>
+                </div>
+
+                <div className="settings-field">
+                  <label className="settings-label" htmlFor="station-power">
+                    Station power (W)
+                  </label>
                   <input
+                    id="station-power"
                     className="settings-input"
                     type="number"
-                    min={1}
-                    max={120}
-                    value={form.tuneTimeoutSecs || 12}
+                    min="0"
+                    step="1"
+                    inputMode="decimal"
+                    value={form.stationPowerW ?? ''}
+                    placeholder="e.g. 100"
                     onChange={(e) => {
-                      // '' must mean "back to the 12 s default" — the generic
-                      // numeric coercion turned a cleared field into a saved 0.
                       markDirty()
-                      const n = e.target.value === '' ? 12 : Math.max(1, Number(e.target.value) || 12)
-                      setForm((prev) => (prev ? { ...prev, tuneTimeoutSecs: n } : prev))
+                      const raw = e.target.value.trim()
+                      const num = raw === '' ? null : Number(raw)
+                      setForm((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              stationPowerW:
+                                num !== null && Number.isNaN(num) ? prev.stationPowerW : num,
+                            }
+                          : prev,
+                      )
                     }}
                   />
-                </label>
-                <span className="settings-hint">
-                  Auto-release the tune carrier after this many seconds — never leave a key-down
-                  unattended.
-                </span>
-              </div>
-
-              <div className="settings-field">
-                <label className="settings-toggle">
-                  <span className="settings-label">Clock check (NTP)</span>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={form.clockCheck}
-                    className={`toggle${form.clockCheck ? ' on' : ''}`}
-                    onClick={() => updateBool('clockCheck', !form.clockCheck)}
-                  >
-                    <span className="toggle-knob" />
-                  </button>
-                </label>
-                <span className="settings-hint">
-                  Periodically check your PC clock against an NTP server and show the offset in the
-                  top bar. FT1/DX1 are slot-timed to UTC — keep it within ~0.5 s (NTP / time.is;
-                  off-grid: GPS). Turn off for fully-offline operation (no network calls).
-                </span>
-              </div>
-
-              <div className="settings-field">
-                <span className="settings-label">Decode depth</span>
-                <div className="theme-switcher" role="group" aria-label="Decode depth">
-                  {([1, 2, 3] as const).map((d) => (
-                    <button
-                      key={d}
-                      type="button"
-                      className={`theme-chip${(form.decodeDepth ?? 3) === d ? ' active' : ''}`}
-                      aria-pressed={(form.decodeDepth ?? 3) === d}
-                      onClick={() => {
-                        markDirty()
-                        setForm((prev) => (prev ? { ...prev, decodeDepth: d } : prev))
-                      }}
-                    >
-                      {d === 1 ? 'Fast' : d === 2 ? 'Normal' : 'Deep'}
-                    </button>
-                  ))}
+                  <span className="settings-hint">
+                    Your transmit power in watts — unlocks the Journey miles-per-watt &amp; QRP feats.
+                    Leave blank if unknown.
+                  </span>
                 </div>
-                <span className="settings-hint">
-                  Deep finds the most signals (WSJT-X default); Fast saves CPU on old hardware.
-                </span>
-              </div>
-
-              <div className="settings-field">
-                <span className="settings-label">Decoder passband (Hz)</span>
-                <div className="settings-input-row">
-                  <label className="settings-inline-label">
-                    <span>F low</span>
-                    <input
-                      id="decode-flow"
-                      className="settings-input"
-                      type="number"
-                      inputMode="numeric"
-                      min={200}
-                      max={2900}
-                      step={1}
-                      value={form.decodeFLowHz ?? 200}
-                      aria-label="Decoder F low (Hz)"
-                      onChange={(e) => {
-                        if (e.target.value === '') return // mid-edit clear: keep the prior value
-                        markDirty()
-                        const raw = Number(e.target.value)
-                        const clamped = Math.max(200, Math.min(2900, Math.round(raw)))
-                        setForm((prev) =>
-                          prev
-                            ? { ...prev, decodeFLowHz: clamped }
-                            : prev,
-                        )
-                      }}
-                      onBlur={() => {
-                        setForm((prev) => {
-                          if (!prev) return prev
-                          const lo = prev.decodeFLowHz ?? 200
-                          const hi = prev.decodeFHighHz ?? 2900
-                          if (lo >= hi) return { ...prev, decodeFLowHz: Math.min(lo, hi - 1) }
-                          return prev
-                        })
-                      }}
-                    />
-                  </label>
-                  <label className="settings-inline-label">
-                    <span>F high</span>
-                    <input
-                      id="decode-fhigh"
-                      className="settings-input"
-                      type="number"
-                      inputMode="numeric"
-                      min={200}
-                      max={2900}
-                      step={1}
-                      value={form.decodeFHighHz ?? 2900}
-                      aria-label="Decoder F high (Hz)"
-                      onChange={(e) => {
-                        if (e.target.value === '') return // mid-edit clear: keep the prior value
-                        markDirty()
-                        const raw = Number(e.target.value)
-                        const clamped = Math.max(200, Math.min(2900, Math.round(raw)))
-                        setForm((prev) =>
-                          prev
-                            ? { ...prev, decodeFHighHz: clamped }
-                            : prev,
-                        )
-                      }}
-                      onBlur={() => {
-                        setForm((prev) => {
-                          if (!prev) return prev
-                          const lo = prev.decodeFLowHz ?? 200
-                          const hi = prev.decodeFHighHz ?? 2900
-                          if (hi <= lo) return { ...prev, decodeFHighHz: Math.max(hi, lo + 1) }
-                          return prev
-                        })
-                      }}
-                    />
-                  </label>
-                </div>
-                <span className="settings-hint">
-                  Restrict the decoder&apos;s search range — useful with narrow filters or strong
-                  close-in QRM. Default 200–2900 Hz (full passband).
-                </span>
-              </div>
-
-              <div className="settings-field">
-                <span className="settings-label">DXpedition mode</span>
-                <div className="theme-switcher" role="group" aria-label="DXpedition mode">
-                  {([
-                    { value: 'none' as const, label: 'Off' },
-                    { value: 'hound' as const, label: 'Hound' },
-                  ]).map((op) => (
-                    <button
-                      key={op.value}
-                      type="button"
-                      className={`theme-chip${(form.specialOp ?? 'none') === op.value ? ' active' : ''}`}
-                      aria-pressed={(form.specialOp ?? 'none') === op.value}
-                      onClick={() => {
-                        markDirty()
-                        setForm((prev) => prev ? { ...prev, specialOp: op.value } : prev)
-                      }}
-                    >
-                      {op.label}
-                    </button>
-                  ))}
-                </div>
-                <span className="settings-hint">
-                  Off = normal FT8/FT4 operation. Hound = DXpedition pile-up discipline (calls
-                  above 1000 Hz; your report auto-moves to the Fox&apos;s frequency).
-                </span>
               </div>
             </div>
           </fieldset>
@@ -3657,507 +3680,597 @@ export function SettingsPanel({
           </fieldset>
           <fieldset className="settings-section">
             <legend>Confirmations</legend>
-            <div className="settings-grid">
-              <label className="settings-field">
-                <span className="settings-label">LoTW username</span>
-                <input
-                  className="settings-input"
-                  type="text"
-                  value={form.lotwUsername}
-                  placeholder="your LoTW account login"
-                  onChange={(e) => update('lotwUsername', e.target.value)}
-                  autoComplete="off"
-                  spellCheck={false}
-                />
-                <span className="settings-hint">
-                  Often your callsign, but not always — use your LoTW account login. Save settings to apply.
-                </span>
-              </label>
-
-              <label className="settings-field">
-                <span className="settings-label">LoTW password</span>
-                <div className="settings-input-row">
+            <div className="settings-featgroup">
+              <span className="settings-featgroup-title">LoTW</span>
+              <div className="settings-grid">
+                <label className="settings-field">
+                  <span className="settings-label">LoTW username</span>
                   <input
                     className="settings-input"
-                    type="password"
-                    value={lotwPw}
-                    placeholder="LoTW website password"
-                    onChange={(e) => setLotwPw(e.target.value)}
+                    type="text"
+                    value={form.lotwUsername}
+                    placeholder="your LoTW account login"
+                    onChange={(e) => update('lotwUsername', e.target.value)}
                     autoComplete="off"
                     spellCheck={false}
                   />
-                  <button
-                    type="button"
-                    className="settings-refresh"
-                    onClick={onSaveLotwPassword}
-                    disabled={!lotwPw}
-                  >
-                    Set
-                  </button>
-                  <button
-                    type="button"
-                    className="settings-refresh"
-                    onClick={onForgetLotwPassword}
-                    title="Remove the stored password from the system keychain"
-                  >
-                    Forget
-                  </button>
-                </div>
-                <span className="settings-hint">
-                  Your LoTW <strong>website</strong> password (not your TQSL certificate password). Stored in
-                  the OS keychain, never on disk; not shown again after you click Set.
-                </span>
-              </label>
-
-              <div className="settings-field">
-                <span className="settings-label">LoTW sync</span>
-                <div className="settings-input-row">
-                  <button
-                    type="button"
-                    className="settings-refresh"
-                    onClick={onSyncLotw}
-                    disabled={lotwSyncing || !form.lotwUsername.trim()}
-                  >
-                    {lotwSyncing ? 'Syncing…' : 'Sync LoTW now'}
-                  </button>
-                </div>
-                <span className="settings-hint">
-                  Pulls new confirmations into your log and marks which of your uploads LoTW now holds on file
-                  (so they read “waiting on the other op,” not “never uploaded”). The first sync pulls your whole
-                  history (can be slow); later syncs are incremental.
-                </span>
-              </div>
-
-              <label className="settings-field">
-                <span className="settings-label">LoTW Station Location</span>
-                <input
-                  className="settings-input"
-                  type="text"
-                  value={form.lotwStationLocation}
-                  placeholder="exact TQSL Station Location name"
-                  onChange={(e) => update('lotwStationLocation', e.target.value)}
-                  autoComplete="off"
-                  spellCheck={false}
-                />
-                <span className="settings-hint">
-                  For <strong>uploading</strong> to LoTW (the "Upload to LoTW" button in the Logbook). Signing is
-                  done by your installed <strong>TQSL</strong> against this named Station Location — set it up in
-                  TQSL first; the name must match exactly. No certificate or password is stored by Nexus.
-                </span>
-              </label>
-
-              <label className="settings-field">
-                <span className="settings-label">TQSL path (optional)</span>
-                <input
-                  className="settings-input"
-                  type="text"
-                  value={form.tqslPath}
-                  placeholder="auto-detect (leave blank)"
-                  onChange={(e) => update('tqslPath', e.target.value)}
-                  autoComplete="off"
-                  spellCheck={false}
-                />
-                <span className="settings-hint">
-                  Only if TQSL is installed somewhere non-standard; otherwise leave blank to auto-detect.
-                </span>
-              </label>
-
-              <label className="settings-field">
-                <span className="settings-label">eQSL username</span>
-                <input
-                  className="settings-input"
-                  type="text"
-                  value={form.eqslUsername}
-                  placeholder="your eQSL.cc account login"
-                  onChange={(e) => update('eqslUsername', e.target.value)}
-                  autoComplete="off"
-                  spellCheck={false}
-                />
-                <span className="settings-hint">
-                  Your eQSL.cc login (often your callsign). Save settings to apply.
-                </span>
-              </label>
-
-              <label className="settings-field">
-                <span className="settings-label">eQSL password</span>
-                <div className="settings-input-row">
-                  <input
-                    className="settings-input"
-                    type="password"
-                    value={eqslPw}
-                    placeholder="eQSL.cc account password"
-                    onChange={(e) => setEqslPw(e.target.value)}
-                    autoComplete="off"
-                    spellCheck={false}
-                  />
-                  <button
-                    type="button"
-                    className="settings-refresh"
-                    onClick={onSaveEqslPassword}
-                    disabled={!eqslPw}
-                  >
-                    Set
-                  </button>
-                  <button
-                    type="button"
-                    className="settings-refresh"
-                    onClick={onForgetEqslPassword}
-                    title="Remove the stored password from the system keychain"
-                  >
-                    Forget
-                  </button>
-                </div>
-                <span className="settings-hint">
-                  Stored in the OS keychain, never on disk; not shown again after you click Set.
-                </span>
-              </label>
-
-              <div className="settings-field">
-                <span className="settings-label">eQSL confirmations</span>
-                <div className="settings-input-row">
-                  <button
-                    type="button"
-                    className="settings-refresh"
-                    onClick={onSyncEqsl}
-                    disabled={eqslSyncing || !form.eqslUsername.trim()}
-                  >
-                    {eqslSyncing ? 'Syncing…' : 'Sync eQSL now'}
-                  </button>
-                </div>
-                <span className="settings-hint">
-                  Download eQSL confirmations into your log. These count as confirmations but{' '}
-                  <strong>not</strong> for DXCC/WAS (ARRL doesn't accept eQSL) — a separate tier.
-                </span>
-              </div>
-
-              <div className="settings-field">
-                <label className="settings-toggle">
-                  <span className="settings-label">Auto-upload QSOs to eQSL</span>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={form.eqslUpload}
-                    className={`toggle${form.eqslUpload ? ' on' : ''}`}
-                    onClick={() => updateBool('eqslUpload', !form.eqslUpload)}
-                  >
-                    <span className="toggle-knob" />
-                  </button>
+                  <span className="settings-hint">
+                    Often your callsign, but not always — use your LoTW account login. Save settings to apply.
+                  </span>
                 </label>
-                <span className="settings-hint">
-                  Upload each logged QSO to eQSL.cc as you log it (needs the eQSL username + password above).
-                </span>
-              </div>
 
-              <label className="settings-field">
-                <span className="settings-label">QRZ username</span>
-                <input
-                  className="settings-input"
-                  type="text"
-                  value={form.qrzUsername}
-                  placeholder="your QRZ.com account login"
-                  onChange={(e) => update('qrzUsername', e.target.value)}
-                  autoComplete="off"
-                  spellCheck={false}
-                />
-                <span className="settings-hint">
-                  Used to look up a callsign's name + grid when logging. Save settings to apply.
-                </span>
-              </label>
-
-              <label className="settings-field">
-                <span className="settings-label">QRZ password</span>
-                <div className="settings-input-row">
-                  <input
-                    className="settings-input"
-                    type="password"
-                    value={qrzPw}
-                    placeholder="QRZ.com account password"
-                    onChange={(e) => setQrzPw(e.target.value)}
-                    autoComplete="off"
-                    spellCheck={false}
-                  />
-                  <button
-                    type="button"
-                    className="settings-refresh"
-                    onClick={onSaveQrzPassword}
-                    disabled={!qrzPw}
-                  >
-                    Set
-                  </button>
-                  <button
-                    type="button"
-                    className="settings-refresh"
-                    onClick={onForgetQrzPassword}
-                    title="Remove the stored password from the system keychain"
-                  >
-                    Forget
-                  </button>
-                </div>
-                <span className="settings-hint">
-                  Stored in the OS keychain, never on disk. <strong>Grid &amp; state require a QRZ XML
-                  subscription</strong> — free accounts return only name/address/country.
-                </span>
-              </label>
-
-              <label className="settings-field">
-                <span className="settings-label">HamQTH username</span>
-                <input
-                  className="settings-input"
-                  type="text"
-                  value={form.hamqthUsername}
-                  placeholder="your HamQTH.com account login"
-                  onChange={(e) => update('hamqthUsername', e.target.value)}
-                  autoComplete="off"
-                  spellCheck={false}
-                />
-                <span className="settings-hint">
-                  A <strong>free</strong> callbook used as a fallback when QRZ isn't configured or has
-                  no match — a HamQTH account returns name, grid &amp; US state at no charge. Save
-                  settings to apply.
-                </span>
-              </label>
-
-              <label className="settings-field">
-                <span className="settings-label">HamQTH password</span>
-                <div className="settings-input-row">
-                  <input
-                    className="settings-input"
-                    type="password"
-                    value={hamqthPw}
-                    placeholder="HamQTH.com account password"
-                    onChange={(e) => setHamqthPw(e.target.value)}
-                    autoComplete="off"
-                    spellCheck={false}
-                  />
-                  <button
-                    type="button"
-                    className="settings-refresh"
-                    onClick={onSaveHamqthPassword}
-                    disabled={!hamqthPw}
-                  >
-                    Set
-                  </button>
-                  <button
-                    type="button"
-                    className="settings-refresh"
-                    onClick={onForgetHamqthPassword}
-                    title="Remove the stored password from the system keychain"
-                  >
-                    Forget
-                  </button>
-                </div>
-                <span className="settings-hint">
-                  Stored in the OS keychain, never on disk.
-                </span>
-              </label>
-
-              <label className="settings-field">
-                <span className="settings-label">QRZ Logbook API key</span>
-                <div className="settings-input-row">
-                  <input
-                    className="settings-input"
-                    type="password"
-                    value={qrzKey}
-                    placeholder="from your QRZ logbook settings page"
-                    onChange={(e) => setQrzKey(e.target.value)}
-                    autoComplete="off"
-                    spellCheck={false}
-                  />
-                  <button
-                    type="button"
-                    className="settings-refresh"
-                    onClick={onSaveQrzLogbookKey}
-                    disabled={!qrzKey}
-                  >
-                    Set
-                  </button>
-                  <button
-                    type="button"
-                    className="settings-refresh"
-                    onClick={onForgetQrzLogbookKey}
-                    title="Remove the stored Logbook key from the system keychain"
-                  >
-                    Forget
-                  </button>
-                </div>
-                <span className="settings-hint">
-                  A <strong>separate</strong> key (not the login password) from your QRZ logbook's settings
-                  page — used to upload logged QSOs.
-                </span>
-              </label>
-
-              <div className="settings-field">
-                <label className="settings-toggle">
-                  <span className="settings-label">Auto-upload QSOs to QRZ</span>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={form.qrzLogbookUpload}
-                    className={`toggle${form.qrzLogbookUpload ? ' on' : ''}`}
-                    onClick={() => updateBool('qrzLogbookUpload', !form.qrzLogbookUpload)}
-                  >
-                    <span className="toggle-knob" />
-                  </button>
+                <label className="settings-field">
+                  <span className="settings-label">LoTW password</span>
+                  <div className="settings-input-row">
+                    <input
+                      className="settings-input"
+                      type="password"
+                      value={lotwPw}
+                      placeholder="LoTW website password"
+                      onChange={(e) => setLotwPw(e.target.value)}
+                      autoComplete="off"
+                      spellCheck={false}
+                    />
+                    <button
+                      type="button"
+                      className="settings-refresh"
+                      onClick={onSaveLotwPassword}
+                      disabled={!lotwPw}
+                    >
+                      Set
+                    </button>
+                    <button
+                      type="button"
+                      className="settings-refresh"
+                      onClick={onForgetLotwPassword}
+                      title="Remove the stored password from the system keychain"
+                    >
+                      Forget
+                    </button>
+                  </div>
+                  <span className="settings-hint">
+                    Your LoTW <strong>website</strong> password (not your TQSL certificate password). Stored in
+                    the OS keychain, never on disk; not shown again after you click Set.
+                  </span>
                 </label>
-                <span className="settings-hint">
-                  Push each logged QSO to your QRZ logbook (needs the Logbook API key above).
-                </span>
-              </div>
 
-              <label className="settings-field">
-                <span className="settings-label">ClubLog email</span>
-                <input
-                  className="settings-input"
-                  type="text"
-                  value={form.clublogEmail}
-                  placeholder="your ClubLog account email (not a callsign)"
-                  onChange={(e) => update('clublogEmail', e.target.value)}
-                  autoComplete="off"
-                  spellCheck={false}
-                />
-                <span className="settings-hint">Your ClubLog login email. Save settings to apply.</span>
-              </label>
+                <div className="settings-field">
+                  <span className="settings-label">LoTW sync</span>
+                  <div className="settings-input-row">
+                    <button
+                      type="button"
+                      className="settings-refresh"
+                      onClick={onSyncLotw}
+                      disabled={lotwSyncing || !form.lotwUsername.trim()}
+                    >
+                      {lotwSyncing ? 'Syncing…' : 'Sync LoTW now'}
+                    </button>
+                  </div>
+                  <span className="settings-hint">
+                    Pulls new confirmations into your log and marks which of your uploads LoTW now holds on file
+                    (so they read “waiting on the other op,” not “never uploaded”). The first sync pulls your whole
+                    history (can be slow); later syncs are incremental.
+                  </span>
+                </div>
 
-              <label className="settings-field">
-                <span className="settings-label">ClubLog callsign</span>
-                <input
-                  className="settings-input"
-                  type="text"
-                  value={form.clublogCallsign}
-                  placeholder="defaults to your callsign"
-                  onChange={(e) => update('clublogCallsign', e.target.value)}
-                  autoComplete="off"
-                  spellCheck={false}
-                />
-                <span className="settings-hint">The ClubLog logbook to upload into (empty = your callsign).</span>
-              </label>
-
-              <label className="settings-field">
-                <span className="settings-label">ClubLog app-password</span>
-                <div className="settings-input-row">
+                <label className="settings-field">
+                  <span className="settings-label">LoTW Station Location</span>
                   <input
                     className="settings-input"
-                    type="password"
-                    value={clublogPw}
-                    placeholder="a ClubLog Application Password"
-                    onChange={(e) => setClublogPw(e.target.value)}
+                    type="text"
+                    value={form.lotwStationLocation}
+                    placeholder="exact TQSL Station Location name"
+                    onChange={(e) => update('lotwStationLocation', e.target.value)}
                     autoComplete="off"
                     spellCheck={false}
                   />
-                  <button
-                    type="button"
-                    className="settings-refresh"
-                    onClick={onSaveClublogPassword}
-                    disabled={!clublogPw}
-                  >
-                    Set
-                  </button>
-                  <button
-                    type="button"
-                    className="settings-refresh"
-                    onClick={onForgetClublogPassword}
-                    title="Remove the stored ClubLog password from the system keychain"
-                  >
-                    Forget
-                  </button>
-                </div>
-                <span className="settings-hint">
-                  Use a ClubLog <strong>Application Password</strong> (Settings → App Passwords), not your main
-                  password. Stored in the OS keychain.
-                </span>
-              </label>
-
-              <label className="settings-field">
-                <span className="settings-label">ClubLog API key (application-level)</span>
-                <input
-                  className="settings-input"
-                  type="text"
-                  value={form.clublogApiKey}
-                  placeholder="blank = use the key bundled with this build (if any)"
-                  onChange={(e) => update('clublogApiKey', e.target.value)}
-                  autoComplete="off"
-                  spellCheck={false}
-                />
-                <span className="settings-hint">
-                  This is the <strong>application</strong> credential, not yours — official installer builds
-                  bundle one, and you only need email + app-password above. Building from source? Request a
-                  free key at clublog.org/requestapikey.php and paste it here (open-source can't ship one —
-                  ClubLog auto-revokes published keys).
-                </span>
-              </label>
-
-              <div className="settings-field">
-                <label className="settings-toggle">
-                  <span className="settings-label">Auto-upload QSOs to ClubLog</span>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={form.clublogUpload}
-                    className={`toggle${form.clublogUpload ? ' on' : ''}`}
-                    onClick={() => updateBool('clublogUpload', !form.clublogUpload)}
-                  >
-                    <span className="toggle-knob" />
-                  </button>
+                  <span className="settings-hint">
+                    For <strong>uploading</strong> to LoTW (the "Upload to LoTW" button in the Logbook). Signing is
+                    done by your installed <strong>TQSL</strong> against this named Station Location — set it up in
+                    TQSL first; the name must match exactly. No certificate or password is stored by Nexus.
+                  </span>
                 </label>
-                <span className="settings-hint">
-                  Push each logged QSO to ClubLog in real time (needs the email + app-password above; official builds bundle the API key).
-                </span>
-              </div>
 
-              <label className="settings-field">
-                <span className="settings-label">HRDLog.net upload code</span>
-                <div className="settings-input-row">
+                <label className="settings-field">
+                  <span className="settings-label">TQSL path (optional)</span>
                   <input
                     className="settings-input"
-                    type="password"
-                    value={hrdlogCode}
-                    placeholder="your hrdlog.net upload code"
-                    onChange={(e) => setHrdlogCodeField(e.target.value)}
+                    type="text"
+                    value={form.tqslPath}
+                    placeholder="auto-detect (leave blank)"
+                    onChange={(e) => update('tqslPath', e.target.value)}
                     autoComplete="off"
                     spellCheck={false}
                   />
-                  <button
-                    type="button"
-                    className="settings-refresh"
-                    onClick={onSaveHrdlogCode}
-                    disabled={!hrdlogCode}
-                  >
-                    Set
-                  </button>
-                  <button
-                    type="button"
-                    className="settings-refresh"
-                    onClick={onForgetHrdlogCode}
-                    title="Remove the stored HRDLog.net code from the system keychain"
-                  >
-                    Forget
-                  </button>
-                </div>
-                <span className="settings-hint">
-                  The upload code from your HRDLog.net account (Options → your code). Uploads log under your
-                  station callsign. Stored in the OS keychain. This is the online HRDLog.net service — separate
-                  from the HRD Logbook UDP push under Logging.
-                </span>
-              </label>
-
-              <div className="settings-field">
-                <label className="settings-toggle">
-                  <span className="settings-label">Auto-upload QSOs to HRDLog.net</span>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={form.hrdlogUpload}
-                    className={`toggle${form.hrdlogUpload ? ' on' : ''}`}
-                    onClick={() => updateBool('hrdlogUpload', !form.hrdlogUpload)}
-                  >
-                    <span className="toggle-knob" />
-                  </button>
+                  <span className="settings-hint">
+                    Only if TQSL is installed somewhere non-standard; otherwise leave blank to auto-detect.
+                  </span>
                 </label>
-                <span className="settings-hint">
-                  Push each logged QSO to HRDLog.net (needs the upload code above). HRDLog.net is a live-logging
-                  and awards site — it is <strong>not</strong> an ARRL confirmation source, so an upload here
-                  never earns DXCC/WAS credit.
-                </span>
+              </div>
+            </div>
+            <div className="settings-featgroup">
+              <span className="settings-featgroup-title">eQSL</span>
+              <div className="settings-grid">
+                <label className="settings-field">
+                  <span className="settings-label">eQSL username</span>
+                  <input
+                    className="settings-input"
+                    type="text"
+                    value={form.eqslUsername}
+                    placeholder="your eQSL.cc account login"
+                    onChange={(e) => update('eqslUsername', e.target.value)}
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                  <span className="settings-hint">
+                    Your eQSL.cc login (often your callsign). Save settings to apply.
+                  </span>
+                </label>
+
+                <label className="settings-field">
+                  <span className="settings-label">eQSL password</span>
+                  <div className="settings-input-row">
+                    <input
+                      className="settings-input"
+                      type="password"
+                      value={eqslPw}
+                      placeholder="eQSL.cc account password"
+                      onChange={(e) => setEqslPw(e.target.value)}
+                      autoComplete="off"
+                      spellCheck={false}
+                    />
+                    <button
+                      type="button"
+                      className="settings-refresh"
+                      onClick={onSaveEqslPassword}
+                      disabled={!eqslPw}
+                    >
+                      Set
+                    </button>
+                    <button
+                      type="button"
+                      className="settings-refresh"
+                      onClick={onForgetEqslPassword}
+                      title="Remove the stored password from the system keychain"
+                    >
+                      Forget
+                    </button>
+                  </div>
+                  <span className="settings-hint">
+                    Stored in the OS keychain, never on disk; not shown again after you click Set.
+                  </span>
+                </label>
+
+                <div className="settings-field">
+                  <span className="settings-label">eQSL confirmations</span>
+                  <div className="settings-input-row">
+                    <button
+                      type="button"
+                      className="settings-refresh"
+                      onClick={onSyncEqsl}
+                      disabled={eqslSyncing || !form.eqslUsername.trim()}
+                    >
+                      {eqslSyncing ? 'Syncing…' : 'Sync eQSL now'}
+                    </button>
+                  </div>
+                  <span className="settings-hint">
+                    Download eQSL confirmations into your log. These count as confirmations but{' '}
+                    <strong>not</strong> for DXCC/WAS (ARRL doesn't accept eQSL) — a separate tier.
+                  </span>
+                </div>
+
+                <div className="settings-field">
+                  <label className="settings-toggle">
+                    <span className="settings-label">Auto-upload QSOs to eQSL</span>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={form.eqslUpload}
+                      className={`toggle${form.eqslUpload ? ' on' : ''}`}
+                      onClick={() => updateBool('eqslUpload', !form.eqslUpload)}
+                    >
+                      <span className="toggle-knob" />
+                    </button>
+                  </label>
+                  <span className="settings-hint">
+                    Upload each logged QSO to eQSL.cc as you log it (needs the eQSL username + password above).
+                  </span>
+                </div>
+              </div>
+            </div>
+            <div className="settings-featgroup">
+              <span className="settings-featgroup-title">QRZ</span>
+              <div className="settings-grid">
+                <label className="settings-field">
+                  <span className="settings-label">QRZ username</span>
+                  <input
+                    className="settings-input"
+                    type="text"
+                    value={form.qrzUsername}
+                    placeholder="your QRZ.com account login"
+                    onChange={(e) => update('qrzUsername', e.target.value)}
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                  <span className="settings-hint">
+                    Used to look up a callsign's name + grid when logging. Save settings to apply.
+                  </span>
+                </label>
+
+                <label className="settings-field">
+                  <span className="settings-label">QRZ password</span>
+                  <div className="settings-input-row">
+                    <input
+                      className="settings-input"
+                      type="password"
+                      value={qrzPw}
+                      placeholder="QRZ.com account password"
+                      onChange={(e) => setQrzPw(e.target.value)}
+                      autoComplete="off"
+                      spellCheck={false}
+                    />
+                    <button
+                      type="button"
+                      className="settings-refresh"
+                      onClick={onSaveQrzPassword}
+                      disabled={!qrzPw}
+                    >
+                      Set
+                    </button>
+                    <button
+                      type="button"
+                      className="settings-refresh"
+                      onClick={onForgetQrzPassword}
+                      title="Remove the stored password from the system keychain"
+                    >
+                      Forget
+                    </button>
+                  </div>
+                  <span className="settings-hint">
+                    Stored in the OS keychain, never on disk. <strong>Grid &amp; state require a QRZ XML
+                    subscription</strong> — free accounts return only name/address/country.
+                  </span>
+                </label>
+
+                <label className="settings-field">
+                  <span className="settings-label">QRZ Logbook API key</span>
+                  <div className="settings-input-row">
+                    <input
+                      className="settings-input"
+                      type="password"
+                      value={qrzKey}
+                      placeholder="from your QRZ logbook settings page"
+                      onChange={(e) => setQrzKey(e.target.value)}
+                      autoComplete="off"
+                      spellCheck={false}
+                    />
+                    <button
+                      type="button"
+                      className="settings-refresh"
+                      onClick={onSaveQrzLogbookKey}
+                      disabled={!qrzKey}
+                    >
+                      Set
+                    </button>
+                    <button
+                      type="button"
+                      className="settings-refresh"
+                      onClick={onForgetQrzLogbookKey}
+                      title="Remove the stored Logbook key from the system keychain"
+                    >
+                      Forget
+                    </button>
+                  </div>
+                  <span className="settings-hint">
+                    A <strong>separate</strong> key (not the login password) from your QRZ logbook's settings
+                    page — used to upload logged QSOs.
+                  </span>
+                </label>
+
+                <div className="settings-field">
+                  <label className="settings-toggle">
+                    <span className="settings-label">Auto-upload QSOs to QRZ</span>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={form.qrzLogbookUpload}
+                      className={`toggle${form.qrzLogbookUpload ? ' on' : ''}`}
+                      onClick={() => updateBool('qrzLogbookUpload', !form.qrzLogbookUpload)}
+                    >
+                      <span className="toggle-knob" />
+                    </button>
+                  </label>
+                  <span className="settings-hint">
+                    Push each logged QSO to your QRZ logbook (needs the Logbook API key above).
+                  </span>
+                </div>
+              </div>
+            </div>
+            <div className="settings-featgroup">
+              <span className="settings-featgroup-title">HamQTH</span>
+              <div className="settings-grid">
+                <label className="settings-field">
+                  <span className="settings-label">HamQTH username</span>
+                  <input
+                    className="settings-input"
+                    type="text"
+                    value={form.hamqthUsername}
+                    placeholder="your HamQTH.com account login"
+                    onChange={(e) => update('hamqthUsername', e.target.value)}
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                  <span className="settings-hint">
+                    A <strong>free</strong> callbook used as a fallback when QRZ isn't configured or has
+                    no match — a HamQTH account returns name, grid &amp; US state at no charge. Save
+                    settings to apply.
+                  </span>
+                </label>
+
+                <label className="settings-field">
+                  <span className="settings-label">HamQTH password</span>
+                  <div className="settings-input-row">
+                    <input
+                      className="settings-input"
+                      type="password"
+                      value={hamqthPw}
+                      placeholder="HamQTH.com account password"
+                      onChange={(e) => setHamqthPw(e.target.value)}
+                      autoComplete="off"
+                      spellCheck={false}
+                    />
+                    <button
+                      type="button"
+                      className="settings-refresh"
+                      onClick={onSaveHamqthPassword}
+                      disabled={!hamqthPw}
+                    >
+                      Set
+                    </button>
+                    <button
+                      type="button"
+                      className="settings-refresh"
+                      onClick={onForgetHamqthPassword}
+                      title="Remove the stored password from the system keychain"
+                    >
+                      Forget
+                    </button>
+                  </div>
+                  <span className="settings-hint">
+                    Stored in the OS keychain, never on disk.
+                  </span>
+                </label>
+              </div>
+            </div>
+            <div className="settings-featgroup">
+              <span className="settings-featgroup-title">ClubLog</span>
+              <div className="settings-grid">
+                <label className="settings-field">
+                  <span className="settings-label">ClubLog email</span>
+                  <input
+                    className="settings-input"
+                    type="text"
+                    value={form.clublogEmail}
+                    placeholder="your ClubLog account email (not a callsign)"
+                    onChange={(e) => update('clublogEmail', e.target.value)}
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                  <span className="settings-hint">Your ClubLog login email. Save settings to apply.</span>
+                </label>
+
+                <label className="settings-field">
+                  <span className="settings-label">ClubLog callsign</span>
+                  <input
+                    className="settings-input"
+                    type="text"
+                    value={form.clublogCallsign}
+                    placeholder="defaults to your callsign"
+                    onChange={(e) => update('clublogCallsign', e.target.value)}
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                  <span className="settings-hint">The ClubLog logbook to upload into (empty = your callsign).</span>
+                </label>
+
+                <label className="settings-field">
+                  <span className="settings-label">ClubLog app-password</span>
+                  <div className="settings-input-row">
+                    <input
+                      className="settings-input"
+                      type="password"
+                      value={clublogPw}
+                      placeholder="a ClubLog Application Password"
+                      onChange={(e) => setClublogPw(e.target.value)}
+                      autoComplete="off"
+                      spellCheck={false}
+                    />
+                    <button
+                      type="button"
+                      className="settings-refresh"
+                      onClick={onSaveClublogPassword}
+                      disabled={!clublogPw}
+                    >
+                      Set
+                    </button>
+                    <button
+                      type="button"
+                      className="settings-refresh"
+                      onClick={onForgetClublogPassword}
+                      title="Remove the stored ClubLog password from the system keychain"
+                    >
+                      Forget
+                    </button>
+                  </div>
+                  <span className="settings-hint">
+                    Use a ClubLog <strong>Application Password</strong> (Settings → App Passwords), not your main
+                    password. Stored in the OS keychain.
+                  </span>
+                </label>
+
+                <label className="settings-field">
+                  <span className="settings-label">ClubLog API key (application-level)</span>
+                  <input
+                    className="settings-input"
+                    type="text"
+                    value={form.clublogApiKey}
+                    placeholder="blank = use the key bundled with this build (if any)"
+                    onChange={(e) => update('clublogApiKey', e.target.value)}
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                  <span className="settings-hint">
+                    This is the <strong>application</strong> credential, not yours — official installer builds
+                    bundle one, and you only need email + app-password above. Building from source? Request a
+                    free key at clublog.org/requestapikey.php and paste it here (open-source can't ship one —
+                    ClubLog auto-revokes published keys).
+                  </span>
+                </label>
+
+                <div className="settings-field">
+                  <label className="settings-toggle">
+                    <span className="settings-label">Auto-upload QSOs to ClubLog</span>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={form.clublogUpload}
+                      className={`toggle${form.clublogUpload ? ' on' : ''}`}
+                      onClick={() => updateBool('clublogUpload', !form.clublogUpload)}
+                    >
+                      <span className="toggle-knob" />
+                    </button>
+                  </label>
+                  <span className="settings-hint">
+                    Push each logged QSO to ClubLog in real time (needs the email + app-password above; official builds bundle the API key).
+                  </span>
+                </div>
+              </div>
+            </div>
+            <div className="settings-featgroup">
+              <span className="settings-featgroup-title">HRDLog</span>
+              <div className="settings-grid">
+                <label className="settings-field">
+                  <span className="settings-label">HRDLog.net upload code</span>
+                  <div className="settings-input-row">
+                    <input
+                      className="settings-input"
+                      type="password"
+                      value={hrdlogCode}
+                      placeholder="your hrdlog.net upload code"
+                      onChange={(e) => setHrdlogCodeField(e.target.value)}
+                      autoComplete="off"
+                      spellCheck={false}
+                    />
+                    <button
+                      type="button"
+                      className="settings-refresh"
+                      onClick={onSaveHrdlogCode}
+                      disabled={!hrdlogCode}
+                    >
+                      Set
+                    </button>
+                    <button
+                      type="button"
+                      className="settings-refresh"
+                      onClick={onForgetHrdlogCode}
+                      title="Remove the stored HRDLog.net code from the system keychain"
+                    >
+                      Forget
+                    </button>
+                  </div>
+                  <span className="settings-hint">
+                    The upload code from your HRDLog.net account (Options → your code). Uploads log under your
+                    station callsign. Stored in the OS keychain. This is the online HRDLog.net service — separate
+                    from the HRD Logbook UDP push under Logging.
+                  </span>
+                </label>
+
+                <div className="settings-field">
+                  <label className="settings-toggle">
+                    <span className="settings-label">Auto-upload QSOs to HRDLog.net</span>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={form.hrdlogUpload}
+                      className={`toggle${form.hrdlogUpload ? ' on' : ''}`}
+                      onClick={() => updateBool('hrdlogUpload', !form.hrdlogUpload)}
+                    >
+                      <span className="toggle-knob" />
+                    </button>
+                  </label>
+                  <span className="settings-hint">
+                    Push each logged QSO to HRDLog.net (needs the upload code above). HRDLog.net is a live-logging
+                    and awards site — it is <strong>not</strong> an ARRL confirmation source, so an upload here
+                    never earns DXCC/WAS credit.
+                  </span>
+                </div>
+              </div>
+            </div>
+            <div className="settings-featgroup">
+              <span className="settings-featgroup-title">Cloudlog / Wavelog</span>
+              <p className="settings-note">
+                Auto-forward each logged QSO to your self-hosted <strong>Cloudlog</strong> or{' '}
+                <strong>Wavelog</strong> logbook (HTTP). The API key is a per-instance token for your
+                own server — enter it, your station-profile id, and turn on the toggle.
+              </p>
+              <div className="settings-grid">
+                <label className="settings-field">
+                  <span className="settings-label">Base URL</span>
+                  <input
+                    className="settings-input"
+                    type="text"
+                    value={form.cloudlogUrl ?? ''}
+                    placeholder="https://log.example.com"
+                    onChange={(e) => update('cloudlogUrl', e.target.value)}
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                  <span className="settings-hint">Your Cloudlog/Wavelog site root. Leave blank to disable.</span>
+                </label>
+
+                <label className="settings-field">
+                  <span className="settings-label">Station profile id</span>
+                  <input
+                    className="settings-input"
+                    type="text"
+                    inputMode="numeric"
+                    value={form.cloudlogStationId ?? ''}
+                    placeholder="1"
+                    onChange={(e) => update('cloudlogStationId', e.target.value)}
+                    autoComplete="off"
+                  />
+                  <span className="settings-hint">The station-location profile to log against (Cloudlog ▸ Station Locations).</span>
+                </label>
+
+                <label className="settings-field">
+                  <span className="settings-label">API key</span>
+                  <input
+                    className="settings-input"
+                    type="password"
+                    value={form.cloudlogKey ?? ''}
+                    placeholder="your instance API key"
+                    onChange={(e) => update('cloudlogKey', e.target.value)}
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                  <span className="settings-hint">Cloudlog ▸ Account ▸ API Keys — a key with read/write.</span>
+                </label>
+
+                <div className="settings-field">
+                  <label className="settings-toggle">
+                    <span className="settings-label">Auto-forward QSOs</span>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={form.cloudlogUpload ?? false}
+                      className={`toggle${form.cloudlogUpload ? ' on' : ''}`}
+                      onClick={() => updateBool('cloudlogUpload', !form.cloudlogUpload)}
+                    >
+                      <span className="toggle-knob" />
+                    </button>
+                  </label>
+                  <span className="settings-hint">Push every logged QSO to the instance above as it's logged.</span>
+                </div>
               </div>
             </div>
           </fieldset>
@@ -4396,74 +4509,6 @@ export function SettingsPanel({
                   </span>
                 )}
                 <span className="settings-hint">Run this at the club site before the event starts to confirm the API link works.</span>
-              </div>
-            </div>
-          </fieldset>
-
-          <fieldset className="settings-section">
-            <legend>Cloudlog / Wavelog</legend>
-            <p className="settings-note">
-              Auto-forward each logged QSO to your self-hosted <strong>Cloudlog</strong> or{' '}
-              <strong>Wavelog</strong> logbook (HTTP). The API key is a per-instance token for your
-              own server — enter it, your station-profile id, and turn on the toggle.
-            </p>
-            <div className="settings-grid">
-              <label className="settings-field">
-                <span className="settings-label">Base URL</span>
-                <input
-                  className="settings-input"
-                  type="text"
-                  value={form.cloudlogUrl ?? ''}
-                  placeholder="https://log.example.com"
-                  onChange={(e) => update('cloudlogUrl', e.target.value)}
-                  autoComplete="off"
-                  spellCheck={false}
-                />
-                <span className="settings-hint">Your Cloudlog/Wavelog site root. Leave blank to disable.</span>
-              </label>
-
-              <label className="settings-field">
-                <span className="settings-label">Station profile id</span>
-                <input
-                  className="settings-input"
-                  type="text"
-                  inputMode="numeric"
-                  value={form.cloudlogStationId ?? ''}
-                  placeholder="1"
-                  onChange={(e) => update('cloudlogStationId', e.target.value)}
-                  autoComplete="off"
-                />
-                <span className="settings-hint">The station-location profile to log against (Cloudlog ▸ Station Locations).</span>
-              </label>
-
-              <label className="settings-field">
-                <span className="settings-label">API key</span>
-                <input
-                  className="settings-input"
-                  type="password"
-                  value={form.cloudlogKey ?? ''}
-                  placeholder="your instance API key"
-                  onChange={(e) => update('cloudlogKey', e.target.value)}
-                  autoComplete="off"
-                  spellCheck={false}
-                />
-                <span className="settings-hint">Cloudlog ▸ Account ▸ API Keys — a key with read/write.</span>
-              </label>
-
-              <div className="settings-field">
-                <label className="settings-toggle">
-                  <span className="settings-label">Auto-forward QSOs</span>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={form.cloudlogUpload ?? false}
-                    className={`toggle${form.cloudlogUpload ? ' on' : ''}`}
-                    onClick={() => updateBool('cloudlogUpload', !form.cloudlogUpload)}
-                  >
-                    <span className="toggle-knob" />
-                  </button>
-                </label>
-                <span className="settings-hint">Push every logged QSO to the instance above as it's logged.</span>
               </div>
             </div>
           </fieldset>

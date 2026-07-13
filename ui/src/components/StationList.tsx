@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import type { Conversation as Conv, NeedTag, Station } from '../types'
+import type { Conversation as Conv, NeedAlert, NeedTag, Station } from '../types'
 import { StationCard } from './StationCard'
 
 type Presence = Station['presence'] | 'offline'
@@ -14,6 +14,9 @@ interface Props {
   unreadByPeer: Record<string, number>
   /** Top need tier per heard callsign (uppercased), for award-aware colouring. */
   needByCall: Map<string, NeedTag>
+  /** ALL need forms per call (uppercased) — lets the roster show every reason a
+   * station is worth working (like the decode feed), not just the top tier. */
+  needAlertsByCall?: Map<string, NeedAlert[]>
   onSelect: (call: string) => void
   onCall: (call: string) => void
   /** Open conversation threads (incl. the "*" band feed) — drives the recents list
@@ -43,6 +46,7 @@ export function StationList({
   activePeer,
   unreadByPeer,
   needByCall,
+  needAlertsByCall,
   onSelect,
   onCall,
   conversations,
@@ -52,6 +56,20 @@ export function StationList({
   onSelectBand,
 }: Props) {
   const [filter, setFilter] = useState<Filter>('all')
+
+  // The full set of need tags per call — union of every alert's tags, deduped,
+  // falling back to the single top tier when the alerts map isn't provided. This
+  // is what lets the roster show the SAME pills the decode feed does (operator
+  // report: pills appeared in Band Activity / Rx Frequency but not the roster).
+  const needAll = (call: string, top: NeedTag | null): NeedTag[] => {
+    const alerts = needAlertsByCall?.get(call.toUpperCase())
+    if (alerts && alerts.length > 0) {
+      const seen = new Set<NeedTag>()
+      for (const a of alerts) for (const t of a.tags) seen.add(t)
+      if (seen.size > 0) return [...seen]
+    }
+    return top ? [top] : []
+  }
 
   // Live presence per heard call, so a recents row shows whether that station is
   // still on the band (or has gone offline since you last chatted).
@@ -168,6 +186,7 @@ export function StationList({
             selected={s.call === activePeer}
             unread={unreadByPeer[s.call] ?? 0}
             need={needByCall.get(s.call.toUpperCase()) ?? null}
+            needAll={needAll(s.call, needByCall.get(s.call.toUpperCase()) ?? null)}
             onSelect={onSelect}
             onCall={onCall}
           />

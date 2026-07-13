@@ -4644,6 +4644,8 @@ fn purge_log(state: State<'_, SharedEngine>) -> Result<usize, String> {
 fn get_awards(state: State<'_, SharedEngine>) -> Result<propagation::AwardSummary, String> {
     let eng = state.lock().map_err(|e| e.to_string())?;
     let mut awards = propagation::Awards::new();
+    // Tell the accumulator our own entity so "First DX" counts only foreign ones.
+    awards.set_home_call(&eng.settings().mycall);
     for q in eng.get_log() {
         // Award-eligible confirmation only (LoTW/paper) — eQSL doesn't count; plus
         // whether ARRL has granted DXCC-family credit (DXCC / DXCC_BAND /
@@ -5841,9 +5843,33 @@ async fn upload_lotw_report_impl(
         (batch, adif, location, tqsl_path)
     };
 
-    // Write the batch ADIF to a temp file for TQSL to sign.
-    let path = std::env::temp_dir().join("nexus_lotw_upload.adi");
-    std::fs::write(&path, adif).map_err(|e| format!("Couldn't write the upload file: {e}"))?;
+    // Write the batch ADIF to a temp file for TQSL to sign. Use a UNIQUE,
+    // unpredictable name (not the old fixed `nexus_lotw_upload.adi` a co-tenant
+    // could pre-symlink to hijack the write), create it O_EXCL so an existing path
+    // fails rather than being followed, and remove it on every exit path — the file
+    // holds the operator's log (PII). RAII guard = cleanup even on the `?` returns.
+    struct TmpFile(std::path::PathBuf);
+    impl Drop for TmpFile {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let path = std::env::temp_dir().join(format!("nexus_lotw_{}_{nonce}.adi", std::process::id()));
+    {
+        use std::io::Write as _;
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .map_err(|e| format!("Couldn't create the upload file: {e}"))?;
+        f.write_all(adif.as_bytes())
+            .map_err(|e| format!("Couldn't write the upload file: {e}"))?;
+    }
+    let _tmp_guard = TmpFile(path.clone());
     let path_str = path.to_string_lossy().to_string();
 
     // Resolve + run TQSL one-shot, capturing its result.
@@ -6540,7 +6566,7 @@ fn eqsl_push_qso_impl(
     // Build + POST without the lock; the body carries the password — never logged.
     let resp = {
         let body = tempo_core::eqsl::build_upload_body(&user, &password, &adif);
-        propagation::live::qrz::post_form(tempo_core::eqsl::EQSL_IMPORT_URL, body)?
+        propagation::live::eqsl::post_form(tempo_core::eqsl::EQSL_IMPORT_URL, body)?
     }; // `body` (holds the password) dropped here
 
     match tempo_core::eqsl::classify_upload(&resp) {

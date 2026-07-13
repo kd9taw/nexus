@@ -288,6 +288,15 @@ export function DetachedPanel({ panel }: { panel: string }) {
               qsyBand(a.band, a.freqMhz ?? undefined)
               return
             }
+            // The board lists ALL modes, but the CW/Phone cockpits are opt-in features.
+            // If the target cockpit is disabled, the MAIN window's nav-hint effect refuses
+            // to follow (same gate as handleWorkNeeded) — so a workSpot would silently
+            // switch the rig into a hidden mode with no UI. Just QSY to the spot instead.
+            const modes = readEnabledModes()
+            if ((t.view === 'cw' && !modes.cw) || (t.view === 'phone' && !modes.phone)) {
+              qsyBand(a.band, a.freqMhz ?? undefined)
+              return
+            }
             const opMode = t.view === 'operate' ? 'digital' : t.view
             apply(workSpot(opMode, t.freqMhz, t.band, t.call))
           }}
@@ -385,6 +394,7 @@ export function DetachedPanel({ panel }: { panel: string }) {
         activePeer={selected}
         unreadByPeer={{}}
         needByCall={needByCall}
+        needAlertsByCall={needAlertsByCall}
         onSelect={onSelect}
         onCall={(call) => onCall(call)}
         conversations={snap.conversations as Conv[]}

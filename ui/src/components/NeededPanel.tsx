@@ -19,7 +19,7 @@ import {
 } from '../neededFilters'
 import { pointRotator, readRotator } from '../api'
 import { pushToast } from '../toast'
-import { RarityGem } from './RarityGem'
+import { RarityChip } from './RarityChip'
 import { NEED_CHIP } from '../features/needVisuals'
 
 /** Defensive chip lookup — an unknown future tag renders visibly, never throws. */
@@ -533,7 +533,7 @@ export function NeededPanel({
                 </span>
                 <span className="np-call">
                   {a.call}
-                  <RarityGem rarity={a.gridRarity} />
+                  <RarityChip rarity={a.gridRarity} />
                   {onPoint && (
                     <button
                       type="button"

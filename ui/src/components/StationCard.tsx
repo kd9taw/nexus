@@ -1,6 +1,6 @@
 import type { NeedTag, Station } from '../types'
 import { bearingLabel, distanceLabel } from '../grid'
-import { RarityGem } from './RarityGem'
+import { RarityChip } from './RarityChip'
 import { NEED_CHIP } from '../features/needVisuals'
 
 interface Props {
@@ -9,8 +9,12 @@ interface Props {
   currentSlot: number
   selected: boolean
   unread: number
-  /** Top award-need tier for this call (null = nothing needed / not resolvable). */
+  /** Top award-need tier for this call (null = nothing needed / not resolvable) —
+   * drives the row's dominant colour. */
   need: NeedTag | null
+  /** EVERY need form for this call — one chip each, matching the decode feed /
+   * GridTracker roster (so the roster isn't missing pills the decodes show). */
+  needAll: NeedTag[]
   onSelect: (call: string) => void
   /** Work / call this station (enters QSO answering it). */
   onCall: (call: string) => void
@@ -32,11 +36,13 @@ export function StationCard({
   selected,
   unread,
   need,
+  needAll,
   onSelect,
   onCall,
 }: Props) {
   const dist = distanceLabel(myGrid, station.grid)
   const bearing = bearingLabel(myGrid, station.grid)
+  // Top need drives the row's dominant colour; needAll drives the chips.
   const chip = need ? NEED_CHIP[need] : null
   return (
     <div
@@ -56,19 +62,26 @@ export function StationCard({
         <span className="station-main">
           <span className="station-line1">
             <span className="station-call">{station.call}</span>
-            {chip && (
-              <span className={`need-chip need-${chip.cls}`} title={chip.title}>
-                {chip.short}
-              </span>
-            )}
+            {/* One chip per need form (new-DXCC, band, zone, …) — matches the decode
+                feed so the roster no longer looks emptier than Band Activity. */}
+            {needAll.map((t) => {
+              const c = NEED_CHIP[t]
+              return c ? (
+                <span key={t} className={`need-chip need-${c.cls}`} title={c.title}>
+                  {c.short}
+                </span>
+              ) : null
+            })}
             {station.worked && <span className="b4-chip" title="Worked before">B4</span>}
+            {/* Loud on the PRIMARY line (with need/B4/unread) so an ultra-rare grid
+                is unmistakable — the tiny line-2 gem was too easy to miss. */}
+            <RarityChip rarity={station.gridRarity} />
             {unread > 0 && <span className="unread-badge">{unread}</span>}
           </span>
           <span className="station-line2">
             {station.country && <span className="station-country">{station.country}</span>}
             {station.country && ' · '}
             {station.grid ?? '—'}
-            <RarityGem rarity={station.gridRarity} />
             {dist && <span className="station-dist"> · {dist}</span>}
             {bearing && <span className="station-bearing"> · {bearing}</span>}
             <span className="station-heard"> · {lastHeardLabel(station.lastHeardSlot, currentSlot)}</span>

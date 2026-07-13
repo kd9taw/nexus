@@ -173,9 +173,13 @@ export function PhoneCockpit({ snap, theme, pendingWork, onConsumeWork, onSnap, 
       return next
     })
 
+  // Live snapshot ref so the spacebar PTT handler (bound on `lock` changes, not every render)
+  // reads the CURRENT TX-allowed privilege state through key() — not whatever existed when bound.
+  const snapRef = useRef(snap)
+  snapRef.current = snap
   const key = (on: boolean) => {
     // Don't key (or show ON-AIR) outside license privileges — the engine blocks it anyway.
-    if (on && !snap.radio.txAllowed) {
+    if (on && !snapRef.current.radio.txAllowed) {
       pushToast('TX locked — this frequency/mode is outside your license privileges', 'info', 3500)
       return
     }

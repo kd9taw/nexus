@@ -49,7 +49,10 @@ export const PROFILES: Record<ProfileId, Profile> = {
     label: 'Contesting',
     blurb: 'Run rate: the contest workspace and field log, with awards and prop out of the way.',
     intents: ['contest'],
-    landing: 'fieldDay',
+    // NOT 'fieldDay': that section's visibility is gated by the persisted master
+    // switch (settings.fdActive), which no path may auto-enable — landing there
+    // would redirect to a hidden view. 'operate' is core, so it's always reachable.
+    landing: 'operate',
     nowBarEmphasis: 'rate',
   },
   pota: {

@@ -43,13 +43,35 @@ pub fn build_body(key: &str, station_id: &str, adif: &str) -> String {
     )
 }
 
-/// POST one ADIF record to a Cloudlog/Wavelog instance. `Ok(body)` on a 2xx; a redacted error
-/// otherwise (the API key is in the body — never echoed into an error string).
+/// Classify a Cloudlog/Wavelog 2xx response. The per-record import result is carried IN the
+/// body (`{"status":"created"}` on success; `{"status":"failed"|"error",...}` on a rejected or
+/// misfiled record), so an HTTP 2xx alone does not mean the QSO was filed. Lenient on unknown
+/// body shapes so a Wavelog variant with a different success payload isn't reported as failed.
+fn classify_body(text: &str) -> Result<String, String> {
+    let t = text.to_ascii_lowercase().replace(' ', "");
+    if t.contains("\"status\":\"failed\"") || t.contains("\"status\":\"error\"") {
+        return Err("Cloudlog rejected the QSO — check the instance log".to_string());
+    }
+    Ok(text.to_string())
+}
+
+/// POST one ADIF record to a Cloudlog/Wavelog instance. `Ok(body)` when the record is actually
+/// filed; a redacted error otherwise (the API key is in the REQUEST body — never echoed into an
+/// error string). Enforces HTTPS + no redirects so a credential-bearing request can't be
+/// downgraded onto cleartext, matching every sibling connector.
 pub fn upload(base_url: &str, key: &str, station_id: &str, adif: &str) -> Result<String, String> {
+    if key.trim().is_empty() {
+        return Err("Cloudlog API key is empty — set it in Settings".to_string());
+    }
+    if station_id.trim().is_empty() {
+        return Err("Cloudlog station profile id is empty — set it in Settings".to_string());
+    }
     let url = api_url(base_url);
     let body = build_body(key, station_id, adif);
     let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(20))
+        .https_only(true)
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|_| "couldn't build HTTP client".to_string())?;
     let resp = client
@@ -57,11 +79,13 @@ pub fn upload(base_url: &str, key: &str, station_id: &str, adif: &str) -> Result
         .header(reqwest::header::CONTENT_TYPE, "application/json")
         .body(body)
         .send()
-        .map_err(|_| "Cloudlog/Wavelog unreachable — check the URL".to_string())?;
+        .map_err(|_| {
+            "Cloudlog/Wavelog unreachable — check the URL (must be https://)".to_string()
+        })?;
     let status = resp.status();
     let text = resp.text().unwrap_or_default();
     if status.is_success() {
-        Ok(text)
+        classify_body(&text)
     } else if status.as_u16() == 401 || status.as_u16() == 403 {
         Err("auth rejected — check the API key".to_string())
     } else {

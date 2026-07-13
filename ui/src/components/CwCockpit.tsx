@@ -306,10 +306,14 @@ export function CwCockpit({
     setWpm(v)
     void setCwWpm(v)
   }
+  // Live snapshot ref so the keyboard handler (bound once, `[]` deps) reads the CURRENT
+  // TX-allowed privilege state through send() — not whatever existed at mount.
+  const snapRef = useRef(snap)
+  snapRef.current = snap
   const send = (t: string) => {
     if (!t.trim()) return
     // The engine blocks keying outside privileges anyway; surface why up front.
-    if (!snap.radio.txAllowed) {
+    if (!snapRef.current.radio.txAllowed) {
       pushToast('TX locked — this frequency is outside your license privileges', 'info', 3500)
       return
     }

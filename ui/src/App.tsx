@@ -1340,6 +1340,7 @@ export default function App() {
       activePeer={activePeer}
       unreadByPeer={unreadByPeer}
       needByCall={needByCall}
+      needAlertsByCall={needAlertsByCall}
       onSelect={handleSelect}
       onCall={handleCall}
       conversations={snap.conversations}
