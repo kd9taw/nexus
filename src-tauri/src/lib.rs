@@ -5240,6 +5240,7 @@ const QRZ_LOGBOOK_KEYCHAIN_USER: &str = "qrz-logbook-key";
 const HAMQTH_KEYCHAIN_USER: &str = "hamqth-password";
 const CLUBLOG_KEYCHAIN_USER: &str = "clublog-password";
 const HRDLOG_KEYCHAIN_USER: &str = "hrdlog-code";
+const CLOUDLOG_KEYCHAIN_USER: &str = "cloudlog-key";
 
 /// Client name Nexus sends to HRDLog.net's `NewEntry.aspx` as `App` (aids their
 /// support / usage stats). Non-secret.
@@ -5320,7 +5321,7 @@ struct CredStatus {
 
 #[tauri::command]
 fn get_credentials_status(state: State<'_, SharedEngine>) -> Result<Vec<CredStatus>, String> {
-    let (lotw_user, eqsl_user, qrz_user, clublog_email, mycall, clublog_key) = {
+    let (lotw_user, eqsl_user, qrz_user, clublog_email, mycall, clublog_key, cloudlog_url) = {
         let eng = state.lock().map_err(|e| e.to_string())?;
         let st = eng.settings();
         (
@@ -5334,6 +5335,7 @@ fn get_credentials_status(state: State<'_, SharedEngine>) -> Result<Vec<CredStat
             // builds (CLUBLOG_API_KEY at build time) both satisfy it. The user's
             // own credentials are only email + app-password.
             !effective_clublog_key(&st.clublog_api_key).is_empty(),
+            st.cloudlog_url.clone(),
         )
     };
     let has = |entry: Result<keyring::Entry, String>| {
@@ -5371,6 +5373,11 @@ fn get_credentials_status(state: State<'_, SharedEngine>) -> Result<Vec<CredStat
             connector: "HRDLog.net".into(),
             stored: has(hrdlog_keychain()),
             identity: mycall,
+        },
+        CredStatus {
+            connector: "Cloudlog".into(),
+            stored: has(cloudlog_keychain()),
+            identity: cloudlog_url,
         },
     ])
 }
@@ -5414,6 +5421,11 @@ fn hamqth_keychain() -> Result<keyring::Entry, String> {
 
 fn clublog_keychain() -> Result<keyring::Entry, String> {
     keyring::Entry::new(LOTW_KEYCHAIN_SERVICE, CLUBLOG_KEYCHAIN_USER)
+        .map_err(|e| format!("couldn't open the system keychain: {e}"))
+}
+
+fn cloudlog_keychain() -> Result<keyring::Entry, String> {
+    keyring::Entry::new(LOTW_KEYCHAIN_SERVICE, CLOUDLOG_KEYCHAIN_USER)
         .map_err(|e| format!("couldn't open the system keychain: {e}"))
 }
 
@@ -5639,6 +5651,35 @@ fn clear_qrz_logbook_key(state: State<'_, SharedEngine>) -> Result<(), String> {
     if r.is_ok() {
         conn_log("QRZ Logbook", "info", "API key cleared from the OS keychain");
         set_upload_toggle(&state, UploadToggle::Qrz, false);
+    }
+    r
+}
+
+/// Store (or, if empty, clear) the Cloudlog/Wavelog instance API key in the OS
+/// keychain — write-only, kept out of settings.json at rest like every other
+/// credential. Unlike QRZ, saving does NOT flip the upload toggle: Cloudlog also
+/// needs a URL + station-profile id, so the operator enables it explicitly.
+#[tauri::command]
+fn set_cloudlog_key(key: String) -> Result<(), String> {
+    let entry = cloudlog_keychain()?;
+    if key.trim().is_empty() {
+        clear_keychain_entry(&entry)?;
+        conn_log("Cloudlog", "info", "API key cleared from the OS keychain");
+        return Ok(());
+    }
+    entry
+        .set_password(key.trim())
+        .map_err(|e| format!("couldn't save to the system keychain: {e}"))?;
+    conn_log("Cloudlog", "ok", "API key saved to the OS keychain");
+    Ok(())
+}
+
+/// Remove the stored Cloudlog/Wavelog API key from the OS keychain (idempotent).
+#[tauri::command]
+fn clear_cloudlog_key() -> Result<(), String> {
+    let r = clear_keychain_entry(&cloudlog_keychain()?);
+    if r.is_ok() {
+        conn_log("Cloudlog", "info", "API key cleared from the OS keychain");
     }
     r
 }
@@ -6650,19 +6691,23 @@ fn n3fjp_push_qso_impl(dto: &LoggedQso, engine: &SharedEngine) -> Result<(), Str
     tempo_net::n3fjp::push_qso(&host, port, &push)
 }
 
-/// Forward ONE logged QSO to a Cloudlog/Wavelog instance (HTTP JSON ADIF POST). URL + key +
-/// station id come from Settings (plain — a per-instance self-hosted token, not an account
-/// password).
+/// Forward ONE logged QSO to a Cloudlog/Wavelog instance (HTTP JSON ADIF POST). URL +
+/// station id come from Settings; the API key lives in the OS keychain (never
+/// settings.json), read here at push time.
 fn cloudlog_push_qso_impl(dto: &LoggedQso, engine: &SharedEngine) -> Result<String, String> {
-    let (url, station_id, key) = {
+    let (url, station_id) = {
         let eng = engine.lock().map_err(|e| e.to_string())?;
         let s = eng.settings();
         (
             s.cloudlog_url.trim().to_string(),
             s.cloudlog_station_id.trim().to_string(),
-            s.cloudlog_key.trim().to_string(),
         )
     };
+    let key = cloudlog_keychain()?
+        .get_password()
+        .unwrap_or_default()
+        .trim()
+        .to_string();
     if url.is_empty() {
         return Err("no Cloudlog URL set".to_string());
     }
@@ -6674,6 +6719,10 @@ fn cloudlog_push_qso_impl(dto: &LoggedQso, engine: &SharedEngine) -> Result<Stri
     propagation::live::cloudlog::upload(&url, &key, &station_id, &adif)
 }
 
+/// Push one logged QSO to each enabled+owed connector. Returns the bitmask of
+/// legs that failed TRANSIENTLY (network down / service busy) and should be
+/// retried — a permanent reject (bad auth, malformed) or a success is NOT in the
+/// return, so the worker's re-queue never re-pushes a leg that already landed.
 fn auto_push_one(
     engine: &SharedEngine,
     dto: LoggedQso,
@@ -6683,12 +6732,16 @@ fn auto_push_one(
     hrdlog_on: bool,
     n3fjp_on: bool,
     cloudlog_on: bool,
-) {
+    owed: u8,
+) -> u8 {
+    use tempo_app::engine::upload_legs as legs;
     let call = dto.call.clone();
     let mut parts: Vec<String> = Vec::new();
     let mut all_ok = true;
-    if qrz_on {
-        let (part, ok) = match qrz_push_qso_impl(dto.clone(), engine) {
+    // Legs that failed transiently → the worker retries just these.
+    let mut failed: u8 = 0;
+    if qrz_on && owed & legs::QRZ != 0 {
+        let (part, ok, transient) = match qrz_push_qso_impl(dto.clone(), engine) {
             Ok(r) => {
                 let ok = matches!(r.result.as_str(), "ok" | "replace" | "duplicate");
                 conn_log(
@@ -6703,18 +6756,22 @@ fn auto_push_one(
                     "authFail" => "QRZ ✗ key invalid — check Settings".to_string(),
                     _ => format!("QRZ ✗ {}", r.reason.as_deref().unwrap_or("failed")),
                 };
-                (part, ok)
+                // A QRZ reply (auth-fail / reject) is definitive — don't retry.
+                (part, ok, false)
             }
             Err(e) => {
                 conn_log("QRZ Logbook", "error", format!("auto-push {call} — {e}"));
-                (format!("QRZ ✗ {e}"), false)
+                (format!("QRZ ✗ {e}"), false, true) // transport error → retry
             }
         };
         parts.push(part);
         all_ok &= ok;
+        if transient {
+            failed |= legs::QRZ;
+        }
     }
-    if clublog_on {
-        let (part, ok) = match clublog_push_qso_impl(dto.clone(), engine) {
+    if clublog_on && owed & legs::CLUBLOG != 0 {
+        let (part, ok, transient) = match clublog_push_qso_impl(dto.clone(), engine) {
             Ok(r) => {
                 let ok = matches!(r.result.as_str(), "ok" | "modified" | "duplicate");
                 conn_log(
@@ -6729,18 +6786,22 @@ fn auto_push_one(
                     "serverError" => "ClubLog ✗ busy".to_string(),
                     _ => format!("ClubLog ✗ {}", r.message.as_deref().unwrap_or("rejected")),
                 };
-                (part, ok)
+                // "serverError" = ClubLog temporarily busy → retry; auth/reject = don't.
+                (part, ok, r.result.as_str() == "serverError")
             }
             Err(e) => {
                 conn_log("ClubLog", "error", format!("auto-push {call} — {e}"));
-                (format!("ClubLog ✗ {e}"), false)
+                (format!("ClubLog ✗ {e}"), false, true)
             }
         };
         parts.push(part);
         all_ok &= ok;
+        if transient {
+            failed |= legs::CLUBLOG;
+        }
     }
-    if hrdlog_on {
-        let (part, ok) = match hrdlog_push_qso_impl(dto.clone(), engine) {
+    if hrdlog_on && owed & legs::HRDLOG != 0 {
+        let (part, ok, transient) = match hrdlog_push_qso_impl(dto.clone(), engine) {
             Ok(r) => {
                 let ok = matches!(r.result.as_str(), "ok" | "duplicate");
                 conn_log(
@@ -6756,18 +6817,22 @@ fn auto_push_one(
                     "unknown" => "HRDLog ✗ unavailable".to_string(),
                     _ => format!("HRDLog ✗ {}", r.message.as_deref().unwrap_or("rejected")),
                 };
-                (part, ok)
+                // "unknown" = HRDLog temporarily unavailable → retry; auth/reject = don't.
+                (part, ok, r.result.as_str() == "unknown")
             }
             Err(e) => {
                 conn_log("HRDLog.net", "error", format!("auto-push {call} — {e}"));
-                (format!("HRDLog ✗ {e}"), false)
+                (format!("HRDLog ✗ {e}"), false, true)
             }
         };
         parts.push(part);
         all_ok &= ok;
+        if transient {
+            failed |= legs::HRDLOG;
+        }
     }
-    if eqsl_on {
-        let (part, ok) = match eqsl_push_qso_impl(dto.clone(), engine) {
+    if eqsl_on && owed & legs::EQSL != 0 {
+        let (part, ok, transient) = match eqsl_push_qso_impl(dto.clone(), engine) {
             Ok(r) => {
                 let ok = matches!(r.outcome.as_str(), "accepted" | "duplicate");
                 conn_log(
@@ -6788,47 +6853,60 @@ fn auto_push_one(
                             .unwrap_or_default()
                     ),
                 };
-                (part, ok)
+                // "retry" = eQSL temporarily unavailable → retry; authfail/reject = don't.
+                (part, ok, r.outcome.as_str() == "retry")
             }
             Err(e) => {
                 conn_log("eQSL", "error", format!("auto-push {call} — {e}"));
-                (format!("eQSL ✗ {e}"), false)
+                (format!("eQSL ✗ {e}"), false, true)
             }
         };
         parts.push(part);
         all_ok &= ok;
+        if transient {
+            failed |= legs::EQSL;
+        }
     }
-    if n3fjp_on {
-        let (part, ok) = match n3fjp_push_qso_impl(&dto, engine) {
+    if n3fjp_on && owed & legs::N3FJP != 0 {
+        let (part, ok, transient) = match n3fjp_push_qso_impl(&dto, engine) {
             Ok(()) => {
                 conn_log("N3FJP", "ok", format!("auto-forward {call}"));
-                ("N3FJP ✓".to_string(), true)
+                ("N3FJP ✓".to_string(), true, false)
             }
             Err(e) => {
                 conn_log("N3FJP", "error", format!("auto-forward {call} — {e}"));
-                (format!("N3FJP ✗ {e}"), false)
+                (format!("N3FJP ✗ {e}"), false, true)
             }
         };
         parts.push(part);
         all_ok &= ok;
+        if transient {
+            failed |= legs::N3FJP;
+        }
     }
-    if cloudlog_on {
-        let (part, ok) = match cloudlog_push_qso_impl(&dto, engine) {
+    if cloudlog_on && owed & legs::CLOUDLOG != 0 {
+        let (part, ok, transient) = match cloudlog_push_qso_impl(&dto, engine) {
             Ok(_) => {
                 conn_log("Cloudlog", "ok", format!("auto-forward {call}"));
-                ("Cloudlog ✓".to_string(), true)
+                ("Cloudlog ✓".to_string(), true, false)
             }
             Err(e) => {
                 conn_log("Cloudlog", "error", format!("auto-forward {call} — {e}"));
-                (format!("Cloudlog ✗ {e}"), false)
+                // Cloudlog's error covers both a down instance and a reject; retry
+                // (bounded by MAX_UPLOAD_RETRIES) rather than silently drop.
+                (format!("Cloudlog ✗ {e}"), false, true)
             }
         };
         parts.push(part);
         all_ok &= ok;
+        if transient {
+            failed |= legs::CLOUDLOG;
+        }
     }
     if !parts.is_empty() {
         note_upload_shared(engine, format!("{call} → {}", parts.join(" · ")), all_ok);
     }
+    failed
 }
 
 // ----- Parks / Summits On The Air -------------------------------------------
@@ -7358,7 +7436,20 @@ fn open_download_page(app: tauri::AppHandle) -> Result<(), String> {
 /// Build and run the Tauri application.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let settings = Settings::load(&settings_path());
+    let mut settings = Settings::load(&settings_path());
+
+    // One-time migration: an older build kept the Cloudlog/Wavelog API key in
+    // plaintext in settings.json. Move any legacy key into the OS keychain and
+    // scrub it from the file at rest (the field is now skip-serialized too).
+    if !settings.cloudlog_key.trim().is_empty() {
+        if let Ok(entry) = cloudlog_keychain() {
+            let _ = entry.set_password(settings.cloudlog_key.trim());
+        }
+        settings.cloudlog_key.clear();
+        if let Err(e) = settings.save(&settings_path()) {
+            eprintln!("tempo: couldn't re-save settings after Cloudlog key migration: {e}");
+        }
+    }
 
     // Build the radio config from settings before the engine takes ownership.
     #[cfg(feature = "radio")]
@@ -7630,17 +7721,26 @@ pub fn run() {
             // per QSO — the suspension was announced once; re-push covers later.
             let clublog_live = clublog_on
                 && !CLUBLOG_SUSPENDED.load(std::sync::atomic::Ordering::Relaxed);
-            for rec in recs {
-                auto_push_one(
+            for p in recs {
+                let rec = p.rec.clone();
+                let failed = auto_push_one(
                     &push_engine,
-                    LoggedQso::from(rec),
+                    LoggedQso::from(p.rec),
                     qrz_on,
                     clublog_live,
                     eqsl_on,
                     hrdlog_on,
                     n3fjp_on,
                     cloudlog_on,
+                    p.legs,
                 );
+                // Transient failures (network down / service busy) → re-queue ONLY
+                // the legs that failed so the next tick retries them, without
+                // re-pushing the legs that already succeeded (no double-upload).
+                if failed != 0 {
+                    let mut eng = push_engine.lock().unwrap_or_else(|e| e.into_inner());
+                    eng.requeue_upload(rec, failed, p.attempts.saturating_add(1));
+                }
             }
         });
     }
@@ -7868,6 +7968,8 @@ pub fn run() {
             open_download_page,
             set_qrz_logbook_key,
             clear_qrz_logbook_key,
+            set_cloudlog_key,
+            clear_cloudlog_key,
             qrz_push_qso,
             set_clublog_password,
             clear_clublog_password,

@@ -541,9 +541,12 @@ pub struct Settings {
     /// Cloudlog/Wavelog station-profile id to log each QSO against.
     #[serde(default)]
     pub cloudlog_station_id: String,
-    /// Cloudlog/Wavelog instance API key — a per-instance token for the operator's OWN self-hosted
-    /// logbook (not a third-party account password), stored alongside the URL.
-    #[serde(default)]
+    /// Cloudlog/Wavelog instance API key. LEGACY-ONLY at rest: the key now lives in
+    /// the OS keychain (see src-tauri `set_cloudlog_key`). `skip_serializing` keeps
+    /// it OUT of settings.json on every save; it still DESERIALIZES an older file's
+    /// plaintext key so the shell can migrate it into the keychain once, then clear
+    /// it. Not sent to the frontend — the UI field is write-only.
+    #[serde(default, skip_serializing)]
     pub cloudlog_key: String,
     /// Auto-forward each logged QSO to the Cloudlog/Wavelog instance above. Off by default.
     #[serde(default)]

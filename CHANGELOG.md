@@ -5,6 +5,30 @@ All notable changes to Nexus (formerly Tempo) are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.2] — 2026-07-13 — Settings declutter + upload/credential hardening
+
+### Improved
+
+- **Settings are much easier to navigate.** Every crowded screen is now grouped into labelled
+  sub-sections: **Operating** (Transmit & Sequencing · Auto-CQ · Logging · Decoder · Housekeeping);
+  **Logbook & QSL** (a section per service — LoTW · eQSL · QRZ · HamQTH · ClubLog · HRDLog ·
+  Cloudlog); and **Integrations & Feeds** (Local Loggers · Spot Sources · Propagation). Rarely-touched
+  Rig/CAT controls (CAT broker, Flex IP, Icom CI-V, rigctld port) and the phone-only FM knobs now sit
+  behind collapsible **Advanced** / **Phone / FM** groups so the everyday settings aren't buried.
+
+### Fixed
+
+- **Auto-upload no longer drops a QSO on a network hiccup.** A transient failure (connection down,
+  service busy) now re-queues just the connectors that failed and retries them — without re-sending
+  the ones that already succeeded — instead of silently giving up. A definitive rejection (bad key)
+  isn't retried, and a permanently-down service stops after 20 attempts.
+
+### Security
+
+- **The Cloudlog/Wavelog API key is now stored in the OS keychain**, not in `settings.json`. Any key
+  saved by an earlier build is migrated into the keychain on first launch and scrubbed from the file;
+  the Settings field is now write-only, matching every other credential.
+
 ## [0.8.1] — 2026-07-12 — Field Day run fix + audit hardening
 
 A fast-follow after a full white-box QA + security audit of 0.8.0.

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { AudioDevices, BandChannel, CatTestResult, DetectedRig, RadioStatus, Settings } from '../types'
 import {
+  clearCloudlogKey,
   clearClublogPassword,
   clearEqslPassword,
   clearHamqthPassword,
@@ -17,6 +18,7 @@ import {
   getRigModels,
   getSerialPorts,
   getSettings,
+  setCloudlogKey,
   setClublogPassword,
   setEqslPassword,
   setHamqthPassword,
@@ -46,6 +48,7 @@ import { FrequencyControl } from './FrequencyControl'
 import { LevelMeter } from './LevelMeter'
 import { WatchlistPanel } from './WatchlistPanel'
 import { MiniSpectrum } from './MiniSpectrum'
+import { SettingsGroup } from './SettingsGroup'
 import type { Layout } from '../useLayout'
 import type { Scale } from '../useScale'
 import { SCALE_STEPS } from '../useScale'
@@ -205,7 +208,7 @@ const SETTINGS_TABS: { id: SettingsTab; label: string }[] = [
   { id: 'operating', label: 'Operating' },
   { id: 'frequencies', label: 'Frequencies' },
   { id: 'alerts', label: 'Alerts' },
-  { id: 'connections', label: 'Connections' },
+  { id: 'connections', label: 'Integrations & Feeds' },
   { id: 'confirmations', label: 'Logbook & QSL' },
   { id: 'features', label: 'Features' },
   { id: 'workspace', label: 'Workspace' },
@@ -321,6 +324,7 @@ export function SettingsPanel({
   const [hamqthPw, setHamqthPw] = useState('')
   const [clublogPw, setClublogPw] = useState('')
   const [hrdlogCode, setHrdlogCodeField] = useState('')
+  const [cloudlogKey, setCloudlogKeyField] = useState('')
   const [tab, setTab] = useState<SettingsTab>('station')
   // In-progress MHz text for the override row being edited — committed only when
   // it parses as a positive number, so a half-typed "14." never corrupts the form.
@@ -1060,6 +1064,29 @@ export function SettingsPanel({
     }
   }
 
+  const onSaveCloudlogKey = async () => {
+    if (!cloudlogKey) return
+    const ok = await withErrorToast(async () => {
+      await setCloudlogKey(cloudlogKey)
+      return true
+    }, 'Could not save the Cloudlog API key')
+    if (ok) {
+      setCloudlogKeyField('')
+      pushToast('Cloudlog API key saved to the keychain', 'success')
+    }
+  }
+
+  const onForgetCloudlogKey = async () => {
+    const ok = await withErrorToast(async () => {
+      await clearCloudlogKey()
+      return true
+    }, 'Could not clear the Cloudlog API key')
+    if (ok) {
+      setCloudlogKeyField('')
+      pushToast('Cloudlog API key cleared from the keychain', 'success')
+    }
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!form) return
@@ -1612,56 +1639,6 @@ export function SettingsPanel({
                 <span className="settings-hint">How transmit is keyed.</span>
               </label>
 
-              <label className="settings-field">
-                <span className="settings-label">Phone mode</span>
-                <select
-                  className="settings-input"
-                  value={form.phoneMode}
-                  onChange={(e) => update('phoneMode', e.target.value)}
-                >
-                  <option value="ssb">SSB (USB/LSB by band)</option>
-                  <option value="fm">FM (VHF/UHF + repeaters)</option>
-                </select>
-                <span className="settings-hint">FM drives the rig to FM + the shift/tone below.</span>
-              </label>
-
-              {form.phoneMode === 'fm' && (
-                <>
-                  <label className="settings-field">
-                    <span className="settings-label">Repeater shift</span>
-                    <select
-                      className="settings-input"
-                      value={form.rptrShift}
-                      onChange={(e) => update('rptrShift', e.target.value)}
-                    >
-                      <option value="simplex">Simplex (no shift)</option>
-                      <option value="plus">Plus (+)</option>
-                      <option value="minus">Minus (−)</option>
-                    </select>
-                    <span className="settings-hint">Offset is the band standard (2 m 600 k, 70 cm 5 M…).</span>
-                  </label>
-
-                  <label className="settings-field">
-                    <span className="settings-label">CTCSS (PL) tone</span>
-                    <select
-                      className="settings-input"
-                      value={String(form.ctcssToneHz)}
-                      onChange={(e) =>
-                        setForm((p) => (p ? { ...p, ctcssToneHz: Number(e.target.value) } : p))
-                      }
-                    >
-                      <option value="0">Off</option>
-                      {CTCSS_TONES.map((t) => (
-                        <option key={t} value={String(t)}>
-                          {t.toFixed(1)} Hz
-                        </option>
-                      ))}
-                    </select>
-                    <span className="settings-hint">Repeater access tone (PL).</span>
-                  </label>
-                </>
-              )}
-
               <div className="settings-field">
                 <span className="settings-label">Zero-config setup</span>
                 <div className="settings-input-row">
@@ -1916,43 +1893,6 @@ export function SettingsPanel({
                 </>
               )}
 
-              <label className="settings-field">
-                <span className="settings-label">rigctld TCP Port</span>
-                <input
-                  className="settings-input"
-                  type="number"
-                  inputMode="numeric"
-                  value={String(form.rigctldPort)}
-                  placeholder="4532"
-                  onChange={(e) => update('rigctldPort', e.target.value)}
-                  autoComplete="off"
-                />
-                <span className="settings-hint">Port Nexus launches rigctld on.</span>
-              </label>
-
-              {form.rigConn !== 'network' &&
-                /IC-?\s?(7300|7610|9700|705|905)\b/i.test(form.rigModelName ?? '') && (
-                  <label className="settings-field">
-                    <span className="settings-label">Native Icom CI-V (early access)</span>
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-checked={form.icomNativeCat ?? false}
-                      className={`toggle${form.icomNativeCat ? ' on' : ''}`}
-                      onClick={() => updateBool('icomNativeCat', !form.icomNativeCat)}
-                    >
-                      <span className="toggle-knob" />
-                    </button>
-                    <span className="settings-hint">
-                      Nexus drives this Icom's CI-V directly instead of launching rigctld —
-                      unlocking the rig's real spectrum scope in the waterfall ("CI-V RF") and
-                      instant dial tracking. Set the rig's CI-V USB baud rate to 115200 (Menu ▸
-                      Connectors) and match Baud above. Save to apply; turn off any time to
-                      return to the classic Hamlib path.
-                    </span>
-                  </label>
-                )}
-
               <div className="settings-field">
                 <span className="settings-label">Antenna rotator</span>
                 {(() => {
@@ -2097,6 +2037,113 @@ export function SettingsPanel({
                   on any CAT rig). None = stock WSJT-X default, transmits at the raw audio offset.
                 </span>
               </div>
+            </div>
+            <SettingsGroup title="Phone / FM" defaultOpen={false}>
+              <label className="settings-field">
+                <span className="settings-label">Phone mode</span>
+                <select
+                  className="settings-input"
+                  value={form.phoneMode}
+                  onChange={(e) => update('phoneMode', e.target.value)}
+                >
+                  <option value="ssb">SSB (USB/LSB by band)</option>
+                  <option value="fm">FM (VHF/UHF + repeaters)</option>
+                </select>
+                <span className="settings-hint">FM drives the rig to FM + the shift/tone below.</span>
+              </label>
+
+              {form.phoneMode === 'fm' && (
+                <>
+                  <label className="settings-field">
+                    <span className="settings-label">Repeater shift</span>
+                    <select
+                      className="settings-input"
+                      value={form.rptrShift}
+                      onChange={(e) => update('rptrShift', e.target.value)}
+                    >
+                      <option value="simplex">Simplex (no shift)</option>
+                      <option value="plus">Plus (+)</option>
+                      <option value="minus">Minus (−)</option>
+                    </select>
+                    <span className="settings-hint">Offset is the band standard (2 m 600 k, 70 cm 5 M…).</span>
+                  </label>
+
+                  <label className="settings-field">
+                    <span className="settings-label">CTCSS (PL) tone</span>
+                    <select
+                      className="settings-input"
+                      value={String(form.ctcssToneHz)}
+                      onChange={(e) =>
+                        setForm((p) => (p ? { ...p, ctcssToneHz: Number(e.target.value) } : p))
+                      }
+                    >
+                      <option value="0">Off</option>
+                      {CTCSS_TONES.map((t) => (
+                        <option key={t} value={String(t)}>
+                          {t.toFixed(1)} Hz
+                        </option>
+                      ))}
+                    </select>
+                    <span className="settings-hint">Repeater access tone (PL).</span>
+                  </label>
+                </>
+              )}
+            </SettingsGroup>
+            <SettingsGroup title="Advanced" defaultOpen={false}>
+              <label className="settings-field">
+                <span className="settings-label">rigctld TCP Port</span>
+                <input
+                  className="settings-input"
+                  type="number"
+                  inputMode="numeric"
+                  value={String(form.rigctldPort)}
+                  placeholder="4532"
+                  onChange={(e) => update('rigctldPort', e.target.value)}
+                  autoComplete="off"
+                />
+                <span className="settings-hint">Port Nexus launches rigctld on.</span>
+              </label>
+
+              {form.rigConn !== 'network' &&
+                /IC-?\s?(7300|7610|9700|705|905)\b/i.test(form.rigModelName ?? '') && (
+                  <label className="settings-field">
+                    <span className="settings-label">Native Icom CI-V (early access)</span>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={form.icomNativeCat ?? false}
+                      className={`toggle${form.icomNativeCat ? ' on' : ''}`}
+                      onClick={() => updateBool('icomNativeCat', !form.icomNativeCat)}
+                    >
+                      <span className="toggle-knob" />
+                    </button>
+                    <span className="settings-hint">
+                      Nexus drives this Icom's CI-V directly instead of launching rigctld —
+                      unlocking the rig's real spectrum scope in the waterfall ("CI-V RF") and
+                      instant dial tracking. Set the rig's CI-V USB baud rate to 115200 (Menu ▸
+                      Connectors) and match Baud above. Save to apply; turn off any time to
+                      return to the classic Hamlib path.
+                    </span>
+                  </label>
+                )}
+
+              {(form.rigModel === 2036 || form.rigModel === 23005) && (
+                <label className="settings-field">
+                  <span className="settings-label">Flex radio IP (native panadapter)</span>
+                  <input
+                    className="settings-input"
+                    type="text"
+                    value={form.flexRadioIp}
+                    placeholder="e.g. 192.168.1.50"
+                    onChange={(e) => update('flexRadioIp', e.target.value)}
+                    autoComplete="off"
+                  />
+                  <span className="settings-hint">
+                    Your FlexRadio's LAN IP (SmartSDR API, port 4992) — turns on the native RF
+                    panadapter. This is the <em>radio's</em> address, not the SmartSDR-CAT port above.
+                  </span>
+                </label>
+              )}
 
               <div className="settings-field">
                 <label className="settings-toggle">
@@ -2118,6 +2165,21 @@ export function SettingsPanel({
               </div>
 
               {form.catBroker && (
+                <label className="settings-field">
+                  <span className="settings-label">CAT broker port</span>
+                  <input
+                    className="settings-input"
+                    type="number"
+                    inputMode="numeric"
+                    value={String(form.catBrokerPort)}
+                    placeholder="4532"
+                    onChange={(e) => update('catBrokerPort', e.target.value)}
+                    autoComplete="off"
+                  />
+                  <span className="settings-hint">Other apps connect here (Hamlib NET rigctl default 4532).</span>
+                </label>
+              )}
+              {form.catBroker && (
                 <div className="settings-field">
                   <span className="settings-label">Broker PTT</span>
                   <button
@@ -2135,39 +2197,7 @@ export function SettingsPanel({
                   </span>
                 </div>
               )}
-              {form.catBroker && (
-                <label className="settings-field">
-                  <span className="settings-label">CAT broker port</span>
-                  <input
-                    className="settings-input"
-                    type="number"
-                    inputMode="numeric"
-                    value={String(form.catBrokerPort)}
-                    placeholder="4532"
-                    onChange={(e) => update('catBrokerPort', e.target.value)}
-                    autoComplete="off"
-                  />
-                  <span className="settings-hint">Other apps connect here (Hamlib NET rigctl default 4532).</span>
-                </label>
-              )}
-              {(form.rigModel === 2036 || form.rigModel === 23005) && (
-                <label className="settings-field">
-                  <span className="settings-label">Flex radio IP (native panadapter)</span>
-                  <input
-                    className="settings-input"
-                    type="text"
-                    value={form.flexRadioIp}
-                    placeholder="e.g. 192.168.1.50"
-                    onChange={(e) => update('flexRadioIp', e.target.value)}
-                    autoComplete="off"
-                  />
-                  <span className="settings-hint">
-                    Your FlexRadio's LAN IP (SmartSDR API, port 4992) — turns on the native RF
-                    panadapter. This is the <em>radio's</em> address, not the SmartSDR-CAT port above.
-                  </span>
-                </label>
-              )}
-            </div>
+            </SettingsGroup>
             <div className="settings-cat-test">
               <button
                 type="button"
@@ -3256,300 +3286,314 @@ export function SettingsPanel({
           {/* ---- Network integrations ---- */}
           {tab === 'connections' && (
           <fieldset className="settings-section">
-            <legend>Connections</legend>
-            <div className="settings-grid">
-              <div className="settings-field">
-                <label className="settings-toggle">
-                  <span className="settings-label">WSJT-X UDP API</span>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={form.wsjtxUdp}
-                    className={`toggle${form.wsjtxUdp ? ' on' : ''}`}
-                    onClick={() => updateBool('wsjtxUdp', !form.wsjtxUdp)}
-                  >
-                    <span className="toggle-knob" />
-                  </button>
-                </label>
-                <span className="settings-hint">for JTAlert / GridTracker / loggers</span>
-              </div>
+            <legend>Integrations &amp; Feeds</legend>
+            <div className="settings-featgroup">
+              <span className="settings-featgroup-title">Local APIs &amp; Loggers</span>
+              <div className="settings-grid">
+                <div className="settings-field">
+                  <label className="settings-toggle">
+                    <span className="settings-label">WSJT-X UDP API</span>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={form.wsjtxUdp}
+                      className={`toggle${form.wsjtxUdp ? ' on' : ''}`}
+                      onClick={() => updateBool('wsjtxUdp', !form.wsjtxUdp)}
+                    >
+                      <span className="toggle-knob" />
+                    </button>
+                  </label>
+                  <span className="settings-hint">for JTAlert / GridTracker / loggers</span>
+                </div>
 
-              <label className="settings-field">
-                <span className="settings-label">UDP Address</span>
-                <input
-                  className="settings-input"
-                  type="text"
-                  value={form.wsjtxUdpAddr}
-                  placeholder="127.0.0.1:2237"
-                  onChange={(e) => update('wsjtxUdpAddr', e.target.value)}
-                  disabled={!form.wsjtxUdp}
-                  autoComplete="off"
-                  spellCheck={false}
-                />
-                <span className="settings-hint">host:port for the UDP feed</span>
-              </label>
-
-              <div className="settings-field">
-                <label className="settings-toggle">
-                  <span className="settings-label">Write ALL.TXT decode log</span>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={form.writeAllTxt}
-                    className={`toggle${form.writeAllTxt ? ' on' : ''}`}
-                    onClick={() => updateBool('writeAllTxt', !form.writeAllTxt)}
-                  >
-                    <span className="toggle-knob" />
-                  </button>
-                </label>
-                <span className="settings-hint">WSJT-X-format ALL.TXT for GridTracker / loggers to tail</span>
-              </div>
-
-              <div className="settings-field">
-                <label className="settings-toggle">
-                  <span className="settings-label">Save a WAV per logged QSO</span>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={form.saveQsoWav}
-                    className={`toggle${form.saveQsoWav ? ' on' : ''}`}
-                    onClick={() => updateBool('saveQsoWav', !form.saveQsoWav)}
-                  >
-                    <span className="toggle-knob" />
-                  </button>
-                </label>
-                <span className="settings-hint">Auto-records the last ~60 s of RX audio to the recordings folder on log</span>
-              </div>
-
-              <div className="settings-field">
-                <label className="settings-toggle">
-                  <span className="settings-label">Ham Radio Deluxe logging</span>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={form.hrdLogging}
-                    className={`toggle${form.hrdLogging ? ' on' : ''}`}
-                    onClick={() => updateBool('hrdLogging', !form.hrdLogging)}
-                  >
-                    <span className="toggle-knob" />
-                  </button>
-                </label>
-                <span className="settings-hint">
-                  push each QSO to HRD Logbook over its QSO-Forwarding UDP port (HRD must be running;
-                  don't also run JTAlert/QSO Relay into HRD or you'll double-log)
-                </span>
-              </div>
-
-              <label className="settings-field">
-                <span className="settings-label">HRD UDP Address</span>
-                <input
-                  className="settings-input"
-                  type="text"
-                  value={form.hrdUdpAddr}
-                  placeholder="127.0.0.1:2333"
-                  onChange={(e) => update('hrdUdpAddr', e.target.value)}
-                  disabled={!form.hrdLogging}
-                  autoComplete="off"
-                  spellCheck={false}
-                />
-                <span className="settings-hint">HRD QSO-Forwarding host:port (default 127.0.0.1:2333)</span>
-              </label>
-
-              <div className="settings-field">
-                <label className="settings-toggle">
-                  <span className="settings-label">PSK Reporter</span>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={form.pskreporter}
-                    className={`toggle${form.pskreporter ? ' on' : ''}`}
-                    onClick={() => updateBool('pskreporter', !form.pskreporter)}
-                  >
-                    <span className="toggle-knob" />
-                  </button>
-                </label>
-                <span className="settings-hint">upload spots to the global map</span>
-              </div>
-
-              <div className="settings-field">
-                <label className="settings-toggle">
-                  <span className="settings-label">DX Cluster / RBN spots</span>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={!!form.clusterEnabled}
-                    className={`toggle${form.clusterEnabled ? ' on' : ''}`}
-                    onClick={() => updateBool('clusterEnabled', !form.clusterEnabled)}
-                  >
-                    <span className="toggle-knob" />
-                  </button>
-                </label>
-                <span className="settings-hint">
-                  Surface "new ones" from the Reverse Beacon Network on the Needed board + Connect.
-                  Takes effect on restart.
-                </span>
-              </div>
-
-              <div className="settings-field">
-                <span className="settings-label">Phone/SSB cluster nodes</span>
-                {(form.clusterHosts ?? []).length === 0 ? (
-                  <span className="settings-hint cluster-node-empty">
-                    No nodes — add one below to get SSB/phone needs (RBN only carries CW + digital).
-                  </span>
-                ) : (
-                  (form.clusterHosts ?? []).map((host, i) => (
-                    <div key={i} className="cluster-node-row">
-                      <input
-                        className="settings-input"
-                        value={host}
-                        onChange={(e) =>
-                          mutateClusterHosts((hs) => hs.map((h, j) => (j === i ? e.target.value : h)))
-                        }
-                        placeholder="ve7cc.net:23"
-                        spellCheck={false}
-                      />
-                      <button
-                        type="button"
-                        className="cluster-node-remove"
-                        title="Remove this cluster node"
-                        aria-label={`Remove ${host || 'node'}`}
-                        onClick={() => mutateClusterHosts((hs) => hs.filter((_, j) => j !== i))}
-                      >
-                        ✕
-                      </button>
-                    </div>
-                  ))
-                )}
-                <div className="cluster-node-add">
-                  <select
+                <label className="settings-field">
+                  <span className="settings-label">UDP Address</span>
+                  <input
                     className="settings-input"
-                    value=""
-                    onChange={(e) => {
-                      const host = e.target.value
-                      if (!host) return
-                      mutateClusterHosts((hs) =>
-                        hs.some((h) => h.trim().toLowerCase() === host.toLowerCase())
-                          ? hs
-                          : [...hs, host],
-                      )
-                    }}
-                  >
-                    <option value="">+ Add a known node…</option>
-                    {CLUSTER_PRESETS.map((p) => (
-                      <option key={p.host} value={p.host}>
-                        {p.label}
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    type="button"
-                    className="cluster-node-add-blank"
-                    title="Add a custom node row"
-                    onClick={() => mutateClusterHosts((hs) => [...hs, ''])}
-                  >
-                    + Custom
-                  </button>
-                </div>
-                <span className="settings-hint">
-                  We connect to ALL listed nodes and union their human SSB/phone spots — more
-                  nodes = wider phone coverage (RBN CW + digital connect automatically; RBN
-                  endpoints are ignored here). An added node connects on the next Save; removing
-                  one takes effect on restart.
-                </span>
-              </div>
-
-              <label className="settings-field">
-                <span className="settings-label">Companion UDP address</span>
-                <input
-                  className="settings-input"
-                  value={form.companionAddr ?? ''}
-                  onChange={(e) => update('companionAddr', e.target.value)}
-                  placeholder="127.0.0.1:2237"
-                  spellCheck={false}
-                />
-                <span className="settings-hint">
-                  Where Nexus listens for WSJT-X/JTDX in Companion source mode.
-                </span>
-              </label>
-
-              <div className="settings-field">
-                <label className="settings-toggle">
-                  <span className="settings-label">Near-region opening watch</span>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={form.openingRegional}
-                    className={`toggle${form.openingRegional ? ' on' : ''}`}
-                    onClick={() => updateBool('openingRegional', !form.openingRegional)}
-                  >
-                    <span className="toggle-knob" />
-                  </button>
+                    type="text"
+                    value={form.wsjtxUdpAddr}
+                    placeholder="127.0.0.1:2237"
+                    onChange={(e) => update('wsjtxUdpAddr', e.target.value)}
+                    disabled={!form.wsjtxUdp}
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                  <span className="settings-hint">host:port for the UDP feed</span>
                 </label>
-                <span className="settings-hint">
-                  Watch VHF/10 m activity near your QTH (not just your own contacts) so openings flag "open
-                  around you" before you've worked anyone. Takes effect on restart.
-                </span>
-              </div>
 
-              <label className="settings-field">
-                <span className="settings-label">Prediction engine</span>
-                <select
-                  value={form.propEngine || 'heuristic'}
-                  onChange={(e) => update('propEngine', e.target.value)}
-                >
-                  <option value="heuristic">Modelled (fast heuristic)</option>
-                  <option value="p533">ITU-R P.533 (full physics)</option>
-                </select>
-                <span className="settings-hint">
-                  Drives the per-station path outlook + 24h band×hour grid. P.533 is the real
-                  circuit-reliability method (validated against the ITU reference; ~0.1 s per
-                  prediction, uses your station power). Live spots always win over any model.
-                </span>
-              </label>
-
-              <label className="settings-field">
-                <span className="settings-label">Save received audio (.wav per period)</span>
-                <select
-                  value={form.saveWav || 'none'}
-                  onChange={(e) => update('saveWav', e.target.value)}
-                >
-                  <option value="none">None (default)</option>
-                  <option value="decodes">Save periods with decodes</option>
-                  <option value="all">Save all periods</option>
-                </select>
-                <span className="settings-hint">
-                  WAVs land in recordings/periods (12 kHz mono, ~360 KB each). "All" writes
-                  ~2 GB/day of continuous monitoring — use for decoder debugging, not always-on.
-                </span>
-              </label>
-
-              <div className="settings-field">
-                <span className="settings-label">Antenna gain (dBi) — TX / RX</span>
-                <div className="settings-inline-pair">
-                  {(['antTxGainDbi', 'antRxGainDbi'] as const).map((k) => (
-                    <input
-                      key={k}
-                      className="settings-input"
-                      type="number"
-                      step="0.5"
-                      min="-10"
-                      max="30"
-                      inputMode="decimal"
-                      aria-label={k === 'antTxGainDbi' ? 'TX antenna gain (dBi)' : 'RX antenna gain (dBi)'}
-                      value={form[k] ?? 0}
-                      onChange={(e) => {
-                        const num = Number(e.target.value)
-                        if (!Number.isNaN(num)) updateNum(k, num)
-                      }}
-                    />
-                  ))}
+                <div className="settings-field">
+                  <label className="settings-toggle">
+                    <span className="settings-label">Ham Radio Deluxe logging</span>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={form.hrdLogging}
+                      className={`toggle${form.hrdLogging ? ' on' : ''}`}
+                      onClick={() => updateBool('hrdLogging', !form.hrdLogging)}
+                    >
+                      <span className="toggle-knob" />
+                    </button>
+                  </label>
+                  <span className="settings-hint">
+                    push each QSO to HRD Logbook over its QSO-Forwarding UDP port (HRD must be running;
+                    don't also run JTAlert/QSO Relay into HRD or you'll double-log)
+                  </span>
                 </div>
-                <span className="settings-hint">
-                  Used by the P.533 link budget only. 0 = a simple wire/vertical (isotropic);
-                  a 3-element yagi ≈ 6–8. Honest v1: a plain dB shift — no pattern or
-                  takeoff-angle modelling, and the fast heuristic ignores it.
-                </span>
+
+                <label className="settings-field">
+                  <span className="settings-label">HRD UDP Address</span>
+                  <input
+                    className="settings-input"
+                    type="text"
+                    value={form.hrdUdpAddr}
+                    placeholder="127.0.0.1:2333"
+                    onChange={(e) => update('hrdUdpAddr', e.target.value)}
+                    disabled={!form.hrdLogging}
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                  <span className="settings-hint">HRD QSO-Forwarding host:port (default 127.0.0.1:2333)</span>
+                </label>
+
+                <label className="settings-field">
+                  <span className="settings-label">Companion UDP address</span>
+                  <input
+                    className="settings-input"
+                    value={form.companionAddr ?? ''}
+                    onChange={(e) => update('companionAddr', e.target.value)}
+                    placeholder="127.0.0.1:2237"
+                    spellCheck={false}
+                  />
+                  <span className="settings-hint">
+                    Where Nexus listens for WSJT-X/JTDX in Companion source mode.
+                  </span>
+                </label>
+
+                <div className="settings-field">
+                  <label className="settings-toggle">
+                    <span className="settings-label">Write ALL.TXT decode log</span>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={form.writeAllTxt}
+                      className={`toggle${form.writeAllTxt ? ' on' : ''}`}
+                      onClick={() => updateBool('writeAllTxt', !form.writeAllTxt)}
+                    >
+                      <span className="toggle-knob" />
+                    </button>
+                  </label>
+                  <span className="settings-hint">WSJT-X-format ALL.TXT for GridTracker / loggers to tail</span>
+                </div>
+
+                <div className="settings-field">
+                  <label className="settings-toggle">
+                    <span className="settings-label">Save a WAV per logged QSO</span>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={form.saveQsoWav}
+                      className={`toggle${form.saveQsoWav ? ' on' : ''}`}
+                      onClick={() => updateBool('saveQsoWav', !form.saveQsoWav)}
+                    >
+                      <span className="toggle-knob" />
+                    </button>
+                  </label>
+                  <span className="settings-hint">Auto-records the last ~60 s of RX audio to the recordings folder on log</span>
+                </div>
+
+                <label className="settings-field">
+                  <span className="settings-label">Save received audio (.wav per period)</span>
+                  <select
+                    value={form.saveWav || 'none'}
+                    onChange={(e) => update('saveWav', e.target.value)}
+                  >
+                    <option value="none">None (default)</option>
+                    <option value="decodes">Save periods with decodes</option>
+                    <option value="all">Save all periods</option>
+                  </select>
+                  <span className="settings-hint">
+                    WAVs land in recordings/periods (12 kHz mono, ~360 KB each). "All" writes
+                    ~2 GB/day of continuous monitoring — use for decoder debugging, not always-on.
+                  </span>
+                </label>
               </div>
+            </div>
+
+            <div className="settings-featgroup">
+              <span className="settings-featgroup-title">Spot Sources</span>
+              <div className="settings-grid">
+                <div className="settings-field">
+                  <label className="settings-toggle">
+                    <span className="settings-label">PSK Reporter</span>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={form.pskreporter}
+                      className={`toggle${form.pskreporter ? ' on' : ''}`}
+                      onClick={() => updateBool('pskreporter', !form.pskreporter)}
+                    >
+                      <span className="toggle-knob" />
+                    </button>
+                  </label>
+                  <span className="settings-hint">upload spots to the global map</span>
+                </div>
+
+                <div className="settings-field">
+                  <label className="settings-toggle">
+                    <span className="settings-label">DX Cluster / RBN spots</span>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={!!form.clusterEnabled}
+                      className={`toggle${form.clusterEnabled ? ' on' : ''}`}
+                      onClick={() => updateBool('clusterEnabled', !form.clusterEnabled)}
+                    >
+                      <span className="toggle-knob" />
+                    </button>
+                  </label>
+                  <span className="settings-hint">
+                    Surface "new ones" from the Reverse Beacon Network on the Needed board + Connect.
+                    Takes effect on restart.
+                  </span>
+                </div>
+
+                <div className="settings-field">
+                  <span className="settings-label">Phone/SSB cluster nodes</span>
+                  {(form.clusterHosts ?? []).length === 0 ? (
+                    <span className="settings-hint cluster-node-empty">
+                      No nodes — add one below to get SSB/phone needs (RBN only carries CW + digital).
+                    </span>
+                  ) : (
+                    (form.clusterHosts ?? []).map((host, i) => (
+                      <div key={i} className="cluster-node-row">
+                        <input
+                          className="settings-input"
+                          value={host}
+                          onChange={(e) =>
+                            mutateClusterHosts((hs) => hs.map((h, j) => (j === i ? e.target.value : h)))
+                          }
+                          placeholder="ve7cc.net:23"
+                          spellCheck={false}
+                        />
+                        <button
+                          type="button"
+                          className="cluster-node-remove"
+                          title="Remove this cluster node"
+                          aria-label={`Remove ${host || 'node'}`}
+                          onClick={() => mutateClusterHosts((hs) => hs.filter((_, j) => j !== i))}
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ))
+                  )}
+                  <div className="cluster-node-add">
+                    <select
+                      className="settings-input"
+                      value=""
+                      onChange={(e) => {
+                        const host = e.target.value
+                        if (!host) return
+                        mutateClusterHosts((hs) =>
+                          hs.some((h) => h.trim().toLowerCase() === host.toLowerCase())
+                            ? hs
+                            : [...hs, host],
+                        )
+                      }}
+                    >
+                      <option value="">+ Add a known node…</option>
+                      {CLUSTER_PRESETS.map((p) => (
+                        <option key={p.host} value={p.host}>
+                          {p.label}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      className="cluster-node-add-blank"
+                      title="Add a custom node row"
+                      onClick={() => mutateClusterHosts((hs) => [...hs, ''])}
+                    >
+                      + Custom
+                    </button>
+                  </div>
+                  <span className="settings-hint">
+                    We connect to ALL listed nodes and union their human SSB/phone spots — more
+                    nodes = wider phone coverage (RBN CW + digital connect automatically; RBN
+                    endpoints are ignored here). An added node connects on the next Save; removing
+                    one takes effect on restart.
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div className="settings-featgroup">
+              <span className="settings-featgroup-title">Propagation</span>
+              <div className="settings-grid">
+                <div className="settings-field">
+                  <label className="settings-toggle">
+                    <span className="settings-label">Near-region opening watch</span>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={form.openingRegional}
+                      className={`toggle${form.openingRegional ? ' on' : ''}`}
+                      onClick={() => updateBool('openingRegional', !form.openingRegional)}
+                    >
+                      <span className="toggle-knob" />
+                    </button>
+                  </label>
+                  <span className="settings-hint">
+                    Watch VHF/10 m activity near your QTH (not just your own contacts) so openings flag "open
+                    around you" before you've worked anyone. Takes effect on restart.
+                  </span>
+                </div>
+
+                <label className="settings-field">
+                  <span className="settings-label">Prediction engine</span>
+                  <select
+                    value={form.propEngine || 'heuristic'}
+                    onChange={(e) => update('propEngine', e.target.value)}
+                  >
+                    <option value="heuristic">Modelled (fast heuristic)</option>
+                    <option value="p533">ITU-R P.533 (full physics)</option>
+                  </select>
+                  <span className="settings-hint">
+                    Drives the per-station path outlook + 24h band×hour grid. P.533 is the real
+                    circuit-reliability method (validated against the ITU reference; ~0.1 s per
+                    prediction, uses your station power). Live spots always win over any model.
+                  </span>
+                </label>
+              </div>
+              <SettingsGroup title="Antenna gain (advanced)" defaultOpen={false}>
+                <div className="settings-field">
+                  <span className="settings-label">Antenna gain (dBi) — TX / RX</span>
+                  <div className="settings-inline-pair">
+                    {(['antTxGainDbi', 'antRxGainDbi'] as const).map((k) => (
+                      <input
+                        key={k}
+                        className="settings-input"
+                        type="number"
+                        step="0.5"
+                        min="-10"
+                        max="30"
+                        inputMode="decimal"
+                        aria-label={k === 'antTxGainDbi' ? 'TX antenna gain (dBi)' : 'RX antenna gain (dBi)'}
+                        value={form[k] ?? 0}
+                        onChange={(e) => {
+                          const num = Number(e.target.value)
+                          if (!Number.isNaN(num)) updateNum(k, num)
+                        }}
+                      />
+                    ))}
+                  </div>
+                  <span className="settings-hint">
+                    Used by the P.533 link budget only. 0 = a simple wire/vertical (isotropic);
+                    a 3-element yagi ≈ 6–8. Honest v1: a plain dB shift — no pattern or
+                    takeoff-angle modelling, and the fast heuristic ignores it.
+                  </span>
+                </div>
+              </SettingsGroup>
             </div>
           </fieldset>
           )}
@@ -4244,16 +4288,37 @@ export function SettingsPanel({
 
                 <label className="settings-field">
                   <span className="settings-label">API key</span>
-                  <input
-                    className="settings-input"
-                    type="password"
-                    value={form.cloudlogKey ?? ''}
-                    placeholder="your instance API key"
-                    onChange={(e) => update('cloudlogKey', e.target.value)}
-                    autoComplete="off"
-                    spellCheck={false}
-                  />
-                  <span className="settings-hint">Cloudlog ▸ Account ▸ API Keys — a key with read/write.</span>
+                  <div className="settings-input-row">
+                    <input
+                      className="settings-input"
+                      type="password"
+                      value={cloudlogKey}
+                      placeholder="your instance API key"
+                      onChange={(e) => setCloudlogKeyField(e.target.value)}
+                      autoComplete="off"
+                      spellCheck={false}
+                    />
+                    <button
+                      type="button"
+                      className="settings-refresh"
+                      onClick={onSaveCloudlogKey}
+                      disabled={!cloudlogKey}
+                    >
+                      Set
+                    </button>
+                    <button
+                      type="button"
+                      className="settings-refresh"
+                      onClick={onForgetCloudlogKey}
+                      title="Remove the stored Cloudlog key from the system keychain"
+                    >
+                      Forget
+                    </button>
+                  </div>
+                  <span className="settings-hint">
+                    Cloudlog ▸ Account ▸ API Keys — a key with read/write. Stored in the OS keychain,
+                    never on disk.
+                  </span>
                 </label>
 
                 <div className="settings-field">

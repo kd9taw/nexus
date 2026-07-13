@@ -565,6 +565,16 @@ export async function hrdlogPushQso(
   return invoke<import('./types').HrdLogPushResult>('hrdlog_push_qso', { record })
 }
 
+/** Store the Cloudlog/Wavelog instance API key in the OS keychain (write-only; empty clears). */
+export async function setCloudlogKey(key: string): Promise<void> {
+  await invoke<void>('set_cloudlog_key', { key })
+}
+
+/** Remove the stored Cloudlog/Wavelog API key from the OS keychain (idempotent). */
+export async function clearCloudlogKey(): Promise<void> {
+  await invoke<void>('clear_cloudlog_key')
+}
+
 /** Need-aware spotting: the stations heard now, ranked by award value. */
 export async function getNeedAlerts(): Promise<NeedAlert[]> {
   return invoke<NeedAlert[]>('get_need_alerts')

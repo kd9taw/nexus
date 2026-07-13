@@ -77,6 +77,35 @@ struct OwnTx {
 /// Callsign → "actively uploads to LoTW" (clippy type_complexity extraction).
 type LotwResolver = Box<dyn Fn(&str) -> bool + Send + Sync>;
 
+/// Connector legs a queued upload still owes, as a bitmask. A transient-failure
+/// retry re-attempts ONLY the legs that failed (never a leg that already
+/// succeeded), so a re-queue can't double-push to a connector that doesn't dedupe.
+pub mod upload_legs {
+    pub const QRZ: u8 = 1 << 0;
+    pub const CLUBLOG: u8 = 1 << 1;
+    pub const EQSL: u8 = 1 << 2;
+    pub const HRDLOG: u8 = 1 << 3;
+    pub const N3FJP: u8 = 1 << 4;
+    pub const CLOUDLOG: u8 = 1 << 5;
+    pub const ALL: u8 = QRZ | CLUBLOG | EQSL | HRDLOG | N3FJP | CLOUDLOG;
+}
+
+/// One QSO awaiting connector auto-upload, plus which legs it still owes and how
+/// many times it has been retried.
+#[derive(Clone)]
+pub struct PendingUpload {
+    pub rec: tempo_core::logbook::QsoRecord,
+    /// Owed connector legs (see [`upload_legs`]); `ALL` on the first attempt.
+    pub legs: u8,
+    /// Retry count — a record is dropped once it hits [`MAX_UPLOAD_RETRIES`] so a
+    /// perpetually-failing service can't pin it in the queue forever.
+    pub attempts: u8,
+}
+
+/// Give up on a queued upload after this many transient-failure retries (~1 per
+/// worker tick / 2 s), so a permanently-down service eventually stops retrying.
+pub const MAX_UPLOAD_RETRIES: u8 = 20;
+
 pub struct Engine {
     pub app: AppState,
     settings: Settings,
@@ -121,7 +150,7 @@ pub struct Engine {
     /// engine auto-log included — so "logged locally but never uploaded" can't
     /// happen for any log path. Drained by [`Engine::take_pending_uploads`];
     /// bounded so a worker outage can't grow it without limit.
-    pending_uploads: VecDeque<tempo_core::logbook::QsoRecord>,
+    pending_uploads: VecDeque<PendingUpload>,
     /// Last connector-upload outcome (operator-facing toast text) + whether it
     /// succeeded; `upload_tick` bumps on every note so the UI can toast changes.
     upload_note: Option<String>,
@@ -2267,15 +2296,37 @@ impl Engine {
         if self.pending_uploads.len() >= 256 {
             self.pending_uploads.pop_front();
         }
-        self.pending_uploads.push_back(rec.clone());
+        self.pending_uploads.push_back(PendingUpload {
+            rec: rec.clone(),
+            legs: upload_legs::ALL,
+            attempts: 0,
+        });
         self.logbook.add(rec);
         self.refresh_worked_index();
     }
 
     /// Drain the freshly-logged QSOs awaiting connector auto-upload (FIFO).
     /// Called by the shell's upload worker; empty when nothing was logged.
-    pub fn take_pending_uploads(&mut self) -> Vec<tempo_core::logbook::QsoRecord> {
+    pub fn take_pending_uploads(&mut self) -> Vec<PendingUpload> {
         self.pending_uploads.drain(..).collect()
+    }
+
+    /// Re-queue an upload for ONLY the legs that transiently failed (network down,
+    /// service busy), so the worker retries them without re-pushing the legs that
+    /// already succeeded — a permanently-rejected or successful leg is never in
+    /// `legs`. Dropped once past [`MAX_UPLOAD_RETRIES`] or with nothing owed.
+    pub fn requeue_upload(&mut self, rec: tempo_core::logbook::QsoRecord, legs: u8, attempts: u8) {
+        if legs == 0 || attempts >= MAX_UPLOAD_RETRIES {
+            return;
+        }
+        if self.pending_uploads.len() >= 256 {
+            self.pending_uploads.pop_front();
+        }
+        self.pending_uploads.push_back(PendingUpload {
+            rec,
+            legs,
+            attempts,
+        });
     }
 
     /// Record a connector-upload outcome for the operator (toast text + level).
@@ -7536,7 +7587,12 @@ mod tests {
         e.ingest_decodes_for_test(&[dec_snr("K2DEF W9XYZ RR73", -7)], 3);
         let pending = e.take_pending_uploads();
         assert_eq!(pending.len(), 1, "auto-logged QSO queues for upload");
-        assert_eq!(pending[0].call, "W9XYZ");
+        assert_eq!(pending[0].rec.call, "W9XYZ");
+        assert_eq!(
+            pending[0].legs,
+            upload_legs::ALL,
+            "first attempt owes every leg"
+        );
 
         // Drain is a real drain.
         assert!(e.take_pending_uploads().is_empty(), "queue empties on take");
@@ -7570,7 +7626,7 @@ mod tests {
         });
         let pending = e.take_pending_uploads();
         assert_eq!(pending.len(), 1, "manual log_qso queues for upload");
-        assert_eq!(pending[0].call, "N0CALL");
+        assert_eq!(pending[0].rec.call, "N0CALL");
 
         // The upload note bumps the tick for the UI toast.
         let t0 = e.snapshot().upload_tick;
@@ -7579,6 +7635,30 @@ mod tests {
         assert_eq!(snap.upload_tick, t0 + 1, "note bumps the tick");
         assert_eq!(snap.upload_note.as_deref(), Some("Uploaded N0CALL to QRZ"));
         assert!(snap.upload_ok);
+    }
+
+    #[test]
+    fn requeue_only_re_enqueues_owed_legs_and_caps_retries() {
+        let mut e = Engine::new("K2DEF", "FN31", 0);
+        let rec = qrec("W9XYZ", "20m");
+        // A transient failure re-queues ONLY the failed leg — never a leg that
+        // already succeeded, so the retry can't double-push a non-deduping service.
+        e.requeue_upload(rec.clone(), upload_legs::EQSL, 1);
+        let p = e.take_pending_uploads();
+        assert_eq!(p.len(), 1);
+        assert_eq!(
+            p[0].legs,
+            upload_legs::EQSL,
+            "only the failed leg is owed on retry"
+        );
+        assert_eq!(p[0].attempts, 1);
+        // Nothing owed, or retries exhausted → dropped (no infinite retry loop).
+        e.requeue_upload(rec.clone(), 0, 1);
+        e.requeue_upload(rec.clone(), upload_legs::QRZ, MAX_UPLOAD_RETRIES);
+        assert!(
+            e.take_pending_uploads().is_empty(),
+            "nothing-owed / retry-exhausted uploads are dropped"
+        );
     }
 
     /// A concise `QsoRecord` builder for the logbook tests (the struct has no

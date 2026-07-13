@@ -7759,6 +7759,39 @@ select optgroup {
   color: var(--text-faint);
   margin-bottom: var(--space-2);
 }
+/* Collapsible sub-section (SettingsGroup): a featgroup whose title is a toggle
+   button. Reuses .settings-featgroup-title for the heading look; only the
+   button reset + chevron affordance is new. The chevron transition uses
+   --transition, which the global reduced-motion rule already collapses to 0ms. */
+.settings-group {
+  margin-top: 14px;
+}
+.settings-group-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.settings-group-toggle:hover {
+  color: var(--text-dim);
+}
+.settings-group-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.settings-group-chevron {
+  flex: none;
+  transition: transform var(--transition);
+}
+.settings-group-toggle[aria-expanded='true'] .settings-group-chevron {
+  transform: rotate(90deg);
+}
 .settings-field {
   display: flex;
   flex-direction: column;
