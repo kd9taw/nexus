@@ -5,6 +5,19 @@ All notable changes to Nexus (formerly Tempo) are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **CAT errors now name the actual fault instead of blaming the mode.** A failed mode change used to
+  always read *"rig rejected PKTUSB"*, even when the real problem was the CAT connection. It now tells
+  the three faults apart: *"can't reach the radio's CAT link"* when nothing is listening (rigctld or
+  SmartSDR not running — the Windows `os error 10061` / *"target machine actively refused it"* case);
+  *"no reply from the rig over CAT"* when the link is up but the radio never answers (rig off/asleep,
+  wrong CAT port or model, serial baud mismatch, or SmartSDR not actually connected to the radio — the
+  *"rig reply incomplete"* case); and *"rig rejected …"* only for a true rejection, where the radio
+  answered but has no such mode (e.g. no DATA/PKT submode).
+
 ## [0.8.2] — 2026-07-13 — Settings declutter + upload/credential hardening
 
 ### Improved

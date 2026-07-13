@@ -1450,7 +1450,7 @@ impl RadioLoop {
                             // `last_mode` is unchanged, so the steady-state path below re-tries
                             // on later loops and re-gives-up past the budget — a non-supporting
                             // rig is still never spammed forever.
-                            Err(e) => retune_note = Some(format!("rig rejected {md}: {e}")),
+                            Err(e) => retune_note = Some(mode_command_failed(&md, &e)),
                         }
                     }
                 } else {
@@ -1478,7 +1478,8 @@ impl RadioLoop {
                                 // and once any mode sticks the give-up is cleared.
                                 self.mode_fail_count += 1;
                                 retune_note = Some(format!(
-                                    "rig rejected {md} ({}/{MODE_SET_MAX_TRIES}): {e}",
+                                    "{} ({}/{MODE_SET_MAX_TRIES})",
+                                    mode_command_failed(&md, &e),
                                     self.mode_fail_count
                                 ));
                                 if self.mode_fail_count >= MODE_SET_MAX_TRIES {
@@ -3207,6 +3208,37 @@ fn mode_set_note(rig: &mut Rig, md: &str) -> String {
     }
 }
 
+/// Describe a failed `set_mode` WITHOUT misdiagnosing the fault. The old note said
+/// "rig rejected {mode}" for every failure, which sent operators of a broken CAT
+/// link chasing a mode-support problem that doesn't exist. There are three distinct
+/// faults, and the operator's fix differs for each:
+///
+/// - **Rig rejection** — `set_mode` reached the radio and it answered `RPRT -1`
+///   (e.g. no DATA/PKT submode). This is the ONE case `set_mode` reports as
+///   `ErrorKind::Other`, and the only one where "rig rejected" is accurate.
+/// - **No reply** — the CAT bridge (rigctld) was reached and accepted the command,
+///   but no complete reply came back before the deadline, or the link dropped
+///   mid-reply (`TimedOut`/`UnexpectedEof`/`ConnectionReset`/`ConnectionAborted`/
+///   `BrokenPipe`). The bridge is up but the RADIO behind it is mute — rig off/
+///   asleep, wrong CAT port or model, serial baud mismatch, or (Flex) SmartSDR not
+///   actually connected to the radio. This is the `rig reply incomplete after N ms`
+///   case.
+/// - **Unreachable** — the CAT endpoint refused the connection or isn't listening
+///   (`ConnectionRefused` etc.): rigctld or SmartSDR not running, or the wrong
+///   address/port. This is the Windows `os error 10061` case.
+///
+/// The raw `{e}` is kept in every message because its OS detail helps support.
+fn mode_command_failed(md: &str, e: &std::io::Error) -> String {
+    use std::io::ErrorKind::*;
+    match e.kind() {
+        Other => format!("rig rejected {md}: {e}"),
+        TimedOut | UnexpectedEof | ConnectionReset | ConnectionAborted | BrokenPipe => {
+            format!("no reply from the rig over CAT — couldn't set {md}: {e}")
+        }
+        _ => format!("can't reach the radio's CAT link — couldn't set {md}: {e}"),
+    }
+}
+
 /// The result of opening/probing a rig: `(rig, rigctld handle, cat_ok, detail)`.
 /// `cat_ok` is `Some(true/false)` for CAT/serial, `None` for VOX; the handle
 /// keeps the launched `rigctld` daemon alive (kill-on-drop).
@@ -3442,6 +3474,46 @@ mod tests {
         assert_eq!(tier_mode(Tier::Dx1), "DX1");
         assert_eq!(tier_mode(Tier::Ft8), "FT8");
         assert_eq!(tier_mode(Tier::Ft4), "FT4");
+    }
+
+    #[test]
+    fn mode_command_failed_distinguishes_the_three_cat_faults() {
+        use std::io::{Error, ErrorKind};
+        // No CAT endpoint listening (`os error 10061`) — the operator must START the
+        // bridge (rigctld / SmartSDR). Not a mode problem, not a mute-rig problem.
+        for kind in [ErrorKind::ConnectionRefused, ErrorKind::NotConnected] {
+            let note = mode_command_failed("PKTUSB", &Error::new(kind, "actively refused it"));
+            assert!(note.contains("can't reach the radio's CAT link"), "{note}");
+            assert!(
+                !note.contains("rejected"),
+                "must not blame the mode: {note}"
+            );
+        }
+        // Bridge reached but the radio never answered — the `rig reply incomplete after
+        // 2500 ms` case. Reported as "no reply from the rig", NOT "rig rejected".
+        for kind in [
+            ErrorKind::TimedOut,
+            ErrorKind::UnexpectedEof,
+            ErrorKind::ConnectionReset,
+            ErrorKind::BrokenPipe,
+        ] {
+            let note = mode_command_failed("PKTUSB", &Error::new(kind, "rig reply incomplete"));
+            assert!(note.contains("no reply from the rig"), "{note}");
+            assert!(
+                !note.contains("rejected"),
+                "must not blame the mode: {note}"
+            );
+        }
+        // A genuine rejection — set_mode surfaces `RPRT -1` as ErrorKind::Other — keeps
+        // the "rig rejected" wording, the accurate diagnosis there.
+        let note = mode_command_failed(
+            "PKTUSB",
+            &Error::other("rigctld mode error: \"RPRT -1\\n\""),
+        );
+        assert!(
+            note.contains("rig rejected PKTUSB"),
+            "rejection note: {note}"
+        );
     }
 
     #[test]
