@@ -278,6 +278,16 @@ impl Rig {
         match self.command_inner(line) {
             Ok(reply) => Ok(reply),
             Err(e) => {
+                // Diagnostic: dropping the rigctld connection is what triggers the daemon's
+                // disconnect fail-safe unkey. Log WHICH command failed and why (keyed = mid-TX,
+                // where the drop steals our own transmit) so the flicker's true trigger is named.
+                if crate::civ::diag::is_enabled() {
+                    crate::civ::diag::note(&format!(
+                        "Rig: rigctld cmd {:?} FAILED ({e}) → dropping connection (keyed={})",
+                        line.trim(),
+                        self.keyed
+                    ));
+                }
                 self.stream = None; // force a clean reconnect on the next call
                 Err(e)
             }

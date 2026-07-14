@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Native Icom CI-V: transmit no longer flickers the PTT (IC-9700 and friends).** With the native
+  CI-V path on, hitting Tune or transmitting keyed the rig and then unkeyed it ~50 ms later — a fast
+  "click," TX light but no RF. Root cause (found via the new CI-V diagnostic log): Nexus's own rig
+  control is a client of the native daemon's built-in rigctld server, which has a *fail-safe* that
+  unkeys the radio if a PTT-asserting client disconnects (so a crashing WSJT-X/N1MM can't strand the
+  rig keyed). A transient reconnect of Nexus's *own* connection tripped that fail-safe and dropped
+  the over. The fail-safe now stands down while Nexus itself is transmitting, and still fires for a
+  genuine external-client crash. (The scope-waveform stream, separately, is rejected by the IC-9700,
+  so native CI-V has no live scope on that model yet — tracked for a follow-up.)
+
 ### Added
 
 - **CI-V bus diagnostic log (Settings ▸ native Icom CI-V).** An opt-in support tool that records the

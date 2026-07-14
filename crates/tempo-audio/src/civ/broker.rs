@@ -30,14 +30,19 @@ pub struct CivBackend {
     /// Split state the UI/`s` verb reads back (the rig's `0F` read is skipped — the
     /// last commanded state is authoritative for the session, like the Hamlib cache).
     split: AtomicBool,
+    /// True while Nexus itself intends to transmit. Shared with the owning [`CivDaemon`] so the
+    /// broker's disconnect fail-safe unkey can skip while Nexus is on the air (its own Rig is a
+    /// client here, and a transient reconnect must not steal the over). See `owner_transmitting`.
+    tx_intent: Arc<AtomicBool>,
 }
 
 impl CivBackend {
-    pub fn new(h: CivHandle, addr: u8) -> Self {
+    pub fn new(h: CivHandle, addr: u8, tx_intent: Arc<AtomicBool>) -> Self {
         CivBackend {
             h,
             addr,
             split: AtomicBool::new(false),
+            tx_intent,
         }
     }
 
@@ -50,6 +55,10 @@ impl CivBackend {
 }
 
 impl RigBackend for CivBackend {
+    fn owner_transmitting(&self) -> bool {
+        self.tx_intent.load(Ordering::Relaxed)
+    }
+
     fn freq_hz(&self) -> u64 {
         match self.read(commands::read_freq(self.addr), 0x03, None) {
             Ok(f) => commands::parse_freq(&f)
@@ -238,6 +247,9 @@ pub struct CivDaemon {
     civ_addr: u8,
     tcp_stop: Arc<AtomicBool>,
     tcp_thread: Option<JoinHandle<()>>,
+    /// Shared with the broker backend: set true while Nexus is transmitting so the disconnect
+    /// fail-safe unkey doesn't fire on Nexus's own Rig reconnect (the CI-V PTT-flicker fix).
+    tx_intent: Arc<AtomicBool>,
 }
 
 impl CivDaemon {
@@ -250,7 +262,9 @@ impl CivDaemon {
         let engine = CivEngine::start(io, civ_addr);
         let listener = TcpListener::bind(("127.0.0.1", tcp_port))?;
         listener.set_nonblocking(true)?;
-        let backend: Arc<dyn RigBackend> = Arc::new(CivBackend::new(engine.handle(), civ_addr));
+        let tx_intent = Arc::new(AtomicBool::new(false));
+        let backend: Arc<dyn RigBackend> =
+            Arc::new(CivBackend::new(engine.handle(), civ_addr, tx_intent.clone()));
         let tcp_stop = Arc::new(AtomicBool::new(false));
         let tcp_thread = {
             let stop = tcp_stop.clone();
@@ -284,6 +298,7 @@ impl CivDaemon {
             civ_addr,
             tcp_stop,
             tcp_thread: Some(tcp_thread),
+            tx_intent,
         })
     }
 
@@ -321,6 +336,13 @@ impl CivDaemon {
     /// the stream would otherwise crowd a monitor's slow poll off the serial link).
     pub fn set_scope_enabled(&self, on: bool) {
         self.engine.set_scope_enabled(on);
+    }
+
+    /// Tell the broker whether Nexus itself is transmitting, so the disconnect fail-safe unkey
+    /// stands down while we're on the air (a reconnect of Nexus's own Rig must not drop the over).
+    /// The service loop calls this each tick with its keyed state.
+    pub fn set_tx_intent(&self, on: bool) {
+        self.tx_intent.store(on, Ordering::Relaxed);
     }
 
     /// Flip the rig's DATA mode (`1A 06`) — the TUNE path uses this so a plain-USB Icom

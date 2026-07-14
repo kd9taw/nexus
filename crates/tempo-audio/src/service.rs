@@ -1408,12 +1408,18 @@ impl RadioLoop {
                 // CAT error). Gate the stream OFF for any keyed state — an FT8 over (tx_until_ms),
                 // the tune carrier (tuning_keyed), or manual phone PTT — and it resumes on unkey.
                 // RX scope is meaningless during TX anyway. (Native path only; Hamlib has no stream.)
-                d.set_scope_enabled(
-                    self.applied.baud >= 57_600
-                        && self.tx_until_ms.is_none()
-                        && !self.tuning_keyed
-                        && !self.manual_ptt_applied,
-                );
+                // `rig.keyed` flips true the instant ANY keying path (slot, tune, voice, CW) calls
+                // ptt(true), so it leads the per-path flags by up to a tick — include it so there's
+                // no window right after keying where we'd wrongly report "not transmitting".
+                let keyed_now = rig.keyed
+                    || self.tx_until_ms.is_some()
+                    || self.tuning_keyed
+                    || self.manual_ptt_applied;
+                d.set_scope_enabled(self.applied.baud >= 57_600 && !keyed_now);
+                // Tell the broker we're on the air, so its disconnect fail-safe unkey stands down
+                // while WE'RE transmitting — a transient reconnect of Nexus's own Rig must never
+                // steal the over (the native-CI-V PTT flicker). Cleared the moment TX ends.
+                d.set_tx_intent(keyed_now);
                 if let Some(sweep) = d.take_scope_row() {
                     if let Ok(mut e) = engine.lock() {
                         e.set_spectrum_rf(tempo_app::dto::Spectrum {

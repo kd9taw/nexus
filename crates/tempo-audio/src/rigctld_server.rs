@@ -26,6 +26,15 @@ pub trait RigBackend: Send + Sync {
     fn freq_hz(&self) -> u64;
     fn mode(&self) -> (String, u32); // (mode, passband Hz)
     fn ptt(&self) -> bool;
+    /// True when Nexus ITSELF currently intends to transmit (a slot over, a tune carrier, or
+    /// manual phone PTT). The disconnect fail-safe unkey (`serve_connection`) consults this: it
+    /// must NOT unkey when Nexus is the one transmitting, because Nexus's own `Rig` is a client
+    /// of this same broker and a transient reconnect of that connection would otherwise steal the
+    /// active transmit (the IC-9700 native-CI-V flicker). Defaults false so the fail-safe still
+    /// protects against an external client (WSJT-X/N1MM) that keyed then crashed.
+    fn owner_transmitting(&self) -> bool {
+        false
+    }
     fn vfo(&self) -> String {
         "VFOA".to_string()
     }
@@ -323,8 +332,21 @@ pub fn serve_connection(stream: TcpStream, backend: Arc<dyn RigBackend>) {
     // Connection ended with PTT still asserted by this client → fail-safe unkey.
     // `set_ptt(false)` (broker_ptt(false)) is always honored and idempotent, so
     // this is safe even if Nexus itself is not transmitting.
+    // ...UNLESS Nexus itself is transmitting: its own Rig is a client of this broker, and a
+    // transient reconnect of that connection must not unkey the active over. Nexus's own TX
+    // safety (idle self-heal + daemon-Drop key-up) still recovers a genuinely stuck rig once
+    // Nexus stops wanting TX. This is the native-CI-V PTT-flicker fix.
     if asserted_ptt {
-        backend.set_ptt(false);
+        if backend.owner_transmitting() {
+            crate::civ::diag::note(
+                "rigctld_server: client disconnected with PTT asserted, but Nexus is transmitting → fail-safe SKIPPED (flicker fix)",
+            );
+        } else {
+            crate::civ::diag::note(
+                "rigctld_server: a PTT-asserting client disconnected, Nexus not transmitting → fail-safe unkey",
+            );
+            backend.set_ptt(false);
+        }
     }
 }
 
@@ -487,6 +509,68 @@ mod tests {
         assert!(*b.ptt.lock().unwrap(), "T 1 (ON) must key the rig");
         // Malformed PTT arg → error, no key change.
         assert_eq!(reply("T x", &b), "RPRT -1\n");
+    }
+
+    #[test]
+    fn disconnect_failsafe_respects_owner_transmitting() {
+        // A client that keyed (T 1) then dropped its connection: the fail-safe unkeys ONLY when
+        // Nexus itself is NOT transmitting. When Nexus IS on the air (its own Rig reconnecting),
+        // the fail-safe must stand down — else it steals the over (the IC-9700 CI-V flicker).
+        use std::io::Write;
+        use std::net::{TcpListener, TcpStream};
+        struct TxRig {
+            ptt: Mutex<bool>,
+            owner_tx: bool,
+        }
+        impl RigBackend for TxRig {
+            fn freq_hz(&self) -> u64 {
+                0
+            }
+            fn mode(&self) -> (String, u32) {
+                ("USB".into(), 0)
+            }
+            fn ptt(&self) -> bool {
+                *self.ptt.lock().unwrap()
+            }
+            fn set_freq(&self, _: u64) -> bool {
+                true
+            }
+            fn set_mode(&self, _: &str, _: u32) -> bool {
+                true
+            }
+            fn set_ptt(&self, on: bool) -> bool {
+                *self.ptt.lock().unwrap() = on;
+                true
+            }
+            fn owner_transmitting(&self) -> bool {
+                self.owner_tx
+            }
+        }
+        // (owner_transmitting, keyed-after-the-client-drops)
+        for (owner_tx, keyed_after) in [(false, false), (true, true)] {
+            let backend: Arc<dyn RigBackend> = Arc::new(TxRig {
+                ptt: Mutex::new(false),
+                owner_tx,
+            });
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let addr = listener.local_addr().unwrap();
+            let b = backend.clone();
+            let server = std::thread::spawn(move || {
+                let (stream, _) = listener.accept().unwrap();
+                serve_connection(stream, b);
+            });
+            let mut client = TcpStream::connect(addr).unwrap();
+            client.write_all(b"T 1\n").unwrap();
+            client.flush().unwrap();
+            drop(client); // client vanished mid-key (crash / reconnect)
+            server.join().unwrap(); // runs the fail-safe path to completion
+            assert_eq!(
+                backend.ptt(),
+                keyed_after,
+                "owner_transmitting={owner_tx}: rig should be {}keyed after the client drops",
+                if keyed_after { "" } else { "un" }
+            );
+        }
     }
 
     #[test]
