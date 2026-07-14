@@ -46,16 +46,28 @@ type SharedEngine = Arc<Mutex<Engine>>;
 type PropCache = Arc<Mutex<Option<(std::time::Instant, propagation::PropagationSnapshot)>>>;
 /// TTL cache for the OVATION aurora oval (distinct payload type from PropCache, so
 /// a distinct TypeId for `.manage()`).
-type AuroraCache = Arc<Mutex<Option<(std::time::Instant, Vec<propagation::live::aurora::AuroraPoint>)>>>;
+type AuroraCache = Arc<
+    Mutex<
+        Option<(
+            std::time::Instant,
+            Vec<propagation::live::aurora::AuroraPoint>,
+        )>,
+    >,
+>;
 /// TTL cache for the KC2G ionosonde MUF map. Distinct payload type → distinct
 /// TypeId for `.manage()`.
 type Kc2gCache = Arc<Mutex<Option<(std::time::Instant, Vec<propagation::MufStation>)>>>;
-type ProtonCache =
-    Arc<Mutex<Option<(std::time::Instant, propagation::live::protons::ProtonFlux)>>>;
+type ProtonCache = Arc<Mutex<Option<(std::time::Instant, propagation::live::protons::ProtonFlux)>>>;
 /// TTL cache for the NOAA R/S/G scales + recent SWPC alerts (one fetch pair).
 /// Distinct payload type → distinct TypeId for `.manage()`.
-type ScalesCache =
-    Arc<Mutex<Option<(std::time::Instant, (propagation::NoaaScalesView, Vec<propagation::AlertView>))>>>;
+type ScalesCache = Arc<
+    Mutex<
+        Option<(
+            std::time::Instant,
+            (propagation::NoaaScalesView, Vec<propagation::AlertView>),
+        )>,
+    >,
+>;
 
 /// Recent DX-cluster / RBN spots, fed by the background cluster thread and read
 /// by `get_need_alerts`.
@@ -106,7 +118,8 @@ static RBN_DIGITAL_STARTED: std::sync::atomic::AtomicBool =
 type SharedLivePaths = Arc<Mutex<propagation::LiveSpots>>;
 /// Last fetched POTA+SOTA activator spots (unix stamp + rows) — refreshed by the
 /// hunter view's poll; read lock-only by the Needed scorer for POTA/SOTA tags.
-type SharedOtaSpots = Arc<Mutex<std::collections::HashMap<String, (i64, Vec<propagation::OtaSpot>)>>>;
+type SharedOtaSpots =
+    Arc<Mutex<std::collections::HashMap<String, (i64, Vec<propagation::OtaSpot>)>>>;
 
 /// The locally-searchable POTA park directory (imported or downloaded once, searched offline).
 /// Distinct payload type → distinct TypeId for `.manage()`.
@@ -243,7 +256,13 @@ fn start_cluster_feeds(
     health: &SharedHealth,
 ) {
     start_cluster_feed(spots, RBN_CW_HOST, mycall, health, &RBN_CW_STARTED);
-    start_cluster_feed(spots, RBN_DIGITAL_HOST, mycall, health, &RBN_DIGITAL_STARTED);
+    start_cluster_feed(
+        spots,
+        RBN_DIGITAL_HOST,
+        mycall,
+        health,
+        &RBN_DIGITAL_STARTED,
+    );
     for host in cluster_hosts {
         let h = host.trim();
         if h.is_empty() || h.contains("reversebeacon.net") {
@@ -268,7 +287,11 @@ fn start_cluster_feed(
     conn_log(
         "RBN",
         "info",
-        format!("connecting to {} as {}", cluster_host, mycall.trim().to_uppercase()),
+        format!(
+            "connecting to {} as {}",
+            cluster_host,
+            mycall.trim().to_uppercase()
+        ),
     );
     let buf = spots.clone();
     let hp = health.clone();
@@ -718,19 +741,31 @@ struct BandmapWindow {
     dock: String,
 }
 
-fn bandmap_window_path() -> PathBuf {
-    settings_path().with_file_name("bandmap-window.json")
+/// Per-window geometry file — keyed by slug (bandmapCw / bandmapPhone) so the two band maps
+/// DON'T clobber each other's saved size/position/dock when both are torn off.
+fn bandmap_window_path(slug: &str) -> PathBuf {
+    settings_path().with_file_name(format!("bandmap-window-{slug}.json"))
 }
 
-fn load_bandmap_window() -> Option<BandmapWindow> {
-    let g: BandmapWindow = serde_json::from_str(&std::fs::read_to_string(bandmap_window_path()).ok()?).ok()?;
+/// The band-map slug ("bandmapCw"/"bandmapPhone") for a window, or None for any other window.
+fn bandmap_slug(window: &tauri::WebviewWindow) -> Option<String> {
+    window
+        .label()
+        .strip_prefix("panel-")
+        .filter(|s| s.starts_with("bandmap"))
+        .map(String::from)
+}
+
+fn load_bandmap_window(slug: &str) -> Option<BandmapWindow> {
+    let g: BandmapWindow =
+        serde_json::from_str(&std::fs::read_to_string(bandmap_window_path(slug)).ok()?).ok()?;
     // Reject a degenerate/blank record so a corrupt file falls back to the default size.
     (g.w >= 200.0 && g.h >= 200.0).then_some(g)
 }
 
-fn save_bandmap_window(g: &BandmapWindow) {
+fn save_bandmap_window(slug: &str, g: &BandmapWindow) {
     if let Ok(txt) = serde_json::to_string(g) {
-        let p = bandmap_window_path();
+        let p = bandmap_window_path(slug);
         if let Some(dir) = p.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
@@ -738,24 +773,74 @@ fn save_bandmap_window(g: &BandmapWindow) {
     }
 }
 
-/// Snapshot a band-map window's current size+position to disk (logical px), preserving its
-/// dock choice. Called on close so the next open restores it. No-op for any other window.
+/// Snapshot a band-map window's current size+position to its own per-slug file (logical px),
+/// preserving its dock choice. Called on close so the next open restores it. No-op otherwise.
 fn capture_bandmap_window(window: &tauri::WebviewWindow) {
-    if !window.label().starts_with("panel-bandmap") {
+    let Some(slug) = bandmap_slug(window) else {
         return;
-    }
+    };
     let scale = window.scale_factor().unwrap_or(1.0);
     let (Ok(size), Ok(pos)) = (window.inner_size(), window.outer_position()) else {
         return;
     };
-    let dock = load_bandmap_window().map(|g| g.dock).unwrap_or_default();
-    save_bandmap_window(&BandmapWindow {
-        w: size.width as f64 / scale,
-        h: size.height as f64 / scale,
-        x: pos.x as f64 / scale,
-        y: pos.y as f64 / scale,
-        dock,
-    });
+    let dock = load_bandmap_window(&slug)
+        .map(|g| g.dock)
+        .unwrap_or_default();
+    save_bandmap_window(
+        &slug,
+        &BandmapWindow {
+            w: size.width as f64 / scale,
+            h: size.height as f64 / scale,
+            x: pos.x as f64 / scale,
+            y: pos.y as f64 / scale,
+            dock,
+        },
+    );
+}
+
+/// Snap a band-map window to the left/right edge of its monitor's WORK AREA (excludes the
+/// taskbar — full monitor size overlapped it) as a full-height strip, keeping its width.
+/// Applies the move AND persists the resulting geometry + dock. Best-effort: a window with no
+/// resolvable monitor (e.g. not yet mapped) is left as-is.
+fn snap_bandmap_to_edge(
+    window: &tauri::WebviewWindow,
+    side: &str,
+) -> Result<BandmapWindow, String> {
+    let scale = window.scale_factor().unwrap_or(1.0);
+    let cur_w = window
+        .inner_size()
+        .map(|s| (s.width as f64 / scale).clamp(300.0, 640.0))
+        .unwrap_or(420.0);
+    let monitor = window
+        .current_monitor()
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "no monitor for this window".to_string())?;
+    // work_area() is the usable region (taskbar/dock excluded) — unlike size()/position().
+    let area = monitor.work_area();
+    let mw = area.size.width as f64 / scale;
+    let mh = area.size.height as f64 / scale;
+    let mx = area.position.x as f64 / scale;
+    let my = area.position.y as f64 / scale;
+    let w = cur_w;
+    let h = mh;
+    let x = if side == "left" { mx } else { mx + mw - w };
+    let g = BandmapWindow {
+        w,
+        h,
+        x,
+        y: my,
+        dock: side.to_string(),
+    };
+    window
+        .set_size(tauri::LogicalSize::new(w, h))
+        .map_err(|e| e.to_string())?;
+    window
+        .set_position(tauri::LogicalPosition::new(x, my))
+        .map_err(|e| e.to_string())?;
+    if let Some(slug) = bandmap_slug(window) {
+        save_bandmap_window(&slug, &g);
+    }
+    Ok(g)
 }
 
 /// Where the ADIF logbook is persisted: the same base dir as [`settings_path`],
@@ -999,7 +1084,14 @@ async fn get_propagation(
         let mut needs = propagation::LogNeeds::new();
         for q in eng.get_log() {
             // A "needs confirmation" must be award-grade (LoTW/paper), not eQSL.
-            needs.add(&q.call, &q.band, &q.mode, q.grid.as_deref(), q.state.as_deref(), q.award_confirmed);
+            needs.add(
+                &q.call,
+                &q.band,
+                &q.mode,
+                q.grid.as_deref(),
+                q.state.as_deref(),
+                q.award_confirmed,
+            );
         }
         // The operator's OWN decoded roster on the current band → "I heard X"
         // PathSpots. This feeds the opening detector + advisor from MONITORING
@@ -1183,7 +1275,9 @@ async fn get_propagation(
                 if band.is_vhf() {
                     let near = match (&rx_grid, me_ll_for_gate) {
                         (Some(g), Some(me)) => propagation::geo::maidenhead_to_latlon(g)
-                            .is_some_and(|rx| propagation::geo::haversine_km(me, rx) <= REGION_RADIUS_KM),
+                            .is_some_and(|rx| {
+                                propagation::geo::haversine_km(me, rx) <= REGION_RADIUS_KM
+                            }),
                         _ => false,
                     };
                     if !near {
@@ -1200,7 +1294,11 @@ async fn get_propagation(
                     // Cluster/RBN carry the goods the band-level feeds lack: the EXACT
                     // spot frequency. The mode is the band plan's call, NEVER the free-text
                     // comment (which holds QSY requests / chit-chat / times).
-                    mode: Some(propagation::classify_spot_mode(cs.freq_mhz()).label().to_string()),
+                    mode: Some(
+                        propagation::classify_spot_mode(cs.freq_mhz())
+                            .label()
+                            .to_string(),
+                    ),
                     snr: None,
                     freq_mhz: Some(cs.freq_mhz()),
                 });
@@ -1632,7 +1730,11 @@ async fn get_dxped_windows(
                     (0..days as i64)
                         .map(|n| {
                             let dt = t + n * 86_400;
-                            let dp = if n == 0 { p.clone() } else { eng.predict(dx, dt, &wx) };
+                            let dp = if n == 0 {
+                                p.clone()
+                            } else {
+                                eng.predict(dx, dt, &wx)
+                            };
                             DxpedDayBest {
                                 day_unix: dt,
                                 best: best_line(&dp),
@@ -1746,9 +1848,8 @@ async fn get_pca(
     const MIN_DB: f64 = 0.5;
     let cached = {
         let g = protons.lock().map_err(|e| e.to_string())?;
-        g.as_ref().and_then(|(when, p)| {
-            (when.elapsed().as_secs() < PROTON_TTL_SECS).then_some(*p)
-        })
+        g.as_ref()
+            .and_then(|(when, p)| (when.elapsed().as_secs() < PROTON_TTL_SECS).then_some(*p))
     };
     let flux = match cached {
         Some(p) => Some(p),
@@ -1764,7 +1865,11 @@ async fn get_pca(
                     Some(p)
                 }
                 // Serve the stale reading rather than nothing; None if never had one.
-                Err(_) => protons.lock().map_err(|e| e.to_string())?.as_ref().map(|(_, p)| *p),
+                Err(_) => protons
+                    .lock()
+                    .map_err(|e| e.to_string())?
+                    .as_ref()
+                    .map(|(_, p)| *p),
             }
         }
     };
@@ -1773,7 +1878,10 @@ async fn get_pca(
     };
     let kp = {
         let guard = cache.lock().map_err(|e| e.to_string())?;
-        guard.as_ref().map(|(_, s)| s.space_wx.kp as f64).unwrap_or(0.0)
+        guard
+            .as_ref()
+            .map(|(_, s)| s.space_wx.kp as f64)
+            .unwrap_or(0.0)
     };
     let now = now_unix();
     Ok(Some(PcaView {
@@ -1801,8 +1909,9 @@ fn get_declination(state: State<'_, SharedEngine>) -> Result<Option<f64>, String
 /// ARRL LoTW user-activity data: call → last-upload unix. Feeds the injected
 /// engine resolver (decode/roster LoTW marks). Empty until the operator fetches
 /// (or a persisted copy loads at startup) — the honest default is no highlight.
-static LOTW_ACTIVITY: std::sync::LazyLock<std::sync::RwLock<std::collections::HashMap<String, i64>>> =
-    std::sync::LazyLock::new(Default::default);
+static LOTW_ACTIVITY: std::sync::LazyLock<
+    std::sync::RwLock<std::collections::HashMap<String, i64>>,
+> = std::sync::LazyLock::new(Default::default);
 /// The operator's recency window (days), synced from settings; the resolver reads it.
 static LOTW_MAX_AGE_DAYS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(365);
 /// Unix time of the last successful fetch/refresh check (0 = never).
@@ -1935,8 +2044,7 @@ static TLE_CACHE: Mutex<Option<(std::time::Instant, Vec<propagation::sat::Tle>)>
 /// Computed PASS-LIST cache (the expensive 24 h scan). Subpoints are NEVER
 /// cached — a LEO ground track moves ~4°/min, so positions are recomputed on
 /// every call (one cheap sgp4 eval per bird) while the pass scan reuses this.
-static SAT_PASSES: Mutex<Option<(std::time::Instant, String, Vec<SatPassDto>)>> =
-    Mutex::new(None);
+static SAT_PASSES: Mutex<Option<(std::time::Instant, String, Vec<SatPassDto>)>> = Mutex::new(None);
 
 /// One bird's sub-satellite point right now.
 #[derive(serde::Serialize, Clone)]
@@ -1999,7 +2107,10 @@ fn post_spot(freq_mhz: f64, call: String, comment: String) -> Result<(), String>
     }
     let connected = PHONE_NODE_CONNS
         .lock()
-        .map(|v| v.iter().any(|b| b.load(std::sync::atomic::Ordering::Relaxed)))
+        .map(|v| {
+            v.iter()
+                .any(|b| b.load(std::sync::atomic::Ordering::Relaxed))
+        })
         .unwrap_or(false);
     if !connected {
         return Err("no DX cluster connected — set a cluster host in Settings".into());
@@ -2063,9 +2174,7 @@ async fn get_satellites(state: State<'_, SharedEngine>) -> Result<Option<SatView
         // majority (review catch: the old max-age gate killed the whole view).
         let fresh: Vec<&propagation::sat::Tle> = tles
             .iter()
-            .filter(|t| {
-                sat::tle_age_days(&t.line1, now).is_some_and(|a| a <= STALE_DAYS)
-            })
+            .filter(|t| sat::tle_age_days(&t.line1, now).is_some_and(|a| a <= STALE_DAYS))
             .collect();
         if fresh.is_empty() {
             return None; // every element set is decayed — honest no-data
@@ -2148,9 +2257,8 @@ async fn load_tles() -> Result<Vec<propagation::sat::Tle>, String> {
     const TLE_TTL_SECS: u64 = 12 * 3600;
     let cached = {
         let g = TLE_CACHE.lock().map_err(|e| e.to_string())?;
-        g.as_ref().and_then(|(when, t)| {
-            (when.elapsed().as_secs() < TLE_TTL_SECS).then(|| t.clone())
-        })
+        g.as_ref()
+            .and_then(|(when, t)| (when.elapsed().as_secs() < TLE_TTL_SECS).then(|| t.clone()))
     };
     Ok(match cached {
         Some(t) => t,
@@ -2225,8 +2333,7 @@ struct SatnogsSnapshot {
 }
 
 static SATNOGS: Mutex<Option<SatnogsSnapshot>> = Mutex::new(None);
-static SATNOGS_FETCHING: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
+static SATNOGS_FETCHING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 /// Last refresh ATTEMPT (unix) — failed fetches back off 30 min instead of
 /// being re-tripped every 30 s by the alarm tick (SatNOGS asks bulk consumers
 /// to be gentle; a dead network must not turn into a full-catalog hammer).
@@ -2265,13 +2372,13 @@ fn satnogs_snapshot(norads: Vec<u32>) -> Option<SatnogsSnapshot> {
         .is_some_and(|sn| now - sn.fetched_at < TTL_SECS)
         && norads.iter().all(|n| covered.contains(n));
     let backoff_ok = now - SATNOGS_LAST_TRY.load(Ordering::SeqCst) >= RETRY_BACKOFF_SECS;
-    if !fresh
-        && !norads.is_empty()
-        && backoff_ok
-        && !SATNOGS_FETCHING.swap(true, Ordering::SeqCst)
+    if !fresh && !norads.is_empty() && backoff_ok && !SATNOGS_FETCHING.swap(true, Ordering::SeqCst)
     {
         SATNOGS_LAST_TRY.store(now, Ordering::SeqCst);
-        let mut want: Vec<u32> = covered.union(&norads.iter().copied().collect()).copied().collect();
+        let mut want: Vec<u32> = covered
+            .union(&norads.iter().copied().collect())
+            .copied()
+            .collect();
         want.sort_unstable();
         tauri::async_runtime::spawn_blocking(move || {
             let statuses = propagation::live::satnogs::fetch_satellites(&want);
@@ -2330,9 +2437,17 @@ async fn get_sat_schedule(
             .filter(|t| sat::tle_age_days(&t.line1, now).is_some_and(|a| a <= STALE_DAYS))
             .collect();
         // Status lookup by NORAD id (name-mapping-proof), from the weekly cache.
-        let norads: Vec<u32> = mine.iter().filter_map(|t| sat::norad_id(&t.line1)).collect();
+        let norads: Vec<u32> = mine
+            .iter()
+            .filter_map(|t| sat::norad_id(&t.line1))
+            .collect();
         let status_by_norad: std::collections::HashMap<u32, String> = satnogs_snapshot(norads)
-            .map(|sn| sn.statuses.into_iter().map(|st| (st.norad, st.status)).collect())
+            .map(|sn| {
+                sn.statuses
+                    .into_iter()
+                    .map(|st| (st.norad, st.status))
+                    .collect()
+            })
             .unwrap_or_default();
         let mut passes = Vec::new();
         for t in mine {
@@ -2663,8 +2778,8 @@ async fn stop_sat_track(state: State<'_, SharedEngine>) -> Result<(), String> {
         effective_rotator_addr(eng.settings())
     };
     if let Some(addr) = addr {
-        let _ = tauri::async_runtime::spawn_blocking(move || tempo_audio::rotator::stop(&addr))
-            .await;
+        let _ =
+            tauri::async_runtime::spawn_blocking(move || tempo_audio::rotator::stop(&addr)).await;
     }
     Ok(())
 }
@@ -2679,9 +2794,7 @@ fn sat_track_status() -> Result<Option<SatTrackDto>, String> {
 /// overlay. Cached `KC2G_TTL_SECS`; serves the last-good set on a fetch failure,
 /// empty if we never had one (never fabricated).
 #[tauri::command]
-async fn get_kc2g_muf(
-    cache: State<'_, Kc2gCache>,
-) -> Result<Vec<propagation::MufStation>, String> {
+async fn get_kc2g_muf(cache: State<'_, Kc2gCache>) -> Result<Vec<propagation::MufStation>, String> {
     const KC2G_TTL_SECS: u64 = 300;
     {
         let g = cache.lock().map_err(|e| e.to_string())?;
@@ -2794,9 +2907,7 @@ async fn get_space_wx_scales(
         _ => {
             // Any feed down → serve last-good if we have it, else quiet defaults.
             let g = cache.lock().map_err(|e| e.to_string())?;
-            Ok(g.as_ref()
-                .map(|(_, pair)| pair.clone())
-                .unwrap_or_default())
+            Ok(g.as_ref().map(|(_, pair)| pair.clone()).unwrap_or_default())
         }
     }
 }
@@ -2919,8 +3030,7 @@ fn set_settings(
     // emptied callsign also tears down (the restart then no-ops via is_real_call).
     let call_changed = {
         let mut prev = PREV_FEED_CALL.lock().unwrap_or_else(|e| e.into_inner());
-        let changed =
-            !prev.is_empty() && prev.to_uppercase() != mycall.trim().to_uppercase();
+        let changed = !prev.is_empty() && prev.to_uppercase() != mycall.trim().to_uppercase();
         *prev = mycall.trim().to_string();
         changed
     };
@@ -3027,20 +3137,20 @@ fn restart_live_feeds(
         }
         PSKR_STARTED.store(false, SeqCst);
         PSKR_REGION_STARTED.store(false, SeqCst);
-        let (cluster_enabled, cluster_hosts, mycall, mygrid, opening_regional) =
-            match engine.lock() {
-                Ok(eng) => {
-                    let st = eng.settings();
-                    (
-                        st.cluster_enabled,
-                        st.cluster_hosts.clone(),
-                        st.mycall.clone(),
-                        st.mygrid.clone(),
-                        st.opening_regional,
-                    )
-                }
-                Err(_) => return,
-            };
+        let (cluster_enabled, cluster_hosts, mycall, mygrid, opening_regional) = match engine.lock()
+        {
+            Ok(eng) => {
+                let st = eng.settings();
+                (
+                    st.cluster_enabled,
+                    st.cluster_hosts.clone(),
+                    st.mycall.clone(),
+                    st.mygrid.clone(),
+                    st.opening_regional,
+                )
+            }
+            Err(_) => return,
+        };
         if cluster_enabled {
             start_cluster_feeds(&spots, &cluster_hosts, &mycall, &health);
         }
@@ -3709,9 +3819,9 @@ fn set_active_radio(state: State<'_, SharedEngine>, id: u32) -> Result<AppSnapsh
         }
         (eng.snapshot(), eng.settings().clone())
     }; // drop the engine lock before touching the rotator daemon
-    // Each radio carries its own rotator — re-sync the rotctld daemon to the newly-active radio's
-    // rotator config (mirrors set_settings). The rig loop swaps CAT/audio on its own via the flat
-    // mirror, but the rotator daemon only follows an explicit sync.
+       // Each radio carries its own rotator — re-sync the rotctld daemon to the newly-active radio's
+       // rotator config (mirrors set_settings). The rig loop swaps CAT/audio on its own via the flat
+       // mirror, but the rotator daemon only follows an explicit sync.
     sync_rotctld(&settings);
     Ok(snap)
 }
@@ -3754,7 +3864,11 @@ fn remove_radio(state: State<'_, SharedEngine>, id: u32) -> Result<AppSnapshot, 
 
 /// Rename a radio profile (its switcher label). Returns the snapshot.
 #[tauri::command]
-fn rename_radio(state: State<'_, SharedEngine>, id: u32, name: String) -> Result<AppSnapshot, String> {
+fn rename_radio(
+    state: State<'_, SharedEngine>,
+    id: u32,
+    name: String,
+) -> Result<AppSnapshot, String> {
     let mut eng = state.lock().map_err(|e| e.to_string())?;
     eng.rename_radio(id, &name);
     if let Err(e) = eng.settings().save(&settings_path()) {
@@ -3879,7 +3993,9 @@ fn get_all_rig_models() -> Vec<(u32, String)> {
 /// Tempo's proposed calling-frequency band plan (HF + VHF/UHF), for the band
 /// selector. Each entry is General-legal + clear of the existing watering holes.
 #[tauri::command]
-fn get_band_plan(state: State<'_, SharedEngine>) -> Result<Vec<tempo_app::bandplan::BandChannel>, String> {
+fn get_band_plan(
+    state: State<'_, SharedEngine>,
+) -> Result<Vec<tempo_app::bandplan::BandChannel>, String> {
     // Tier-aware (FT8/FT4 → the standard WSJT-X watering holes; FT1/DX1 →
     // native plan) WITH the operator's Settings ▸ Frequencies overrides applied
     // — the band picker must show the dials the engine will actually QSY to.
@@ -3911,9 +4027,19 @@ fn get_licensed_band_plan(
     use tempo_app::bandplan::BandChannel;
     use tempo_app::settings::OperatingMode;
     const BANDS: &[(&str, &str)] = &[
-        ("160m", "HF"), ("80m", "HF"), ("40m", "HF"), ("30m", "HF"), ("20m", "HF"),
-        ("17m", "HF"), ("15m", "HF"), ("12m", "HF"), ("10m", "HF"), ("6m", "VHF"),
-        ("2m", "VHF"), ("1.25m", "VHF"), ("70cm", "UHF"),
+        ("160m", "HF"),
+        ("80m", "HF"),
+        ("40m", "HF"),
+        ("30m", "HF"),
+        ("20m", "HF"),
+        ("17m", "HF"),
+        ("15m", "HF"),
+        ("12m", "HF"),
+        ("10m", "HF"),
+        ("6m", "VHF"),
+        ("2m", "VHF"),
+        ("1.25m", "VHF"),
+        ("70cm", "UHF"),
     ];
     let eng = state.lock().map_err(|e| e.to_string())?;
     let class = eng.settings().license_class;
@@ -4235,7 +4361,9 @@ fn play_voice_message(state: State<'_, SharedEngine>, slot: u8) -> Result<AppSna
             .unwrap_or_default()
     };
     if file.trim().is_empty() {
-        return Err(format!("No recording in F{slot} yet — record or import one first"));
+        return Err(format!(
+            "No recording in F{slot} yet — record or import one first"
+        ));
     }
     #[cfg(feature = "radio")]
     {
@@ -4567,7 +4695,10 @@ fn set_hold_tx_freq(state: State<'_, SharedEngine>, on: bool) -> Result<AppSnaps
 /// that panel against the same shared engine the main window uses.
 #[tauri::command]
 async fn open_panel_window(app: tauri::AppHandle, panel: String) -> Result<(), String> {
-    let slug: String = panel.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+    let slug: String = panel
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .collect();
     if slug.is_empty() {
         return Err("invalid panel".into());
     }
@@ -4594,7 +4725,18 @@ async fn open_panel_window(app: tauri::AppHandle, panel: String) -> Result<(), S
     let is_bandmap = slug == "bandmapPhone" || slug == "bandmapCw";
     // The band map reopens where the operator left it (size + position), so a Windows-snapped
     // vertical strip on the side survives restarts. Other pop-outs keep their fixed defaults.
-    let saved = if is_bandmap { load_bandmap_window() } else { None };
+    let saved = if is_bandmap {
+        load_bandmap_window(&slug)
+    } else {
+        None
+    };
+    // A docked window re-snaps to the CURRENT monitor work area AFTER build (so a resolution
+    // change since last session can't strand it off-screen); a free window replays its saved
+    // absolute position.
+    let docked_side = saved
+        .as_ref()
+        .map(|g| g.dock.clone())
+        .filter(|d| d == "left" || d == "right");
     let (w, h) = if let Some(g) = &saved {
         (g.w, g.h)
     } else if slug == "operate" {
@@ -4615,14 +4757,21 @@ async fn open_panel_window(app: tauri::AppHandle, panel: String) -> Result<(), S
     )
     .title(title)
     .inner_size(w, h)
-    .min_inner_size(if slug == "waterfall" { 380.0 } else { 420.0 }, if slug == "waterfall" { 180.0 } else { 360.0 });
-    if let Some(g) = &saved {
+    .min_inner_size(
+        if slug == "waterfall" { 380.0 } else { 420.0 },
+        if slug == "waterfall" { 180.0 } else { 360.0 },
+    );
+    if let (Some(g), None) = (&saved, &docked_side) {
         builder = builder.position(g.x, g.y);
     }
     // Pop-outs are ordinary windows — the operator must be able to send them behind the
     // main UI (a tester couldn't hide the waterfall while it was pinned always-on-top). A
     // future "pin" toggle can call `window.set_always_on_top(true)` on demand.
-    builder.build().map_err(|e| e.to_string())?;
+    let win = builder.build().map_err(|e| e.to_string())?;
+    if let Some(side) = docked_side {
+        // Re-pin to the edge of the current work area (best-effort; ignore if unmapped).
+        let _ = snap_bandmap_to_edge(&win, &side);
+    }
     Ok(())
 }
 
@@ -4632,46 +4781,18 @@ async fn open_panel_window(app: tauri::AppHandle, panel: String) -> Result<(), S
 /// just persists the current geometry). The dock + geometry persist so it restores on relaunch.
 #[tauri::command]
 fn dock_bandmap_window(window: tauri::WebviewWindow, side: String) -> Result<(), String> {
-    let scale = window.scale_factor().unwrap_or(1.0);
-    // Current width (logical) — a dock keeps the strip's width, only pins the edge + height.
-    let cur_w = window
-        .inner_size()
-        .map(|s| (s.width as f64 / scale).clamp(300.0, 640.0))
-        .unwrap_or(420.0);
-
-    if side != "left" && side != "right" {
-        // Un-dock: leave the window where it is, just clear the dock flag so a later open
-        // doesn't re-snap it. Persist the current geometry.
-        capture_bandmap_window(&window);
-        let mut g = load_bandmap_window().unwrap_or_default();
-        g.dock = String::new();
-        save_bandmap_window(&g);
+    if side == "left" || side == "right" {
+        snap_bandmap_to_edge(&window, &side)?;
         return Ok(());
     }
-
-    let monitor = window
-        .current_monitor()
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| "no monitor for this window".to_string())?;
-    let msize = monitor.size(); // physical
-    let mpos = monitor.position(); // physical (top-left in the virtual desktop)
-    let mw = msize.width as f64 / scale;
-    let mh = msize.height as f64 / scale;
-    let mx = mpos.x as f64 / scale;
-    let my = mpos.y as f64 / scale;
-    // Full monitor height as a vertical strip; the OS keeps it clear of a docked taskbar in
-    // most setups (we don't guess the taskbar size). Width stays as-is, pinned to the edge.
-    let w = cur_w;
-    let h = mh;
-    let x = if side == "left" { mx } else { mx + mw - w };
-    let y = my;
-    window
-        .set_size(tauri::LogicalSize::new(w, h))
-        .map_err(|e| e.to_string())?;
-    window
-        .set_position(tauri::LogicalPosition::new(x, y))
-        .map_err(|e| e.to_string())?;
-    save_bandmap_window(&BandmapWindow { w, h, x, y, dock: side });
+    // Un-dock: leave the window where it is, just clear the dock flag (per-slug) so a later
+    // open doesn't re-snap it. Persist the current geometry.
+    capture_bandmap_window(&window);
+    if let Some(slug) = bandmap_slug(&window) {
+        let mut g = load_bandmap_window(&slug).unwrap_or_default();
+        g.dock = String::new();
+        save_bandmap_window(&slug, &g);
+    }
     Ok(())
 }
 
@@ -4921,7 +5042,9 @@ async fn get_journey(
             // The Journey "strongest signal" stat is a digital dB SNR concept; parse
             // the numeric report only for DIGITAL QSOs (a phone "59"/CW "599" isn't dB).
             rst_rcvd: if ModeClass::from_adif(&r.mode) == ModeClass::Digital {
-                r.rst_rcvd.as_deref().and_then(|s| s.trim().parse::<i32>().ok())
+                r.rst_rcvd
+                    .as_deref()
+                    .and_then(|s| s.trim().parse::<i32>().ok())
             } else {
                 None
             },
@@ -5074,7 +5197,14 @@ async fn get_need_alerts(
     let eng = state.lock().map_err(|e| e.to_string())?;
     let mut needs = propagation::LogNeeds::new();
     for q in eng.get_log() {
-        needs.add(&q.call, &q.band, &q.mode, q.grid.as_deref(), q.state.as_deref(), q.award_confirmed);
+        needs.add(
+            &q.call,
+            &q.band,
+            &q.mode,
+            q.grid.as_deref(),
+            q.state.as_deref(),
+            q.award_confirmed,
+        );
     }
     let snap = eng.snapshot();
     // Operator "wanted" watch list (W1.5) — captured before the lock drops.
@@ -5161,16 +5291,13 @@ async fn get_need_alerts(
                 // through here (the last uncorroborated hole, the 4U1UN case).
                 let near_spotters: Vec<&str> = std::iter::once(cs.spotter.as_str())
                     .chain(cs.corroborators.iter().map(|c| c.as_str()))
-                    .filter(|sp| {
-                        match (propagation::skimmer_grid(sp), me_ll) {
-                            (Some(g), Some(me)) => {
-                                propagation::geo::maidenhead_to_latlon(g).is_some_and(|rx| {
-                                    propagation::geo::haversine_km(me, rx)
-                                        <= propagation::near_me_radius_km(band)
-                                })
-                            }
-                            _ => false,
-                        }
+                    .filter(|sp| match (propagation::skimmer_grid(sp), me_ll) {
+                        (Some(g), Some(me)) => propagation::geo::maidenhead_to_latlon(g)
+                            .is_some_and(|rx| {
+                                propagation::geo::haversine_km(me, rx)
+                                    <= propagation::near_me_radius_km(band)
+                            }),
+                        _ => false,
                     })
                     .collect();
                 if near_spotters.len() < 2 {
@@ -5184,8 +5311,7 @@ async fn get_need_alerts(
                 // ~country centroid as the operator and correctly read "near").
                 let dx_far = match (propagation::dxcc::resolve(&cs.dx_call), me_ll) {
                     (Some(info), Some(me)) => {
-                        let my_entity =
-                            propagation::dxcc::resolve(&snap.mycall).map(|i| i.entity);
+                        let my_entity = propagation::dxcc::resolve(&snap.mycall).map(|i| i.entity);
                         my_entity != Some(info.entity)
                             || propagation::geo::haversine_km(me, (info.lat, info.lon))
                                 >= propagation::VHF_MIN_DX_KM
@@ -5221,8 +5347,7 @@ async fn get_need_alerts(
                     freq_mhz: Some(freq),
                     // The spot's REAL receive time — stamping poll-time made
                     // every cluster row read "just now" forever.
-                    admitted_at: (cs.received_unix > 0)
-                        .then_some(cs.received_unix as i64),
+                    admitted_at: (cs.received_unix > 0).then_some(cs.received_unix as i64),
                     evidence: Some(format!(
                         "spotted by {} via cluster/RBN",
                         spotters.join(" + ")
@@ -5296,8 +5421,7 @@ async fn get_need_alerts(
                     };
                     if !a.tags.contains(&tag) {
                         a.tags.push(tag);
-                        a.headline =
-                            format!("{} · {} {}", a.headline, sp.program, sp.reference);
+                        a.headline = format!("{} · {} {}", a.headline, sp.program, sp.reference);
                     }
                 }
             }
@@ -5556,7 +5680,9 @@ fn get_credentials_status(state: State<'_, SharedEngine>) -> Result<Vec<CredStat
         )
     };
     let has = |entry: Result<keyring::Entry, String>| {
-        entry.and_then(|e| e.get_password().map_err(|er| er.to_string())).is_ok()
+        entry
+            .and_then(|e| e.get_password().map_err(|er| er.to_string()))
+            .is_ok()
     };
     Ok(vec![
         CredStatus {
@@ -5608,7 +5734,10 @@ fn effective_clublog_key(settings_key: &str) -> String {
     if !k.is_empty() {
         return k.to_string();
     }
-    option_env!("CLUBLOG_API_KEY").unwrap_or("").trim().to_string()
+    option_env!("CLUBLOG_API_KEY")
+        .unwrap_or("")
+        .trim()
+        .to_string()
 }
 
 fn lotw_keychain() -> Result<keyring::Entry, String> {
@@ -5797,7 +5926,11 @@ fn set_qrz_logbook_key(key: String, state: State<'_, SharedEngine>) -> Result<()
     let entry = qrz_logbook_keychain()?;
     if key.is_empty() {
         clear_keychain_entry(&entry)?;
-        conn_log("QRZ Logbook", "info", "API key cleared from the OS keychain");
+        conn_log(
+            "QRZ Logbook",
+            "info",
+            "API key cleared from the OS keychain",
+        );
         set_upload_toggle(&state, UploadToggle::Qrz, false);
         return Ok(());
     }
@@ -5866,7 +5999,11 @@ fn set_upload_toggle(state: &State<'_, SharedEngine>, which: UploadToggle, on: b
 fn clear_qrz_logbook_key(state: State<'_, SharedEngine>) -> Result<(), String> {
     let r = clear_keychain_entry(&qrz_logbook_keychain()?);
     if r.is_ok() {
-        conn_log("QRZ Logbook", "info", "API key cleared from the OS keychain");
+        conn_log(
+            "QRZ Logbook",
+            "info",
+            "API key cleared from the OS keychain",
+        );
         set_upload_toggle(&state, UploadToggle::Qrz, false);
     }
     r
@@ -6004,7 +6141,11 @@ fn download_lotw_report_impl(state: State<'_, SharedEngine>) -> Result<LotwSyncR
             {
                 let updated = eng.set_lotw_cursor(high_water);
                 if let Err(e) = updated.save(&settings_path()) {
-                    conn_log("LoTW", "error", format!("failed to persist the sync cursor: {e}"));
+                    conn_log(
+                        "LoTW",
+                        "error",
+                        format!("failed to persist the sync cursor: {e}"),
+                    );
                 }
             }
         }
@@ -6031,8 +6172,16 @@ fn download_lotw_report_impl(state: State<'_, SharedEngine>) -> Result<LotwSyncR
                 let mut eng = state.lock().map_err(|e| e.to_string())?;
                 result.promoted = eng.merge_lotw_own_echo(&b, now_unix());
             }
-            Ok(_) => conn_log("LoTW", "error", "own-echo pull returned a non-ADIF body; skipped"),
-            Err(e) => conn_log("LoTW", "error", format!("own-echo pull failed (confirmations still synced): {e}")),
+            Ok(_) => conn_log(
+                "LoTW",
+                "error",
+                "own-echo pull returned a non-ADIF body; skipped",
+            ),
+            Err(e) => conn_log(
+                "LoTW",
+                "error",
+                format!("own-echo pull failed (confirmations still synced): {e}"),
+            ),
         }
     }
 
@@ -6098,9 +6247,11 @@ async fn upload_lotw_report_impl(
         // A named Station Location is required UNLESS the operator signs from the ADIF
         // (travelers who never create TQSL station locations).
         if location.is_empty() && !use_adif_location {
-            return Err("Set your LoTW Station Location in Settings before uploading (or enable \
+            return Err(
+                "Set your LoTW Station Location in Settings before uploading (or enable \
                         \"sign from ADIF location\" if you don't create TQSL station locations)."
-                .into());
+                    .into(),
+            );
         }
         let batch = indices.unwrap_or_else(|| eng.lotw_unsent_indices());
         if batch.is_empty() {
@@ -6359,11 +6510,8 @@ fn qrz_login(username: &str, password: &str) -> Result<String, String> {
 /// One HamQTH lookup with an existing session id (no login). The HamQTH mirror of
 /// [`qrz_try_lookup`]. Network only; holds no lock; errors redacted by the transport.
 fn hamqth_try_lookup(session_id: &str, callsign: &str) -> Result<QrzOutcome, String> {
-    let url = tempo_core::hamqth::build_lookup_url(
-        session_id,
-        callsign,
-        tempo_core::hamqth::HAMQTH_PRG,
-    );
+    let url =
+        tempo_core::hamqth::build_lookup_url(session_id, callsign, tempo_core::hamqth::HAMQTH_PRG);
     let body = propagation::live::hamqth::fetch(&url)?;
     if !tempo_core::hamqth::is_hamqth_xml(&body) {
         return Err("HamQTH returned an unexpected response.".to_string());
@@ -6567,7 +6715,11 @@ async fn qrz_push_qso(
     let res = tauri::async_runtime::spawn_blocking(move || qrz_push_qso_impl(record, &engine))
         .await
         .map_err(|e| format!("upload task failed: {e}"))?;
-    conn_logged("QRZ Logbook", |r| format!("pushed {} — {}", who, r.result), res)
+    conn_logged(
+        "QRZ Logbook",
+        |r| format!("pushed {} — {}", who, r.result),
+        res,
+    )
 }
 
 /// Test the N3FJP connection: handshake `<CMD><PROGRAM></CMD>` and report
@@ -6615,7 +6767,10 @@ async fn qrz_test_connection_impl() -> Result<String, String> {
     if st.ok {
         let owner = st.owner.unwrap_or_else(|| "your account".into());
         let book = st.book.map(|b| format!(" ({b})")).unwrap_or_default();
-        Ok(format!("{owner}{book} — {} QSOs in the online logbook", st.count))
+        Ok(format!(
+            "{owner}{book} — {} QSOs in the online logbook",
+            st.count
+        ))
     } else {
         Err(st
             .reason
@@ -6663,7 +6818,11 @@ fn set_clublog_password(password: String, state: State<'_, SharedEngine>) -> Res
         // suspend latch is deliberately NOT touched here — re-arming with no
         // password would only make the worker error on every QSO.
         clear_keychain_entry(&entry)?;
-        conn_log("ClubLog", "info", "app-password cleared from the OS keychain");
+        conn_log(
+            "ClubLog",
+            "info",
+            "app-password cleared from the OS keychain",
+        );
         set_upload_toggle(&state, UploadToggle::Clublog, false);
         return Ok(());
     }
@@ -6682,7 +6841,11 @@ fn set_clublog_password(password: String, state: State<'_, SharedEngine>) -> Res
 #[tauri::command]
 fn clear_clublog_password(state: State<'_, SharedEngine>) -> Result<(), String> {
     clear_keychain_entry(&clublog_keychain()?)?;
-    conn_log("ClubLog", "info", "app-password cleared from the OS keychain");
+    conn_log(
+        "ClubLog",
+        "info",
+        "app-password cleared from the OS keychain",
+    );
     set_upload_toggle(&state, UploadToggle::Clublog, false);
     Ok(())
 }
@@ -6697,7 +6860,11 @@ fn set_hrdlog_code(code: String, state: State<'_, SharedEngine>) -> Result<(), S
     let entry = hrdlog_keychain()?;
     if code.is_empty() {
         clear_keychain_entry(&entry)?;
-        conn_log("HRDLog.net", "info", "upload code cleared from the OS keychain");
+        conn_log(
+            "HRDLog.net",
+            "info",
+            "upload code cleared from the OS keychain",
+        );
         set_upload_toggle(&state, UploadToggle::Hrdlog, false);
         return Ok(());
     }
@@ -6715,7 +6882,11 @@ fn set_hrdlog_code(code: String, state: State<'_, SharedEngine>) -> Result<(), S
 fn clear_hrdlog_code(state: State<'_, SharedEngine>) -> Result<(), String> {
     let r = clear_keychain_entry(&hrdlog_keychain()?);
     if r.is_ok() {
-        conn_log("HRDLog.net", "info", "upload code cleared from the OS keychain");
+        conn_log(
+            "HRDLog.net",
+            "info",
+            "upload code cleared from the OS keychain",
+        );
         set_upload_toggle(&state, UploadToggle::Hrdlog, false);
     }
     r
@@ -6736,7 +6907,11 @@ async fn hrdlog_push_qso(
     let res = tauri::async_runtime::spawn_blocking(move || hrdlog_push_qso_impl(record, &engine))
         .await
         .map_err(|e| format!("upload task failed: {e}"))?;
-    conn_logged("HRDLog.net", |r| format!("pushed {} — {}", who, r.result), res)
+    conn_logged(
+        "HRDLog.net",
+        |r| format!("pushed {} — {}", who, r.result),
+        res,
+    )
 }
 
 fn hrdlog_push_qso_impl(
@@ -6846,13 +7021,13 @@ fn clublog_push_qso_impl(
     if push.result == tempo_core::clublog::ClubLogResult::AuthFail {
         // Halt further auto-pushes until a credential changes (IP-block guard).
         {
-        conn_log(
-            "ClubLog",
-            "error",
-            "auth failed — auto-push SUSPENDED until credentials change in Settings",
-        );
-        CLUBLOG_SUSPENDED.store(true, Ordering::Relaxed);
-    }
+            conn_log(
+                "ClubLog",
+                "error",
+                "auth failed — auto-push SUSPENDED until credentials change in Settings",
+            );
+            CLUBLOG_SUSPENDED.store(true, Ordering::Relaxed);
+        }
     }
     // Record the outcome on the just-pushed QSO so diagnostics can surface R1 (never
     // pushed to ClubLog) / R9 (bounced). Transient results (ServerError/Unknown) map
@@ -6886,13 +7061,14 @@ async fn eqsl_push_qso(
     let res = tauri::async_runtime::spawn_blocking(move || eqsl_push_qso_impl(record, &engine))
         .await
         .map_err(|e| format!("upload task failed: {e}"))?;
-    conn_logged("eQSL", |r| format!("pushed {} — outcome: {}", who, r.outcome), res)
+    conn_logged(
+        "eQSL",
+        |r| format!("pushed {} — outcome: {}", who, r.outcome),
+        res,
+    )
 }
 
-fn eqsl_push_qso_impl(
-    record: LoggedQso,
-    engine: &SharedEngine,
-) -> Result<UploadReportDto, String> {
+fn eqsl_push_qso_impl(record: LoggedQso, engine: &SharedEngine) -> Result<UploadReportDto, String> {
     let user = {
         let eng = engine.lock().map_err(|e| e.to_string())?;
         eng.settings().eqsl_username.trim().to_string()
@@ -7288,7 +7464,11 @@ fn get_ota_spots(
                 .map(|b| open_bands.contains(b.label()))
                 .unwrap_or(false);
             let new_park = !park_worked(&sp.reference);
-            OtaSpotDto { spot: sp, new_park, band_open }
+            OtaSpotDto {
+                spot: sp,
+                new_park,
+                band_open,
+            }
         })
         .collect())
 }
@@ -7468,7 +7648,9 @@ fn hunted_parks_count(state: State<'_, SharedEngine>) -> Result<usize, String> {
 fn import_parks_csv(parks: State<'_, SharedParks>, csv: String) -> Result<usize, String> {
     let idx = tempo_core::pota::ParkIndex::parse_csv(&csv);
     if idx.is_empty() {
-        return Err("No parks parsed — is this a POTA parks CSV (needs a 'reference' column)?".into());
+        return Err(
+            "No parks parsed — is this a POTA parks CSV (needs a 'reference' column)?".into(),
+        );
     }
     let n = idx.len();
     let _ = std::fs::write(parks_cache_path(), &csv); // cache; failure is non-fatal
@@ -7505,7 +7687,8 @@ fn import_hunted_parks_csv(engine: State<'_, SharedEngine>, csv: String) -> Resu
     let refs = tempo_core::pota::ParkIndex::parse_csv(&csv).references();
     if refs.is_empty() {
         return Err(
-            "No parks parsed — is this a POTA Hunted Parks CSV (needs a 'reference' column)?".into(),
+            "No parks parsed — is this a POTA Hunted Parks CSV (needs a 'reference' column)?"
+                .into(),
         );
     }
     let n = refs.len();
@@ -7539,7 +7722,10 @@ async fn download_parks(parks: State<'_, SharedParks>) -> Result<usize, String> 
     .map_err(|e| e.to_string())??;
     let idx = tempo_core::pota::ParkIndex::parse_csv(&csv);
     if idx.is_empty() {
-        return Err("Downloaded list had no recognizable parks — the POTA export format may have changed.".into());
+        return Err(
+            "Downloaded list had no recognizable parks — the POTA export format may have changed."
+                .into(),
+        );
     }
     let n = idx.len();
     let _ = std::fs::write(parks_cache_path(), &csv);
@@ -7550,7 +7736,10 @@ async fn download_parks(parks: State<'_, SharedParks>) -> Result<usize, String> 
 /// Exact local lookup of one park by reference (offline, instant). `None` if the ref is malformed
 /// or not in the loaded directory — the caller then falls back to the live lookup.
 #[tauri::command]
-fn lookup_park(parks: State<'_, SharedParks>, reference: String) -> Result<Option<ParkDto>, String> {
+fn lookup_park(
+    parks: State<'_, SharedParks>,
+    reference: String,
+) -> Result<Option<ParkDto>, String> {
     let idx = parks.lock().map_err(|e| e.to_string())?;
     Ok(idx.lookup(&reference).map(ParkDto::from))
 }
@@ -7665,10 +7854,15 @@ impl tempo_audio::rigctld_server::RigBackend for EngineRig {
         (m, 2700)
     }
     fn ptt(&self) -> bool {
-        self.0.lock().map(|e| e.snapshot().radio.transmitting).unwrap_or(false)
+        self.0
+            .lock()
+            .map(|e| e.snapshot().radio.transmitting)
+            .unwrap_or(false)
     }
     fn set_freq(&self, hz: u64) -> bool {
-        let Ok(mut e) = self.0.lock() else { return false };
+        let Ok(mut e) = self.0.lock() else {
+            return false;
+        };
         let mhz = hz as f64 / 1_000_000.0;
         // Derive the band label from the freq; keep the current band if off-plan.
         let band = propagation::model::Band::from_mhz(mhz)
@@ -7676,13 +7870,19 @@ impl tempo_audio::rigctld_server::RigBackend for EngineRig {
             .unwrap_or_else(|| e.settings().band.clone());
         let mode = {
             let m = e.settings().sideband.clone();
-            if m.is_empty() { "USB".to_string() } else { m }
+            if m.is_empty() {
+                "USB".to_string()
+            } else {
+                m
+            }
         };
         e.set_frequency(mhz, &band, &mode);
         true
     }
     fn set_mode(&self, mode: &str, _passband_hz: u32) -> bool {
-        let Ok(mut e) = self.0.lock() else { return false };
+        let Ok(mut e) = self.0.lock() else {
+            return false;
+        };
         let (mhz, band) = {
             let s = e.settings();
             (s.dial_mhz, s.band.clone())
@@ -7703,10 +7903,7 @@ impl tempo_audio::rigctld_server::RigBackend for EngineRig {
         // v2 arbitration: a foreign app may key ONLY when the operator opted in
         // (Settings cat_broker_ptt), TX is enabled/legal, and Nexus is idle —
         // the engine owns the decision (Engine::broker_ptt). Un-key always lands.
-        self.0
-            .lock()
-            .map(|mut e| e.broker_ptt(on))
-            .unwrap_or(false)
+        self.0.lock().map(|mut e| e.broker_ptt(on)).unwrap_or(false)
     }
 }
 
@@ -7718,8 +7915,7 @@ impl tempo_audio::rigctld_server::RigBackend for EngineRig {
 // signed auto-update is a later phase.
 
 /// SourceForge `best_release.json` for the Nexus project — the machine-readable "latest release".
-const BEST_RELEASE_URL: &str =
-    "https://sourceforge.net/projects/nexus-ham-radio/best_release.json";
+const BEST_RELEASE_URL: &str = "https://sourceforge.net/projects/nexus-ham-radio/best_release.json";
 /// The human download page the "Download" button opens (files listing; returns HTTP 200).
 const DOWNLOAD_PAGE_URL: &str = "https://sourceforge.net/projects/nexus-ham-radio/files/";
 
@@ -7741,7 +7937,11 @@ struct UpdateInfo {
 fn fetch_best_release() -> Result<String, String> {
     reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
-        .user_agent(concat!("nexus/", env!("CARGO_PKG_VERSION"), " (+update-check)"))
+        .user_agent(concat!(
+            "nexus/",
+            env!("CARGO_PKG_VERSION"),
+            " (+update-check)"
+        ))
         .build()
         .map_err(|e| e.to_string())?
         .get(BEST_RELEASE_URL)
@@ -8030,9 +8230,7 @@ pub fn run() {
                     .map(|e| e.export_conversations())
                     .unwrap_or_else(|e| e.into_inner().export_conversations());
                 if let Ok(text) = serde_json::to_string(&convs) {
-                    if last.as_deref() != Some(text.as_str())
-                        && write_conversations_atomic(&text)
-                    {
+                    if last.as_deref() != Some(text.as_str()) && write_conversations_atomic(&text) {
                         last = Some(text);
                     }
                 }
@@ -8075,8 +8273,8 @@ pub fn run() {
             };
             // ClubLog suspended (403 latch): skip that leg instead of erroring
             // per QSO — the suspension was announced once; re-push covers later.
-            let clublog_live = clublog_on
-                && !CLUBLOG_SUSPENDED.load(std::sync::atomic::Ordering::Relaxed);
+            let clublog_live =
+                clublog_on && !CLUBLOG_SUSPENDED.load(std::sync::atomic::Ordering::Relaxed);
             for p in recs {
                 let rec = p.rec.clone();
                 let failed = auto_push_one(
@@ -8118,8 +8316,12 @@ pub fn run() {
             }));
             let msg = match result {
                 Ok(Ok(())) => "Radio engine stopped unexpectedly — restart Nexus.".to_string(),
-                Ok(Err(e)) => format!("RADIO ENGINE STOPPED — TX/RX is dead until you restart Nexus ({e})"),
-                Err(_) => "RADIO ENGINE CRASHED — TX/RX is dead until you restart Nexus.".to_string(),
+                Ok(Err(e)) => {
+                    format!("RADIO ENGINE STOPPED — TX/RX is dead until you restart Nexus ({e})")
+                }
+                Err(_) => {
+                    "RADIO ENGINE CRASHED — TX/RX is dead until you restart Nexus.".to_string()
+                }
             };
             eprintln!("tempo: {msg}");
             let _ = eng_for_report
@@ -8163,7 +8365,11 @@ pub fn run() {
             std::thread::spawn(move || {
                 match std::net::TcpListener::bind(("127.0.0.1", broker_port)) {
                     Ok(l) => tempo_audio::rigctld_server::serve(l, backend),
-                    Err(e) => conn_log("CAT broker", "error", format!("couldn't bind 127.0.0.1:{broker_port}: {e}")),
+                    Err(e) => conn_log(
+                        "CAT broker",
+                        "error",
+                        format!("couldn't bind 127.0.0.1:{broker_port}: {e}"),
+                    ),
                 }
             });
         }

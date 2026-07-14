@@ -221,10 +221,13 @@ pub fn merge_and_add(
         match take_match(&mut buckets, &inc) {
             Some(i) => apply_match(&mut local[i], &inc, &mut sum),
             None => {
-                // New contact from the download — append it and index its slot so a
-                // duplicate row later in this same batch matches here, not re-adds.
-                let idx = local.len();
-                buckets.entry(key(&inc)).or_default().push(idx);
+                // New contact from the download — append it. Do NOT re-index it into the
+                // consume-once bucket: a later same-key row in this batch is a DISTINCT QSO
+                // (consume-once, exactly like `reconcile`). Re-indexing broke re-sync
+                // idempotency — the appended slot got popped by a same-key row, leaving its
+                // twin to re-append on every fetch (phantom-duplicate accretion). Because
+                // `build_buckets` rebuilds from the grown log next sync, each row then pops
+                // its own match and nothing re-adds.
                 added.push(inc.clone());
                 local.push(inc);
             }
@@ -645,13 +648,22 @@ mod tests {
     }
 
     #[test]
-    fn merge_add_dedups_repeated_new_row_within_one_batch() {
-        // Two identical rows for a call not in the log: the first is added, the second
-        // matches the just-added row (indexed mid-pass) rather than adding a twin.
+    fn merge_add_keeps_distinct_same_key_rows_and_is_idempotent() {
+        // Two rows collapsing to one (call, band, mode-class, day) key are DISTINCT QSOs —
+        // consume-once, exactly like reconcile — so BOTH add on the first sync...
         let mut log: Vec<QsoRecord> = Vec::new();
         let a = rec("DL1XYZ", "15m", "FT8", 20_100);
-        let (added, _) = merge_and_add(&mut log, vec![a.clone(), a]);
-        assert_eq!(added.len(), 1, "duplicate row in the same batch adds once");
-        assert_eq!(log.len(), 1);
+        let (added, _) = merge_and_add(&mut log, vec![a.clone(), a.clone()]);
+        assert_eq!(added.len(), 2, "two same-key rows are two records");
+        assert_eq!(log.len(), 2);
+        // ...and re-fetching the SAME batch adds nothing (idempotent — each row pops its own
+        // match). The old within-batch "dedup" re-indexed the appended slot and broke exactly
+        // this: the twin re-appended a phantom every sync.
+        let (added2, _) = merge_and_add(&mut log, vec![a.clone(), a]);
+        assert!(
+            added2.is_empty(),
+            "re-sync of the same batch adds no phantom"
+        );
+        assert_eq!(log.len(), 2);
     }
 }
