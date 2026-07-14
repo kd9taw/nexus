@@ -14,6 +14,11 @@
 //! HONESTY NOTE: written to the published SmartSDR Ethernet API + the open-source FlexLib, and
 //! unit-tested against synthetic frames — NOT yet confirmed against live hardware (no Flex on the
 //! dev LAN). The UI gates the native panadapter behind this until an operator confirms it.
+//!
+//! PROVENANCE: original implementation of FlexRadio's PUBLICLY-DOCUMENTED SmartSDR Ethernet API
+//! (github.com/flexradio/smartsdr-api-docs) + the open VITA-49 standard; NO FlexLib/vendor SDK
+//! code is copied or bundled. "FlexRadio"/"SmartSDR" are trademarks used NOMINATIVELY (to state
+//! compatibility only). See the repo-root `NOTICE`, "Rig-control protocol interoperability".
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;

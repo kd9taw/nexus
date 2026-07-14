@@ -6,6 +6,12 @@
 //! serial port exclusively and discards the async scope stream, so to get a native
 //! panadapter Nexus must own the CI-V port itself.
 //!
+//! PROVENANCE: this is an ORIGINAL implementation of the CI-V command set, written from Icom's
+//! PUBLISHED CI-V reference (the command tables in Icom's operating manuals, e.g. IC-7300 §19).
+//! Opcodes + byte layouts are functional protocol facts; NO Icom software or manual text is
+//! reproduced. "Icom" + IC-model names are trademarks used NOMINATIVELY (compatibility only).
+//! See the repo-root `NOTICE`, "Rig-control protocol interoperability".
+//!
 //! This module is layered so the protocol core is testable without any hardware:
 //! - [`frame`] — the pure CI-V frame + BCD codec layer (the foundation);
 //! - [`commands`] — the verb table (freq/mode/PTT/meters…) as pure encode/decode;

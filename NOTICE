@@ -161,6 +161,46 @@ compiled Boost library is linked.
 
 ---
 
+## Rig-control protocol interoperability (no vendor code bundled)
+
+Nexus controls transceivers over their manufacturers' **published** control
+protocols. Each implementation is **independent, original code** written from the
+public protocol documentation to interoperate with hardware the operator owns — a
+long-standing, widely-practiced form of interoperability (Hamlib, WSJT-X, N1MM, and
+many others control the same radios the same way). **No manufacturer SDK, library,
+or source code is copied or bundled.**
+
+### Icom CI-V
+The native Icom CI-V transport (`crates/tempo-audio/src/civ/`) is an original
+implementation of the CI-V command set (frequency, mode, PTT, levels/meters, and the
+`0x27` scope-waveform stream), written from **Icom's published CI-V reference** (the
+command tables in Icom's operating manuals — e.g. the IC-7300 §19 command list).
+Command opcodes and byte layouts are functional facts of the wire protocol; no Icom
+software or manual text is reproduced.
+
+### FlexRadio SmartSDR
+The FlexRadio panadapter path (`crates/tempo-net/src/flex{cat,vita,disc}.rs` and
+`crates/tempo-audio/src/flexspectrum.rs`) is an original implementation of a SmartSDR
+Ethernet-API client, written from FlexRadio's **publicly-documented API**
+(<https://github.com/flexradio/smartsdr-api-docs>) and the **open VITA-49 Radio
+Transport standard** (VITA), and validated against synthetic frames. The FFT-packet
+field layout is cross-checked against the open-source **FlexLib** reference as a wire-
+format fact, not a code copy. **FlexRadio's proprietary FlexLib .NET library is NOT
+included or redistributed** — it is redistributable with third-party apps and requires
+a license only for *commercial* products, and Nexus neither bundles it nor is a
+commercial product. FlexRadio publishes this API expressly for third-party developers,
+and an ecosystem of independent open-source clients exists (e.g. K3TZR's xLib6000,
+flexlib-go, and the GPLv3 AetherSDR).
+
+### Trademarks
+**Icom** and IC-model names, and **FlexRadio**, **SmartSDR**, and FLEX-model names,
+are trademarks of Icom Inc. and FlexRadio Systems respectively. Nexus uses them only
+**nominatively** — to state which radios it is compatible with. Nexus is an
+independent project and is **not affiliated with, sponsored by, or endorsed by** Icom
+or FlexRadio.
+
+---
+
 ## Rust dependencies
 
 Nexus's Rust workspace (`crates/ft1-sys`, `crates/ft1`, `crates/tempo-core`,
