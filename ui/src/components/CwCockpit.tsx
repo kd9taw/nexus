@@ -191,7 +191,7 @@ export function CwCockpit({
   useEffect(() => {
     if (snap.radio.agc != null) setAgcLocal(snap.radio.agc)
   }, [snap.radio.agc])
-  const changeAgc = (sp: string) => {
+  const changeAgc = (sp: 'fast' | 'mid' | 'slow') => {
     setAgcLocal(sp)
     void setAgc(sp)
       .then((s) => onSnap?.(s))

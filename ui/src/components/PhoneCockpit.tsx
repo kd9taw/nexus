@@ -151,7 +151,7 @@ export function PhoneCockpit({ snap, theme, pendingWork, onConsumeWork, onSnap, 
   useEffect(() => {
     if (snap.radio.agc != null) setAgcLocal(snap.radio.agc)
   }, [snap.radio.agc])
-  const changeAgc = (sp: string) => {
+  const changeAgc = (sp: 'fast' | 'mid' | 'slow') => {
     setAgcLocal(sp)
     void setAgc(sp)
       .then((s) => onSnap?.(s))
@@ -163,9 +163,6 @@ export function PhoneCockpit({ snap, theme, pendingWork, onConsumeWork, onSnap, 
     setScopeRefTenths(tenths)
     void setScopeRef(tenths)
   }
-  // True only when the rig's own Icom scope is streaming (span/ref are Icom CI-V commands; the
-  // Flex panadapter has a different control path, so gate on 'civ' specifically, not any RF feed).
-  const civScope = scopeFeed?.source === 'civ'
   const [keyed, setKeyed] = useState(false)
   // Bandscope span (audio-window zoom within the captured passband — this is
   // soundcard audio, not RF IQ, so "span" means which slice of the passband
@@ -182,6 +179,9 @@ export function PhoneCockpit({ snap, theme, pendingWork, onConsumeWork, onSnap, 
   // framing (the "RX audio" label and the audio-Hz span chips) so the operator sees ONE unambiguous
   // display — the panadapter — instead of RF spectrum wrapped in audio-passband chrome.
   const nativeRf = scopeFeed != null && isRfScopeSource(scopeFeed.source)
+  // True only when the rig's own Icom scope is streaming (span/ref are Icom CI-V commands; the
+  // Flex panadapter has a different control path, so gate on 'civ' specifically, not any RF feed).
+  const civScope = scopeFeed?.source === 'civ'
   const [lock, setLock] = useState(false) // hands-free PTT (toggle instead of hold)
   const [recBusy, setRecBusy] = useState(false) // in-flight guard for the record toggle
   const [spotOpen, setSpotOpen] = useState(false) // spot-to-cluster popup
