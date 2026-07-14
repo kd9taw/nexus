@@ -93,6 +93,20 @@ pub fn stop() {
     }
 }
 
+/// Record a decision-point marker (e.g. "daemon Drop unkey", "tune release") interleaved
+/// with the bus traffic by timestamp. This is what turns "a daemon was torn down mid-TX"
+/// from an inference into a named code path in the capture. A no-op when disarmed.
+pub fn note(msg: &str) {
+    if !is_enabled() {
+        return;
+    }
+    let Ok(mut g) = SINK.lock() else { return };
+    let Some(s) = g.as_mut() else { return };
+    let ms = s.start.elapsed().as_millis();
+    let _ = writeln!(s.w, "+{ms:>7} ms  NOTE                                 ; {msg}");
+    let _ = s.w.flush();
+}
+
 /// Record one direction's bytes. A no-op (one relaxed load) when disarmed.
 pub fn log(dir: Dir, bytes: &[u8]) {
     if !is_enabled() || bytes.is_empty() {

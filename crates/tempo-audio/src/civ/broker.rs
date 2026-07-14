@@ -278,6 +278,7 @@ impl CivDaemon {
                 })
                 .expect("spawn civ-daemon-tcp")
         };
+        super::diag::note("CivDaemon created (new serial engine + rigctld TCP)");
         Ok(CivDaemon {
             engine,
             civ_addr,
@@ -340,6 +341,7 @@ impl Drop for CivDaemon {
         // Idempotent (an already-RX radio just acks); one choke point covers every
         // native teardown path: rig rebuilds, monitor recycles, handoff drops, app exit.
         if self.engine.is_alive() {
+            super::diag::note("CivDaemon::Drop — safety key-up (a daemon is being torn down)");
             let _ = self
                 .engine
                 .handle()

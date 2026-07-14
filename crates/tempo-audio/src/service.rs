@@ -567,6 +567,7 @@ fn reconcile_pool(
         (to_open, to_close)
     };
     if !to_close.is_empty() {
+        crate::civ::diag::note("monitor pool: closing daemon(s) — a recycle drops+unkeys them");
         let mut p = pool.lock().unwrap_or_else(|e| e.into_inner());
         p.retain(|c| !to_close.contains(&c.id)); // drop kills each daemon
         if let Ok(mut e) = engine.lock() {
@@ -715,6 +716,7 @@ fn handoff_if_switched(
     // try_lock; re-unkeying every retry adds CAT round-trips that stretch the retry past the
     // monitor's lock-free gaps). Still re-runs if anything keyed the rig mid-deferral.
     if !state.handoff_deferred || rig.keyed || state.tx_until_ms.is_some() {
+        crate::civ::diag::note("dual-radio handoff: unkeying the outgoing rig before it leaves the active slot");
         let _ = rig.ptt(false);
         let _ = rig.stop_morse();
         state.tx_until_ms = None;
@@ -1225,6 +1227,7 @@ impl RadioLoop {
                     // UNCONDITIONAL: the flags can desync from a keyed radio (failed
                     // unkey); this teardown is the last chance to key-up through a
                     // LIVE channel before the daemon dies. Idempotent when idle.
+                    crate::civ::diag::note("rig_differs: transport changed → teardown+rebuild daemon (unkey first)");
                     backend.flush_output();
                     let _ = rig.ptt(false);
                     self.tx_until_ms = None;
@@ -1283,6 +1286,7 @@ impl RadioLoop {
                 // Mirrors the rig-rebuild path above.
                 {
                     // UNCONDITIONAL — same desync rationale as the rig-rebuild guard.
+                    crate::civ::diag::note("audio rebuild: ending the over (flush+unkey) before reopening the sound card");
                     backend.flush_output();
                     let _ = rig.ptt(false);
                     self.tx_until_ms = None;
@@ -2277,6 +2281,7 @@ impl RadioLoop {
             // Tuning just released: drop PTT and re-anchor to the slot grid. The keyed
             // flag only clears on a SUCCESSFUL unkey (fail-safe Rig::ptt), so a miss
             // here is retried by the idle self-heal below.
+            crate::civ::diag::note("tune released: unkey (tune ended or Tune toggled off)");
             let _ = rig.ptt(false);
             if let Some(d) = self.rigctld_proc.as_ref().and_then(CatDaemon::native) {
                 // Restore the PRE-TUNE data state — NOT a hardcoded OFF. An FT8/DATA-U operator
@@ -2294,6 +2299,7 @@ impl RadioLoop {
         // transmission immediately — drop PTT and discard the queued TX audio
         // rather than letting the slot's audio play out to its deadline.
         if self.tx_until_ms.is_some() && !eng.tx_enabled() {
+            crate::civ::diag::note("hard-stop TX: tx_enabled went false mid-over → unkey");
             let _ = rig.ptt(false);
             backend.flush_output();
             self.tx_until_ms = None;
@@ -2306,6 +2312,7 @@ impl RadioLoop {
         // recovering blip. One idempotent CAT call per tick, only while desynced.
         if rig.keyed && self.tx_until_ms.is_none() && !self.tuning_keyed && !self.manual_ptt_applied
         {
+            crate::civ::diag::note("idle self-heal: rig still keyed but loop thinks RX → unkey");
             let _ = rig.ptt(false);
         }
 
