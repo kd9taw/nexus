@@ -5,6 +5,24 @@ All notable changes to Nexus (formerly Tempo) are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.7] — 2026-07-14 — CW ragchew macro tokens + FlexRadio panadapter (early access)
+
+### Added
+
+- **CW macro tokens for ragchew exchanges: `{HISNAME}`, `{MYSTATE}`, `{HISSTATE}`.** Beyond
+  `{MYCALL}` / `{NAME}` / `!`, you can now greet the other op by name and send/confirm QTH:
+  `{HISNAME}` is the worked station's QRZ nickname (falling back to name), `{HISSTATE}` their
+  state, and `{MYSTATE}` your own state (set it once in **Settings ▸ Station ▸ State**).
+  `{HISNAME}`/`{HISSTATE}` fill from the callbook lookup and are keyed to the callsign, so a
+  stale lookup can never key the wrong name; empty until a lookup resolves. Example:
+  `! DE {MYCALL} UR {RST} QTH {MYSTATE} NAME {NAME} HW CPY {HISNAME}? KN`.
+- **FlexRadio native SmartSDR panadapter — early access (opt-in).** For FlexRadio owners:
+  **Settings ▸ Rig ▸ "Flex native panadapter (early access)"** streams the radio's real RF
+  spectrum (SmartSDR VITA-49) into the cockpit scope, with **Flex-pan bandwidth + reference**
+  controls in both the CW and Phone cockpits. Off by default and clearly marked unverified —
+  needs a network Flex with its IP set (from Find Radios). If it doesn't paint or the app
+  hitches, turn it back off. (Enable, test, and it becomes the default once proven on hardware.)
+
 ## [0.8.6] — 2026-07-14 — CI-V controls both cockpits, spot colours, two-way QRZ sync, tester fixes
 
 ### Added
