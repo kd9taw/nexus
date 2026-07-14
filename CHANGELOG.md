@@ -5,26 +5,46 @@ All notable changes to Nexus (formerly Tempo) are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.8.6] — 2026-07-14 — Panadapter controls, RX DSP levels, two-way QRZ logbook sync
+## [0.8.6] — 2026-07-14 — CI-V controls both cockpits, spot colours, two-way QRZ sync, tester fixes
 
 ### Added
 
-- **Phone cockpit: panadapter controls for the native scope (span + reference level).** When a
-  FlexRadio or Icom CI-V scope is streaming, a control row lets you set the RF span (±2.5k up to
-  ±250k) and the reference level directly from Nexus — the same knobs you'd reach for on the rig's
-  own scope. On dual-scope Icoms (IC-9700/7610) the commands target the Main scope; single-scope
-  rigs (IC-7300/705/905) omit the selector, matching each rig's CI-V format.
-- **Phone cockpit: RX DSP level controls (noise reduction + AGC speed).** Beside the existing DSP
-  toggles, an NR-level slider and a Fast/Mid/Slow AGC selector — read back from and written to the
-  rig over CI-V (native path) or Hamlib, so what the cockpit shows matches the radio. Controls only
-  appear for rigs that report the level.
+- **CW + Phone cockpits: panadapter controls for the native scope (span + reference level).** When a
+  FlexRadio or Icom CI-V scope is streaming, a control row sets the RF span (±2.5k up to ±250k) and
+  the reference level directly from Nexus — the same knobs you'd reach for on the rig's own scope. On
+  dual-scope Icoms (IC-9700/7610) the commands target the Main scope; single-scope rigs
+  (IC-7300/705/905) omit the selector, matching each rig's CI-V format.
+- **CW + Phone cockpits: RX DSP level controls (noise reduction + AGC speed).** Beside the DSP
+  toggles, an NR-depth slider and a Fast/Mid/Slow AGC selector — read back from and written to the
+  rig over CI-V (native path) or Hamlib, so what the cockpit shows matches the radio. Capability-gated
+  (only appears for rigs that report it).
+- **The CW cockpit reaches CI-V parity with Phone.** AGC speed, NR depth, and — when a native CI-V
+  scope streams — the real RF panadapter (with RF-zoom + rig span/ref controls) now live in the CW
+  cockpit too; the CW-narrow zero-beat audio view stays for rigs without a native scope. (Mic gain
+  and the SSB TX meters remain Phone-only by design.)
+- **Band Activity + Band map: spot colours now mean something, with a legend.** The flat Band
+  Activity strip colours each spot by need tier (new entity / band / mode / grid / state / wanted),
+  matching the vertical band map, and both show a P / S / ✈ badge for POTA / SOTA / DXpedition
+  regardless of the need colour. A toggleable **Legend** explains the colours + badges (remembered).
+- **The torn-off Band map remembers its place — and docks to a screen edge.** The vertical band-map
+  pop-out reopens at the size + position you left it (no more re-arranging every launch), and new
+  **◧ / ◨** buttons snap it to the left/right screen edge as a full-height strip.
 - **Two-way QRZ logbook sync — pull your online QRZ logbook back down.** Until now Nexus only
   *pushed* QSOs to QRZ. **Settings ▸ Logbook & QSL ▸ QRZ ▸ "Sync from QRZ now"** now FETCHes your
   online QRZ logbook and merges it in: it **adds QSOs you logged elsewhere** (e.g. a phone logger in
   the field) and marks **QRZ-confirmed** contacts. QRZ-native confirmations count as confirmations
   but **not** toward DXCC/WAS (a separate tier, like eQSL) — so a QRZ match can never inflate your
-  award counts. Safe to run repeatedly (deduped by call/band/mode/day). Uses the per-logbook API
-  key (not your QRZ password).
+  award counts. Safe to run repeatedly. Uses the per-logbook API key (not your QRZ password).
+
+### Fixed
+
+- **CW/Phone macro F-keys show your label again, not just "F1."** The label text had no explicit
+  colour, so it inherited the button's default and could paint invisibly (dark-on-dark) — only the
+  small F-key badge showed. Now pinned to the theme colour.
+- **The torn-off Waterfall no longer stays always-on-top** — you can send it behind the main window.
+- **The Connect tab renders correctly at 110% display scaling.** The 2-D map no longer collapses to
+  zero height (and the side panes no longer clip) when the app is zoomed.
+- **AGC speed buttons light up instantly** when clicked (they lagged ~1 s behind the rig read-back).
 
 ## [0.8.5] — 2026-07-14 — Native Icom phone toolkit (RF panadapter, TX meters, mic gain) + CI-V PTT fix
 

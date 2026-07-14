@@ -8569,7 +8569,7 @@ select.settings-input {
   border-radius: 1px;
 }
 /* A need-tagged tick reads as a fuller bar so the colour is legible at strip density. */
-.bandstrip-tick[class*='need-'] {
+.bandstrip-tick.is-need {
   width: 3px;
 }
 .bandstrip-spot:hover .bandstrip-tick {

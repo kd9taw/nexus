@@ -139,7 +139,7 @@ export function BandStrip({
           const cu = s.call.toUpperCase()
           // Colour the tick by need tier (why it's worth working) — parity with the band map.
           const need = needByCall?.get(cu)
-          const needCls = need ? ` need-${NEED_CHIP[need].cls}` : ''
+          const needCls = need ? ` is-need need-${NEED_CHIP[need].cls}` : ''
           // Flag the activity type (POTA/SOTA/DXped) independent of the colour.
           const type = typeByCall?.get(cu)
           const badge = type ? TYPE_BADGE[type] : null
