@@ -4761,7 +4761,11 @@ async fn open_panel_window(app: tauri::AppHandle, panel: String) -> Result<(), S
         if slug == "waterfall" { 380.0 } else { 420.0 },
         if slug == "waterfall" { 180.0 } else { 360.0 },
     );
-    if let (Some(g), None) = (&saved, &docked_side) {
+    if let Some(g) = &saved {
+        // Open at the saved position. For a FREE window that's the exact restore; for a DOCKED
+        // window it lands it on the RIGHT monitor (multi-monitor) before the re-snap below
+        // refines it to THAT monitor's work-area edge — and it's the fallback if the re-snap
+        // can't resolve a monitor.
         builder = builder.position(g.x, g.y);
     }
     // Pop-outs are ordinary windows — the operator must be able to send them behind the
@@ -4769,7 +4773,8 @@ async fn open_panel_window(app: tauri::AppHandle, panel: String) -> Result<(), S
     // future "pin" toggle can call `window.set_always_on_top(true)` on demand.
     let win = builder.build().map_err(|e| e.to_string())?;
     if let Some(side) = docked_side {
-        // Re-pin to the edge of the current work area (best-effort; ignore if unmapped).
+        // Re-pin to the edge of the current work area (best-effort; ignore if unmapped) so a
+        // resolution change since last session can't strand it off-screen.
         let _ = snap_bandmap_to_edge(&win, &side);
     }
     Ok(())
