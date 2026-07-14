@@ -206,6 +206,7 @@ impl AppState {
                 // (the engine recomputes this from recent DT each snapshot).
                 time_sync_ok: true,
                 rf_power: None,          // engine fills from command/read-back
+                mic_gain: None,          // engine fills from command/read-back
                 smeter_db: None,         // engine fills from CAT STRENGTH read-back
                 tx_swr: None,            // engine fills from the keyed-only TX-meter poll
                 tx_alc: None,

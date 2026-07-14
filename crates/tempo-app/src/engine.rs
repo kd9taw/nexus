@@ -362,6 +362,11 @@ pub struct Engine {
     /// the commanded `rf_power` so a 750 ms poll can never clobber a just-issued
     /// set that the radio loop hasn't applied yet.
     rig_rf_power: Option<f32>,
+    /// Desired MIC GAIN (0.0–1.0); `None` = leave the rig's mic gain alone. Same
+    /// commanded-vs-read-back split as `rf_power`/`rig_mic_gain` so an in-flight drag wins.
+    mic_gain: Option<f32>,
+    /// Mic gain as READ BACK from the rig (the poll's truth).
+    rig_mic_gain: Option<f32>,
     /// Rig CAT S-meter (dB relative to S9) from the radio-loop poll; `None` when the
     /// rig doesn't report STRENGTH. Observed-only, RX-only.
     rig_smeter_db: Option<i32>,
@@ -640,6 +645,8 @@ impl Engine {
             manual_ptt: false,
             rf_power: None,
             rig_rf_power: None,
+            mic_gain: None,
+            rig_mic_gain: None,
             rig_smeter_db: None,
             rig_tx_swr: None,
             rig_tx_alc: None,
@@ -1670,6 +1677,21 @@ impl Engine {
     pub fn observe_rig_power(&mut self, frac: f32) {
         if frac.is_finite() {
             self.rig_rf_power = Some(frac.clamp(0.0, 1.0));
+        }
+    }
+
+    /// Set desired mic gain (0.0–1.0). The radio loop applies it via the rig.
+    pub fn set_mic_gain(&mut self, frac: f32) {
+        self.mic_gain = Some(frac.clamp(0.0, 1.0));
+    }
+    /// Desired mic gain, if the operator has set one (for the radio loop).
+    pub fn mic_gain(&self) -> Option<f32> {
+        self.mic_gain
+    }
+    /// Adopt the rig's reported mic gain (radio-loop poll). Observed-only.
+    pub fn observe_rig_mic_gain(&mut self, frac: f32) {
+        if frac.is_finite() {
+            self.rig_mic_gain = Some(frac.clamp(0.0, 1.0));
         }
     }
 
@@ -4303,6 +4325,7 @@ impl Engine {
         s.radio.tx_level = self.settings.tx_level;
         // Rig read-back wins (the knob's truth); else the last commanded value.
         s.radio.rf_power = self.rig_rf_power.or(self.rf_power);
+        s.radio.mic_gain = self.rig_mic_gain.or(self.mic_gain);
         s.radio.smeter_db = self.rig_smeter_db;
         s.radio.tx_swr = self.rig_tx_swr;
         s.radio.tx_alc = self.rig_tx_alc;

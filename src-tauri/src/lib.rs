@@ -4027,6 +4027,14 @@ fn set_rf_power(state: State<'_, SharedEngine>, power: f32) -> Result<AppSnapsho
     Ok(eng.snapshot())
 }
 
+/// Set mic gain as a 0.0–1.0 fraction; the radio loop applies it to the rig.
+#[tauri::command]
+fn set_mic_gain(state: State<'_, SharedEngine>, gain: f32) -> Result<AppSnapshot, String> {
+    let mut eng = state.lock().map_err(|e| e.to_string())?;
+    eng.set_mic_gain(gain);
+    Ok(eng.snapshot())
+}
+
 /// Set (`Some`) or clear (`None`) the desired split TX dial (MHz); the radio loop applies it.
 /// `Some(tx)` = TX split to that dial (e.g. "up 5"), `None` = back to simplex.
 #[tauri::command]
@@ -8044,6 +8052,7 @@ pub fn run() {
             set_cw_keyer,
             set_ptt,
             set_rf_power,
+            set_mic_gain,
             set_split,
             set_rig_func,
             set_sideband_override,

@@ -763,6 +763,11 @@ export async function setRfPower(power: number): Promise<AppSnapshot> {
   return invoke<AppSnapshot>('set_rf_power', { power })
 }
 
+/** Set mic gain as a 0.0–1.0 fraction. */
+export async function setMicGain(gain: number): Promise<AppSnapshot> {
+  return invoke<AppSnapshot>('set_mic_gain', { gain })
+}
+
 // --- phone voice keyer ---
 /** Play the recorded WAV bound to a voice-keyer slot (PTT + audio via the radio loop). */
 export async function playVoiceMessage(slot: number): Promise<AppSnapshot> {

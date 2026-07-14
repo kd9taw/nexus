@@ -663,6 +663,13 @@ impl Rig {
             &format!("{:.3}", frac.clamp(0.0, 1.0)),
         ))
     }
+    /// Set mic gain as a 0.0–1.0 fraction (Hamlib `MICGAIN`).
+    pub fn set_mic_gain(&mut self, frac: f32) -> std::io::Result<()> {
+        self.cat(&level_line(
+            "MICGAIN",
+            &format!("{:.3}", frac.clamp(0.0, 1.0)),
+        ))
+    }
     /// Set the rig's internal CW keyer speed in WPM (Hamlib `KEYSPD`).
     pub fn set_keyspd(&mut self, wpm: u32) -> std::io::Result<()> {
         self.cat(&level_line("KEYSPD", &wpm.to_string()))

@@ -904,6 +904,8 @@ struct RadioLoop {
     manual_ptt_applied: bool,
     /// Last RF power fraction we pushed to the rig — only set on change.
     last_rf_power: Option<f32>,
+    /// Last mic-gain fraction we pushed to the rig — only set on change.
+    last_mic_gain: Option<f32>,
     /// Open WAV sink while a QSO recording is streaming live RX capture to disk (audio
     /// bridge). The loop owns the file handle so the audio never has to live in RAM.
     qso_sink: Option<crate::voice::WavSink>,
@@ -1037,6 +1039,7 @@ impl RadioLoop {
             winkeyer: None,
             manual_ptt_applied: false,
             last_rf_power: None,
+            last_mic_gain: None,
             qso_sink: None,
             qso_started_ms: None,
             voice_mic_open: false,
@@ -1136,6 +1139,7 @@ impl RadioLoop {
         self.last_fm = None;
         self.manual_ptt_applied = false;
         self.last_rf_power = None;
+        self.last_mic_gain = None;
         self.fake_it_restore = None;
         self.audio_rig_split = false;
         self.last_rig_poll = 0.0; // poll the new rig's health/mode/S-meter immediately
@@ -1650,6 +1654,13 @@ impl RadioLoop {
                         if let Ok(frac) = rig.read_level("RFPOWER") {
                             if let Ok(mut eng) = engine.lock() {
                                 eng.observe_rig_power(frac);
+                            }
+                        }
+                        // Mic-gain read-back: same as RF power — mirror the rig so the slider
+                        // shows the real level. Unsupported rigs just error out (ignored).
+                        if let Ok(frac) = rig.read_level("MICGAIN") {
+                            if let Ok(mut eng) = engine.lock() {
+                                eng.observe_rig_mic_gain(frac);
                             }
                         }
                         // Real CAT S-meter (STRENGTH, dB rel S9), mirrored to the UI as a
@@ -2190,6 +2201,12 @@ impl RadioLoop {
             if let Some(p) = power {
                 if Some(p) != self.last_rf_power && rig.set_power(p).is_ok() {
                     self.last_rf_power = Some(p);
+                }
+            }
+            let mic = engine.lock().ok().and_then(|e| e.mic_gain());
+            if let Some(mg) = mic {
+                if Some(mg) != self.last_mic_gain && rig.set_mic_gain(mg).is_ok() {
+                    self.last_mic_gain = Some(mg);
                 }
             }
         }

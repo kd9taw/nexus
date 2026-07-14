@@ -297,6 +297,11 @@ pub struct RadioStatus {
     /// it, else the last commanded value; `None` until either exists.
     #[serde(default)]
     pub rf_power: Option<f32>,
+    /// Mic gain as a 0.0–1.0 fraction — the rig's read-back, or the commanded value until the
+    /// poll confirms it. `None` when the rig doesn't report it. Pairs with the ALC meter for
+    /// SSB setup (raise mic gain until ALC peaks tickle the zone).
+    #[serde(default)]
+    pub mic_gain: Option<f32>,
     /// CAT S-meter reading in dB relative to S9 (S9 = 0 dB, S1 ≈ -48, S9+20 = +20).
     /// `None` when the rig doesn't report STRENGTH over CAT, so the UI shows no meter
     /// rather than a fake one. RX-only — not refreshed while transmitting.

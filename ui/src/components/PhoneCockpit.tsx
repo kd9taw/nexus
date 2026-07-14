@@ -11,7 +11,15 @@ import { BandPicker } from './BandPicker'
 import { VoiceKeyer } from './VoiceKeyer'
 import { LevelMeter } from './LevelMeter'
 import { LogEntry } from './LogEntry'
-import { setPtt, setRfPower, startQsoRecording, stopQsoRecording, setTune, haltTx } from '../api'
+import {
+  setPtt,
+  setRfPower,
+  setMicGain,
+  startQsoRecording,
+  stopQsoRecording,
+  setTune,
+  haltTx,
+} from '../api'
 import { pushToast } from '../toast'
 import { RotorStrip } from './RotorStrip'
 import { MemoryBank } from './MemoryBank'
@@ -88,6 +96,19 @@ export function PhoneCockpit({ snap, theme, pendingWork, onConsumeWork, onSnap, 
       setPower((p) => (Math.abs(p - pct) >= 2 ? pct : p))
     }
   }, [snap.radio.rfPower])
+  const [mic, setMic] = useState(50) // % mic gain — pushed to the rig once touched
+  const micDragging = useRef(false)
+  useEffect(() => {
+    const rb = snap.radio.micGain
+    if (rb != null && !micDragging.current) {
+      const pct = Math.round(rb * 100)
+      setMic((m) => (Math.abs(m - pct) >= 2 ? pct : m))
+    }
+  }, [snap.radio.micGain])
+  const changeMic = (pct: number) => {
+    setMic(pct)
+    void setMicGain(pct / 100)
+  }
   const [keyed, setKeyed] = useState(false)
   // Bandscope span (audio-window zoom within the captured passband — this is
   // soundcard audio, not RF IQ, so "span" means which slice of the passband
@@ -352,6 +373,26 @@ export function PhoneCockpit({ snap, theme, pendingWork, onConsumeWork, onSnap, 
           />
           <span className="ph-power-val">{power}%</span>
         </label>
+        {snap.radio.micGain != null && (
+          <label className="ph-power" title="Microphone gain — raise it until SSB peaks tickle the ALC zone">
+            <span>Mic</span>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              value={mic}
+              onChange={(e) => changeMic(Number(e.target.value))}
+              onPointerDown={() => {
+                micDragging.current = true
+              }}
+              onPointerUp={() => {
+                micDragging.current = false
+              }}
+              aria-label="Mic gain"
+            />
+            <span className="ph-power-val">{mic}%</span>
+          </label>
+        )}
         {catOk && commandedMode !== 'FM' && (
           <div className="ph-filter" title="RX filter / passband width (CAT)">
             <span className="ph-filter-lbl">BW</span>
