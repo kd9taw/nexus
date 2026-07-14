@@ -513,8 +513,19 @@ fn interp_cal(raw: u16, table: &[(u16, f32)]) -> f32 {
 const SWR_CAL: &[(u16, f32)] = &[(0, 1.0), (48, 1.5), (80, 2.0), (120, 3.0), (240, 6.0)];
 const ALC_CAL: &[(u16, f32)] = &[(0, 0.0), (120, 1.0)];
 const PO_WATTS_CAL: &[(u16, f32)] = &[
-    (0, 0.0), (21, 5.0), (43, 10.0), (65, 15.0), (83, 20.0), (95, 25.0), (105, 30.0),
-    (114, 35.0), (124, 40.0), (143, 50.0), (183, 75.0), (213, 100.0), (255, 120.0),
+    (0, 0.0),
+    (21, 5.0),
+    (43, 10.0),
+    (65, 15.0),
+    (83, 20.0),
+    (95, 25.0),
+    (105, 30.0),
+    (114, 35.0),
+    (124, 40.0),
+    (143, 50.0),
+    (183, 75.0),
+    (213, 100.0),
+    (255, 120.0),
 ];
 // IC-9700-specific (the IC-7300 tops out at 241→30 dB; the 9700 at 210→25.5 dB).
 const COMP_DB_CAL: &[(u16, f32)] = &[(0, 0.0), (130, 15.0), (210, 25.5)];
@@ -605,7 +616,7 @@ mod tests {
         assert_eq!(func_sub("VOX"), Some(0x46));
         assert_eq!(func_sub("NB"), Some(0x22));
         assert_eq!(func_sub("RIT"), None); // RIT is a separate register, not a 0x16 func
-        // Set builds `16 <sub> <on>`.
+                                           // Set builds `16 <sub> <on>`.
         let on = set_dsp_func(0xA2, 0x44, true);
         assert_eq!(on.cmd, 0x16);
         assert_eq!(on.data, vec![0x44, 0x01]);
@@ -622,7 +633,10 @@ mod tests {
         assert_eq!(f.cmd, 0x14);
         assert_eq!(f.data[0], 0x0B);
         assert_eq!(level_from_bcd2(f.data[1], f.data[2]), 255);
-        assert_eq!(level_from_bcd2(set_mic_gain(0xA2, 0).data[1], set_mic_gain(0xA2, 0).data[2]), 0);
+        assert_eq!(
+            level_from_bcd2(set_mic_gain(0xA2, 0).data[1], set_mic_gain(0xA2, 0).data[2]),
+            0
+        );
     }
 
     #[test]
@@ -640,17 +654,32 @@ mod tests {
     fn scope_ref_encodes_level_then_sign() {
         // 27 19: [scope, 2-byte BE BCD magnitude in 0.01 dB, sign(00=+/01=-)].
         // +10.0 dB → 1000 → 10 00, sign 00.
-        assert_eq!(set_scope_ref(0xA2, Some(0x00), 100).data, vec![0x19, 0x00, 0x10, 0x00, 0x00]);
+        assert_eq!(
+            set_scope_ref(0xA2, Some(0x00), 100).data,
+            vec![0x19, 0x00, 0x10, 0x00, 0x00]
+        );
         // −20.0 dB → 2000 → 20 00, sign 01. (Clamped range.)
-        assert_eq!(set_scope_ref(0xA2, Some(0x00), -200).data, vec![0x19, 0x00, 0x20, 0x00, 0x01]);
+        assert_eq!(
+            set_scope_ref(0xA2, Some(0x00), -200).data,
+            vec![0x19, 0x00, 0x20, 0x00, 0x01]
+        );
         // +0.5 dB (5 tenths) → 50 → 00 50, sign 00.
-        assert_eq!(set_scope_ref(0x94, None, 5).data, vec![0x19, 0x00, 0x50, 0x00]);
+        assert_eq!(
+            set_scope_ref(0x94, None, 5).data,
+            vec![0x19, 0x00, 0x50, 0x00]
+        );
     }
 
     #[test]
     fn scope_center_mode_is_one_byte() {
-        assert_eq!(set_scope_center_mode(0xA2, Some(0x00), true).data, vec![0x14, 0x00, 0x01]);
-        assert_eq!(set_scope_center_mode(0x94, None, false).data, vec![0x14, 0x00]);
+        assert_eq!(
+            set_scope_center_mode(0xA2, Some(0x00), true).data,
+            vec![0x14, 0x00, 0x01]
+        );
+        assert_eq!(
+            set_scope_center_mode(0x94, None, false).data,
+            vec![0x14, 0x00]
+        );
     }
 
     #[test]

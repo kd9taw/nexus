@@ -80,7 +80,9 @@ pub fn status() -> Option<String> {
     if !is_enabled() {
         return None;
     }
-    SINK.lock().ok().and_then(|g| g.as_ref().map(|s| s.path.clone()))
+    SINK.lock()
+        .ok()
+        .and_then(|g| g.as_ref().map(|s| s.path.clone()))
 }
 
 /// Disarm the tap, then flush and close the log.
@@ -103,7 +105,10 @@ pub fn note(msg: &str) {
     let Ok(mut g) = SINK.lock() else { return };
     let Some(s) = g.as_mut() else { return };
     let ms = s.start.elapsed().as_millis();
-    let _ = writeln!(s.w, "+{ms:>7} ms  NOTE                                 ; {msg}");
+    let _ = writeln!(
+        s.w,
+        "+{ms:>7} ms  NOTE                                 ; {msg}"
+    );
     let _ = s.w.flush();
 }
 

@@ -56,14 +56,18 @@ impl CivBackend {
     /// Read a `15 <sub>` transmit meter and format it through `cal` (raw 0–255 → engineering
     /// unit) to `decimals` places. Returns None if the rig doesn't answer (e.g. not keyed).
     fn tx_meter(&self, sub: u8, cal: fn(u16) -> f32, decimals: usize) -> Option<String> {
-        let f = self.read(commands::read_meter(self.addr, sub), 0x15, Some(sub)).ok()?;
+        let f = self
+            .read(commands::read_meter(self.addr, sub), 0x15, Some(sub))
+            .ok()?;
         let raw = commands::parse_meter_raw(&f, sub)?;
         Some(format!("{:.*}", decimals, cal(raw)))
     }
 
     /// Read a `14 <sub>` DSP level as a 0..1 fraction string (the rigctld level convention).
     fn dsp_level(&self, sub: u8) -> Option<String> {
-        let f = self.read(commands::read_dsp_level(self.addr, sub), 0x14, Some(sub)).ok()?;
+        let f = self
+            .read(commands::read_dsp_level(self.addr, sub), 0x14, Some(sub))
+            .ok()?;
         let raw = commands::parse_dsp_level_raw(&f, sub)?;
         Some(format!("{:.2}", f64::from(raw) / 255.0))
     }
@@ -201,7 +205,9 @@ impl RigBackend for CivBackend {
             // AGC as the Hamlib enum int (OFF=0/FAST=2/SLOW=3/MEDIUM=5), translated from the rig's
             // Icom byte so the rigctld side stays Hamlib-native.
             "AGC" => {
-                let f = self.read(commands::read_agc(self.addr), 0x16, Some(0x12)).ok()?;
+                let f = self
+                    .read(commands::read_agc(self.addr), 0x16, Some(0x12))
+                    .ok()?;
                 let civ = commands::parse_agc_civ(&f)?;
                 Some(format!("{}", commands::agc_hamlib_from_civ(civ)))
             }
@@ -226,7 +232,10 @@ impl RigBackend for CivBackend {
             "AGC" => {
                 // Value is the Hamlib AGC enum int; translate to the rig's Icom byte.
                 let hamlib: u8 = value.parse().ok()?;
-                Some(self.ack(commands::set_agc(self.addr, commands::agc_civ_from_hamlib(hamlib))))
+                Some(self.ack(commands::set_agc(
+                    self.addr,
+                    commands::agc_civ_from_hamlib(hamlib),
+                )))
             }
             "KEYSPD" => {
                 let wpm: u32 = value.parse().ok()?;
@@ -337,8 +346,11 @@ impl CivDaemon {
         let listener = TcpListener::bind(("127.0.0.1", tcp_port))?;
         listener.set_nonblocking(true)?;
         let tx_intent = Arc::new(AtomicBool::new(false));
-        let backend: Arc<dyn RigBackend> =
-            Arc::new(CivBackend::new(engine.handle(), civ_addr, tx_intent.clone()));
+        let backend: Arc<dyn RigBackend> = Arc::new(CivBackend::new(
+            engine.handle(),
+            civ_addr,
+            tx_intent.clone(),
+        ));
         let tcp_stop = Arc::new(AtomicBool::new(false));
         let tcp_thread = {
             let stop = tcp_stop.clone();
