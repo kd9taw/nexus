@@ -250,6 +250,56 @@ pub fn set_repeater_tone(radio: u8, tenths: u32) -> Frame {
 pub fn set_tone_func(radio: u8, on: bool) -> Frame {
     Frame::command(radio, 0x16, &[0x42, u8::from(on)])
 }
+
+/// DSP / audio ON-OFF function sub-commands under CI-V command `0x16` (Icom
+/// IC-7300/9700/7610/705 generation share this 16-family table): Noise Blanker, Noise
+/// Reduction, Auto Notch, speech Compressor, Monitor, VOX. The Hamlib func token maps to
+/// its sub-command byte here — one place, so both the getter and setter agree.
+pub fn func_sub(token: &str) -> Option<u8> {
+    Some(match token {
+        "NB" => 0x22,   // Noise Blanker
+        "NR" => 0x40,   // Noise Reduction
+        "ANF" => 0x41,  // Auto Notch Filter
+        "COMP" => 0x44, // Speech Compressor
+        "MON" => 0x45,  // Monitor
+        "VOX" => 0x46,  // VOX
+        _ => return None,
+    })
+}
+/// Read a `16 <sub>` DSP-function state — the reply carries the on/off byte.
+pub fn read_dsp_func(radio: u8, sub: u8) -> Frame {
+    Frame::command(radio, 0x16, &[sub])
+}
+/// Set a `16 <sub>` DSP function on/off.
+pub fn set_dsp_func(radio: u8, sub: u8, on: bool) -> Frame {
+    Frame::command(radio, 0x16, &[sub, u8::from(on)])
+}
+/// Extract the on/off state from a `16 <sub>` DSP-function reply.
+pub fn parse_dsp_func(f: &Frame, sub: u8) -> Option<bool> {
+    if f.cmd == 0x16 && f.data.first() == Some(&sub) {
+        f.data.get(1).map(|&b| b != 0)
+    } else {
+        None
+    }
+}
+/// Microphone gain (cmd `14 0B`): percent 0–100 mapped onto the 0–255 level scale.
+pub fn set_mic_gain(radio: u8, percent: u8) -> Frame {
+    let level = u16::from(percent.min(100)) * 255 / 100;
+    let [hi, lo] = level_to_bcd2(level);
+    Frame::command(radio, 0x14, &[0x0B, hi, lo])
+}
+/// Read the microphone gain (cmd `14 0B`) — raw 0–255.
+pub fn read_mic_gain(radio: u8) -> Frame {
+    Frame::command(radio, 0x14, &[0x0B])
+}
+/// Extract the raw mic-gain level (0–255) from a `14 0B` reply.
+pub fn parse_mic_gain_raw(f: &Frame) -> Option<u16> {
+    if f.cmd == 0x14 && f.data.first() == Some(&0x0B) && f.data.len() >= 3 {
+        Some(level_from_bcd2(f.data[1], f.data[2]))
+    } else {
+        None
+    }
+}
 /// FM repeater offset frequency (cmd `0D` set / `0C` read): 3-byte little-endian BCD in
 /// 100 Hz units (600 kHz → `00 60 00`). The 10 MHz digit only applies on 1200 MHz.
 pub fn set_rptr_offset(radio: u8, hz: u64) -> Frame {
@@ -379,6 +429,33 @@ mod tests {
         assert_eq!(f.cmd, 0x05);
         assert_eq!(f.to, 0xA2);
         assert_eq!(bcd_to_freq(&f.data), 145_000_000);
+    }
+
+    #[test]
+    fn dsp_func_frames_round_trip() {
+        // Token → 0x16 sub-command mapping is the single source both get + set use.
+        assert_eq!(func_sub("COMP"), Some(0x44));
+        assert_eq!(func_sub("VOX"), Some(0x46));
+        assert_eq!(func_sub("NB"), Some(0x22));
+        assert_eq!(func_sub("RIT"), None); // RIT is a separate register, not a 0x16 func
+        // Set builds `16 <sub> <on>`.
+        let on = set_dsp_func(0xA2, 0x44, true);
+        assert_eq!(on.cmd, 0x16);
+        assert_eq!(on.data, vec![0x44, 0x01]);
+        // A reply `16 44 01` decodes to on=true, and a mismatched sub is rejected.
+        let reply = Frame::parse(&[0xFE, 0xFE, 0xE0, 0xA2, 0x16, 0x44, 0x01, 0xFD]).unwrap();
+        assert_eq!(parse_dsp_func(&reply, 0x44), Some(true));
+        assert_eq!(parse_dsp_func(&reply, 0x46), None); // wrong sub-command
+    }
+
+    #[test]
+    fn mic_gain_scales_percent_onto_0_255() {
+        // 14 0B, percent → 0..255 BCD, mirroring set_rf_power / keyer-speed.
+        let f = set_mic_gain(0xA2, 100);
+        assert_eq!(f.cmd, 0x14);
+        assert_eq!(f.data[0], 0x0B);
+        assert_eq!(level_from_bcd2(f.data[1], f.data[2]), 255);
+        assert_eq!(level_from_bcd2(set_mic_gain(0xA2, 0).data[1], set_mic_gain(0xA2, 0).data[2]), 0);
     }
 
     #[test]

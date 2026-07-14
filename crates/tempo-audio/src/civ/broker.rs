@@ -155,6 +155,13 @@ impl RigBackend for CivBackend {
                 let raw = commands::parse_rf_power_raw(&f)?;
                 Some(format!("{:.2}", f64::from(raw) / 255.0))
             }
+            "MICGAIN" => {
+                let f = self
+                    .read(commands::read_mic_gain(self.addr), 0x14, Some(0x0B))
+                    .ok()?;
+                let raw = commands::parse_mic_gain_raw(&f)?;
+                Some(format!("{:.2}", f64::from(raw) / 255.0))
+            }
             _ => None,
         }
     }
@@ -166,6 +173,11 @@ impl RigBackend for CivBackend {
                 let percent = (frac.clamp(0.0, 1.0) * 100.0).round() as u8;
                 Some(self.ack(commands::set_rf_power(self.addr, percent)))
             }
+            "MICGAIN" => {
+                let frac: f64 = value.parse().ok()?;
+                let percent = (frac.clamp(0.0, 1.0) * 100.0).round() as u8;
+                Some(self.ack(commands::set_mic_gain(self.addr, percent)))
+            }
             "KEYSPD" => {
                 let wpm: u32 = value.parse().ok()?;
                 Some(self.ack(commands::set_keyer_speed_wpm(self.addr, wpm)))
@@ -174,11 +186,23 @@ impl RigBackend for CivBackend {
         }
     }
 
+    fn func(&self, token: &str) -> Option<bool> {
+        // DSP / audio funcs share CI-V command 0x16; the token → sub-command map lives in
+        // commands::func_sub. RIT/XIT are separate registers with no simple read here.
+        let sub = commands::func_sub(token)?;
+        let f = self
+            .read(commands::read_dsp_func(self.addr, sub), 0x16, Some(sub))
+            .ok()?;
+        commands::parse_dsp_func(&f, sub)
+    }
+
     fn set_func(&self, token: &str, on: bool) -> Option<bool> {
         match token {
             "RIT" => Some(self.ack(commands::set_rit_on(self.addr, on))),
             "XIT" => Some(self.ack(commands::set_dtx_on(self.addr, on))),
-            _ => None,
+            // NB / NR / ANF / COMP / MON / VOX → the 0x16 DSP-function table.
+            _ => commands::func_sub(token)
+                .map(|sub| self.ack(commands::set_dsp_func(self.addr, sub, on))),
         }
     }
 
