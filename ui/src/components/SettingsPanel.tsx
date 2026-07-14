@@ -1905,6 +1905,7 @@ export function SettingsPanel({
                 </select>
                 <span className="settings-hint">
                   Serial baud rate — match your rig's CAT setting (most modern rigs: 38,400 or 115,200).
+                  Native Icom CI-V scope needs 115,200 here <em>and</em> on the rig.
                 </span>
               </label>
                 </>
@@ -2137,12 +2138,14 @@ export function SettingsPanel({
                     <span className="settings-hint">
                       Nexus drives this Icom's CI-V directly instead of launching rigctld —
                       unlocking the rig's real spectrum scope in the waterfall ("CI-V RF") and
-                      instant dial tracking. The scope stream <strong>requires 115200 baud</strong>:
-                      on the rig set Menu ▸ SET ▸ Connectors ▸ CI-V ▸ "CI-V USB Baud Rate" =
-                      115200 and "CI-V USB Port" = "Unlink from [REMOTE]", then set Baud above to
-                      115200 to match — the rig refuses to stream at lower rates (CAT still works;
-                      the scope stays off). Save to apply; turn off any time to return to the
-                      classic Hamlib path.
+                      instant dial tracking. The scope needs{' '}
+                      <strong>115200 baud, set the same on BOTH the radio and Nexus</strong>:
+                      (1) on the rig, Menu ▸ SET ▸ Connectors ▸ CI-V ▸ "CI-V USB Baud Rate" ={' '}
+                      <strong>115200</strong>; (2) on the rig, same menu, "CI-V USB Port" =
+                      "Unlink from [REMOTE]"; (3) the <strong>Baud</strong> field above ={' '}
+                      <strong>115200</strong> to match. Below that the rig refuses to stream the
+                      scope (CAT still works; the panadapter just stays off). Save to apply; turn
+                      off any time to return to the classic Hamlib path.
                     </span>
                   </label>
                 )}
