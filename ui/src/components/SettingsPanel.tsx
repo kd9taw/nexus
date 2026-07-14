@@ -2137,9 +2137,12 @@ export function SettingsPanel({
                     <span className="settings-hint">
                       Nexus drives this Icom's CI-V directly instead of launching rigctld —
                       unlocking the rig's real spectrum scope in the waterfall ("CI-V RF") and
-                      instant dial tracking. Set the rig's CI-V USB baud rate to 115200 (Menu ▸
-                      Connectors) and match Baud above. Save to apply; turn off any time to
-                      return to the classic Hamlib path.
+                      instant dial tracking. The scope stream <strong>requires 115200 baud</strong>:
+                      on the rig set Menu ▸ SET ▸ Connectors ▸ CI-V ▸ "CI-V USB Baud Rate" =
+                      115200 and "CI-V USB Port" = "Unlink from [REMOTE]", then set Baud above to
+                      115200 to match — the rig refuses to stream at lower rates (CAT still works;
+                      the scope stays off). Save to apply; turn off any time to return to the
+                      classic Hamlib path.
                     </span>
                   </label>
                 )}

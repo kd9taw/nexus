@@ -27,6 +27,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Native Icom scope: the IC-9700's "no scope" mystery solved — it's the rig's baud requirement.**
+  Per Icom's own CI-V reference, wave-data output over USB requires CI-V USB Baud Rate = 115200
+  ("Unlink from [REMOTE]"); at lower rates the rig refuses to stream (NAKs the enable) even though
+  CAT works fine. Nexus now: gates the scope stream at 115200 (matching the rig instead of inviting
+  the refusal), pins the **Main** scope on dual-receiver rigs (IC-9700/7610) before enabling the
+  stream, and spells out the exact rig menu settings in the native CI-V hint. If your waterfall
+  shows no "CI-V RF": set the rig and Nexus to 115200.
 - **CI-V bus diagnostic log (Settings ▸ native Icom CI-V).** An opt-in support tool that records the
   raw CI-V bus traffic — every byte to and from the radio, timestamped and decoded (PTT on/off, mode
   set, scope waveform, ack…) — to a file in your Downloads. It's the way to root-cause hardware-only

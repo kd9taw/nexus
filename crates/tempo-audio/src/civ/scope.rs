@@ -16,7 +16,11 @@
 //! only the header (`00`=center/`01`=fixed, frequency, span-or-edges, out-of-range — data
 //! omitted when out of range), the rest the points; data range 0–160, length 475; the span
 //! table (2500="2.5k" … 500000="500k") is the ± half-width. The manual's own example frame
-//! is a fixture test below. Remaining on-rig calibration: the IC-9700's main/sub behavior.
+//! is a fixture test below. The IC-9700 (its own CI-V guide, A7508-3EX-1) uses the SAME frame
+//! layout, point count, and height range; its dual-receiver differences are only which scope
+//! the stream carries (`27 12`, pinned to Main by [`scope_stream_frames`]) and the rig-side
+//! precondition that wave output over USB needs CI-V USB baud 115200 (it NAKs `27 11 01` at
+//! lower rates — the "scope never streams" trap).
 
 use super::frame::{bcd_to_freq, Frame};
 
@@ -39,13 +43,28 @@ pub struct ScopeSweep {
 /// `27 10` turns the scope itself on (harmless if already on), `27 11` switches the
 /// waveform-data output to the CI-V port. Sent on every enable transition — both are
 /// idempotent on the radio.
+///
+/// Per the official IC-9700 CI-V reference (A7508-3EX-1): `27 10`/`27 11` take a bare
+/// on/off byte on every model (no Main/Sub prefix); on dual-receiver rigs (IC-9700,
+/// IC-7610) which of the two scopes the stream carries is selected GLOBALLY via `27 12`
+/// (00=Main / 01=Sub), so the enable sequence pins Main first — the assembler renders the
+/// Main scope and drops Sub sweeps. Single-receiver rigs don't have `27 12`; a NAK from
+/// them is harmless (internal request, no reply consumer), so it's sent only to known
+/// dual-scope addresses. NOTE the rig-side precondition (same reference, `27 11` footnote):
+/// wave output over USB requires CI-V USB Port = "Unlink from [REMOTE]" AND CI-V USB baud
+/// 115200 — at lower baud the rig NAKs `27 11 01` (verified on an IC-9700 at 57600).
 pub fn scope_stream_frames(radio: u8, on: bool) -> Vec<Frame> {
     let b = u8::from(on);
     if on {
-        vec![
-            Frame::command(radio, 0x27, &[0x10, 0x01]),
-            Frame::command(radio, 0x27, &[0x11, b]),
-        ]
+        // Dual-scope models by CI-V default address: IC-7610 (0x98), IC-9700 (0xA2).
+        let dual_scope = matches!(radio, 0x98 | 0xA2);
+        let mut frames = Vec::with_capacity(3);
+        if dual_scope {
+            frames.push(Frame::command(radio, 0x27, &[0x12, 0x00])); // target = Main scope
+        }
+        frames.push(Frame::command(radio, 0x27, &[0x10, 0x01]));
+        frames.push(Frame::command(radio, 0x27, &[0x11, b]));
+        frames
     } else {
         // Leave the scope display itself as the operator had it; just stop the stream.
         vec![Frame::command(radio, 0x27, &[0x11, b])]
@@ -344,13 +363,29 @@ mod tests {
 
     #[test]
     fn enable_disable_frames() {
-        let on = scope_stream_frames(0xA2, true);
+        // Single-receiver rig (IC-7300, 0x94): no 27 12 — it doesn't have that command.
+        let on = scope_stream_frames(0x94, true);
         assert_eq!(on.len(), 2);
         assert_eq!(on[0].data, vec![0x10, 0x01]); // scope on
         assert_eq!(on[1].data, vec![0x11, 0x01]); // waveform output on
-        let off = scope_stream_frames(0xA2, false);
+        let off = scope_stream_frames(0x94, false);
         assert_eq!(off.len(), 1);
         assert_eq!(off[0].data, vec![0x11, 0x00]); // stream off, display untouched
+    }
+
+    #[test]
+    fn dual_scope_rigs_pin_the_main_scope_first() {
+        // IC-9700 (0xA2) / IC-7610 (0x98): the stream carries whichever scope 27 12 targets,
+        // so the enable pins Main — the assembler renders Main and drops Sub sweeps.
+        for addr in [0xA2u8, 0x98] {
+            let on = scope_stream_frames(addr, true);
+            assert_eq!(on.len(), 3, "addr {addr:#04x}");
+            assert_eq!(on[0].data, vec![0x12, 0x00]); // target = Main scope
+            assert_eq!(on[1].data, vec![0x10, 0x01]);
+            assert_eq!(on[2].data, vec![0x11, 0x01]);
+            // Disable is unchanged — one frame, display untouched.
+            assert_eq!(scope_stream_frames(addr, false).len(), 1);
+        }
     }
 
     #[test]

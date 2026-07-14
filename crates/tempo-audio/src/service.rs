@@ -1411,8 +1411,11 @@ impl RadioLoop {
             // backgrounded radio's serial link stays free for its slow poll. Rows land in the
             // same engine slot as the Flex path, tagged "civ" (auto-fallback keeps working).
             if let Some(d) = self.rigctld_proc.as_ref().and_then(CatDaemon::native) {
-                // The waveform stream needs a fast CI-V link (~7.5 KB/s of frames): below
-                // 57.6k it would starve CAT commands, so leave it off and CAT-only.
+                // The waveform stream requires CI-V USB baud 115200 — not just for headroom
+                // (~7.5 KB/s of scope frames + CAT), but because the RIG enforces it: per the
+                // official Icom CI-V reference (IC-9700 guide, 27 11 footnote), wave output
+                // over USB needs "Unlink from [REMOTE]" + 115200, and the rig NAKs `27 11 01`
+                // at lower baud (verified on an IC-9700 at 57600). Below that: CAT-only.
                 //
                 // AND pause it while TRANSMITTING: on the shared half-duplex CI-V bus a continuous
                 // 0x27 flood during TX makes the IC-9700's PTT chatter (rapid key/unkey → no RF, no
@@ -1426,7 +1429,7 @@ impl RadioLoop {
                     || self.tx_until_ms.is_some()
                     || self.tuning_keyed
                     || self.manual_ptt_applied;
-                d.set_scope_enabled(self.applied.baud >= 57_600 && !keyed_now);
+                d.set_scope_enabled(self.applied.baud >= 115_200 && !keyed_now);
                 // Tell the broker we're on the air, so its disconnect fail-safe unkey stands down
                 // while WE'RE transmitting — a transient reconnect of Nexus's own Rig must never
                 // steal the over (the native-CI-V PTT flicker). Cleared the moment TX ends.
