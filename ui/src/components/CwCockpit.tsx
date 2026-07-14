@@ -22,6 +22,10 @@ import {
   pointRotatorAtCall,
   setRigFunc,
   setFilterWidth,
+  setNrLevel,
+  setAgc,
+  setScopeSpan,
+  setScopeRef,
   openPanelWindow,
   setTune,
   haltTx,
@@ -29,6 +33,27 @@ import {
 import { pushToast, withErrorToast } from '../toast'
 import { RotorStrip } from './RotorStrip'
 import { useWheelTune } from '../useWheelTune'
+import { isRfScopeSource } from '../waterfall'
+
+/** Client-side RF-zoom presets for a native panadapter (mirror of the Phone cockpit). */
+const RF_SPANS = [
+  { label: 'Full', lo: -1e9, hi: 1e9, title: "The rig's whole scope sweep (set the width on the radio)" },
+  { label: '±25k', lo: -25_000, hi: 25_000, title: '±25 kHz around your dial' },
+  { label: '±10k', lo: -10_000, hi: 10_000, title: '±10 kHz around your dial' },
+  { label: '±5k', lo: -5_000, hi: 5_000, title: '±5 kHz around your dial' },
+] as const
+
+/** RIG scope-span presets (native Icom CI-V) — command the RADIO's real panadapter sweep width
+ *  via CI-V 27 15, exactly as the Phone cockpit does. */
+const RIG_SPANS = [
+  { label: '±2.5k', hz: 2_500 },
+  { label: '±5k', hz: 5_000 },
+  { label: '±10k', hz: 10_000 },
+  { label: '±25k', hz: 25_000 },
+  { label: '±50k', hz: 50_000 },
+  { label: '±100k', hz: 100_000 },
+  { label: '±250k', hz: 250_000 },
+] as const
 
 interface Props {
   snap: AppSnapshot
@@ -144,6 +169,48 @@ export function CwCockpit({
   useEffect(() => {
     if (snap.radio.cwWpm != null) setWpm(snap.radio.cwWpm)
   }, [snap.radio.cwWpm])
+  // --- CI-V RX DSP + panadapter controls, at PARITY with the Phone cockpit (a CW op wants
+  //     AGC speed, NR depth, and the rig's real panadapter just as much). Each control is
+  //     capability-gated on what the rig actually reports, so nothing shows on a rig that lacks it.
+  const [nr, setNr] = useState(30) // % noise-reduction depth — pushed once touched
+  const nrDragging = useRef(false)
+  useEffect(() => {
+    const rb = snap.radio.nrLevel
+    if (rb != null && !nrDragging.current) {
+      const pct = Math.round(rb * 100)
+      setNr((n) => (Math.abs(n - pct) >= 2 ? pct : n))
+    }
+  }, [snap.radio.nrLevel])
+  const changeNr = (pct: number) => {
+    setNr(pct)
+    void setNrLevel(pct / 100)
+  }
+  // AGC speed — local optimistic mirror so the segmented highlight flips on click (same fix as
+  // the Phone cockpit: snap.radio.agc lags a poll behind the click).
+  const [agc, setAgcLocal] = useState<string | null>(() => snap.radio.agc ?? null)
+  useEffect(() => {
+    if (snap.radio.agc != null) setAgcLocal(snap.radio.agc)
+  }, [snap.radio.agc])
+  const changeAgc = (sp: string) => {
+    setAgcLocal(sp)
+    void setAgc(sp)
+      .then((s) => onSnap?.(s))
+      .catch(() => {})
+  }
+  // Native scope feed (reported by PhoneScope) → drives the RF-panadapter switch, exactly like
+  // Phone. When a Flex/Icom CI-V scope is streaming we show the real RF spectrum (with client
+  // RF-zoom + the rig scope controls); otherwise the CW-narrow audio zero-beat view stays.
+  const [scopeFeed, setScopeFeed] = useState<{ source: string; loHz: number; hiHz: number } | null>(
+    null,
+  )
+  const nativeRf = scopeFeed != null && isRfScopeSource(scopeFeed.source)
+  const civScope = scopeFeed?.source === 'civ'
+  const [rfSpan, setRfSpan] = useState<(typeof RF_SPANS)[number]>(RF_SPANS[0])
+  const [scopeRefTenths, setScopeRefTenths] = useState(0)
+  const changeScopeRef = (tenths: number) => {
+    setScopeRefTenths(tenths)
+    void setScopeRef(tenths)
+  }
   // Live single-signal CW decode of the receive audio at the marker pitch — poll the
   // engine ~1.4 Hz (the decode reads a multi-second ring, so faster adds no detail).
   const [decoded, setDecoded] = useState<{ text: string; wpm: number }>({ text: '', wpm: 0 })
@@ -538,20 +605,55 @@ export function CwCockpit({
 
       <section className="ph-scope-panel" ref={scopeRef} title="Scroll here to tune the VFO">
         <div className="ph-scope-head">
+          {/* When a native panadapter drives the scope, name it honestly (real RF spectrum);
+              otherwise it's the CW-narrow audio view for zero-beating. */}
+          <span
+            className="ph-scope-title"
+            title={
+              nativeRf
+                ? 'Native RF panadapter — the real RF spectrum around your dial.'
+                : 'Receiver AUDIO around your CW pitch (~300–1100 Hz) — tune a signal onto the dashed hairline to zero-beat it.'
+            }
+          >
+            {nativeRf ? 'RF Panadapter' : 'CW audio'}{' '}
+            <span className="ph-scope-sub">
+              {nativeRf && scopeFeed
+                ? `· ${(scopeFeed.loHz / 1e6).toFixed(4)}–${(scopeFeed.hiHz / 1e6).toFixed(4)} MHz`
+                : '· zero-beat'}
+            </span>
+          </span>
           <span className="ph-scope-head-label">Colors</span>
           <PalettePicker />
         </div>
-        {/* CW-narrow view: ~300–1100 Hz so individual carriers are readable; the
-            dashed hairline is YOUR pitch — tune a signal onto it = zero-beat. */}
+        {nativeRf && (
+          // Native RF panadapter: client-side RF-width zoom around the dial (mirror of Phone).
+          <div className="ph-span" role="group" aria-label="Panadapter zoom">
+            {RF_SPANS.map((sp) => (
+              <button
+                key={sp.label}
+                type="button"
+                className={`theme-chip${rfSpan.label === sp.label ? ' active' : ''}`}
+                aria-pressed={rfSpan.label === sp.label}
+                title={sp.title}
+                onClick={() => setRfSpan(sp)}
+              >
+                {sp.label}
+              </button>
+            ))}
+          </div>
+        )}
+        {/* CW-narrow view (~300–1100 Hz) unless a native RF scope is streaming, in which case
+            we show the real RF spectrum around the dial. The dashed hairline is YOUR pitch. */}
         <PhoneScope
           transmitting={snap.radio.transmitting}
           theme={theme}
           smeterDb={snap.radio.smeterDb}
-          viewLoHz={300}
-          viewHiHz={1100}
-          markerHz={pitch}
+          viewLoHz={nativeRf ? rfSpan.lo : 300}
+          viewHiHz={nativeRf ? rfSpan.hi : 1100}
+          markerHz={nativeRf ? undefined : pitch}
           sideband={snap.radio.sideband || 'USB'}
           dialHz={snap.radio.dialMhz > 0 ? Math.round(snap.radio.dialMhz * 1e6) : null}
+          onFeed={(source, loHz, hiHz) => setScopeFeed({ source, loHz, hiHz })}
         />
       </section>
       <Splitter
@@ -564,6 +666,42 @@ export function CwCockpit({
         defaultPct={22}
         label="scope height"
       />
+
+      {/* Rig scope controls (native Icom CI-V only) — command the RADIO's real panadapter:
+          span sets the hardware sweep width, ref sets weak-signal visibility. Parity with Phone. */}
+      {civScope && (
+        <div className="ph-rigscope" role="group" aria-label="Rig scope control">
+          <span className="ph-rigscope-lbl" title="These command the radio's own scope, not just the on-screen zoom">
+            Rig&nbsp;scope
+          </span>
+          <div className="ph-span">
+            {RIG_SPANS.map((sp) => (
+              <button
+                key={sp.label}
+                type="button"
+                className="theme-chip"
+                title={`Set the radio's scope span to ${sp.label}`}
+                onClick={() => void setScopeSpan(sp.hz).then((s) => onSnap?.(s)).catch(() => {})}
+              >
+                {sp.label}
+              </button>
+            ))}
+          </div>
+          <label className="ph-rigscope-ref" title="Scope reference level — lower to lift weak signals out of the noise">
+            <span>Ref</span>
+            <input
+              type="range"
+              min={-200}
+              max={200}
+              step={5}
+              value={scopeRefTenths}
+              onChange={(e) => changeScopeRef(Number(e.target.value))}
+              aria-label="Scope reference level (dB)"
+            />
+            <span className="ph-power-val">{(scopeRefTenths / 10).toFixed(1)} dB</span>
+          </label>
+        </div>
+      )}
 
       {/* DSP toggles (NB/NR/Notch) — capability-gated; only funcs the rig reports render. */}
       {(() => {
@@ -594,6 +732,49 @@ export function CwCockpit({
           </div>
         )
       })()}
+
+      {/* RX DSP levels — NR depth + AGC speed, each shown only when the rig reports it. Parity
+          with the Phone cockpit; a CW op leans on AGC speed and NR depth heavily. */}
+      {(snap.radio.nrLevel != null || snap.radio.agc != null) && (
+        <div className="ph-dsp-levels" role="group" aria-label="RX DSP levels">
+          {snap.radio.nrLevel != null && (
+            <label className="ph-dsplev" title="Noise-reduction depth — raise until the noise floor drops, back off if the tone gets watery">
+              <span>NR</span>
+              <input
+                type="range"
+                min={0}
+                max={100}
+                value={nr}
+                onChange={(e) => changeNr(Number(e.target.value))}
+                onPointerDown={() => {
+                  nrDragging.current = true
+                }}
+                onPointerUp={() => {
+                  nrDragging.current = false
+                }}
+                aria-label="Noise-reduction level"
+              />
+              <span className="ph-power-val">{nr}%</span>
+            </label>
+          )}
+          {snap.radio.agc != null && (
+            <div className="ph-agc" role="group" aria-label="AGC speed" title="AGC time constant — Fast for CW/pileups, Slow for steady copy">
+              <span className="ph-dsplev-lbl">AGC</span>
+              {(['fast', 'mid', 'slow'] as const).map((sp) => (
+                <button
+                  key={sp}
+                  type="button"
+                  className={`theme-chip${agc === sp ? ' active' : ''}`}
+                  aria-pressed={agc === sp}
+                  onClick={() => changeAgc(sp)}
+                >
+                  {sp === 'fast' ? 'Fast' : sp === 'mid' ? 'Mid' : 'Slow'}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* CW spot band-activity strip; ⧉ pops the vertical band map into its own window. */}
       {onWorkSpot && (
