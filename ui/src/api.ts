@@ -780,6 +780,14 @@ export async function setRfPower(power: number): Promise<AppSnapshot> {
 export async function setMicGain(gain: number): Promise<AppSnapshot> {
   return invoke<AppSnapshot>('set_mic_gain', { gain })
 }
+/** Set the noise-reduction level as a 0.0–1.0 fraction. */
+export async function setNrLevel(level: number): Promise<AppSnapshot> {
+  return invoke<AppSnapshot>('set_nr_level', { level })
+}
+/** Set the AGC speed ("fast" | "mid" | "slow"). */
+export async function setAgc(speed: 'fast' | 'mid' | 'slow'): Promise<AppSnapshot> {
+  return invoke<AppSnapshot>('set_agc', { speed })
+}
 
 // --- phone voice keyer ---
 /** Play the recorded WAV bound to a voice-keyer slot (PTT + audio via the radio loop). */

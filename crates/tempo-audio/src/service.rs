@@ -137,6 +137,23 @@ const FREQ_MISS_LIMIT: u32 = 3;
 /// order. `ANF` (auto-notch) is the notch we expose — it works as a bare on/off toggle, unlike
 /// `MN` (manual notch) which needs a separate NOTCHF frequency level.
 const RIG_FUNCS: [&str; 5] = ["NB", "NR", "ANF", "COMP", "VOX"];
+
+/// AGC speed <-> Hamlib enum int (FAST=2, MEDIUM=5, SLOW=3). The UI/engine speak
+/// "fast"/"mid"/"slow"; the rigctld `AGC` level carries the enum int.
+fn agc_to_hamlib(speed: &str) -> u8 {
+    match speed {
+        "fast" => 2,
+        "slow" => 3,
+        _ => 5, // mid
+    }
+}
+fn agc_from_hamlib(v: u8) -> &'static str {
+    match v {
+        2 => "fast",
+        3 => "slow",
+        _ => "mid", // 5 medium (and off/superfast fold to mid for display)
+    }
+}
 /// Max consecutive `set_mode` retries for one target mode before giving up (so a rig
 /// that rejects a submode doesn't get an `M` command every loop). Sized to ride out a
 /// rig/rigctld that's still settling (a failing CAT round-trip can block up to the
@@ -907,6 +924,9 @@ struct RadioLoop {
     last_rf_power: Option<f32>,
     /// Last mic-gain fraction we pushed to the rig — only set on change.
     last_mic_gain: Option<f32>,
+    /// Last NR level / AGC speed we pushed to the rig — only set on change.
+    last_nr_level: Option<f32>,
+    last_agc: Option<String>,
     /// Open WAV sink while a QSO recording is streaming live RX capture to disk (audio
     /// bridge). The loop owns the file handle so the audio never has to live in RAM.
     qso_sink: Option<crate::voice::WavSink>,
@@ -1044,6 +1064,8 @@ impl RadioLoop {
             manual_ptt_applied: false,
             last_rf_power: None,
             last_mic_gain: None,
+            last_nr_level: None,
+            last_agc: None,
             qso_sink: None,
             qso_started_ms: None,
             voice_mic_open: false,
@@ -1145,6 +1167,8 @@ impl RadioLoop {
         self.manual_ptt_applied = false;
         self.last_rf_power = None;
         self.last_mic_gain = None;
+        self.last_nr_level = None;
+        self.last_agc = None;
         self.fake_it_restore = None;
         self.audio_rig_split = false;
         self.last_rig_poll = 0.0; // poll the new rig's health/mode/S-meter immediately
@@ -1693,6 +1717,19 @@ impl RadioLoop {
                                 eng.observe_rig_mic_gain(frac);
                             }
                         }
+                        // NR level + AGC read-back — mirror the rig so the controls show the real
+                        // state (and capability-gate: a rig that doesn't report them errors out,
+                        // leaving the field None so the UI hides the control).
+                        if let Ok(frac) = rig.read_level("NR") {
+                            if let Ok(mut eng) = engine.lock() {
+                                eng.observe_rig_nr_level(frac);
+                            }
+                        }
+                        if let Some(v) = rig.read_agc() {
+                            if let Ok(mut eng) = engine.lock() {
+                                eng.observe_rig_agc(agc_from_hamlib(v).to_string());
+                            }
+                        }
                         // Real CAT S-meter (STRENGTH, dB rel S9), mirrored to the UI as a
                         // calibrated S-unit bar. RX-only (this whole block is gated on
                         // `tx_until_ms.is_none()`), so it never reads a meaningless TX value.
@@ -2237,6 +2274,24 @@ impl RadioLoop {
             if let Some(mg) = mic {
                 if Some(mg) != self.last_mic_gain && rig.set_mic_gain(mg).is_ok() {
                     self.last_mic_gain = Some(mg);
+                }
+            }
+            // RX DSP levels: NR level (0..1) + AGC speed — applied on change like mic gain.
+            let (nr, agc) = engine
+                .lock()
+                .ok()
+                .map(|e| (e.nr_level(), e.agc()))
+                .unwrap_or((None, None));
+            if let Some(n) = nr {
+                if Some(n) != self.last_nr_level && rig.set_rx_level("NR", n).is_ok() {
+                    self.last_nr_level = Some(n);
+                }
+            }
+            if let Some(a) = agc {
+                if self.last_agc.as_deref() != Some(a.as_str())
+                    && rig.set_agc(agc_to_hamlib(&a)).is_ok()
+                {
+                    self.last_agc = Some(a);
                 }
             }
         }

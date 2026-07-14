@@ -15,6 +15,8 @@ import {
   setPtt,
   setRfPower,
   setMicGain,
+  setNrLevel,
+  setAgc,
   setScopeSpan,
   setScopeRef,
   startQsoRecording,
@@ -123,6 +125,19 @@ export function PhoneCockpit({ snap, theme, pendingWork, onConsumeWork, onSnap, 
   const changeMic = (pct: number) => {
     setMic(pct)
     void setMicGain(pct / 100)
+  }
+  const [nr, setNr] = useState(30) // % noise-reduction level — pushed once touched
+  const nrDragging = useRef(false)
+  useEffect(() => {
+    const rb = snap.radio.nrLevel
+    if (rb != null && !nrDragging.current) {
+      const pct = Math.round(rb * 100)
+      setNr((n) => (Math.abs(n - pct) >= 2 ? pct : n))
+    }
+  }, [snap.radio.nrLevel])
+  const changeNr = (pct: number) => {
+    setNr(pct)
+    void setNrLevel(pct / 100)
   }
   // Native Icom scope reference level, in tenths of a dB (−200..+200 = −20.0..+20.0 dB).
   const [scopeRefTenths, setScopeRefTenths] = useState(0)
@@ -648,6 +663,48 @@ export function PhoneCockpit({ snap, theme, pendingWork, onConsumeWork, onSnap, 
             </div>
           )
         })()}
+
+      {/* RX DSP levels — NR level slider + AGC speed, each shown only when the rig reports it. */}
+      {(snap.radio.nrLevel != null || snap.radio.agc != null) && (
+        <div className="ph-dsp-levels" role="group" aria-label="RX DSP levels">
+          {snap.radio.nrLevel != null && (
+            <label className="ph-dsplev" title="Noise-reduction depth — raise until the noise floor drops, back off if audio gets watery">
+              <span>NR</span>
+              <input
+                type="range"
+                min={0}
+                max={100}
+                value={nr}
+                onChange={(e) => changeNr(Number(e.target.value))}
+                onPointerDown={() => {
+                  nrDragging.current = true
+                }}
+                onPointerUp={() => {
+                  nrDragging.current = false
+                }}
+                aria-label="Noise-reduction level"
+              />
+              <span className="ph-power-val">{nr}%</span>
+            </label>
+          )}
+          {snap.radio.agc != null && (
+            <div className="ph-agc" role="group" aria-label="AGC speed" title="AGC time constant">
+              <span className="ph-dsplev-lbl">AGC</span>
+              {(['fast', 'mid', 'slow'] as const).map((sp) => (
+                <button
+                  key={sp}
+                  type="button"
+                  className={`theme-chip${snap.radio.agc === sp ? ' active' : ''}`}
+                  aria-pressed={snap.radio.agc === sp}
+                  onClick={() => void setAgc(sp).then((s) => onSnap?.(s)).catch(() => {})}
+                >
+                  {sp === 'fast' ? 'Fast' : sp === 'mid' ? 'Mid' : 'Slow'}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {onWorkSpot && (
         <BandStrip

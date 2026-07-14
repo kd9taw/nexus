@@ -670,6 +670,18 @@ impl Rig {
             &format!("{:.3}", frac.clamp(0.0, 1.0)),
         ))
     }
+    /// Set an RX DSP level (0.0–1.0) by Hamlib name, e.g. "NR" or "NB".
+    pub fn set_rx_level(&mut self, name: &str, frac: f32) -> std::io::Result<()> {
+        self.cat(&level_line(name, &format!("{:.3}", frac.clamp(0.0, 1.0))))
+    }
+    /// Set the AGC time constant by Hamlib enum int (FAST=2, MEDIUM=5, SLOW=3, OFF=0).
+    pub fn set_agc(&mut self, hamlib_val: u8) -> std::io::Result<()> {
+        self.cat(&level_line("AGC", &hamlib_val.to_string()))
+    }
+    /// Read the AGC time constant (Hamlib `AGC`) as its enum int; `None` if unsupported/no reply.
+    pub fn read_agc(&mut self) -> Option<u8> {
+        self.read_meter_f32("AGC").map(|v| v.round() as u8)
+    }
     /// Set the rig's internal CW keyer speed in WPM (Hamlib `KEYSPD`).
     pub fn set_keyspd(&mut self, wpm: u32) -> std::io::Result<()> {
         self.cat(&level_line("KEYSPD", &wpm.to_string()))

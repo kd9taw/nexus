@@ -60,6 +60,19 @@ impl CivBackend {
         let raw = commands::parse_meter_raw(&f, sub)?;
         Some(format!("{:.*}", decimals, cal(raw)))
     }
+
+    /// Read a `14 <sub>` DSP level as a 0..1 fraction string (the rigctld level convention).
+    fn dsp_level(&self, sub: u8) -> Option<String> {
+        let f = self.read(commands::read_dsp_level(self.addr, sub), 0x14, Some(sub)).ok()?;
+        let raw = commands::parse_dsp_level_raw(&f, sub)?;
+        Some(format!("{:.2}", f64::from(raw) / 255.0))
+    }
+    /// Set a `14 <sub>` DSP level from a 0..1 fraction string.
+    fn set_dsp_level_pct(&self, sub: u8, value: &str) -> Option<bool> {
+        let frac: f64 = value.parse().ok()?;
+        let percent = (frac.clamp(0.0, 1.0) * 100.0).round() as u8;
+        Some(self.ack(commands::set_dsp_level(self.addr, sub, percent)))
+    }
 }
 
 impl RigBackend for CivBackend {
@@ -182,6 +195,16 @@ impl RigBackend for CivBackend {
                 self.tx_meter(commands::METER_PO, commands::po_watts_from_raw, 1)
             }
             "COMP_METER" => self.tx_meter(commands::METER_COMP, commands::comp_db_from_raw, 1),
+            // RX DSP levels — 0..1 like mic gain (distinct from the NR/NB on/off funcs).
+            "NR" => self.dsp_level(commands::LVL_NR),
+            "NB" => self.dsp_level(commands::LVL_NB),
+            // AGC as the Hamlib enum int (OFF=0/FAST=2/SLOW=3/MEDIUM=5), translated from the rig's
+            // Icom byte so the rigctld side stays Hamlib-native.
+            "AGC" => {
+                let f = self.read(commands::read_agc(self.addr), 0x16, Some(0x12)).ok()?;
+                let civ = commands::parse_agc_civ(&f)?;
+                Some(format!("{}", commands::agc_hamlib_from_civ(civ)))
+            }
             _ => None,
         }
     }
@@ -197,6 +220,13 @@ impl RigBackend for CivBackend {
                 let frac: f64 = value.parse().ok()?;
                 let percent = (frac.clamp(0.0, 1.0) * 100.0).round() as u8;
                 Some(self.ack(commands::set_mic_gain(self.addr, percent)))
+            }
+            "NR" => self.set_dsp_level_pct(commands::LVL_NR, value),
+            "NB" => self.set_dsp_level_pct(commands::LVL_NB, value),
+            "AGC" => {
+                // Value is the Hamlib AGC enum int; translate to the rig's Icom byte.
+                let hamlib: u8 = value.parse().ok()?;
+                Some(self.ack(commands::set_agc(self.addr, commands::agc_civ_from_hamlib(hamlib))))
             }
             "KEYSPD" => {
                 let wpm: u32 = value.parse().ok()?;

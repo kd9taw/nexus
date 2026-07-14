@@ -6883,6 +6883,36 @@ select optgroup {
   border-radius: var(--radius-sm);
 }
 
+/* RX DSP levels — NR slider + AGC speed, a compact strip below the DSP toggles. */
+.ph-dsp-levels {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+  padding: var(--space-1) var(--space-2);
+}
+.ph-dsplev {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-dim);
+  font-size: 0.82rem;
+}
+.ph-dsplev input[type='range'] {
+  width: 110px;
+}
+.ph-dsplev-lbl {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--text-dim);
+}
+.ph-agc {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
 /* Rig scope controls (native Icom CI-V) — a compact strip that drives the radio's panadapter. */
 .ph-rigscope {
   display: flex;

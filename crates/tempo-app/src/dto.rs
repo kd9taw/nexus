@@ -302,6 +302,12 @@ pub struct RadioStatus {
     /// SSB setup (raise mic gain until ALC peaks tickle the zone).
     #[serde(default)]
     pub mic_gain: Option<f32>,
+    /// Noise-reduction level (0.0–1.0) — rig read-back or commanded; `None` when unsupported.
+    #[serde(default)]
+    pub nr_level: Option<f32>,
+    /// AGC time constant as "fast"|"mid"|"slow"; `None` when the rig doesn't report it.
+    #[serde(default)]
+    pub agc: Option<String>,
     /// CAT S-meter reading in dB relative to S9 (S9 = 0 dB, S1 ≈ -48, S9+20 = +20).
     /// `None` when the rig doesn't report STRENGTH over CAT, so the UI shows no meter
     /// rather than a fake one. RX-only — not refreshed while transmitting.

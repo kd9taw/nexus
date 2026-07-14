@@ -367,6 +367,13 @@ pub struct Engine {
     mic_gain: Option<f32>,
     /// Mic gain as READ BACK from the rig (the poll's truth).
     rig_mic_gain: Option<f32>,
+    /// Desired / read-back NOISE-REDUCTION level (0.0–1.0), same commanded-vs-observed split.
+    nr_level: Option<f32>,
+    rig_nr_level: Option<f32>,
+    /// Desired / read-back AGC time constant as "fast"|"mid"|"slow" (the loop maps it to the
+    /// rig's value). Commanded until the poll confirms; `None` when the rig doesn't report it.
+    agc: Option<String>,
+    rig_agc: Option<String>,
     /// Rig CAT S-meter (dB relative to S9) from the radio-loop poll; `None` when the
     /// rig doesn't report STRENGTH. Observed-only, RX-only.
     rig_smeter_db: Option<i32>,
@@ -653,6 +660,10 @@ impl Engine {
             rig_rf_power: None,
             mic_gain: None,
             rig_mic_gain: None,
+            nr_level: None,
+            rig_nr_level: None,
+            agc: None,
+            rig_agc: None,
             rig_smeter_db: None,
             rig_tx_swr: None,
             rig_tx_alc: None,
@@ -1701,6 +1712,34 @@ impl Engine {
     pub fn observe_rig_mic_gain(&mut self, frac: f32) {
         if frac.is_finite() {
             self.rig_mic_gain = Some(frac.clamp(0.0, 1.0));
+        }
+    }
+
+    /// Set desired noise-reduction level (0.0–1.0); the radio loop applies it.
+    pub fn set_nr_level(&mut self, frac: f32) {
+        self.nr_level = Some(frac.clamp(0.0, 1.0));
+    }
+    pub fn nr_level(&self) -> Option<f32> {
+        self.nr_level
+    }
+    pub fn observe_rig_nr_level(&mut self, frac: f32) {
+        if frac.is_finite() {
+            self.rig_nr_level = Some(frac.clamp(0.0, 1.0));
+        }
+    }
+
+    /// Set desired AGC speed ("fast"|"mid"|"slow"); the radio loop applies it on change.
+    pub fn set_agc(&mut self, speed: &str) {
+        if matches!(speed, "fast" | "mid" | "slow") {
+            self.agc = Some(speed.to_string());
+        }
+    }
+    pub fn agc(&self) -> Option<String> {
+        self.agc.clone()
+    }
+    pub fn observe_rig_agc(&mut self, speed: String) {
+        if matches!(speed.as_str(), "fast" | "mid" | "slow") {
+            self.rig_agc = Some(speed);
         }
     }
 
@@ -4359,6 +4398,8 @@ impl Engine {
         // Rig read-back wins (the knob's truth); else the last commanded value.
         s.radio.rf_power = self.rig_rf_power.or(self.rf_power);
         s.radio.mic_gain = self.rig_mic_gain.or(self.mic_gain);
+        s.radio.nr_level = self.rig_nr_level.or(self.nr_level);
+        s.radio.agc = self.rig_agc.clone().or_else(|| self.agc.clone());
         s.radio.smeter_db = self.rig_smeter_db;
         s.radio.tx_swr = self.rig_tx_swr;
         s.radio.tx_alc = self.rig_tx_alc;

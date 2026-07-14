@@ -207,6 +207,8 @@ impl AppState {
                 time_sync_ok: true,
                 rf_power: None,          // engine fills from command/read-back
                 mic_gain: None,          // engine fills from command/read-back
+                nr_level: None,          // engine fills from CAT NR-level read-back
+                agc: None,               // engine fills from CAT AGC read-back
                 smeter_db: None,         // engine fills from CAT STRENGTH read-back
                 tx_swr: None,            // engine fills from the keyed-only TX-meter poll
                 tx_alc: None,

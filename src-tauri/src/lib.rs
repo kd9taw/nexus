@@ -4035,6 +4035,22 @@ fn set_mic_gain(state: State<'_, SharedEngine>, gain: f32) -> Result<AppSnapshot
     Ok(eng.snapshot())
 }
 
+/// Set the noise-reduction level as a 0.0–1.0 fraction; the radio loop applies it.
+#[tauri::command]
+fn set_nr_level(state: State<'_, SharedEngine>, level: f32) -> Result<AppSnapshot, String> {
+    let mut eng = state.lock().map_err(|e| e.to_string())?;
+    eng.set_nr_level(level);
+    Ok(eng.snapshot())
+}
+
+/// Set the AGC speed ("fast"|"mid"|"slow"); the radio loop applies it to the rig.
+#[tauri::command]
+fn set_agc(state: State<'_, SharedEngine>, speed: String) -> Result<AppSnapshot, String> {
+    let mut eng = state.lock().map_err(|e| e.to_string())?;
+    eng.set_agc(&speed);
+    Ok(eng.snapshot())
+}
+
 /// Set (`Some`) or clear (`None`) the desired split TX dial (MHz); the radio loop applies it.
 /// `Some(tx)` = TX split to that dial (e.g. "up 5"), `None` = back to simplex.
 #[tauri::command]
@@ -8077,6 +8093,8 @@ pub fn run() {
             set_ptt,
             set_rf_power,
             set_mic_gain,
+            set_nr_level,
+            set_agc,
             set_split,
             set_rig_func,
             set_sideband_override,

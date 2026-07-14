@@ -607,6 +607,10 @@ export interface RadioStatus {
   /** Mic gain as a 0.0–1.0 fraction (rig read-back, or the commanded value). Absent when
    * the rig doesn't report it. Pairs with the ALC meter for SSB mic-gain setup. */
   micGain?: number | null
+  /** Noise-reduction level 0.0–1.0 (rig read-back or commanded); absent when unsupported. */
+  nrLevel?: number | null
+  /** AGC time constant: "fast" | "mid" | "slow"; absent when the rig doesn't report it. */
+  agc?: string | null
   /** CAT S-meter in dB relative to S9 (S9 = 0, S1 ≈ -48, S9+20 = +20). Absent when
    * the rig doesn't report STRENGTH over CAT (RX-only; not updated during TX). */
   smeterDb?: number | null

@@ -300,6 +300,65 @@ pub fn parse_mic_gain_raw(f: &Frame) -> Option<u16> {
         None
     }
 }
+
+/// A `0x14` level sub-command: Noise-Reduction level = 0x06, Noise-Blanker level = 0x12.
+pub const LVL_NR: u8 = 0x06;
+pub const LVL_NB: u8 = 0x12;
+/// Set a `14 <sub>` DSP level from a 0–100 percent (mapped onto the 0–255 scale), like mic gain.
+pub fn set_dsp_level(radio: u8, sub: u8, percent: u8) -> Frame {
+    let level = u16::from(percent.min(100)) * 255 / 100;
+    let [hi, lo] = level_to_bcd2(level);
+    Frame::command(radio, 0x14, &[sub, hi, lo])
+}
+/// Read a `14 <sub>` DSP level — raw 0–255.
+pub fn read_dsp_level(radio: u8, sub: u8) -> Frame {
+    Frame::command(radio, 0x14, &[sub])
+}
+/// Extract the raw level (0–255) from a `14 <sub>` reply.
+pub fn parse_dsp_level_raw(f: &Frame, sub: u8) -> Option<u16> {
+    if f.cmd == 0x14 && f.data.first() == Some(&sub) && f.data.len() >= 3 {
+        Some(level_from_bcd2(f.data[1], f.data[2]))
+    } else {
+        None
+    }
+}
+
+/// AGC time constant (`16 12`), one byte. On the IC-7300/9700/705 family: 00=off, 01=FAST,
+/// 02=MID, 03=SLOW. Hamlib carries AGC as an enum int (OFF=0, FAST=2, SLOW=3, MEDIUM=5); these
+/// two helpers translate at the CI-V boundary so the rigctld side speaks Hamlib and the wire
+/// speaks Icom. Unknown values fall back to MID.
+pub fn agc_civ_from_hamlib(hamlib: u8) -> u8 {
+    match hamlib {
+        0 => 0x00, // OFF
+        2 => 0x01, // FAST
+        3 => 0x03, // SLOW
+        _ => 0x02, // MEDIUM(5) and anything else → MID
+    }
+}
+pub fn agc_hamlib_from_civ(civ: u8) -> u8 {
+    match civ {
+        0x00 => 0,
+        0x01 => 2,
+        0x03 => 3,
+        _ => 5, // 0x02 MID and anything else → MEDIUM
+    }
+}
+/// Set the AGC time constant (`16 12`) from an Icom byte (01=FAST/02=MID/03=SLOW).
+pub fn set_agc(radio: u8, civ_byte: u8) -> Frame {
+    Frame::command(radio, 0x16, &[0x12, civ_byte])
+}
+/// Read the AGC time constant (`16 12`).
+pub fn read_agc(radio: u8) -> Frame {
+    Frame::command(radio, 0x16, &[0x12])
+}
+/// Extract the raw AGC Icom byte from a `16 12` reply.
+pub fn parse_agc_civ(f: &Frame) -> Option<u8> {
+    if f.cmd == 0x16 && f.data.first() == Some(&0x12) {
+        f.data.get(1).copied()
+    } else {
+        None
+    }
+}
 /// FM repeater offset frequency (cmd `0D` set / `0C` read): 3-byte little-endian BCD in
 /// 100 Hz units (600 kHz → `00 60 00`). The 10 MHz digit only applies on 1200 MHz.
 pub fn set_rptr_offset(radio: u8, hz: u64) -> Frame {
@@ -592,6 +651,22 @@ mod tests {
     fn scope_center_mode_is_one_byte() {
         assert_eq!(set_scope_center_mode(0xA2, Some(0x00), true).data, vec![0x14, 0x00, 0x01]);
         assert_eq!(set_scope_center_mode(0x94, None, false).data, vec![0x14, 0x00]);
+    }
+
+    #[test]
+    fn dsp_level_and_agc_frames() {
+        // NR level 14 06, 50% → 127 → BE BCD 01 27.
+        let nr = set_dsp_level(0xA2, LVL_NR, 50);
+        assert_eq!(nr.cmd, 0x14);
+        assert_eq!(nr.data[0], 0x06);
+        assert_eq!(level_from_bcd2(nr.data[1], nr.data[2]), 127);
+        // AGC 16 12: FAST byte is 0x01 on this family; Hamlib FAST=2.
+        assert_eq!(set_agc(0xA2, 0x01).data, vec![0x12, 0x01]);
+        assert_eq!(agc_civ_from_hamlib(2), 0x01); // FAST
+        assert_eq!(agc_civ_from_hamlib(5), 0x02); // MEDIUM → MID
+        assert_eq!(agc_civ_from_hamlib(3), 0x03); // SLOW
+        assert_eq!(agc_hamlib_from_civ(0x02), 5); // MID → MEDIUM
+        assert_eq!(agc_hamlib_from_civ(0x03), 3); // SLOW
     }
 
     #[test]
