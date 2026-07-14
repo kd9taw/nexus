@@ -22,8 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the rig keyed) — and the constant churn from (1) meant the connection that keyed always died
   moments later, unkeying the over. The fail-safe now stands down while Nexus itself is
   transmitting (published to the broker at every keying site, so there's no race), and still fires
-  for a genuine external-client crash. (The scope-waveform stream, separately, is rejected by the
-  IC-9700, so native CI-V has no live scope on that model yet — tracked for a follow-up.)
+  for a genuine external-client crash. (The scope-waveform stream is a separate matter — see the
+  115200-baud fix below.)
 
 ### Added
 
@@ -34,6 +34,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the refusal), pins the **Main** scope on dual-receiver rigs (IC-9700/7610) before enabling the
   stream, and spells out the exact rig menu settings in the native CI-V hint. If your waterfall
   shows no "CI-V RF": set the rig and Nexus to 115200.
+- **Phone cockpit: the native scope is now a real RF panadapter.** When a FlexRadio or Icom CI-V
+  scope is streaming, the Phone cockpit drops the audio-passband framing (the "RX audio" label and
+  the audio-Hz span chips) and shows the rig's actual RF spectrum full-width, with RF zoom presets
+  (Full / ±25k / ±10k / ±5k) instead of a passband-width sliver. Audio-derived scope is unchanged.
+- **Phone cockpit: transmit meters (SWR / ALC / Po / COMP).** While you transmit, colored meter
+  bars appear where the S-meter sits — SWR (antenna match), ALC (set your mic gain against it on
+  SSB), output power in watts, and speech compression — using the exact IC-9700 calibration curves,
+  so the readings match the rig. Only the meters your rig actually reports show; all blank on unkey.
+- **Phone cockpit: mic-gain slider.** A mic-gain control beside the power slider (when the rig
+  reports it) so you set SSB mic gain from Nexus while watching the ALC meter — no reaching for the
+  radio. Mirrors the real rig level.
+- **Native Icom CI-V: the DSP buttons (NB / NR / ANF / COMP / VOX) now work.** They were live only on
+  the Hamlib path; on the native CI-V path the rig never reported the states, so the buttons stayed
+  hidden. Nexus now reads and sets them over CI-V, so the cockpit's DSP toggles light up and work.
 - **CI-V bus diagnostic log (Settings ▸ native Icom CI-V).** An opt-in support tool that records the
   raw CI-V bus traffic — every byte to and from the radio, timestamped and decoded (PTT on/off, mode
   set, scope waveform, ack…) — to a file in your Downloads. It's the way to root-cause hardware-only
