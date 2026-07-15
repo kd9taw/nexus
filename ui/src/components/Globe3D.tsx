@@ -217,6 +217,7 @@ export default function Globe3D({
   const linesRef = useRef<Record<string, THREE.Group>>({})
   const satGroupRef = useRef<THREE.Group | null>(null)
   const satMarkersRef = useRef<Record<string, THREE.Object3D>>({})
+  const bloomRef = useRef<UnrealBloomPass | null>(null)
   const [size, setSize] = useState({ w: 0, h: 0 })
   const [ready, setReady] = useState(false)
   const [ok] = useState(webglOk)
@@ -350,17 +351,49 @@ export default function Globe3D({
         new THREE.PointsMaterial({ color: '#cdd9ec', size: 2.2, sizeAttenuation: false, transparent: true, opacity: 0.8 }),
       )
       g.scene().add(stars)
-      // Bloom so spots/arcs/lights glow.
-      const bloom = new UnrealBloomPass(new THREE.Vector2(size.w || 1, size.h || 1), 0.6, 0.7, 0.2)
-      g.postProcessingComposer().addPass(bloom)
+      // Bloom so spots/arcs/lights glow. Added ONCE — globe.gl resizes the composer (and this
+      // pass) itself whenever the <Globe> width/height change, so this effect must NOT depend on
+      // size. Re-running it on every resize stacked a second UnrealBloomPass onto the composer each
+      // time (and a second starfield), and stacked bloom compounds the glow into a full brightness
+      // blowout — the "globe goes massively bright after resizing the window, and only a 2D↔3D
+      // toggle resets it" bug. Size the pass off the live container so the first frame is correct.
+      const el = wrapRef.current
+      const bloom = new UnrealBloomPass(
+        new THREE.Vector2(el?.clientWidth || 1, el?.clientHeight || 1),
+        0.6,
+        0.7,
+        0.2,
+      )
+      const composer = g.postProcessingComposer()
+      composer.addPass(bloom)
+      bloomRef.current = bloom
       // Gentle idle auto-rotate speed; the on/off state is driven by the spin effect.
       const controls = g.controls() as { autoRotateSpeed: number }
       controls.autoRotateSpeed = 0.3
+      // Remove what we added so a remount / re-ready can never accumulate a second bloom or field.
+      return () => {
+        try {
+          composer.passes = composer.passes.filter((pass) => pass !== bloom)
+          bloom.dispose()
+          bloomRef.current = null
+          g.scene().remove(stars)
+          stars.geometry.dispose()
+          ;(stars.material as THREE.Material).dispose()
+        } catch {
+          /* best-effort teardown */
+        }
+      }
     } catch (e) {
       // eslint-disable-next-line no-console
       console.warn('[Globe3D] cinematic setup skipped:', e)
     }
-  }, [ready, size.w, size.h])
+  }, [ready])
+
+  // Keep the ONE bloom pass matched to the canvas on resize (resize it, never re-add it — that
+  // was the brightness-blowout bug). Idempotent, so it's harmless if globe.gl also resizes it.
+  useEffect(() => {
+    if (size.w > 0 && size.h > 0) bloomRef.current?.setSize(size.w, size.h)
+  }, [size.w, size.h])
 
   // Frame the globe on the QTH once it's ready.
   useEffect(() => {

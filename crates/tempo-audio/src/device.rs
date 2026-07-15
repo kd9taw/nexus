@@ -23,37 +23,6 @@ use crate::resample::resample_linear;
 
 const MODEM_RATE: u32 = 12_000;
 
-/// Most channels we consider when folding a capture block to mono. Rig codecs are mono or
-/// 2-channel; the cap just bounds the on-stack energy scratch for a pathological device.
-const MAX_LANES: usize = 8;
-
-/// The lane (channel) carrying the most energy across a capture block.
-///
-/// Rig RX audio is mono, but it commonly rides a **2-channel** USB codec on ONE lane while the
-/// other is silent (or just hiss). The old fold averaged the lanes (`sum / channels`), which on
-/// such a device cost **6 dB** of level AND folded the dead lane's noise into the signal (worse
-/// SNR) — the "Nexus reads much lower than WSJT-X on the same DE-19" report. Taking the live lane
-/// instead restores full level and drops the dead lane entirely. On an exact energy tie (true
-/// dual-mono, L=R) `max_by` keeps the last lane, but the lanes are sample-identical there so the
-/// audio is the same — single-lane and dual-mono devices are unchanged. `absf` maps a raw sample to
-/// its magnitude (per sample format).
-fn dominant_lane<T: Copy>(data: &[T], ch: usize, absf: impl Fn(T) -> f32) -> usize {
-    let ch = ch.max(1);
-    if ch == 1 {
-        return 0;
-    }
-    let lanes = ch.min(MAX_LANES);
-    let mut energy = [0.0f32; MAX_LANES];
-    for frame in data.chunks(ch) {
-        for (i, &s) in frame.iter().take(lanes).enumerate() {
-            energy[i] += absf(s);
-        }
-    }
-    (0..lanes)
-        .max_by(|&a, &b| energy[a].total_cmp(&energy[b]))
-        .unwrap_or(0)
-}
-
 fn err_fn(e: cpal::StreamError) {
     eprintln!("tempo-audio: cpal stream error: {e}");
 }
@@ -359,10 +328,15 @@ impl CpalBackend {
                     let monitoring = mon_enabled_in.load(Ordering::Relaxed);
                     let g = f32::from_bits(rx_gain_cb.load(Ordering::Relaxed));
                     let ch = in_ch.max(1);
-                    let dom = dominant_lane(data, ch, |s: f32| s.abs());
                     let mut peak = 0.0f32;
                     for frame in data.chunks(ch) {
-                        let m = frame.get(dom).copied().unwrap_or(0.0) * g;
+                        // Fold to mono by AVERAGING the channels (× RX gain). Averaging keeps the
+                        // signal phase-coherent across the whole FT8 window no matter how the rig's
+                        // codec lays mono onto a stereo stream. Per-block "loudest lane" picking
+                        // (0.8.9) thrashed L↔R on a hiss channel and shredded decodes on stereo
+                        // interfaces (Flex DAX, Xiegu DE-19) — a quiet rig is handled by RX Gain,
+                        // not by discarding a channel.
+                        let m = frame.iter().copied().sum::<f32>() / ch as f32 * g;
                         peak = peak.max(m.abs());
                         ring.push_back(m);
                         if monitoring {
@@ -381,10 +355,10 @@ impl CpalBackend {
                     let monitoring = mon_enabled_in.load(Ordering::Relaxed);
                     let g = f32::from_bits(rx_gain_cb.load(Ordering::Relaxed));
                     let ch = in_ch.max(1);
-                    let dom = dominant_lane(data, ch, |s: i16| (s as f32).abs());
                     let mut peak = 0.0f32;
                     for frame in data.chunks(ch) {
-                        let m = frame.get(dom).map(|&s| s as f32 / 32768.0).unwrap_or(0.0) * g;
+                        let m =
+                            frame.iter().map(|&s| s as f32 / 32768.0).sum::<f32>() / ch as f32 * g;
                         peak = peak.max(m.abs());
                         ring.push_back(m);
                         if monitoring {
@@ -405,14 +379,14 @@ impl CpalBackend {
                     let monitoring = mon_enabled_in.load(Ordering::Relaxed);
                     let g = f32::from_bits(rx_gain_cb.load(Ordering::Relaxed));
                     let ch = in_ch.max(1);
-                    // U8 is offset-binary around 128 — magnitude is the deviation from the midpoint.
-                    let dom = dominant_lane(data, ch, |s: u8| (s as f32 - 128.0).abs());
                     let mut peak = 0.0f32;
                     for frame in data.chunks(ch) {
+                        // U8 is offset-binary around 128.
                         let m = frame
-                            .get(dom)
+                            .iter()
                             .map(|&s| (s as f32 - 128.0) / 128.0)
-                            .unwrap_or(0.0)
+                            .sum::<f32>()
+                            / ch as f32
                             * g;
                         peak = peak.max(m.abs());
                         ring.push_back(m);
@@ -432,13 +406,13 @@ impl CpalBackend {
                     let monitoring = mon_enabled_in.load(Ordering::Relaxed);
                     let g = f32::from_bits(rx_gain_cb.load(Ordering::Relaxed));
                     let ch = in_ch.max(1);
-                    let dom = dominant_lane(data, ch, |s: i32| (s as f32).abs());
                     let mut peak = 0.0f32;
                     for frame in data.chunks(ch) {
                         let m = frame
-                            .get(dom)
+                            .iter()
                             .map(|&s| s as f32 / 2_147_483_648.0)
-                            .unwrap_or(0.0)
+                            .sum::<f32>()
+                            / ch as f32
                             * g;
                         peak = peak.max(m.abs());
                         ring.push_back(m);

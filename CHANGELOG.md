@@ -5,6 +5,27 @@ All notable changes to Nexus (formerly Tempo) are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] — 2026-07-15 — Linux build + decode-regression fix + globe fix
+
+### Added
+
+- **Linux build.** Nexus now ships a **.deb and an AppImage** alongside the Windows installer, built
+  with `scripts/build-linux.sh` (native Tauri, system FFTW). CAT on Linux uses the system Hamlib —
+  the .deb pulls `libhamlib-utils` automatically; AppImage users run `sudo apt install libhamlib-utils`.
+
+### Fixed
+
+- **FT8/FT4 decode restored on stereo audio interfaces (FlexRadio DAX, Xiegu DE-19).** The 0.8.9
+  mono-fold change picked the "loudest" channel per capture block with no memory, so on a 2-channel
+  codec whose idle channel carries hiss it thrashed between channels and destroyed the phase coherence
+  the decoder needs — audio and the waterfall showed activity, but nothing decoded. Reverted the fold
+  to **channel averaging** (what decoded before), which is phase-coherent regardless of how a rig lays
+  mono onto a stereo stream. Mono interfaces (most Yaesu) were never affected. The **RX Gain** control
+  stays as the lever for a quiet interface — raise it if the RX level reads low.
+- **The 3-D Connect globe no longer washes out to a blown-out glare after a window resize.** The
+  globe's bloom pass was being re-added on every resize (stacking glow); it's now added once and
+  simply resized, with cleanup so a remount can't accumulate another.
+
 ## [0.8.9] — 2026-07-15 — RX audio level fix + RX gain + 1080p window fit
 
 ### Fixed
