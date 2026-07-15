@@ -217,6 +217,8 @@ pub struct RadioConfig {
     pub audio_out: String,
     /// Tx audio level (0.0–1.0) applied to outgoing samples.
     pub tx_level: f32,
+    /// RX capture gain (≥1.0) applied to received audio before decode.
+    pub rx_gain: f32,
 }
 
 impl Default for RadioConfig {
@@ -239,6 +241,7 @@ impl Default for RadioConfig {
             audio_in: String::new(),
             audio_out: String::new(),
             tx_level: 0.9,
+            rx_gain: 1.0,
         }
     }
 }
@@ -274,6 +277,7 @@ pub fn run_radio(engine: Arc<Mutex<Engine>>, cfg: RadioConfig) -> Result<(), Str
         }
     };
     backend.set_tx_level(cfg.tx_level);
+    backend.set_rx_gain(cfg.rx_gain);
 
     // Resolve the PTT method into a Rig and probe it. `open_rig` launches rigctld
     // for CAT (its kill-on-drop handle lives as long as the rig) and reports the
@@ -407,6 +411,7 @@ pub fn run_radio(engine: Arc<Mutex<Engine>>, cfg: RadioConfig) -> Result<(), Str
                 let outn = (!t.audio_out.is_empty()).then_some(t.audio_out.as_str());
                 CpalBackend::open(inn, outn).map(|mut b| {
                     b.set_tx_level(t.tx_level);
+                    b.set_rx_gain(t.rx_gain);
                     b
                 })
             },
@@ -461,6 +466,7 @@ impl Transport {
             audio_out: String::new(),
             voice_mic_device: String::new(),
             tx_level: p.tx_level,
+            rx_gain: p.rx_gain,
             monitor_enabled: false,
             monitor_device: String::new(),
             monitor_level: 0.5,
@@ -1404,8 +1410,15 @@ impl RadioLoop {
                         self.err_owner = ErrOwner::Device;
                     }
                 }
-            } else if (want.tx_level - self.applied.tx_level).abs() > f32::EPSILON {
-                backend.set_tx_level(want.tx_level);
+            } else {
+                // No backend rebuild — apply the live gains in place. Independent checks (not an
+                // else-if chain) so a same-tick change to both TX level and RX gain both land.
+                if (want.tx_level - self.applied.tx_level).abs() > f32::EPSILON {
+                    backend.set_tx_level(want.tx_level);
+                }
+                if (want.rx_gain - self.applied.rx_gain).abs() > f32::EPSILON {
+                    backend.set_rx_gain(want.rx_gain);
+                }
             }
 
             // Headphone monitor (DARK, off by default): reconfigure it IN PLACE on a
@@ -3328,6 +3341,7 @@ struct Transport {
     /// rebuilds the capture/TX streams (it only affects the transient mic stream).
     voice_mic_device: String,
     tx_level: f32,
+    rx_gain: f32,
     /// Dark headphone-monitor settings (off by default). Carried here so a change is
     /// applied to the running backend IN PLACE — never as a capture-stream rebuild.
     monitor_enabled: bool,
@@ -3353,6 +3367,7 @@ impl Transport {
             // is "none", so the first recording reads it from the live engine settings.
             voice_mic_device: String::new(),
             tx_level: c.tx_level,
+            rx_gain: c.rx_gain,
             // The monitor is not part of the startup seed — the initial applied state
             // is "off", so the first loop turns it on from the live engine settings.
             monitor_enabled: false,
@@ -3380,6 +3395,7 @@ impl Transport {
             audio_out: s.audio_out.clone(),
             voice_mic_device: s.voice_mic_device.clone(),
             tx_level: s.tx_level,
+            rx_gain: s.rx_gain,
             monitor_enabled: s.monitor_enabled,
             monitor_device: s.monitor_device.clone(),
             monitor_level: s.monitor_level,
@@ -4908,6 +4924,7 @@ mod tests {
             audio_out: String::new(),
             voice_mic_device: String::new(),
             tx_level: 0.9,
+            rx_gain: 1.0,
             monitor_enabled: false,
             monitor_device: String::new(),
             monitor_level: 0.5,

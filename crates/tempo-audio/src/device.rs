@@ -11,7 +11,7 @@
 //! may want to pick a specific CODEC device and a 48 kHz config explicitly.
 
 use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicBool, AtomicU32};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -22,6 +22,37 @@ use crate::monitor::{Monitor, SpscRing};
 use crate::resample::resample_linear;
 
 const MODEM_RATE: u32 = 12_000;
+
+/// Most channels we consider when folding a capture block to mono. Rig codecs are mono or
+/// 2-channel; the cap just bounds the on-stack energy scratch for a pathological device.
+const MAX_LANES: usize = 8;
+
+/// The lane (channel) carrying the most energy across a capture block.
+///
+/// Rig RX audio is mono, but it commonly rides a **2-channel** USB codec on ONE lane while the
+/// other is silent (or just hiss). The old fold averaged the lanes (`sum / channels`), which on
+/// such a device cost **6 dB** of level AND folded the dead lane's noise into the signal (worse
+/// SNR) — the "Nexus reads much lower than WSJT-X on the same DE-19" report. Taking the live lane
+/// instead restores full level and drops the dead lane entirely. On an exact energy tie (true
+/// dual-mono, L=R) `max_by` keeps the last lane, but the lanes are sample-identical there so the
+/// audio is the same — single-lane and dual-mono devices are unchanged. `absf` maps a raw sample to
+/// its magnitude (per sample format).
+fn dominant_lane<T: Copy>(data: &[T], ch: usize, absf: impl Fn(T) -> f32) -> usize {
+    let ch = ch.max(1);
+    if ch == 1 {
+        return 0;
+    }
+    let lanes = ch.min(MAX_LANES);
+    let mut energy = [0.0f32; MAX_LANES];
+    for frame in data.chunks(ch) {
+        for (i, &s) in frame.iter().take(lanes).enumerate() {
+            energy[i] += absf(s);
+        }
+    }
+    (0..lanes)
+        .max_by(|&a, &b| energy[a].total_cmp(&energy[b]))
+        .unwrap_or(0)
+}
 
 fn err_fn(e: cpal::StreamError) {
     eprintln!("tempo-audio: cpal stream error: {e}");
@@ -145,6 +176,10 @@ pub struct CpalBackend {
     out_rate: u32,
     /// Decaying peak RX input level (0.0–1.0), updated on the audio thread.
     rx_level: Arc<Mutex<f32>>,
+    /// RX capture gain (f32 bits): a multiplier (≥1.0) applied to captured samples on the audio
+    /// thread. Live-updatable from Settings for a quiet interface; 1.0 = unchanged. Atomic because
+    /// the realtime input callback reads it every block.
+    rx_gain: Arc<AtomicU32>,
     /// Tx audio level (0.0–1.0) applied to outgoing samples in [`Self::play`].
     tx_level: f32,
     /// Dark headphone monitor: an in-place, off-by-default pass-through of the RX
@@ -296,6 +331,7 @@ impl CpalBackend {
         let in_ring = Arc::new(Mutex::new(VecDeque::<f32>::new()));
         let out_ring = Arc::new(Mutex::new(VecDeque::<f32>::new()));
         let rx_level = Arc::new(Mutex::new(0.0f32));
+        let rx_gain = Arc::new(AtomicU32::new(1.0f32.to_bits()));
 
         // ---- headphone monitor shared state (DARK; nothing drains it until the
         // operator enables the monitor, which opens the output stream). Sized ~0.5 s
@@ -305,11 +341,12 @@ impl CpalBackend {
         let mon_enabled = Arc::new(AtomicBool::new(false));
         let mon_level = Arc::new(AtomicU32::new(0.5f32.to_bits()));
 
-        // ---- input: downmix to mono f32 → in_ring (+ decaying peak meter) ----
+        // ---- input: fold to mono f32 (dominant lane × RX gain) → in_ring (+ peak meter) ----
         let in_ring_cb = in_ring.clone();
         let rx_meter_cb = rx_level.clone();
         let mon_ring_in = mon_ring.clone();
         let mon_enabled_in = mon_enabled.clone();
+        let rx_gain_cb = rx_gain.clone();
         let in_stream = match in_cfg.sample_format() {
             SampleFormat::F32 => in_dev.build_input_stream(
                 &in_cfg.config(),
@@ -319,10 +356,13 @@ impl CpalBackend {
                     // push each mono sample into the wait-free monitor ring — it never
                     // blocks or allocates and drops on overflow, so the decode path
                     // (this same callback) is never stalled by monitoring.
-                    let monitoring = mon_enabled_in.load(std::sync::atomic::Ordering::Relaxed);
+                    let monitoring = mon_enabled_in.load(Ordering::Relaxed);
+                    let g = f32::from_bits(rx_gain_cb.load(Ordering::Relaxed));
+                    let ch = in_ch.max(1);
+                    let dom = dominant_lane(data, ch, |s: f32| s.abs());
                     let mut peak = 0.0f32;
-                    for frame in data.chunks(in_ch.max(1)) {
-                        let m = frame.iter().copied().sum::<f32>() / in_ch.max(1) as f32;
+                    for frame in data.chunks(ch) {
+                        let m = frame.get(dom).copied().unwrap_or(0.0) * g;
                         peak = peak.max(m.abs());
                         ring.push_back(m);
                         if monitoring {
@@ -338,11 +378,13 @@ impl CpalBackend {
                 &in_cfg.config(),
                 move |data: &[i16], _: &cpal::InputCallbackInfo| {
                     let mut ring = in_ring_cb.lock().unwrap_or_else(|e| e.into_inner());
-                    let monitoring = mon_enabled_in.load(std::sync::atomic::Ordering::Relaxed);
+                    let monitoring = mon_enabled_in.load(Ordering::Relaxed);
+                    let g = f32::from_bits(rx_gain_cb.load(Ordering::Relaxed));
+                    let ch = in_ch.max(1);
+                    let dom = dominant_lane(data, ch, |s: i16| (s as f32).abs());
                     let mut peak = 0.0f32;
-                    for frame in data.chunks(in_ch.max(1)) {
-                        let m = frame.iter().map(|&s| s as f32 / 32768.0).sum::<f32>()
-                            / in_ch.max(1) as f32;
+                    for frame in data.chunks(ch) {
+                        let m = frame.get(dom).map(|&s| s as f32 / 32768.0).unwrap_or(0.0) * g;
                         peak = peak.max(m.abs());
                         ring.push_back(m);
                         if monitoring {
@@ -360,14 +402,18 @@ impl CpalBackend {
                 &in_cfg.config(),
                 move |data: &[u8], _: &cpal::InputCallbackInfo| {
                     let mut ring = in_ring_cb.lock().unwrap_or_else(|e| e.into_inner());
-                    let monitoring = mon_enabled_in.load(std::sync::atomic::Ordering::Relaxed);
+                    let monitoring = mon_enabled_in.load(Ordering::Relaxed);
+                    let g = f32::from_bits(rx_gain_cb.load(Ordering::Relaxed));
+                    let ch = in_ch.max(1);
+                    // U8 is offset-binary around 128 — magnitude is the deviation from the midpoint.
+                    let dom = dominant_lane(data, ch, |s: u8| (s as f32 - 128.0).abs());
                     let mut peak = 0.0f32;
-                    for frame in data.chunks(in_ch.max(1)) {
+                    for frame in data.chunks(ch) {
                         let m = frame
-                            .iter()
+                            .get(dom)
                             .map(|&s| (s as f32 - 128.0) / 128.0)
-                            .sum::<f32>()
-                            / in_ch.max(1) as f32;
+                            .unwrap_or(0.0)
+                            * g;
                         peak = peak.max(m.abs());
                         ring.push_back(m);
                         if monitoring {
@@ -383,14 +429,17 @@ impl CpalBackend {
                 &in_cfg.config(),
                 move |data: &[i32], _: &cpal::InputCallbackInfo| {
                     let mut ring = in_ring_cb.lock().unwrap_or_else(|e| e.into_inner());
-                    let monitoring = mon_enabled_in.load(std::sync::atomic::Ordering::Relaxed);
+                    let monitoring = mon_enabled_in.load(Ordering::Relaxed);
+                    let g = f32::from_bits(rx_gain_cb.load(Ordering::Relaxed));
+                    let ch = in_ch.max(1);
+                    let dom = dominant_lane(data, ch, |s: i32| (s as f32).abs());
                     let mut peak = 0.0f32;
-                    for frame in data.chunks(in_ch.max(1)) {
+                    for frame in data.chunks(ch) {
                         let m = frame
-                            .iter()
+                            .get(dom)
                             .map(|&s| s as f32 / 2_147_483_648.0)
-                            .sum::<f32>()
-                            / in_ch.max(1) as f32;
+                            .unwrap_or(0.0)
+                            * g;
                         peak = peak.max(m.abs());
                         ring.push_back(m);
                         if monitoring {
@@ -484,6 +533,7 @@ impl CpalBackend {
             in_rate,
             out_rate,
             rx_level,
+            rx_gain,
             tx_level: 1.0,
             monitor: Monitor::new(mon_ring, mon_enabled, mon_level, in_rate),
             voice_mic: None,
@@ -526,6 +576,14 @@ impl AudioBackend for CpalBackend {
     /// [`play`]: AudioBackend::play
     fn set_tx_level(&mut self, level: f32) {
         self.tx_level = level.clamp(0.0, 1.0);
+    }
+
+    /// Set the RX capture gain (a ≥1.0 multiplier applied to captured samples on the audio
+    /// thread). Live: the realtime input callback reads the atomic each block. Clamped to a
+    /// sane 1.0–8.0 (+18 dB) so a stray value can't blow up the decode/monitor path.
+    fn set_rx_gain(&mut self, gain: f32) {
+        self.rx_gain
+            .store(gain.clamp(1.0, 8.0).to_bits(), Ordering::Relaxed);
     }
 
     /// Discard queued-but-unplayed TX audio (hard Stop TX): clear the output ring

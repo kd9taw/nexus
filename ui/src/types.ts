@@ -1560,6 +1560,8 @@ export interface Settings {
   voiceMicDevice?: string
   /** Transmit drive level, 0–1 (default 0.9). */
   txLevel: number
+  /** RX capture gain, ≥1.0 multiplier on received audio before decode (default 1.0). */
+  rxGain: number
   /** Headphone monitor (DARK, off by default): live pass-through of the RX audio the
    * decoder hears to a chosen output device. Refuses to open on the rig's TX device. */
   monitorEnabled?: boolean
@@ -1800,6 +1802,7 @@ export interface RadioProfile {
   audioIn: string
   audioOut: string
   txLevel: number
+  rxGain: number
   rotatorModel: number
   rotatorPort: string
   rotatorBaud: number

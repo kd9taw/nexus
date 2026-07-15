@@ -896,6 +896,11 @@ export async function setTxLevel(level: number): Promise<AppSnapshot> {
   return invoke<AppSnapshot>('set_tx_level', { level })
 }
 
+/** Set the RX capture gain (≥1.0 multiplier on received audio before decode). Returns the snapshot. */
+export async function setRxGain(gain: number): Promise<AppSnapshot> {
+  return invoke<AppSnapshot>('set_rx_gain', { gain })
+}
+
 /** Switch the active radio (dual-radio). The rig loop swaps rigs on the next tick (carrier
  * dropped first); Mode/TX-queues are untouched. Returns the fresh snapshot. */
 export async function setActiveRadio(id: number): Promise<AppSnapshot> {

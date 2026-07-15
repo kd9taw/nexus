@@ -5,6 +5,27 @@ All notable changes to Nexus (formerly Tempo) are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.9] — 2026-07-15 — RX audio level fix + RX gain + 1080p window fit
+
+### Fixed
+
+- **RX audio no longer reads much lower than WSJT-X on the same interface.** Many rig USB codecs
+  (the Xiegu DE-19 among them) are 2-channel but carry the receive audio on ONE channel, with the
+  other silent or just hiss. Nexus folded to mono by *averaging* the channels, which halved the
+  level (−6 dB) and mixed the dead channel's noise into the signal (worse SNR). Nexus now takes the
+  **channel that actually carries the signal**, restoring full level. Single-channel and true
+  dual-mono devices are unchanged.
+- **Windows no longer cut off at 1080p while looking perfect at 4K.** The auto-zoom picked its
+  level from screen *width* only, so 1920×1080 got 110% — too tall, pushing the bottom of the
+  layout past the window edge. The auto-fit is now **height-aware**: 1080p lands on 100%, and 4K
+  still gets 125%. (You can always override the zoom in the top bar.)
+
+### Added
+
+- **RX Gain control (Settings ▸ Audio).** A software boost (×1.0–×8.0) applied to received audio
+  before decode — headroom for a quiet interface whose line-out reads low in Nexus. Watch the RX
+  Level meter and raise it until the level reaches the green zone. Default ×1.0 (unchanged).
+
 ## [0.8.8] — 2026-07-14 — Xiegu CAT fix ("os error 10049") + auto-baud
 
 ### Fixed

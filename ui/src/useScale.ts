@@ -13,17 +13,25 @@ const STORAGE_KEY = 'tempo-ui-scale'
  *
  * `w`/`h` are CSS pixels — the webview already folds the OS display scale into
  * them (1080p @125% OS ≈ 1536 CSS px wide), so we must NOT multiply by
- * devicePixelRatio again or we'd double-magnify. Width drives the choice; a short
- * panel (768/800-tall laptop) caps it because vertical space is the tighter
- * constraint there.
+ * devicePixelRatio again or we'd double-magnify.
+ *
+ * BOTH dimensions gate the choice, and HEIGHT is the one that usually binds: the
+ * cockpit has a minimum vertical footprint, and a too-tall zoom pushes the bottom
+ * of the layout past the window edge (the "cut off at 1080p but perfect at 4K"
+ * report — 1080p is width-wide but vertically tight, so it must land on 100%, not
+ * a clipping 110%). Each higher step therefore also demands enough height to wear
+ * it: 125% only on 4K-class panels, 110% only when there's ≥1100 px of height.
  */
 export function pickInitialZoom(
   w: number = typeof window !== 'undefined' ? window.innerWidth : 1280,
   h: number = typeof window !== 'undefined' ? window.innerHeight : 800,
 ): Scale {
-  let z: Scale = w >= 3400 ? 125 : w >= 1600 ? 110 : w >= 1200 ? 100 : 90
-  if (h < 820 && z > 100) z = 100 // 768/800-tall laptops: vertical is binding
-  if (h < 720 && z > 90) z = 90
+  let z: Scale
+  if (w >= 3400 && h >= 1300) z = 125
+  else if (w >= 1600 && h >= 1100) z = 110
+  else if (w >= 1200) z = 100
+  else z = 90
+  if (h < 720 && z > 90) z = 90 // 768-and-shorter panels: vertical is binding
   return z
 }
 

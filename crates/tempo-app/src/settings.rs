@@ -293,6 +293,9 @@ pub struct Settings {
     /// Tx audio level (0.0–1.0) applied to outgoing samples before they reach
     /// the sound card.
     pub tx_level: f32,
+    /// RX capture gain: a ≥1.0 multiplier applied to received audio before decode. Headroom for a
+    /// quiet interface (e.g. a rig codec whose line-out reads low in Nexus). 1.0 = unchanged.
+    pub rx_gain: f32,
     /// Headphone monitor (DARK, off by default): live pass-through of the exact RX
     /// audio the decoder hears to a chosen output device, so the operator can HEAR
     /// the band and diagnose levels / RFI. Best-effort name guard against the rig's TX device (System default resolved first)
@@ -826,6 +829,8 @@ pub struct RadioProfile {
     pub audio_in: String,
     pub audio_out: String,
     pub tx_level: f32,
+    /// RX capture gain (≥1.0) applied to received audio before decode; 1.0 = unchanged.
+    pub rx_gain: f32,
     // --- rotator (per-radio; replaces the old 4533 rotctld singleton) ---
     pub rotator_model: u32,
     pub rotator_port: String,
@@ -866,6 +871,7 @@ impl Default for RadioProfile {
             audio_in: String::new(),
             audio_out: String::new(),
             tx_level: 0.9,
+            rx_gain: 1.0,
             rotator_model: 0,
             rotator_port: String::new(),
             rotator_baud: default_rotator_baud(),
@@ -1030,6 +1036,7 @@ impl Default for Settings {
             audio_out: String::new(),
             voice_mic_device: String::new(),
             tx_level: 0.9,
+            rx_gain: 1.0,
             monitor_enabled: false,
             monitor_device: String::new(),
             monitor_level: 0.5,
@@ -1127,6 +1134,7 @@ impl Settings {
             audio_in: self.audio_in.clone(),
             audio_out: self.audio_out.clone(),
             tx_level: self.tx_level,
+            rx_gain: self.rx_gain,
             rotator_model: self.rotator_model,
             rotator_port: self.rotator_port.clone(),
             rotator_baud: self.rotator_baud,
@@ -1295,6 +1303,7 @@ impl Settings {
         self.audio_in = p.audio_in;
         self.audio_out = p.audio_out;
         self.tx_level = p.tx_level;
+        self.rx_gain = p.rx_gain;
         self.rotator_model = p.rotator_model;
         self.rotator_port = p.rotator_port;
         self.rotator_baud = p.rotator_baud;
@@ -1321,6 +1330,7 @@ impl Settings {
             audio_in,
             audio_out,
             tx_level,
+            rx_gain,
             rotator_model,
             rotator_port,
             rotator_baud,
@@ -1338,6 +1348,7 @@ impl Settings {
             self.audio_in.clone(),
             self.audio_out.clone(),
             self.tx_level,
+            self.rx_gain,
             self.rotator_model,
             self.rotator_port.clone(),
             self.rotator_baud,
@@ -1356,6 +1367,7 @@ impl Settings {
             p.audio_in = audio_in;
             p.audio_out = audio_out;
             p.tx_level = tx_level;
+            p.rx_gain = rx_gain;
             p.rotator_model = rotator_model;
             p.rotator_port = rotator_port;
             p.rotator_baud = rotator_baud;

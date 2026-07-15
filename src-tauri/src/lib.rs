@@ -3805,6 +3805,19 @@ fn set_tx_level(state: State<'_, SharedEngine>, level: f32) -> Result<AppSnapsho
     Ok(eng.snapshot())
 }
 
+/// Set the RX capture gain (≥1.0 multiplier on received audio before decode) — headroom for a
+/// quiet interface. Applied live by the audio service; persisted so it survives restart. Returns
+/// the refreshed snapshot.
+#[tauri::command]
+fn set_rx_gain(state: State<'_, SharedEngine>, gain: f32) -> Result<AppSnapshot, String> {
+    let mut eng = state.lock().map_err(|e| e.to_string())?;
+    eng.set_rx_gain(gain);
+    if let Err(e) = eng.settings().save(&settings_path()) {
+        eprintln!("tempo: set_rx_gain save failed: {e}");
+    }
+    Ok(eng.snapshot())
+}
+
 /// Switch the active radio (dual-radio). The light path — mirrors the chosen profile's
 /// CAT/audio into the flat fields so the radio loop swaps the rig on the next tick (carrier
 /// dropped first), restores that radio's last tune, and never touches Mode/TX-queues (unlike
@@ -8068,6 +8081,7 @@ pub fn run() {
         audio_in: settings.audio_in.clone(),
         audio_out: settings.audio_out.clone(),
         tx_level: settings.tx_level,
+        rx_gain: settings.rx_gain,
     };
 
     // The engine boots on the native source; restore a persisted Companion choice
@@ -8521,6 +8535,7 @@ pub fn run() {
             stop_qso_recording,
             set_tx_enabled,
             set_tx_level,
+            set_rx_gain,
             set_active_radio,
             set_peg_lock,
             add_radio,

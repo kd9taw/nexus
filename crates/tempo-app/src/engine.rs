@@ -3897,6 +3897,12 @@ impl Engine {
         self.settings.tx_level = level.clamp(0.0, 1.0);
     }
 
+    /// Set the RX capture gain (≥1.0 multiplier on received audio before decode). Headroom for a
+    /// quiet interface; clamped to 1.0–8.0 (+18 dB). Applied live by the audio service.
+    pub fn set_rx_gain(&mut self, gain: f32) {
+        self.settings.rx_gain = gain.clamp(1.0, 8.0);
+    }
+
     /// Whether normal slot TX is currently enabled.
     pub fn tx_enabled(&self) -> bool {
         self.tx_enabled

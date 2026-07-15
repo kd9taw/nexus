@@ -2477,6 +2477,26 @@ export function SettingsPanel({
                   <span className="cat-result fail" role="alert">✗ {radio.audioError}</span>
                 )}
               </div>
+
+              <label className="settings-field">
+                <span className="settings-label">
+                  RX Gain <span className="settings-value">×{(form.rxGain ?? 1).toFixed(1)}</span>
+                </span>
+                <input
+                  className="settings-slider"
+                  type="range"
+                  min="1"
+                  max="8"
+                  step="0.1"
+                  value={String(form.rxGain ?? 1)}
+                  onChange={(e) => updateNum('rxGain', Number(e.target.value))}
+                  aria-label="RX capture gain"
+                />
+                <span className="settings-hint">
+                  Boost a quiet interface until RX Level reaches the green zone (applies on Save).
+                  Leave at ×1.0 unless the meter reads low.
+                </span>
+              </label>
             </div>
           </fieldset>
 

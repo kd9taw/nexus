@@ -1,7 +1,7 @@
 {
   "name": "tempo-ui",
   "private": true,
-  "version": "0.8.8",
+  "version": "0.8.9",
   "type": "module",
   "description": "Nexus web UI — unified ham digital-ops nerve center",
   "author": "KD9TAW <kd9taw@protonmail.com>",

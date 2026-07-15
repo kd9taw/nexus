@@ -17,6 +17,10 @@ pub trait AudioBackend {
     /// Set the TX audio level (0.0–1.0) applied to played samples. No-op default
     /// for non-hardware backends (the real sound card overrides it).
     fn set_tx_level(&mut self, _level: f32) {}
+    /// Set the RX capture gain (a multiplier ≥ 1.0 applied to the captured samples
+    /// before decode). Headroom for a low-output interface — e.g. a rig codec whose
+    /// line-out reads quiet in Nexus. No-op default; the real sound card overrides it.
+    fn set_rx_gain(&mut self, _gain: f32) {}
     /// Discard any queued-but-not-yet-played TX audio immediately (a hard Stop TX
     /// mid-transmission). Default no-op; the real sound card clears its output
     /// ring. Returns the count discarded (for tests).
