@@ -3575,6 +3575,72 @@ export function SettingsPanel({
           </fieldset>
           )}
 
+          {/* ---- Connections (connector status + log) — moved from Logbook & QSL ---- */}
+          {tab === 'connections' && (
+          <fieldset className="settings-section">
+            <legend>Connections</legend>
+            <div className="conn-status-grid">
+              {creds.map((c) => (
+                <div key={c.connector} className="conn-status-row">
+                  <span className={`conn-dot ${c.stored ? 'on' : 'off'}`} aria-hidden="true" />
+                  <span className="conn-name">{c.connector}</span>
+                  <span className="conn-id">{c.identity || '—'}</span>
+                  <span className={`conn-state ${c.stored ? 'on' : 'off'}`}>
+                    {c.stored ? 'credential stored' : 'no credential'}
+                  </span>
+                  {c.connector === 'QRZ Logbook' && (
+                    <button
+                      type="button"
+                      className="settings-test-btn"
+                      onClick={runQrzTest}
+                      disabled={qrzTest.state === 'testing'}
+                      title="Round-trips the QRZ Logbook API (ACTION=STATUS) — proves the key works without logging anything"
+                    >
+                      {qrzTest.state === 'testing' ? 'Testing…' : 'Test'}
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+            {qrzTest.state !== 'idle' && qrzTest.state !== 'testing' && (
+              <p className={`conn-test-result ${qrzTest.state}`}>
+                {qrzTest.state === 'ok' ? '✓ QRZ Logbook reachable: ' : '✗ QRZ test failed: '}
+                {qrzTest.msg}
+                {qrzTest.state === 'fail' && (
+                  <>
+                    {' '}
+                    (Uploads need the per-logbook <strong>API key</strong> from
+                    logbook.qrz.com ▸ Settings ▸ API — not your QRZ password.)
+                  </>
+                )}
+              </p>
+            )}
+            <div className="conn-log">
+              <div className="conn-log-head">
+                <span>Connection log</span>
+                <span className="settings-hint">every save, sync, push, and failure lands here</span>
+              </div>
+              {connLog.length === 0 ? (
+                <p className="conn-log-empty">
+                  No events yet this session — save a credential or run a sync and it shows here.
+                </p>
+              ) : (
+                <ul className="conn-log-list">
+                  {connLog.slice(0, 40).map((e, i) => (
+                    <li key={`${e.tsUnix}-${i}`} className={`conn-ev ${e.level}`}>
+                      <span className="conn-ev-time">
+                        {new Date(e.tsUnix * 1000).toLocaleTimeString([], { hour12: false })}
+                      </span>
+                      <span className="conn-ev-name">{e.connector}</span>
+                      <span className="conn-ev-msg">{e.message}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </fieldset>
+          )}
+
           {/* ---- Network integrations ---- */}
           {tab === 'connections' && (
           <fieldset className="settings-section">
@@ -4038,72 +4104,6 @@ export function SettingsPanel({
             </div>
           </fieldset>
           </>
-          )}
-
-          {/* ---- Connections (connector status + log) — moved from Logbook & QSL ---- */}
-          {tab === 'connections' && (
-          <fieldset className="settings-section">
-            <legend>Connections</legend>
-            <div className="conn-status-grid">
-              {creds.map((c) => (
-                <div key={c.connector} className="conn-status-row">
-                  <span className={`conn-dot ${c.stored ? 'on' : 'off'}`} aria-hidden="true" />
-                  <span className="conn-name">{c.connector}</span>
-                  <span className="conn-id">{c.identity || '—'}</span>
-                  <span className={`conn-state ${c.stored ? 'on' : 'off'}`}>
-                    {c.stored ? 'credential stored' : 'no credential'}
-                  </span>
-                  {c.connector === 'QRZ Logbook' && (
-                    <button
-                      type="button"
-                      className="settings-test-btn"
-                      onClick={runQrzTest}
-                      disabled={qrzTest.state === 'testing'}
-                      title="Round-trips the QRZ Logbook API (ACTION=STATUS) — proves the key works without logging anything"
-                    >
-                      {qrzTest.state === 'testing' ? 'Testing…' : 'Test'}
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
-            {qrzTest.state !== 'idle' && qrzTest.state !== 'testing' && (
-              <p className={`conn-test-result ${qrzTest.state}`}>
-                {qrzTest.state === 'ok' ? '✓ QRZ Logbook reachable: ' : '✗ QRZ test failed: '}
-                {qrzTest.msg}
-                {qrzTest.state === 'fail' && (
-                  <>
-                    {' '}
-                    (Uploads need the per-logbook <strong>API key</strong> from
-                    logbook.qrz.com ▸ Settings ▸ API — not your QRZ password.)
-                  </>
-                )}
-              </p>
-            )}
-            <div className="conn-log">
-              <div className="conn-log-head">
-                <span>Connection log</span>
-                <span className="settings-hint">every save, sync, push, and failure lands here</span>
-              </div>
-              {connLog.length === 0 ? (
-                <p className="conn-log-empty">
-                  No events yet this session — save a credential or run a sync and it shows here.
-                </p>
-              ) : (
-                <ul className="conn-log-list">
-                  {connLog.slice(0, 40).map((e, i) => (
-                    <li key={`${e.tsUnix}-${i}`} className={`conn-ev ${e.level}`}>
-                      <span className="conn-ev-time">
-                        {new Date(e.tsUnix * 1000).toLocaleTimeString([], { hour12: false })}
-                      </span>
-                      <span className="conn-ev-name">{e.connector}</span>
-                      <span className="conn-ev-msg">{e.message}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          </fieldset>
           )}
 
           {/* ---- Confirmations (LoTW / eQSL / QRZ / ClubLog accounts) ---- */}
