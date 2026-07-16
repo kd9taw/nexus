@@ -26,6 +26,7 @@ export function TuningStrip({
   step: stepProp,
   onStep,
   sensitivity,
+  showReadout = true,
 }: {
   snap: AppSnapshot
   onSnap?: (s: AppSnapshot) => void
@@ -34,6 +35,9 @@ export function TuningStrip({
   onStep?: (hz: number) => void
   /** Wheel-tune sensitivity (from Settings), applied to the readout wheel. */
   sensitivity?: number
+  /** Render the big frequency readout in the strip (default). Set false when a parent (the shared
+   * CockpitHeader) already owns the readout and this strip only supplies nudges/step/VFO/RIT/XIT. */
+  showReadout?: boolean
 }) {
   const dial = snap.radio.dialMhz
   const catOk = snap.radio.catOk === true
@@ -94,20 +98,22 @@ export function TuningStrip({
       >
         ◄
       </button>
-      <span
-        ref={readoutRef}
-        className="tuning-readout-wheel"
-        title={catOk ? `Scroll to tune ±${step} Hz (Shift = ×10)` : undefined}
-      >
-        <FrequencyReadout
-          dialMhz={dial}
-          size="hero"
-          editable
-          disabled={!catOk}
-          onCommit={(mhz) => void tuneTo(mhz)}
-          txBlocked={!bandLabelForMhz(dial)}
-        />
-      </span>
+      {showReadout && (
+        <span
+          ref={readoutRef}
+          className="tuning-readout-wheel"
+          title={catOk ? `Scroll to tune ±${step} Hz (Shift = ×10)` : undefined}
+        >
+          <FrequencyReadout
+            dialMhz={dial}
+            size="hero"
+            editable
+            disabled={!catOk}
+            onCommit={(mhz) => void tuneTo(mhz)}
+            txBlocked={!bandLabelForMhz(dial)}
+          />
+        </span>
+      )}
       <button
         type="button"
         className="tuning-nudge"

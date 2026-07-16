@@ -10502,6 +10502,67 @@ select.settings-input {
   flex-wrap: wrap;
 }
 
+/* ── Shared cockpit header (CockpitHeader.tsx) — base controls in identical positions across the
+   Phone / Digital / CW cockpits, with a mode-specific slot. Every region wraps + min-width:0 so
+   nothing clips off-screen at a non-maximized width or 110–125% UI zoom. ── */
+.cockpit-header {
+  display: flex;
+  align-items: center;
+  gap: var(--gap);
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.ch-identity {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.ch-freq {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.ch-readout,
+.ch-freq-extras,
+.ch-band {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+/* The elastic member: fills the middle when wide, and (since both base clusters are flex:0 0 auto
+   under flex-wrap) drops to its own row first when space is tight — so the mode-specific controls
+   stay in a consistent location and the base row never reflows out from under the operator. */
+.ch-mode-extras {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+.ch-actions {
+  margin-left: auto;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.cockpit-txstate {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.cockpit-txstate.on {
+  color: var(--danger, #e5484d);
+}
+
 .cockpit-modes {
   display: flex;
   gap: var(--space-2);

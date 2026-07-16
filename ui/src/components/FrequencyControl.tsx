@@ -11,6 +11,11 @@ interface Props {
   mode: string
   /** compact = TopBar inline; full = Settings field block */
   variant?: 'compact' | 'full'
+  /** Render the big MHz readout (default). Set false when a parent (the shared CockpitHeader)
+   * already owns the readout and this control only supplies the band-plan channel select + chip. */
+  showReadout?: boolean
+  /** Render the USB/FM mode toggle (default). Off for FT8/FT4, whose "mode" is the tier. */
+  showModeToggle?: boolean
   onSet: (dialMhz: number, band: string, mode: string) => void
 }
 
@@ -38,6 +43,8 @@ export function FrequencyControl({
   band,
   mode,
   variant = 'compact',
+  showReadout = true,
+  showModeToggle = true,
   onSet,
 }: Props) {
   const active = useMemo(
@@ -90,34 +97,38 @@ export function FrequencyControl({
         </select>
       </label>
 
-      <div className="freq-manual-wrap">
-        {variant === 'full' && <span className="settings-label">Dial (MHz)</span>}
-        <FrequencyReadout
-          dialMhz={dialMhz}
-          size="hero"
-          editable
-          commitOnBlur
-          onCommit={(v) => onSet(v, bandLabelForMhz(v), mode)}
-        />
-      </div>
+      {showReadout && (
+        <div className="freq-manual-wrap">
+          {variant === 'full' && <span className="settings-label">Dial (MHz)</span>}
+          <FrequencyReadout
+            dialMhz={dialMhz}
+            size="hero"
+            editable
+            commitOnBlur
+            onCommit={(v) => onSet(v, bandLabelForMhz(v), mode)}
+          />
+        </div>
+      )}
 
       <div className="freq-band-tag" title={active ? active.note : 'Current band'}>
         <span className={`band-chip${active ? ' active' : ''}`}>{band || bandLabelForMhz(dialMhz) || '—'}</span>
       </div>
 
-      <div className="freq-mode-toggle" role="group" aria-label="Phone mode">
-        {MODES.map((md) => (
-          <button
-            key={md}
-            type="button"
-            className={`freq-mode-btn${mode === md ? ' active' : ''}`}
-            aria-pressed={mode === md}
-            onClick={() => setMode(md)}
-          >
-            {md}
-          </button>
-        ))}
-      </div>
+      {showModeToggle && (
+        <div className="freq-mode-toggle" role="group" aria-label="Phone mode">
+          {MODES.map((md) => (
+            <button
+              key={md}
+              type="button"
+              className={`freq-mode-btn${mode === md ? ' active' : ''}`}
+              aria-pressed={mode === md}
+              onClick={() => setMode(md)}
+            >
+              {md}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
