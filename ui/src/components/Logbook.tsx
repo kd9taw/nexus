@@ -738,7 +738,7 @@ export function Logbook({
                       background: vrow.index % 2 ? 'color-mix(in srgb, var(--bg-elev) 50%, transparent)' : 'transparent',
                     }}
                   >
-                <span className="log-cell mono">{q.call}</span>
+                <span className="log-cell mono" title={q.call}>{q.call}</span>
                 <span className="log-cell log-country" title={q.country ?? ''}>{q.country ?? '—'}</span>
                 <span className="log-cell">{q.band}</span>
                 <span className="log-cell mono">{q.freqMhz.toFixed(4)}</span>

@@ -242,7 +242,12 @@ export function OperateRoster({
                     </span>
                   )}
                 </span>
-                <span className="or-need">
+                <span
+                  className="or-need"
+                  /* The cell clips chips (deliberate — stops the Zone chip overlapping the Call);
+                     this title surfaces every need on hover so a clipped chip isn't silently lost. */
+                  title={needAll.map((t) => NEED_CHIP[t]?.label).filter(Boolean).join(' · ') || undefined}
+                >
                   {needAll.map((t) => {
                     const c = NEED_CHIP[t]
                     return (

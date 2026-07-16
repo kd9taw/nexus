@@ -33,6 +33,7 @@ import { setFrequency, getSettings, setSettings, setSplit, setRigFunc, setSideba
 import { bandLabelForMhz } from '../band'
 import { isRfScopeSource } from '../waterfall'
 import { useWheelTune } from '../useWheelTune'
+import { useScopeTune } from '../useScopeTune'
 
 interface Props {
   snap: AppSnapshot
@@ -235,6 +236,15 @@ export function PhoneCockpit({ snap, theme, pendingWork, onConsumeWork, onSnap, 
   // Whether the app can actually control the rig. Without CAT (VOX/serial PTT) the dial +
   // mode can't be set or read back — surface that so it's clear, not silently broken.
   const catOk = snap.radio.catOk === true
+
+  // Click/drag tuning from the bandscope (Flex-style): clicks command immediately, a
+  // drag coalesces to one CAT write per ~120 ms. PhoneScope does the signal-snap math
+  // and reports the final dial; this hook just commands it.
+  const onScopeTune = useScopeTune({
+    sideband: commandedMode,
+    enabled: catOk && !snap.radio.transmitting,
+    onSnap,
+  })
 
   // RX filter / passband width — the rig's read-back (null = unknown/default). The ± stepper
   // nudges it 100 Hz within a sane SSB/CW span, seeded from the current value or a 2.4 kHz default.
@@ -620,6 +630,9 @@ export function PhoneCockpit({ snap, theme, pendingWork, onConsumeWork, onSnap, 
             sideband={commandedMode}
             dialHz={snap.radio.dialMhz > 0 ? Math.round(snap.radio.dialMhz * 1e6) : null}
             onFeed={(source, loHz, hiHz) => setScopeFeed({ source, loHz, hiHz })}
+            onTune={onScopeTune}
+            filterWidthHz={filterHz ?? 2400}
+            interactive={catOk && !snap.radio.transmitting && snap.radio.dialMhz > 0}
           />
         </div>
       </section>

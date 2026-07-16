@@ -5,6 +5,53 @@ All notable changes to Nexus (formerly Tempo) are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.2] — 2026-07-15 — click-to-tune on the Phone/CW scopes + layout cutoff fixes
+
+### Added
+
+- **Click a signal on the Phone or CW scope to tune to it, the way a FlexRadio slice works.**
+  Nexus finds the signal near your click and puts the dial where it belongs for the mode:
+  - **SSB:** on the signal's suppressed carrier (detected energy edge minus the 300 Hz voice
+    low-cut), so the voice sounds natural immediately. No clear signal under the click parks the
+    dial on the nearest 500 Hz.
+  - **CW:** zero-beat — the signal lands exactly at your sidetone pitch. Works with the CAT and
+    WinKeyer keyers (dial on the signal) and the soundcard keyer (dial offset by the pitch).
+  - **FM/AM:** centered on the carrier.
+  Works on the native RF panadapters (FlexRadio, Icom CI-V scope) and on the audio scope every
+  other rig gets — there a click shifts the dial so the clicked signal lands at your pitch (CW)
+  or settles the voice into the passband (SSB).
+- **Hold the left button and drag a passband box to tune by hand.** The box is the width of the
+  rig's current RX filter and shows exactly where the rig is listening (above the dial on USB,
+  below on LSB, centered on CW). The rig follows live while you drag, throttled to one CAT write
+  per 120 ms. Push the box into the outer edge of the scope and the whole band scrolls under it —
+  ease in for a slow readable cruise, shove to the very edge for about 3 screen-widths per second.
+  The box stays pinned under your cursor the whole time.
+
+### Changed
+
+- **The panadapter trace no longer strobes with bursty signals.** The colored spectrum trace above
+  the waterfall used to flash at frame rate with every syllable gap and CW dit. It now rises
+  instantly when a signal appears and fades over about a second when it pauses (the classic rig
+  peak-hold with decay). The waterfall below is unchanged.
+
+### Fixed
+
+- **The setup wizard no longer cuts off its bottom on shorter screens.** Its last step is the tallest,
+  and the dialog had no height cap or scroll, so on a laptop-height display the mode cards and the
+  Back/Next/Finish buttons ran off the bottom edge — you couldn't reach Finish. Dialogs now cap to the
+  viewport and scroll their content. Every modal shares this shell, so they all benefit.
+- **A batch of related cut-off fixes across the app**, all the same family (content running off-screen
+  with no scroll), mostly visible at ~1366×768 or at 110–125% UI zoom:
+  - **Operate cockpit:** the right-hand control cluster (Pwr/drive slider, Pop-out, Spot) wraps to a
+    second line instead of clipping off the right edge; the long Companion address is ellipsized so it
+    can't push the row wide.
+  - **Logbook:** the per-row QRZ/ClubLog push buttons no longer clip off the left edge; long compound
+    callsigns show the full call on hover.
+  - **Roam (coordinated QSY) panel and torn-off panel windows:** heights are zoom-corrected, so at
+    110–125% zoom the close button / panel bottom no longer sit off-screen.
+  - **Toast alerts** and the **3-D globe layer list** now scroll when they'd otherwise overflow.
+  - **Call Roster:** a station's full set of "need" reasons shows on hover even when a chip is clipped.
+
 ## [0.9.1] — 2026-07-15 — late-start TX, K4 CAT stability, wider FT8 passband
 
 ### Added

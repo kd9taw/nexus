@@ -35,7 +35,8 @@ import {
 import { pushToast, withErrorToast } from '../toast'
 import { RotorStrip } from './RotorStrip'
 import { useWheelTune } from '../useWheelTune'
-import { isRfScopeSource } from '../waterfall'
+import { useScopeTune } from '../useScopeTune'
+import { isRfScopeSource, sidebandSign } from '../waterfall'
 
 /** Client-side RF-zoom presets for a native panadapter (mirror of the Phone cockpit). */
 const RF_SPANS = [
@@ -163,6 +164,19 @@ export function CwCockpit({
     stepHz: tuneStep,
     onSnap,
   })
+  // Click/drag tuning from the scope (Flex-style): a click zero-beats the clicked CW
+  // signal to the pitch; a press-drag slides the passband box, coalesced ~120 ms.
+  // The CAT write keeps the raw sideband (what wheel-tune sends — the CW rig-mode
+  // policy is applied separately by the engine).
+  const onScopeTune = useScopeTune({
+    sideband: snap.radio.sideband || 'USB',
+    enabled: catOk && !snap.radio.transmitting,
+    onSnap,
+  })
+  // The scope's click/box math needs a CW-CLASSIFIED mode string (settings.sideband is
+  // USB/LSB here — the soundcard keyer keys through SSB): same sideband SIGN, but the
+  // click zero-beats instead of carrier-snapping, and the box centers on the dial.
+  const scopeMode = sidebandSign(snap.radio.sideband || 'USB') < 0 ? 'CW-L' : 'CW'
   // RX filter width (CW wants a NARROW filter — default 500 Hz, 50-Hz steps, 50–2000 Hz span).
   const filterHz = snap.radio.filterWidthHz ?? null
   const bumpFilter = (deltaHz: number) => {
@@ -671,9 +685,14 @@ export function CwCockpit({
           viewLoHz={nativeRf ? rfSpan.lo : 300}
           viewHiHz={nativeRf ? rfSpan.hi : 1100}
           markerHz={nativeRf ? undefined : pitch}
-          sideband={snap.radio.sideband || 'USB'}
+          sideband={scopeMode}
           dialHz={snap.radio.dialMhz > 0 ? Math.round(snap.radio.dialMhz * 1e6) : null}
           onFeed={(source, loHz, hiHz) => setScopeFeed({ source, loHz, hiHz })}
+          onTune={onScopeTune}
+          filterWidthHz={filterHz ?? 500}
+          pitchHz={pitch}
+          cwPitchRefDial={keyer !== 'soundcard'}
+          interactive={catOk && !snap.radio.transmitting && snap.radio.dialMhz > 0}
         />
       </section>
       <Splitter

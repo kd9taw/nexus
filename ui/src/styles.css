@@ -221,6 +221,10 @@
   margin: 0;
   padding: 0;
   list-style: none;
+  /* Cap to the viewport and scroll when a burst of toasts (band opening / pileup) stacks up, so the
+     oldest toasts + their buttons don't grow off the top edge unreachable. --vh-eff is zoom-corrected. */
+  max-height: calc(var(--vh-eff, 100vh) - 2 * var(--space-4));
+  overflow-y: auto;
   z-index: 80;
 }
 .ui-toast {
@@ -342,6 +346,12 @@
   left: 50%;
   transform: translateX(-50%);
   width: min(640px, calc(100vw - 2 * var(--space-4)));
+  /* Cap to the viewport and scroll tall content instead of running off the bottom edge.
+     top:12vh + 84vh = 96vh, leaving a small bottom margin. Without this a tall dialog
+     (the setup wizard's last step) clips its footer buttons off-screen. */
+  max-height: 84vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   background: var(--panel);
   color: var(--text);
   border: 1px solid var(--border);
@@ -1382,6 +1392,10 @@ button.nb-chip:hover {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   font-size: 0.72rem;
+  /* Scroll the toggle list inside the globe cell instead of clipping the bottom rows against the
+     parent .connect-map (overflow:hidden) when the cell is short (pop-out / small window). */
+  max-height: calc(100% - 16px);
+  overflow-y: auto;
 }
 .globe3d-layers-h {
   font-weight: 700;
@@ -2656,7 +2670,9 @@ button.nb-chip:hover {
 .roam-modal-body {
   position: relative;
   width: min(720px, 92vw);
-  max-height: 86vh;
+  /* Zoom-corrected: this modal is NOT portaled, so it lives inside .app's zoom. A raw 86vh
+     over-talls at 110/125% UI zoom and pushes the close button off the top. --vh-eff = innerHeight/zoom. */
+  max-height: calc(0.86 * var(--vh-eff, 100vh));
   overflow-y: auto;
   border: 1px solid var(--border);
   border-radius: var(--radius-md, 8px);
@@ -4110,7 +4126,7 @@ select optgroup {
    glowing "💎 ULTRA" pill so an open-water grid is unmistakable at a glance and
    ties back to the "💎 ULTRA-RARE" alert toast. RARE stays the quiet gem — the
    boards must not become confetti. Tokens are --rarity-* (outside the guarded
-   --need-*/--band-* namespaces). Violet matches the map halo + the ◆◆ gem. */
+   --need-* / --band-* namespaces). Violet matches the map halo + the ◆◆ gem. */
 :root {
   --rarity-ultra: #c084fc;
   --rarity-rare: #f5a524;
@@ -6894,12 +6910,35 @@ select optgroup {
   background: var(--ok, #2fbf71);
   transition: width 80ms linear, background 120ms linear;
 }
+/* Positioning host for the canvas + the drag passband box (click-to-tune). Takes over the
+   flex-fill role so the canvas keeps its exact old geometry. */
+.ph-scope-canvas-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
 .ph-scope-canvas {
   flex: 1;
   width: 100%;
   min-height: 0;
   display: block;
   border-radius: var(--radius-sm);
+}
+.ph-scope-canvas.tunable {
+  cursor: crosshair;
+}
+/* The Flex-style passband box while press-dragging: shows exactly where the rig will be
+   listening. Imperatively positioned; display:block only during a drag. */
+.ph-scope-box {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: none;
+  border: 1px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border-radius: 2px;
+  pointer-events: none;
 }
 
 /* RX DSP levels — NR slider + AGC speed, a compact strip below the DSP toggles. */
@@ -9653,7 +9692,11 @@ select.settings-input {
   margin-top: var(--space-3);
 }
 .logbook-row {
-  grid-template-columns: 1fr 1.3fr 0.7fr 1fr 0.7fr 0.6fr 0.6fr 1.6fr 0.9fr 0.7fr 0.8fr;
+  /* Last track (row actions) gets a fixed floor, not a bare 0.8fr: at ~1366px / >=110% zoom the
+     fractional share shrinks below the button cluster and .log-cell{overflow:hidden} + justify-end
+     clip the leading QRZ/ClubLog push buttons off the LEFT, unclickable. A deterministic px floor
+     (not max-content) keeps the empty header cell aligned with the button-filled data cells. */
+  grid-template-columns: 1fr 1.3fr 0.7fr 1fr 0.7fr 0.6fr 0.6fr 1.6fr 0.9fr 0.7fr minmax(160px, 0.8fr);
 }
 .log-country {
   overflow: hidden;
@@ -10541,6 +10584,10 @@ select.settings-input {
   gap: var(--space-3);
   color: var(--text-dim);
   font-size: 0.8rem;
+  /* Wrap the control cluster onto a second row instead of clipping the trailing controls (Pwr
+     slider, Pop out, Spot) off the right edge — the parent .cockpit-bar already wraps, and the
+     flex-column cockpit-body absorbs the extra height. Bites at 1366px / 110-125% zoom / Companion. */
+  flex-wrap: wrap;
 }
 /* Signal-source toggle: native engine vs WSJT-X/JTDX/MSHV companion over UDP. */
 .cockpit-source {
@@ -10578,6 +10625,11 @@ select.settings-input {
   font-weight: 600;
   color: var(--text-dim);
   white-space: nowrap;
+  /* Cap + ellipsize so the long Companion address ("Companion · listening 127.0.0.1:2237")
+     can't push the control row wide enough to clip the trailing controls. */
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .cockpit-offsets {
   display: inline-flex;
@@ -11108,7 +11160,10 @@ select.settings-input {
 }
 /* A torn-off panel window: fill the OS window, no app chrome. */
 .app.detached {
-  height: 100vh;
+  /* Zoom-correct outer height for the flex-fill children. A raw 100vh over-talls at 110/125% UI
+     zoom (Blink bakes zoom into vh) and pushes the panel bottom past the window; --vh-eff
+     (innerHeight/zoom, set by useViewport in this window) paints to the real window height. */
+  height: var(--vh-eff, 100vh);
   display: flex;
   flex-direction: column;
   background: var(--bg);
