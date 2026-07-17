@@ -273,10 +273,9 @@ export const FEATURES: FeatureDef[] = [
     intents: ['casual', 'pota', 'vhf'],
     view: 'program',
     // global (no workspace) — a programming workbench, never touches the rig on entry.
-    // Ships OFF until the RepeaterBook application is approved (enable in
-    // Settings ▸ Features to try it on the open hearham.com data meanwhile);
-    // flip this to default-on in the release that activates the proxy.
-    defaultOff: true,
+    // On by default: it works today on the open hearham.com repeater data (no key), so
+    // it no longer waits on RepeaterBook approval — the RB proxy is a data-quality
+    // upgrade that layers in transparently when activated, not a gate on shipping this.
     oneLine: 'Program your radios — local repeaters to a channel list: CHIRP CSV, rig memories, or tune-now.',
   },
   {

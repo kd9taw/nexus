@@ -25,6 +25,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   live when you flip the toggle or change the target address, re-announcing on connect so GridTracker
   registers Nexus immediately.
 
+### Changed
+
+- **The Program section (radio programming) is now on by default.** It works on open hearham.com
+  repeater data with no setup, so it no longer waits behind an opt-in toggle. (If you'd previously
+  customized your sections, enable it any time in Settings ▸ Features.)
+
 ### Added
 
 - **Skip Tx1 (FT8/FT4), like WSJT-X.** A "Skip Tx1" checkbox in the Tx panel: when you answer a CQ,

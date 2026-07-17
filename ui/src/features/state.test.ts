@@ -180,10 +180,13 @@ describe('feature state transitions', () => {
   })
 })
 
-describe('staged defaultOff features', () => {
-  it('stay hidden when the persisted key is missing, but an explicit enable persists', () => {
-    expect(coerceEnabled({}).program).toBe(false)
-    expect(coerceEnabled({ program: true }).program).toBe(true)
+describe('Program defaults on (graduated from opt-in)', () => {
+  it('is on when the persisted key is missing, and an explicit off still persists', () => {
+    // Program was defaultOff (opt-in) through 0.9.7; it's now a default section. A fresh
+    // or never-customized user (missing key) gets it on; a user who explicitly turned it
+    // off keeps it off — coerceEnabled respects an explicit choice either way.
+    expect(coerceEnabled({}).program).toBe(true)
     expect(coerceEnabled({ program: false }).program).toBe(false)
+    expect(coerceEnabled({ program: true }).program).toBe(true)
   })
 })
