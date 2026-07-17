@@ -160,6 +160,14 @@ export function MemoriesView({ dialMhz, dialMode, onRecall }: MemoriesViewProps)
 
   const commit = (fn: (b: typeof bank) => typeof bank) => memoriesStore.update(fn)
 
+  // An operator edit to a channel's CONTENT makes the row theirs: a pack re-install
+  // reconciles only rows the pack still owns (source 'curated'), so this stamp is what
+  // protects the edit from being overwritten by a later corrected pack. Favorite, group
+  // and recall changes go through their own verbs and deliberately do NOT stamp — they
+  // aren't content, and a starred pack channel should still receive pack corrections.
+  const editRow = (id: string, patch: Partial<Memory>) =>
+    commit((b) => updateMemory(b, id, { ...patch, source: 'user' }))
+
   // Escape closes the starter-packs dialog (it's also dismissable by backdrop click / ✕).
   useEffect(() => {
     if (!showPacks) return
@@ -172,15 +180,21 @@ export function MemoriesView({ dialMhz, dialMode, onRecall }: MemoriesViewProps)
 
   const installPack = (pack: Pack) => {
     let added = 0
+    let updated = 0
     commit((b) => {
       const r = importPack(b, pack)
       added = r.added
+      updated = r.updated
       return r.bank
     })
+    // Report added and refreshed separately — "already up to date" is only honest when
+    // the re-install genuinely changed nothing.
+    const ch = (n: number) => `${n} channel${n === 1 ? '' : 's'}`
+    const parts: string[] = []
+    if (added > 0) parts.push(`added ${ch(added)}`)
+    if (updated > 0) parts.push(`refreshed ${ch(updated)}`)
     pushToast(
-      added > 0
-        ? `Installed ${added} channel${added === 1 ? '' : 's'} from ${pack.name}`
-        : `${pack.name} — already up to date`,
+      parts.length > 0 ? `${pack.name} — ${parts.join(', ')}` : `${pack.name} — already up to date`,
       'success',
       3000,
     )
@@ -265,7 +279,7 @@ export function MemoriesView({ dialMhz, dialMode, onRecall }: MemoriesViewProps)
 
   // ---- the inline editor (list view) --------------------------------------
   const editor = (m: Memory) => {
-    const up = (patch: Partial<Memory>) => commit((b) => updateMemory(b, m.id, patch))
+    const up = (patch: Partial<Memory>) => editRow(m.id, patch)
     const showOffset = m.kind === 'repeater' || m.kind === 'simplex' || m.kind === 'calling'
     return (
       <div className="mv-editor">
@@ -804,7 +818,7 @@ export function MemoriesView({ dialMhz, dialMode, onRecall }: MemoriesViewProps)
                         className="mv-cell"
                         resetKey={`${m.id}:gname:${m.name}`}
                         value={m.name}
-                        onCommit={(v) => commit((b) => updateMemory(b, m.id, { name: v }))}
+                        onCommit={(v) => editRow(m.id, { name: v })}
                       />
                     </td>
                     <td>
@@ -814,7 +828,7 @@ export function MemoriesView({ dialMhz, dialMode, onRecall }: MemoriesViewProps)
                         type="number"
                         step="0.001"
                         value={String(m.rxMhz)}
-                        onCommit={(v) => commit((b) => updateMemory(b, m.id, { rxMhz: Number(v) }))}
+                        onCommit={(v) => editRow(m.id, { rxMhz: Number(v) })}
                       />
                     </td>
                     <td>
@@ -823,7 +837,7 @@ export function MemoriesView({ dialMhz, dialMode, onRecall }: MemoriesViewProps)
                         resetKey={`${m.id}:gmode:${m.mode}`}
                         list="mv-modes"
                         value={m.mode}
-                        onCommit={(v) => commit((b) => updateMemory(b, m.id, { mode: v }))}
+                        onCommit={(v) => editRow(m.id, { mode: v })}
                       />
                     </td>
                     <td className="mv-ro">{rowSummary(m) || '—'}</td>

@@ -75,8 +75,11 @@ export interface Memory {
   notes?: string
   callsign?: string
   grid?: string
-  /** Provenance: 'user' | 'program' | 'pack:<id>' — pack refreshes update their
-   * own rows without clobbering user edits (Phase 2). */
+  /** Provenance: 'user' | 'program' | 'curated'. A pack re-install reconciles only
+   * 'curated' rows; editing a row's content in the Memories UI stamps it 'user' and
+   * a pack never overwrites it again. NOTE: pack membership is carried by `groups`,
+   * NOT by a 'pack:<id>' source — a channel can belong to two packs (FT8 14.074 is
+   * in both Digital and POTA), so a single scalar id here could not represent it. */
   source: string
   /** Memory-scan skip flag (Phase 3; carried now for CHIRP round-trip). */
   skip?: boolean

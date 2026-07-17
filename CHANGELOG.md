@@ -17,7 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rides the **MEM strip** in every cockpit for instant recall.
 - **Starter packs.** One click installs a curated channel set — *VHF/UHF Calling & Simplex*, *HF Digital
   Watering Holes*, *POTA Activity*, and *Well-Known HF Nets* — deduped, so re-installing is safe.
-  Offered right from the empty Memories view on first run.
+  Offered right from the empty Memories view on first run. Re-installing a pack also **refreshes** it:
+  if a later Nexus release corrects a net's time or a note, installing again applies the correction.
+  Any channel you've edited yourself becomes yours and is never overwritten — and turning a net
+  reminder on won't stop that net receiving schedule corrections.
 - **Opt-in net reminders.** Give an HF-net memory its meeting days and UTC time, tick **Remind me**, and
   Nexus raises a one-click *Tune* reminder a few minutes before it starts. Reminders are per-net — only
   the nets you enable, never a firehose.

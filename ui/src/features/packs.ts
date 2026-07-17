@@ -124,10 +124,62 @@ const NETS: Pack = {
 
 export const STARTER_PACKS: Pack[] = [CALLING, DIGITAL, POTA, NETS]
 
-/** Install a pack into the bank: its channels land (deduped on freq+mode+tone) in a
- * group named after the pack, tagged source 'curated'. Idempotent — re-installing
- * only adds the channels that aren't already present. Returns the count added. */
-export function importPack(bank: MemoriesBank, pack: Pack): { bank: MemoriesBank; added: number } {
+/** The fields a pack is the authority on, as a patch against a row it still owns.
+ * Everything absent from the pack entry is patched to `undefined` so a correction
+ * that REMOVES a note/tone clears it rather than leaving the stale value behind.
+ * User-owned state is not in here and survives: id, groups, favorite, lastUsedUtc —
+ * and, for a net, the operator's own reminder prefs (the pack owns WHEN the net
+ * meets; the operator owns whether they're reminded and how early). */
+function packContentPatch(pm: PackMemory, existing: Memory): Partial<Memory> {
+  const patch: Partial<Memory> = {
+    name: pm.name,
+    kind: pm.kind,
+    rxMhz: pm.rxMhz,
+    mode: pm.mode,
+    offsetDir: pm.offsetDir,
+    offsetMhz: pm.offsetMhz,
+    txMhz: pm.txMhz,
+    toneMode: pm.toneMode,
+    ctcssEncHz: pm.ctcssEncHz,
+    ctcssDecHz: pm.ctcssDecHz,
+    dtcsCode: pm.dtcsCode,
+    dtcsRxCode: pm.dtcsRxCode,
+    dtcsPol: pm.dtcsPol,
+    notes: pm.notes,
+    callsign: pm.callsign,
+    grid: pm.grid,
+    skip: pm.skip,
+    net: pm.net
+      ? {
+          ...pm.net,
+          alertEnabled: existing.net?.alertEnabled ?? pm.net.alertEnabled,
+          alertLeadMin: existing.net?.alertLeadMin ?? pm.net.alertLeadMin,
+        }
+      : undefined,
+  }
+  return patch
+}
+
+/** Install (or re-install) a pack into the bank: its channels land (deduped on
+ * freq+mode+tone) in a group named after the pack, tagged source 'curated'.
+ *
+ * Idempotent, and a re-install RECONCILES — a channel already present is refreshed
+ * from the pack, so a corrected net time or note in a later Nexus release actually
+ * reaches an operator who installed the pack earlier. Only rows the pack still owns
+ * (`source: 'curated'`) are touched: editing a row in the Memories UI stamps it
+ * `source: 'user'` and a pack never overwrites it again.
+ *
+ * KNOWN LIMIT: identity is freq+mode+tone, so a pack entry whose FREQUENCY changes
+ * reads as a new channel — the corrected row is added and the stale one is left in
+ * place for the operator to delete. Fixing that needs a stable per-entry id, which
+ * no pack has yet needed (the volatile field is a net's time, which is content-only
+ * and reconciles correctly). Revisit if a pack ever moves a frequency.
+ *
+ * Returns the counts added + updated (both 0 = genuinely already up to date). */
+export function importPack(
+  bank: MemoriesBank,
+  pack: Pack,
+): { bank: MemoriesBank; added: number; updated: number } {
   let b = bank
   let group = b.groups.find((g) => g.name === pack.name)
   if (!group) {
@@ -136,6 +188,7 @@ export function importPack(bank: MemoriesBank, pack: Pack): { bank: MemoriesBank
   }
   const gid = group?.id
   let added = 0
+  let updated = 0
   for (const pm of pack.memories) {
     const probe = coerceMemory({ ...pm, id: 'probe' })
     if (!probe) continue
@@ -148,10 +201,16 @@ export function importPack(bank: MemoriesBank, pack: Pack): { bank: MemoriesBank
       if (gid && !existing.groups.includes(gid)) {
         b = updateMemory(b, existing.id, { groups: [...existing.groups, gid] })
       }
+      if (existing.source !== 'curated') continue // the operator owns this row now
+      // Count an update only when the row actually changed, so the toast can't claim
+      // work it didn't do. Compare after the group join above, which is not an update.
+      const before = JSON.stringify(b.memories.find((m) => m.id === existing.id))
+      b = updateMemory(b, existing.id, packContentPatch(pm, existing))
+      if (JSON.stringify(b.memories.find((m) => m.id === existing.id)) !== before) updated++
     } else {
       b = addMemory(b, { ...pm, groups: gid ? [gid] : [], source: 'curated' })
       added++
     }
   }
-  return { bank: b, added }
+  return { bank: b, added, updated }
 }
