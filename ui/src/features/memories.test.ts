@@ -10,6 +10,7 @@ import {
   deleteMemory,
   derivedName,
   emptyBank,
+  hotkeyRecallTarget,
   memoryKey,
   migrateV1Channel,
   moveMemory,
@@ -334,5 +335,53 @@ describe('saveFavoriteFromDial (cockpit ＋)', () => {
     const { bank, result } = saveFavoriteFromDial(base, { rxMhz: 146.52, mode: 'FM' })
     expect(result).toBe('exists')
     expect(bank.memories).toHaveLength(1)
+  })
+})
+
+describe('hotkeyRecallTarget — Ctrl+1..9 quick recall', () => {
+  // A bank whose favorites (in bank order) are fav-A, fav-B; a non-favorite sits between
+  // them to prove indexing counts favorites only, in bank order.
+  const bank = {
+    version: 2 as const,
+    groups: [],
+    memories: [
+      mem({ id: 'a', name: 'Fav A', favorite: true }),
+      mem({ id: 'x', name: 'Not fav', favorite: false }),
+      mem({ id: 'b', name: 'Fav B', favorite: true }),
+    ],
+  }
+  const chord = (over: Partial<{ ctrlKey: boolean; altKey: boolean; metaKey: boolean; shiftKey: boolean; code: string }> = {}) => ({
+    ctrlKey: true,
+    altKey: false,
+    metaKey: false,
+    shiftKey: false,
+    code: 'Digit1',
+    ...over,
+  })
+
+  it('maps Ctrl+1 / Ctrl+2 to the 1st / 2nd favorite in bank order', () => {
+    expect(hotkeyRecallTarget(chord({ code: 'Digit1' }), bank)?.id).toBe('a')
+    expect(hotkeyRecallTarget(chord({ code: 'Digit2' }), bank)?.id).toBe('b')
+  })
+
+  it('returns null past the last favorite', () => {
+    expect(hotkeyRecallTarget(chord({ code: 'Digit3' }), bank)).toBeNull()
+  })
+
+  it('requires Ctrl ALONE — Alt/Meta/Shift + digit are other rigs’ shortcuts', () => {
+    expect(hotkeyRecallTarget(chord({ ctrlKey: false }), bank)).toBeNull()
+    expect(hotkeyRecallTarget(chord({ altKey: true }), bank)).toBeNull() // Alt+1 = FT8 Tx
+    expect(hotkeyRecallTarget(chord({ metaKey: true }), bank)).toBeNull()
+    expect(hotkeyRecallTarget(chord({ shiftKey: true }), bank)).toBeNull()
+  })
+
+  it('ignores non-digit and numpad codes', () => {
+    expect(hotkeyRecallTarget(chord({ code: 'KeyA' }), bank)).toBeNull()
+    expect(hotkeyRecallTarget(chord({ code: 'Digit0' }), bank)).toBeNull()
+    expect(hotkeyRecallTarget(chord({ code: 'Numpad1' }), bank)).toBeNull()
+  })
+
+  it('returns null when there are no favorites', () => {
+    expect(hotkeyRecallTarget(chord({ code: 'Digit1' }), emptyBank())).toBeNull()
   })
 })

@@ -92,7 +92,13 @@ import {
   pointRotatorAtCall,
   qsySetEnabled as apiQsySetEnabled,
 } from './api'
-import { markRecalled, memoriesStore, planRecall, type Memory } from './features/memories'
+import {
+  hotkeyRecallTarget,
+  markRecalled,
+  memoriesStore,
+  planRecall,
+  type Memory,
+} from './features/memories'
 import { dueNetReminders, reminderKey, untilPhrase } from './features/nets'
 import { bandLabelForMhz } from './band'
 import { processFlare, effectiveXray } from './flareAlert'
@@ -1090,6 +1096,28 @@ export default function App() {
     },
     [cwEnabled, phoneEnabled],
   )
+
+  // Global quick-recall hotkeys: Ctrl+1..9 recall the 1st..9th ★ favorite from ANY
+  // section (the same action as clicking its MEM-strip chip — recallMemory tunes +
+  // switches to the right cockpit). Rides a ref so the listener binds once and always
+  // sees the latest recallMemory + enabled flag; favorites are read fresh at press time.
+  // Ctrl+Digit is clear of the cockpits' Alt+Digit (FT8 Tx) and F-key macros.
+  const recallHotkeyRef = useRef({ recall: recallMemory, enabled: features.isOn('memories') })
+  recallHotkeyRef.current = { recall: recallMemory, enabled: features.isOn('memories') }
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null
+      const tag = t?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || t?.isContentEditable) return
+      if (!recallHotkeyRef.current.enabled) return
+      const target = hotkeyRecallTarget(e, memoriesStore.get())
+      if (!target) return
+      e.preventDefault()
+      recallHotkeyRef.current.recall(target)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   // Opt-in net reminders: a light 30 s poll that fires ONE prominent toast per net
   // occurrence, a per-net lead time before it starts, with a Tune button that recalls

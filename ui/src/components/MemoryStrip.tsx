@@ -56,8 +56,11 @@ export function MemoryStrip({ dialMhz, mode, onRecall, onManage }: MemoryStripPr
       >
         ＋
       </button>
-      {favorites.map((m) => {
+      {favorites.map((m, i) => {
         const active = Math.abs(m.rxMhz - dialMhz) < MATCH_EPS
+        // The first 9 favorites are recallable from any section via Ctrl+1..9 (App's
+        // global hotkey); surface it in the tooltip so it's discoverable.
+        const hotkey = i < 9 ? ` · Ctrl+${i + 1}` : ''
         return (
           <button
             key={m.id}
@@ -66,7 +69,7 @@ export function MemoryStrip({ dialMhz, mode, onRecall, onManage }: MemoryStripPr
             onClick={() => onRecall?.(m)}
             title={`${m.name} — ${m.rxMhz.toFixed(4)} MHz ${m.mode}${
               m.ctcssEncHz ? ` · tone ${m.ctcssEncHz.toFixed(1)}` : ''
-            } (click to tune)`}
+            } (click to tune${hotkey})`}
           >
             {m.name}
           </button>

@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   if a later Nexus release corrects a net's time or a note, installing again applies the correction.
   Any channel you've edited yourself becomes yours and is never overwritten — and turning a net
   reminder on won't stop that net receiving schedule corrections.
+- **Quick-recall hotkeys.** Press **Ctrl+1** through **Ctrl+9** from any section to tune your first
+  nine ★ favorites — the same one-click tune (frequency, mode, shift, tone + cockpit switch) as the
+  MEM strip, without reaching for the mouse. The strip's tooltips show each chip's hotkey.
 - **Opt-in net reminders.** Give an HF-net memory its meeting days and UTC time, tick **Remind me**, and
   Nexus raises a one-click *Tune* reminder a few minutes before it starts. Reminders are per-net — only
   the nets you enable, never a firehose.
