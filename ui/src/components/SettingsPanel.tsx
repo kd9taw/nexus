@@ -16,7 +16,7 @@ import {
   getAudioDevices,
   getBandPlan,
   getRigModels,
-  getSerialPorts,
+  getSerialPortsDetailed,
   getSettings,
   setCloudlogKey,
   setClublogPassword,
@@ -271,6 +271,13 @@ export function SettingsPanel({
   const [allRigModelsLoading, setAllRigModelsLoading] = useState(false)
   const [showAllRigModels, setShowAllRigModels] = useState(false)
   const [serialPorts, setSerialPorts] = useState<string[]>([])
+  // Port -> USB product label ("USB-Enhanced-SERIAL-B CH342"), so the picker can tell a
+  // dual-serial rig's two interfaces apart (Xiegu CAT is on SERIAL-B).
+  const [portLabels, setPortLabels] = useState<Record<string, string>>({})
+  const applyPorts = (infos: { name: string; label: string }[]) => {
+    setSerialPorts(infos.map((i) => i.name))
+    setPortLabels(Object.fromEntries(infos.map((i) => [i.name, i.label])))
+  }
   // Native CI-V bus diagnostic log: null = off, string = the log file path while capturing.
   // Transient (not persisted) — a support tool the operator arms to capture a fault. The
   // backend keeps logging while Settings is closed (so the operator can go transmit), so the
@@ -418,8 +425,8 @@ export function SettingsPanel({
     getRigModels()
       .then((m) => mounted && setRigModels(m))
       .catch(() => {})
-    getSerialPorts()
-      .then((p) => mounted && setSerialPorts(p))
+    getSerialPortsDetailed()
+      .then((infos) => mounted && applyPorts(infos))
       .catch(() => {})
     getBandPlan()
       .then((b) => mounted && setBandPlan(b))
@@ -434,8 +441,8 @@ export function SettingsPanel({
 
   const refreshPorts = () => {
     setPortsLoading(true)
-    getSerialPorts()
-      .then(setSerialPorts)
+    getSerialPortsDetailed()
+      .then(applyPorts)
       .catch(() => {})
       .finally(() => setPortsLoading(false))
   }
@@ -2070,10 +2077,14 @@ export function SettingsPanel({
                     placeholder="Select or type, e.g. COM16"
                     onChange={(e) => update('serialPort', e.target.value)}
                   />
-                  {/* Shared by the CAT + PTT port inputs; renders nothing (suggestions only). */}
+                  {/* Shared by the CAT + PTT port inputs. The label text shows the USB product
+                      so two identical-looking ports (e.g. a Xiegu's SERIAL-A vs SERIAL-B) are
+                      distinguishable in the suggestion list. */}
                   <datalist id="serial-port-list">
                     {portOptions.map((p) => (
-                      <option key={p} value={p} />
+                      <option key={p} value={p}>
+                        {portLabels[p] || ''}
+                      </option>
                     ))}
                   </datalist>
                   <button
@@ -2097,6 +2108,13 @@ export function SettingsPanel({
                 </div>
                 <span className="settings-hint">
                   COM / tty device for rig control — or Auto-test to find it.
+                  {[3088, 3087, 3091, 3089, 3076].includes(form.rigModel) && (
+                    <>
+                      {' '}
+                      <strong>Xiegu:</strong> the radio makes two serial ports — CAT is on the{' '}
+                      <strong>SERIAL-B</strong> one (often the higher COM number).
+                    </>
+                  )}
                 </span>
               </label>
 

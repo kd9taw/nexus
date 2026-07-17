@@ -1067,6 +1067,17 @@ export async function getSerialPorts(): Promise<string[]> {
   return invoke<string[]>('get_serial_ports')
 }
 
+export interface SerialPortInfo {
+  name: string
+  /** USB product string, e.g. "USB-Enhanced-SERIAL-B CH342" ("" for non-USB ports). */
+  label: string
+}
+
+/** Serial ports with a descriptive USB-product label (to tell dual-serial rigs apart). */
+export async function getSerialPortsDetailed(): Promise<SerialPortInfo[]> {
+  return invoke<SerialPortInfo[]>('get_serial_ports_detailed')
+}
+
 /** Post your own DX spot to the connected human cluster (rejects if none connected). */
 export async function postSpot(freqMhz: number, call: string, comment: string): Promise<void> {
   return invoke('post_spot', { freqMhz, call, comment })

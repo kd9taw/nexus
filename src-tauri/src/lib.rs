@@ -3306,6 +3306,41 @@ async fn get_serial_ports() -> Vec<String> {
     }
 }
 
+/// A serial port plus a human label (its USB product string). Lets the picker tell
+/// otherwise-identical ports apart — e.g. a Xiegu X6100 exposes TWO CH342 interfaces
+/// ("USB-Enhanced-SERIAL-A" and "-B"; CAT answers on B only), which look like bare
+/// "COMx" without the product. Non-USB ports get an empty label.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SerialPortInfo {
+    name: String,
+    label: String,
+}
+
+/// Serial ports WITH a descriptive USB-product label, for the Settings picker.
+#[tauri::command]
+async fn get_serial_ports_detailed() -> Vec<SerialPortInfo> {
+    #[cfg(feature = "radio")]
+    {
+        let usb = tempo_audio::ports::available_usb_ports();
+        tempo_audio::ports::available_ports()
+            .into_iter()
+            .map(|name| {
+                let label = usb
+                    .iter()
+                    .find(|u| u.port_name == name)
+                    .map(|u| u.product.clone())
+                    .unwrap_or_default();
+                SerialPortInfo { name, label }
+            })
+            .collect()
+    }
+    #[cfg(not(feature = "radio"))]
+    {
+        Vec::new()
+    }
+}
+
 /// Available sound-card input/output device names (for the Settings dropdowns).
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -8891,6 +8926,7 @@ pub fn run() {
             civ_diagnostic_status,
             broadcast,
             get_serial_ports,
+            get_serial_ports_detailed,
             get_audio_devices,
             detect_rigs,
             probe_cat_ports,
