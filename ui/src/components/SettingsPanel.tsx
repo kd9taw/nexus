@@ -1261,22 +1261,31 @@ export function SettingsPanel({
     )
   }
 
-  // One feature toggle row (used by the Core group + each category group).
+  // One feature row. Core features are always on and can't be switched, so they
+  // show a static "always on" badge instead of a toggle — a locked switch next to
+  // the real, toggleable settings just reads as broken.
   const featureRow = (f: FeatureDef) => {
+    if (f.core) {
+      return (
+        <div className="settings-field" key={f.id}>
+          <div className="settings-toggle">
+            <span className="settings-label">{f.label}</span>
+            <span className="feature-always-on">always on</span>
+          </div>
+          <span className="settings-hint">{f.oneLine}</span>
+        </div>
+      )
+    }
     const on = features.enabled[f.id] !== false
     const depOff = f.dependsOn.find((d) => features.enabled[d] === false)
     return (
       <div className="settings-field" key={f.id}>
         <label className="settings-toggle">
-          <span className="settings-label">
-            {f.label}
-            {f.core && <span className="settings-value"> always on</span>}
-          </span>
+          <span className="settings-label">{f.label}</span>
           <button
             type="button"
             role="switch"
             aria-checked={on}
-            disabled={f.core}
             className={`toggle${on ? ' on' : ''}`}
             onClick={() => features.toggle(f.id)}
             aria-label={`${on ? 'Disable' : 'Enable'} ${f.label}`}
@@ -1286,7 +1295,7 @@ export function SettingsPanel({
         </label>
         <span className="settings-hint">
           {f.oneLine}
-          {depOff && !f.core && ` Turning on also enables ${featureById(depOff as FeatureId)?.label ?? depOff}.`}
+          {depOff && ` Turning on also enables ${featureById(depOff as FeatureId)?.label ?? depOff}.`}
         </span>
       </div>
     )
