@@ -14107,8 +14107,20 @@ select.settings-input {
   font-size: 0.72rem;
   color: var(--text-faint);
 }
+/* The Program section's primary action — filled accent so it reads as the button
+   to press, not another filter chip lost in the row. */
 .rp-fetch {
   font-weight: 800;
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+.rp-fetch:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+.rp-fetch:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 .rp-stamp {
   font-size: 0.72rem;
