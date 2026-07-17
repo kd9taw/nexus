@@ -787,7 +787,7 @@ export async function stopCw(): Promise<AppSnapshot> {
 /** Choose the CW keyer back-end ("cat" = rig send_morse / "soundcard" = keyed tone)
  * and tone pitch in Hz (<=0 keeps the current pitch). */
 export async function setCwKeyer(
-  backend: 'cat' | 'soundcard' | 'winkeyer',
+  backend: 'cat' | 'soundcard' | 'winkeyer' | 'serial',
   pitch = 0,
 ): Promise<AppSnapshot> {
   return invoke<AppSnapshot>('set_cw_keyer', { backend, pitch })

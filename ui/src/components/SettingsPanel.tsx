@@ -3313,14 +3313,18 @@ export function SettingsPanel({
                   value={form.cwKeyer ?? 'cat'}
                   onChange={(e) => update('cwKeyer', e.target.value)}
                 >
-                  <option value="cat">CAT — the rig keys CW (Hamlib send_morse)</option>
-                  <option value="soundcard">Soundcard — keyed audio tone through SSB</option>
+                  <option value="cat">CAT — the rig keys CW (Hamlib send_morse; newer rigs only)</option>
+                  <option value="serial">Serial keyline (DTR/RTS) — key the rig&apos;s KEY jack</option>
                   <option value="winkeyer">WinKeyer — K1EL hardware keyer</option>
+                  <option value="soundcard">Soundcard — audio tone through SSB (workaround)</option>
                 </select>
                 <span className="settings-hint">
-                  How Nexus sends CW. CAT uses the rig&apos;s internal keyer; Soundcard keys an audio
-                  tone (rig in SSB); WinKeyer drives a K1EL on the port below. Also switchable live
-                  from the CW cockpit.
+                  How Nexus sends CW. <strong>CAT</strong> uses the rig&apos;s internal keyer, but older
+                  rigs (e.g. IC-756PRO III) don&apos;t support it. <strong>Serial keyline</strong> toggles
+                  DTR/RTS into the rig&apos;s KEY jack (rig in CW, rig shapes the signal — the clean
+                  N1MM/fldigi method, needs only a keying cable). <strong>WinKeyer</strong> drives a K1EL.
+                  <strong>Soundcard</strong> keys an audio tone through SSB — a workaround; set drive so
+                  ALC reads zero. Also switchable live from the CW cockpit.
                 </span>
               </label>
               <label className="settings-field">
@@ -3355,6 +3359,42 @@ export function SettingsPanel({
                   For the WinKeyer CW keyer (select it above). 1200 baud.
                 </span>
               </label>
+              {form.cwKeyer === 'serial' && (
+                <>
+                  <label className="settings-field">
+                    <span className="settings-label">Keyline serial port</span>
+                    <input
+                      className="settings-input"
+                      type="text"
+                      value={form.cwKeyPort ?? ''}
+                      placeholder="COM7 — the keying interface (separate from CAT)"
+                      onChange={(e) => update('cwKeyPort', e.target.value)}
+                      autoComplete="off"
+                      spellCheck={false}
+                    />
+                    <span className="settings-hint">
+                      The USB-to-serial into your keying interface (Buxcomm, US Navigator, a homebrew
+                      DTR cable, …) that plugs into the rig&apos;s KEY jack. Must be a SEPARATE port
+                      from CAT. Set the rig to CW and its key-jack to straight-key / bug.
+                    </span>
+                  </label>
+                  <label className="settings-field">
+                    <span className="settings-label">Keying line</span>
+                    <select
+                      className="settings-input"
+                      value={form.cwKeyLine ?? 'dtr'}
+                      onChange={(e) => update('cwKeyLine', e.target.value)}
+                    >
+                      <option value="dtr">DTR (the CW convention)</option>
+                      <option value="rts">RTS</option>
+                    </select>
+                    <span className="settings-hint">
+                      Which control line keys the rig. DTR is standard (RTS = PTT); flip to RTS if your
+                      interface is wired the other way.
+                    </span>
+                  </label>
+                </>
+              )}
               <div className="settings-field">
                 <label className="settings-toggle">
                   <span className="settings-label">CW ID after 73</span>

@@ -220,6 +220,34 @@ pub(crate) fn icom_scope_model(model: u32) -> Option<crate::civ::commands::IcomM
     })
 }
 
+/// Hamlib **serial** rigs whose CAT backend answers slowly enough that the tight 700 ms
+/// serial read deadline can fire before rigctld/Hamlib finishes its own
+/// `post_write_delay + timeout × retry` (plus the internal retry-on-timeout) — producing a
+/// spurious "rig reply incomplete after 700 ms (got \"\")" even though the rig would have
+/// answered. These get the longer (2.5 s) `slow_transport` window that network chains and
+/// the native CI-V daemon already use — matching how WSJT-X lets Hamlib's own timeout+retry
+/// finish rather than racing an external stopwatch.
+///
+/// The slow set is the SAME old/slow rigs that already need a non-default CAT baud (mirrors
+/// `BAUD_BY_MODEL` in SettingsPanel.tsx, verified vs Hamlib riglist.h):
+/// - **Xiegu** CI-V family (G90/X6100/X6200/X5105/X108G) — fixed 19200, slow CI-V backend.
+/// - **Vintage Kenwood** (IF-232C era, fixed 4800 8N2: TS-50S/140S/440S/450S/690S/790/850/
+///   940S/950SDX) and the 9600 TS-870S / TS-570D/S.
+///
+/// Every modern/fast rig is UNAFFECTED and keeps the 700 ms deadline: Yaesu, Icom via
+/// rigctld, modern Kenwood (TS-590/890/990), Flex, Elecraft.
+pub(crate) fn is_slow_serial_rig(model: u32) -> bool {
+    matches!(
+        model,
+        // Xiegu CI-V (fixed 19200, slow backend)
+        3088 | 3087 | 3091 | 3089 | 3076
+        // Vintage Kenwood — fixed 4800
+        | 2001 | 2002 | 2003 | 2005 | 2007 | 2009 | 2011 | 2013 | 2025
+        // 1990s Kenwood — 9600 factory default
+        | 2004 | 2010 | 2016
+    )
+}
+
 /// Classify what native spectrum stream a radio offers, given its Hamlib model number and
 /// its connection kind (`"serial"` / `"network"`). This is the single gate both native
 /// panadapter workers consult:
@@ -249,6 +277,24 @@ pub fn native_spectrum_kind(model: u32, rig_conn: &str) -> Option<SpectrumKind> 
 mod tests {
     use super::*;
     use std::collections::HashSet;
+
+    #[test]
+    fn slow_serial_rig_flags_xiegu_and_vintage_kenwood_only() {
+        // Xiegu family (slow CI-V backend) → the long deadline.
+        for m in [3088u32, 3087, 3091, 3089, 3076] {
+            assert!(is_slow_serial_rig(m), "Xiegu model {m} should be slow");
+        }
+        // Vintage Kenwood (4800/9600 IF-232C-era rigs — the same set as BAUD_BY_MODEL) → slow.
+        for m in [2001u32, 2002, 2003, 2005, 2007, 2009, 2011, 2013, 2025, 2004, 2010, 2016] {
+            assert!(is_slow_serial_rig(m), "vintage Kenwood model {m} should be slow");
+        }
+        // Everything else keeps the fast 700 ms deadline — the working rigs are UNAFFECTED:
+        // Icom 7300/9700, a Yaesu serial model (1042), MODERN Kenwood TS-590S (2031),
+        // Flex SmartSDR (23005), Elecraft K4 (2048), and "none" (0).
+        for m in [3073u32, 3081, 1042, 2031, 23005, 2048, 0] {
+            assert!(!is_slow_serial_rig(m), "fast/modern model {m} must stay fast");
+        }
+    }
 
     #[test]
     fn native_spectrum_capability_gate() {

@@ -120,6 +120,45 @@ pub fn morse_code(ch: char) -> Option<&'static str> {
     })
 }
 
+/// The key-down / key-up schedule for `text` as Morse — the timing the **serial
+/// keyline** back-end walks to toggle a DTR/RTS line (the rig, in CW mode, shapes the
+/// actual envelope). Each entry is `(key_down, duration_ms)`. PARIS timing: dit =
+/// 1.2/wpm s, dah = 3 dits, intra-char gap = 1 dit, inter-char = 3 dits, word = 7 dits.
+/// Unsupported chars are skipped. Empty/blank text → empty schedule. The first entry is
+/// always a key-down (no leading gap); there is no trailing gap.
+pub fn morse_key_events(text: &str, wpm: u32) -> Vec<(bool, u32)> {
+    let dit = (1200 / wpm.clamp(5, 60)).max(1);
+    let mut ev: Vec<(bool, u32)> = Vec::new();
+    // Append a gap only between real elements (never leading), coalescing adjacent gaps.
+    let gap = |ev: &mut Vec<(bool, u32)>, ms: u32| {
+        if ev.is_empty() {
+            return;
+        }
+        match ev.last_mut() {
+            Some(last) if !last.0 => last.1 += ms,
+            _ => ev.push((false, ms)),
+        }
+    };
+    for word in text.split_whitespace() {
+        gap(&mut ev, 7 * dit); // inter-word (no-op before the first word)
+        let mut first_char = true;
+        for ch in word.chars() {
+            let Some(code) = morse_code(ch) else { continue };
+            if !first_char {
+                gap(&mut ev, 3 * dit); // inter-character
+            }
+            first_char = false;
+            for (i, el) in code.chars().enumerate() {
+                if i > 0 {
+                    gap(&mut ev, dit); // intra-character
+                }
+                ev.push((true, if el == '-' { 3 * dit } else { dit }));
+            }
+        }
+    }
+    ev
+}
+
 /// Generate keyed-tone PCM (mono f32 in -1..1) for `text` as Morse — the **soundcard
 /// CW** back-end (rig in USB; the app keys an audio tone). PARIS timing: dit =
 /// 1.2/wpm s, dah = 3 dits, intra-char gap = 1 dit, inter-char = 3 dits, word = 7 dits.
@@ -328,6 +367,33 @@ mod tests {
         assert_eq!(morse_code('?'), Some("..--.."));
         assert_eq!(morse_code(' '), None); // spaces are word gaps, not a glyph
         assert_eq!(morse_code('#'), None);
+    }
+
+    #[test]
+    fn morse_key_events_paris_timing() {
+        let dit = 60u32; // 1200/20 at 20 wpm
+        assert_eq!(morse_key_events("E", 20), vec![(true, dit)]); // single dit
+        assert_eq!(morse_key_events("T", 20), vec![(true, 3 * dit)]); // single dah
+        // "A" = ".-": dit, intra-char gap (1 dit), dah
+        assert_eq!(
+            morse_key_events("A", 20),
+            vec![(true, dit), (false, dit), (true, 3 * dit)]
+        );
+        // "EE" (one word): dit, inter-char gap (3 dits), dit
+        assert_eq!(
+            morse_key_events("EE", 20),
+            vec![(true, dit), (false, 3 * dit), (true, dit)]
+        );
+        // "E E" (two words): dit, word gap (7 dits), dit — no leading/trailing gap
+        assert_eq!(
+            morse_key_events("E E", 20),
+            vec![(true, dit), (false, 7 * dit), (true, dit)]
+        );
+        // blank / empty → nothing; unsupported chars skipped; first event is always key-DOWN
+        assert!(morse_key_events("   ", 20).is_empty());
+        assert!(morse_key_events("", 20).is_empty());
+        assert_eq!(morse_key_events("E#", 20), vec![(true, dit)]); // '#' skipped
+        assert!(morse_key_events("CQ", 20).first().unwrap().0, "no leading gap");
     }
 
     #[test]

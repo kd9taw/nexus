@@ -39,10 +39,13 @@ pub enum LicenseClass {
     Open,
 }
 
-/// How CW is transmitted. **Cat** = the rig's own keyer via Hamlib `send_morse` (rig
-/// in CW; zero extra hardware, but CAT-latency feel). **Soundcard** = the app keys an
-/// audio tone via the sound card (rig in USB; works on any rig). WinKeyer (a hardware
-/// keyer) comes later.
+/// How CW is transmitted. **Cat** = the rig's own keyer via Hamlib `send_morse` (rig in
+/// CW; clean, but older rigs like the IC-756PRO III don't implement it). **Serial** = the
+/// app toggles a DTR/RTS keyline into the rig's KEY jack (rig in CW; the classic
+/// N1MM/fldigi method — clean, needs only a keying cable; see `cw_key_port`/`cw_key_line`).
+/// **WinKeyer** = a K1EL hardware keyer (rig in CW; jitter-free). **Soundcard** = the app
+/// keys an audio tone through SSB (rig in USB; works on any rig, but an SSB-audio workaround
+/// — shape it and keep it below ALC).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum CwKeyerBackend {
@@ -51,6 +54,8 @@ pub enum CwKeyerBackend {
     Soundcard,
     /// K1EL WinKeyer hardware keyer over serial (see `settings.winkeyer_port`).
     WinKeyer,
+    /// Serial DTR/RTS keyline into the rig's KEY jack (see `cw_key_port`/`cw_key_line`).
+    Serial,
 }
 
 /// Everything the operator configures: identity, band/frequency, Field Day
@@ -187,6 +192,14 @@ pub struct Settings {
     pub cw_keyer: CwKeyerBackend,
     /// Serial port for the K1EL WinKeyer (when `cw_keyer == WinKeyer`), e.g. "COM6".
     pub winkeyer_port: String,
+    /// Serial port for the DTR/RTS CW keyline (when `cw_keyer == Serial`), e.g. "COM7" —
+    /// a SEPARATE port from CAT (the keying interface into the rig's KEY jack).
+    #[serde(default)]
+    pub cw_key_port: String,
+    /// Which control line keys the rig for the serial keyline: "dtr" (default, the CW
+    /// convention) or "rts". Parsed by `serial_keyer::KeyLine::parse`.
+    #[serde(default = "default_cw_key_line")]
+    pub cw_key_line: String,
     /// CW sidetone / keyed-tone pitch in Hz (soundcard keyer + UI marker). Default 600.
     pub cw_pitch_hz: f32,
     /// AI CW decoder (DeepCW model): the PRIMARY CW decode — dramatically better
@@ -697,6 +710,10 @@ fn default_best_caller() -> String {
     "first".to_string()
 }
 
+fn default_cw_key_line() -> String {
+    "dtr".to_string()
+}
+
 fn default_monitor_level() -> f32 {
     0.5
 }
@@ -1046,6 +1063,8 @@ impl Default for Settings {
             license_class: LicenseClass::Open, // no TX lockout until the operator declares a class
             cw_keyer: CwKeyerBackend::Cat, // rig keyer via send_morse (zero hardware)
             winkeyer_port: String::new(),
+            cw_key_port: String::new(),
+            cw_key_line: default_cw_key_line(),
             cw_pitch_hz: 600.0,
             ai_cw_enabled: true,
             rigctld_port: 4532,
@@ -1615,9 +1634,12 @@ impl Settings {
             // CW: force CW for the CAT keyer; for the soundcard keyer the rig must be
             // in USB so it transmits the keyed audio tone (band-aware: LSB <10 MHz).
             OperatingMode::Cw => match self.cw_keyer {
-                // CAT + WinKeyer both key the rig in CW mode; the soundcard keyer keys an
-                // audio tone, so the rig must be in SSB (band-aware sideband).
-                CwKeyerBackend::Cat | CwKeyerBackend::WinKeyer => "CW".to_string(),
+                // CAT, WinKeyer, and the serial keyline all key the rig in CW mode (the rig
+                // shapes the envelope); only the soundcard keyer keys an audio tone, so that
+                // one needs the rig in SSB (band-aware sideband).
+                CwKeyerBackend::Cat | CwKeyerBackend::WinKeyer | CwKeyerBackend::Serial => {
+                    "CW".to_string()
+                }
                 CwKeyerBackend::Soundcard => {
                     if self.dial_mhz < 10.0 { "LSB" } else { "USB" }.to_string()
                 }

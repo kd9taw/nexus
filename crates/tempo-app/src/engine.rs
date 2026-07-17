@@ -1625,6 +1625,7 @@ impl Engine {
         self.settings.cw_keyer = match backend.to_ascii_lowercase().as_str() {
             "soundcard" => CwKeyerBackend::Soundcard,
             "winkeyer" => CwKeyerBackend::WinKeyer,
+            "serial" => CwKeyerBackend::Serial,
             _ => CwKeyerBackend::Cat,
         };
         if pitch_hz > 0.0 {
@@ -1680,6 +1681,25 @@ impl Engine {
         } else {
             None
         }
+    }
+
+    /// The serial keyline port when the CW keyer backend is Serial and a port is set — the
+    /// radio loop opens it and toggles DTR/RTS (rig in CW). `None` for the other keyers.
+    pub fn cw_serial_key_port(&self) -> Option<String> {
+        if matches!(
+            self.settings.cw_keyer,
+            crate::settings::CwKeyerBackend::Serial
+        ) {
+            let p = self.settings.cw_key_port.trim();
+            (!p.is_empty()).then(|| p.to_string())
+        } else {
+            None
+        }
+    }
+
+    /// Which control line the serial keyline toggles ("dtr"/"rts").
+    pub fn cw_serial_key_line(&self) -> String {
+        self.settings.cw_key_line.clone()
     }
 
     /// CW tone pitch (Hz) for the soundcard keyer.
@@ -4492,6 +4512,7 @@ impl Engine {
             crate::settings::CwKeyerBackend::Cat => "cat",
             crate::settings::CwKeyerBackend::Soundcard => "soundcard",
             crate::settings::CwKeyerBackend::WinKeyer => "winkeyer",
+            crate::settings::CwKeyerBackend::Serial => "serial",
         }
         .to_string();
         s.radio.audio_error = self.audio_error.clone();

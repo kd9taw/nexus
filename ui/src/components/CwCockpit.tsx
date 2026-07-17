@@ -422,12 +422,12 @@ export function CwCockpit({
   // Initialize the keyer toggle from the engine's ACTUAL setting (the snapshot is the source
   // of truth) — not a hard-coded 'cat'. A stale local default showed CAT while the backend was
   // on Soundcard, so CW silently went to USB (Soundcard keying = rig in SSB) with no clue why.
-  const [keyer, setKeyer] = useState<'cat' | 'soundcard' | 'winkeyer'>(
-    () => (snap.radio.cwKeyer as 'cat' | 'soundcard' | 'winkeyer') || 'cat',
+  const [keyer, setKeyer] = useState<'cat' | 'soundcard' | 'winkeyer' | 'serial'>(
+    () => (snap.radio.cwKeyer as 'cat' | 'soundcard' | 'winkeyer' | 'serial') || 'cat',
   )
   // Keep it in sync if the backend value changes (or arrives after first render).
   useEffect(() => {
-    if (snap.radio.cwKeyer) setKeyer(snap.radio.cwKeyer as 'cat' | 'soundcard' | 'winkeyer')
+    if (snap.radio.cwKeyer) setKeyer(snap.radio.cwKeyer as 'cat' | 'soundcard' | 'winkeyer' | 'serial')
   }, [snap.radio.cwKeyer])
   const [text, setText] = useState('')
   // Sidetone pitch — local for instant marker response; persisted via set_cw_keyer.
@@ -479,7 +479,7 @@ export function CwCockpit({
       .then((s) => s && onSnap?.(s))
       .catch(() => {})
   }
-  const changeKeyer = (k: 'cat' | 'soundcard' | 'winkeyer') => {
+  const changeKeyer = (k: 'cat' | 'soundcard' | 'winkeyer' | 'serial') => {
     setKeyer(k)
     void setCwKeyer(k).then((s) => s && onSnap?.(s))
   }
@@ -593,11 +593,11 @@ export function CwCockpit({
           </button>
           <button
             type="button"
-            className={`cw-keyer-opt${keyer === 'soundcard' ? ' active' : ''}`}
-            onClick={() => changeKeyer('soundcard')}
-            title="Soundcard keyer — a keyed audio tone (rig in USB). Works ONLY if Nexus's audio output is routed to the rig (like FT8) AND PTT works; otherwise it looks like it's sending but nothing goes on the air. WinKeyer is the no-ambiguity option."
+            className={`cw-keyer-opt${keyer === 'serial' ? ' active' : ''}`}
+            onClick={() => changeKeyer('serial')}
+            title="Serial keyline — Nexus toggles DTR/RTS into the rig's KEY jack (rig in CW, rig shapes the signal). The clean N1MM/fldigi method for rigs without CAT CW. Set the keyline port + line in Settings ▸ CW."
           >
-            Soundcard
+            Serial
           </button>
           <button
             type="button"
@@ -606,6 +606,14 @@ export function CwCockpit({
             title="K1EL WinKeyer — hardware keyer over serial (rig in CW). Set its port in Settings."
           >
             WinKeyer
+          </button>
+          <button
+            type="button"
+            className={`cw-keyer-opt${keyer === 'soundcard' ? ' active' : ''}`}
+            onClick={() => changeKeyer('soundcard')}
+            title="Soundcard keyer — a keyed audio tone through SSB (rig in USB). A workaround: works ONLY if Nexus's audio output is routed to the rig (like FT8) AND PTT works, and you must keep drive below ALC. WinKeyer or the serial keyline are the clean options."
+          >
+            Soundcard
           </button>
         </div>
         <label className="cw-wpm" title="Sidetone / zero-beat pitch (Hz) — the scope's dashed marker">

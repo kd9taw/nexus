@@ -533,7 +533,11 @@ fn open_monitor(t: &Transport) -> (Rig, Option<CatDaemon>, Option<bool>) {
             // Native-daemon transports are LOCAL TCP but their serve path can take up to
             // ~1.3 s (engine queue) — the client deadline must outlast it or every busy
             // moment reads as CAT-dead (the flapping pill).
-            rig.set_slow_transport(network || native_civ_addr(t).is_some());
+            rig.set_slow_transport(
+                network
+                    || native_civ_addr(t).is_some()
+                    || crate::rigmodels::is_slow_serial_rig(t.rig_model),
+            );
             let (ok, _d) = probe_cat(&mut rig, t.rigctld_port);
             (rig, Some(proc), ok)
         }
@@ -966,6 +970,10 @@ struct RadioLoop {
     /// on demand, reopened if the configured port changes.
     #[cfg(feature = "serial")]
     winkeyer: Option<(String, crate::winkeyer::WinKeyer)>,
+    /// The open serial DTR/RTS keyline keyer (port + line + handle) when the CW backend is
+    /// Serial — opened on demand, reopened if the configured port or line changes.
+    #[cfg(feature = "serial")]
+    serial_keyer: Option<(String, String, crate::serial_keyer::SerialKeyer)>,
     /// Last manual-PTT (live phone) state we applied to the rig — only key on change.
     manual_ptt_applied: bool,
     /// Last RF power fraction we pushed to the rig — only set on change.
@@ -1116,6 +1124,8 @@ impl RadioLoop {
             last_fm: None,
             #[cfg(feature = "serial")]
             winkeyer: None,
+            #[cfg(feature = "serial")]
+            serial_keyer: None,
             manual_ptt_applied: false,
             last_rf_power: None,
             last_mic_gain: None,
@@ -2119,7 +2129,7 @@ impl RadioLoop {
         // one `\stop_morse`). Operator-initiated; the engine gates on tx_enabled + privileges.
         {
             let ready = now >= self.cw_busy_until;
-            let (abort, wpm, word, soundcard, pitch, winkeyer_port) = {
+            let (abort, wpm, word, soundcard, pitch, winkeyer_port, serial_key) = {
                 let mut eng = engine.lock().map_err(|e| e.to_string())?;
                 (
                     eng.take_cw_abort(),
@@ -2128,14 +2138,21 @@ impl RadioLoop {
                     eng.cw_soundcard(),
                     eng.cw_pitch_hz(),
                     eng.cw_winkeyer_port(),
+                    eng.cw_serial_key_port().map(|p| (p, eng.cw_serial_key_line())),
                 )
             };
             #[cfg(not(feature = "serial"))]
-            let _ = &winkeyer_port; // only the serial build keys a WinKeyer
-                                    // Switched away from the WinKeyer backend → release its serial port.
+            {
+                let _ = (&winkeyer_port, &serial_key); // only the serial build keys these
+            }
+            // Switched away from a serial-port keyer → release its port.
             #[cfg(feature = "serial")]
             if winkeyer_port.is_none() {
                 self.winkeyer = None;
+            }
+            #[cfg(feature = "serial")]
+            if serial_key.is_none() {
+                self.serial_keyer = None;
             }
             if abort {
                 let _ = rig.stop_morse(); // CAT keyer abort (cut the one word in the rig buffer)
@@ -2143,6 +2160,11 @@ impl RadioLoop {
                 #[cfg(feature = "serial")]
                 if let Some((_, wk)) = self.winkeyer.as_mut() {
                     let _ = wk.clear();
+                }
+                // Serial keyline abort: key up NOW + drop the rest of the macro.
+                #[cfg(feature = "serial")]
+                if let Some((_, _, sk)) = self.serial_keyer.as_ref() {
+                    sk.clear();
                 }
                 if soundcard {
                     // Soundcard abort: dump the queued tone audio + unkey now.
@@ -2180,6 +2202,41 @@ impl RadioLoop {
                         }
                         let _ = wk.send(&text);
                         handled = true;
+                    }
+                }
+                // Serial DTR/RTS keyline keyer: open the port on demand (reopen if the port
+                // OR the line changed) and hand it the word — its own thread times the
+                // keying, rig in CW. On open failure, surface a serial-specific error rather
+                // than falling through to the CAT keyer (whose send_morse error would mislead).
+                #[cfg(feature = "serial")]
+                if !handled {
+                    if let Some((port, line)) = &serial_key {
+                        let reopen = self
+                            .serial_keyer
+                            .as_ref()
+                            .map(|(p, l, _)| p != port || l != line)
+                            .unwrap_or(true);
+                        if reopen {
+                            self.serial_keyer = crate::serial_keyer::SerialKeyer::open(
+                                port,
+                                crate::serial_keyer::KeyLine::parse(line),
+                            )
+                            .ok()
+                            .map(|sk| (port.clone(), line.clone(), sk));
+                        }
+                        let open_err = self.serial_keyer.is_none();
+                        if let Some((_, _, sk)) = self.serial_keyer.as_ref() {
+                            sk.send(&text, wpm);
+                        }
+                        if let Ok(mut eng) = engine.lock() {
+                            eng.set_cw_keyer_error(open_err.then(|| {
+                                format!(
+                                    "Serial keyline: couldn't open {port}. Check the port name \
+                                     and that nothing else (CAT, another app) has it open."
+                                )
+                            }));
+                        }
+                        handled = true; // the Serial backend owns this word (sent or errored)
                     }
                 }
                 if !handled {
@@ -3712,7 +3769,7 @@ fn open_cat(
         // reuses the port of the daemon we just killed (`allow_coexist == false`), so we never
         // reconnect through our own dying daemon and keep commanding the OLD radio.
         let mut rig = Rig::with_control(Some(addr.clone()), ptt_mode);
-        rig.set_slow_transport(t.is_network()); // network chains get the long command deadline
+        rig.set_slow_transport(t.is_network() || crate::rigmodels::is_slow_serial_rig(t.rig_model)); // network chains + slow serial rigs (Xiegu / vintage Kenwood) get the long command deadline
         let _ = rig.set_freq(dial_hz);
         let _ = rig.set_mode(mode, passband_for(mode));
         let (ok, detail) = probe_cat(&mut rig, t.rigctld_port);
@@ -3738,7 +3795,11 @@ fn open_cat(
             // Give the daemon a moment to bind its TCP port before connecting.
             std::thread::sleep(Duration::from_millis(700));
             let mut rig = Rig::with_control(Some(addr), ptt_mode);
-            rig.set_slow_transport(network || native_civ_addr(t).is_some()); // network chains + the native daemon get the long deadline
+            rig.set_slow_transport(
+                network
+                    || native_civ_addr(t).is_some()
+                    || crate::rigmodels::is_slow_serial_rig(t.rig_model),
+            ); // network chains + the native daemon + slow serial rigs (Xiegu / vintage Kenwood) get the long deadline
             let _ = rig.set_freq(dial_hz);
             let _ = rig.set_mode(mode, passband_for(mode));
             let (ok, detail) = probe_cat(&mut rig, t.rigctld_port);

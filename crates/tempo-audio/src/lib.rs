@@ -39,6 +39,7 @@ pub mod rigmodels;
 pub mod rotator;
 pub mod runtime;
 pub mod slot;
+pub mod serial_keyer;
 pub mod usbrig;
 pub mod voice;
 pub mod winkeyer;

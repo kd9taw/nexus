@@ -5,6 +5,27 @@ All notable changes to Nexus (formerly Tempo) are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.7] — 2026-07-17 — Serial CW keying + slow-rig CAT fix
+
+### Added
+
+- **A serial DTR/RTS CW keyline keyer — the clean way to key an older rig from the PC.** For rigs that
+  don't support CAT CW keying (the IC-756PRO III and most pre-2016 radios), Nexus can now toggle a DTR
+  or RTS line into the rig's KEY jack the way N1MM and fldigi do: the rig stays in CW mode and shapes
+  the CW envelope itself, so the signal is clean. Pick **Serial keyline (DTR/RTS)** in Settings ▸ CW,
+  set the keying serial port (a separate USB-to-serial into your keying interface — a Buxcomm, US
+  Navigator, or a homebrew DTR cable) and the line (DTR by default), put the rig in CW with its key jack
+  set to straight key, and send. It's also on the CW cockpit's keyer switcher. This joins the existing
+  CAT, WinKeyer, and soundcard keyers; the soundcard option is now labeled as the SSB-audio workaround
+  it is (keep its drive below ALC).
+
+### Fixed
+
+- **Xiegu G90 and vintage Kenwoods no longer drop CAT with "rig reply incomplete after 700 ms".** These
+  radios have a slower CI-V / serial backend whose reply can arrive just after the old 700 ms cutoff, so
+  Nexus was giving up on a command the rig would have answered. They now get the same longer,
+  retry-tolerant window that network and native-CI-V rigs already use. No change to any other rig.
+
 ## [0.9.6] — 2026-07-16 — Fits any window or screen size + Program (radio programming)
 
 ### Changed
