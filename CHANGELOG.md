@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A rig that rejects PTT no longer transmits into silence.** On FT8/FT4 and phone, if the radio
+  NAK'd or timed out the key command, Nexus played (or armed) modem audio while the rig stayed in
+  receive — dead air on the band with no warning. It now surfaces "the rig didn't accept PTT — check
+  your PTT method and CAT/port," so you know the key didn't take instead of calling into a void.
 - **AI CW decoder now finds its model on Linux.** The DeepCW model ships bundled inside the .deb and
   AppImage, but the app located it in a Windows-only way (next to the exe), so on Linux it reported
   "model not installed." It now uses the platform resource directory, so the model loads on all

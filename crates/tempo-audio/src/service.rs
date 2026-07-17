@@ -940,12 +940,15 @@ struct Sinks<'a> {
 /// generic over [`AudioBackend`] so a `MockBackend` (+ a `Rig::vox()` / mock
 /// rigctld) can drive the whole heartbeat in a test with no sound card.
 /// Owner of the single audio-error status line (see `err_owner`).
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum ErrOwner {
     None,
     Device,
     Monitor,
     VoiceMic,
+    /// The rig rejected a TX key command (PTT NAK/timeout) — otherwise we'd play modem
+    /// audio into a receiving rig with no warning ("silent dead air").
+    Ptt,
 }
 
 struct RadioLoop {
@@ -1258,6 +1261,31 @@ impl RadioLoop {
     fn publish_tx_intent_now(&self) {
         if let Some(d) = self.rigctld_proc.as_ref().and_then(CatDaemon::native) {
             d.set_tx_intent(true);
+        }
+    }
+
+    /// Surface (or clear) a "the rig didn't accept PTT" status on the shared audio-error
+    /// banner. A keyed-but-NAK'd rig plays modem audio into a receiver = silent dead air
+    /// with no warning, so `keying` calls that swallowed the `ptt()` result now route it
+    /// here. Uses the err-owner arbitration so a PTT status never clobbers a device/mic
+    /// error, and clears only its OWN status when keying succeeds again.
+    fn report_ptt(&mut self, engine: &Arc<Mutex<Engine>>, failed: bool) {
+        if failed {
+            if matches!(self.err_owner, ErrOwner::None | ErrOwner::Ptt) {
+                if let Ok(mut eng) = engine.lock() {
+                    eng.set_audio_error(Some(
+                        "The rig didn't accept PTT — check your PTT method and CAT/port. \
+                         Modem audio may be going out while the radio is still receiving."
+                            .to_string(),
+                    ));
+                }
+                self.err_owner = ErrOwner::Ptt;
+            }
+        } else if self.err_owner == ErrOwner::Ptt {
+            if let Ok(mut eng) = engine.lock() {
+                eng.set_audio_error(None);
+            }
+            self.err_owner = ErrOwner::None;
         }
     }
 
@@ -2416,10 +2444,13 @@ impl RadioLoop {
                 if !buf.is_empty() {
                     let secs = buf.len() as f32 / ft1::SAMPLE_RATE;
                     self.publish_tx_intent_now(); // before keying — the fail-safe must already know
-                    let _ = rig.ptt(true);
+                    let ptt_err = rig.ptt(true).is_err();
                     backend.play(&buf);
                     let until = now + secs as f64 * 1000.0 + crate::slot::TX_TAIL_MS;
                     self.tx_until_ms = Some(self.tx_until_ms.map_or(until, |t| t.max(until)));
+                    // A NAK here means the modem audio above went out while the rig stayed in
+                    // RX — surface it instead of silent dead air.
+                    self.report_ptt(&engine, ptt_err);
                 }
             }
             // QSO recording (audio bridge): stream the live RX capture straight to a WAV on
@@ -2485,7 +2516,10 @@ impl RadioLoop {
                 if ptt {
                     self.publish_tx_intent_now(); // before keying — the fail-safe must already know
                 }
-                let _ = rig.ptt(ptt);
+                // Report only a KEYING failure (a failed unkey is the watchdog's job); a clean
+                // key or any unkey clears our own PTT status.
+                let ptt_failed = rig.ptt(ptt).is_err();
+                self.report_ptt(&engine, ptt && ptt_failed);
                 self.manual_ptt_applied = ptt;
             }
             if let Some(p) = power {
@@ -5193,6 +5227,37 @@ mod tests {
         let mut t2 = cat_transport(4532, None);
         t2.ptt_serial_port = "COM16".to_string();
         assert!(t.rig_differs(&t2) || t2.rig_differs(&t), "PTT port change triggers a rig rebuild");
+    }
+
+    #[test]
+    fn report_ptt_surfaces_a_key_nak_and_respects_error_ownership() {
+        let mut state = loop_state();
+        let engine = Arc::new(Mutex::new(Engine::new("W9XYZ", "EN37", 0)));
+        let banner = |e: &Arc<Mutex<Engine>>| e.lock().unwrap().snapshot().radio.audio_error.clone();
+
+        // A keying NAK surfaces a PTT status on the shared banner; a good key clears OUR status.
+        state.report_ptt(&engine, true);
+        assert!(banner(&engine).is_some(), "PTT NAK shows the banner");
+        assert_eq!(state.err_owner, ErrOwner::Ptt);
+        state.report_ptt(&engine, false);
+        assert!(banner(&engine).is_none(), "a good key clears the PTT status");
+        assert_eq!(state.err_owner, ErrOwner::None);
+
+        // A PTT status must NOT clobber a higher-priority device error, and clearing PTT
+        // must not wipe the device error either.
+        state.err_owner = ErrOwner::Device;
+        engine
+            .lock()
+            .unwrap()
+            .set_audio_error(Some("Sound card failed".to_string()));
+        state.report_ptt(&engine, true);
+        assert_eq!(banner(&engine).as_deref(), Some("Sound card failed"), "device error wins");
+        state.report_ptt(&engine, false);
+        assert_eq!(
+            banner(&engine).as_deref(),
+            Some("Sound card failed"),
+            "clearing PTT leaves a device error intact"
+        );
     }
 
     #[test]
