@@ -730,6 +730,15 @@ export function OperateCockpit({
               ? 'TX 1st / even'
               : 'TX 2nd / odd'}
         </button>
+        <button
+          type="button"
+          className={`cs-skiptx1${skipTx1 ? ' on' : ''}`}
+          aria-pressed={skipTx1}
+          onClick={() => handleSkipTx1(!skipTx1)}
+          title="Skip Tx1 — when you answer a CQ, open with your signal report (Tx2) instead of your grid (Tx1), saving a cycle. Standard callsigns only (a compound call still sends its grid). Resets each launch, like WSJT-X."
+        >
+          Skip Tx1
+        </button>
         <span className="cs-next" title="Time to the next slot">
           next {nextSlotSec}s
         </span>
@@ -896,8 +905,6 @@ export function OperateCockpit({
                   onGenerate={handleGenerate}
                   onClear={clearDx}
                   qsoMacros={qsoMacros}
-                  skipTx1={skipTx1}
-                  onSkipTx1={handleSkipTx1}
                 />
                 <div className="cockpit-rxfreq panel">
                   <OperateDecodes
