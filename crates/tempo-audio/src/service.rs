@@ -508,6 +508,9 @@ impl Transport {
             ptt_method: p.ptt_method.clone(),
             rig_model: p.rig_model,
             serial_port: p.serial_port.clone(),
+            // Global keying-line setting (not per-radio) — the live `from_settings` rebuild
+            // of the ACTIVE radio supplies it; a monitor radio is read-only (never keys).
+            ptt_serial_port: String::new(),
             baud: p.baud,
             rig_conn: p.rig_conn.clone(),
             rig_addr: p.rig_addr.clone(),
@@ -3506,6 +3509,9 @@ struct Transport {
     ptt_method: String,
     rig_model: u32,
     serial_port: String,
+    /// Serial port for RTS/DTR PTT when it differs from the CAT port (SO2R controller
+    /// routing keying on its own COM port). Empty = key on `serial_port` (prior behavior).
+    ptt_serial_port: String,
     baud: u32,
     /// "network" → rigctld talks to `rig_addr` over TCP (Flex/SmartSDR); else serial.
     rig_conn: String,
@@ -3539,6 +3545,10 @@ impl Transport {
             ptt_method: c.ptt_method.clone(),
             rig_model: c.rig_model,
             serial_port: c.serial_port.clone(),
+            // Not part of the per-radio startup seed (it's a GLOBAL keying-line setting):
+            // the live per-tick `from_settings` rebuild supplies the real value, and empty
+            // here just falls back to `serial_port` for the brief pre-first-tick window.
+            ptt_serial_port: String::new(),
             baud: c.baud,
             rig_conn: c.rig_conn.clone(),
             rig_addr: c.rig_addr.clone(),
@@ -3565,6 +3575,7 @@ impl Transport {
             ptt_method: s.ptt_method.clone(),
             rig_model: s.rig_model,
             serial_port: s.serial_port.clone(),
+            ptt_serial_port: s.ptt_serial_port.clone(),
             baud: s.baud,
             icom_native_cat: s.icom_native_cat,
             rig_conn: s.rig_conn.clone(),
@@ -3586,12 +3597,24 @@ impl Transport {
         }
     }
 
+    /// The serial port the RTS/DTR keying line lives on: the dedicated `ptt_serial_port`
+    /// when set (an SO2R controller's own COM port), else the CAT `serial_port` (the prior
+    /// single-port behavior). Only meaningful when `ptt_method` is "rts"/"dtr".
+    fn ptt_port(&self) -> &str {
+        if self.ptt_serial_port.trim().is_empty() {
+            &self.serial_port
+        } else {
+            self.ptt_serial_port.trim()
+        }
+    }
+
     /// True if a field that requires (re)launching rigctld / rebuilding the Rig
     /// changed (PTT method, rig model, serial port, baud, rigctld TCP port).
     fn rig_differs(&self, o: &Transport) -> bool {
         self.ptt_method != o.ptt_method
             || self.rig_model != o.rig_model
             || self.serial_port != o.serial_port
+            || self.ptt_serial_port != o.ptt_serial_port
             || self.baud != o.baud
             || self.rig_conn != o.rig_conn
             || self.rig_addr != o.rig_addr
@@ -3706,11 +3729,11 @@ fn ptt_mode_for(t: &Transport) -> PttMode {
     match t.ptt_method.as_str() {
         "cat" if t.rig_model != 0 => PttMode::Cat,
         "rts" => PttMode::Serial {
-            port: t.serial_port.clone(),
+            port: t.ptt_port().to_string(),
             line: SerialLine::Rts,
         },
         "dtr" => PttMode::Serial {
-            port: t.serial_port.clone(),
+            port: t.ptt_port().to_string(),
             line: SerialLine::Dtr,
         },
         _ => PttMode::Vox,
@@ -3731,11 +3754,12 @@ fn open_rig(t: &Transport, dial_hz: u64, mode: &str, allow_coexist: bool) -> Rig
             Some(false),
             "CAT selected but no rig model is set — pick your rig in Settings.".to_string(),
         ),
-        // Serial-line PTT (RTS/DTR). Keying owns the serial port directly, so we don't
-        // also launch rigctld on it (that would fight for the same port). A rig that
-        // needs CAT freq/mode control AND a serial PTT line should key via CAT or VOX.
-        "rts" => probe_serial(&t.serial_port, SerialLine::Rts),
-        "dtr" => probe_serial(&t.serial_port, SerialLine::Dtr),
+        // Serial-line PTT (RTS/DTR) — see `open_serial_ptt`. When keying is on a SEPARATE
+        // port from CAT (an SO2R controller), we open CAT control too so freq/mode still
+        // track; when it shares the CAT port, keying owns the port and there's no CAT
+        // (launching rigctld there would fight for it).
+        "rts" => open_serial_ptt(t, dial_hz, mode, SerialLine::Rts, allow_coexist),
+        "dtr" => open_serial_ptt(t, dial_hz, mode, SerialLine::Dtr, allow_coexist),
         // VOX: the rig is keyed by its own VOX. But if a CAT rig is configured we STILL
         // open the control channel so freq/mode track the section — control is
         // INDEPENDENT of keying (the WSJT-X model). THIS is the fix for "the rig doesn't
@@ -3750,6 +3774,29 @@ fn open_rig(t: &Transport, dial_hz: u64, mode: &str, allow_coexist: bool) -> Rig
             None,
             "VOX — no CAT; the rig is keyed by transmit audio.".to_string(),
         ),
+    }
+}
+
+/// Open serial-line (RTS/DTR) PTT, asserting the keying line on [`Transport::ptt_port`].
+/// When that port is a DIFFERENT port from the CAT `serial_port` and a rig model is set —
+/// the SO2R case, where a controller (u2R/MK2R) routes keying on its own COM port — we ALSO
+/// open CAT control (rigctld on the CAT port) so frequency/mode still track the section,
+/// exactly like the VOX+CAT path. When keying shares the CAT port (no dedicated PTT port),
+/// we can't also run rigctld there (it would fight for the port), so it stays pure serial
+/// keying with no CAT — the prior behavior.
+fn open_serial_ptt(
+    t: &Transport,
+    dial_hz: u64,
+    mode: &str,
+    line: SerialLine,
+    allow_coexist: bool,
+) -> RigOpen {
+    let ptt_port = t.ptt_port().to_string();
+    let separate = t.rig_model != 0 && !ptt_port.eq_ignore_ascii_case(t.serial_port.trim());
+    if separate {
+        open_cat(t, dial_hz, mode, PttMode::Serial { port: ptt_port, line }, allow_coexist)
+    } else {
+        probe_serial(&ptt_port, line)
     }
 }
 
@@ -3883,10 +3930,10 @@ fn reprobe(rig: &mut Rig, t: &Transport) -> (Option<bool>, String) {
             "CAT selected but no rig model is set — pick your rig in Settings.".to_string(),
         ),
         "rts" | "dtr" => {
-            let shown = if t.serial_port.is_empty() {
+            let shown = if t.ptt_port().is_empty() {
                 "(no port set)"
             } else {
-                &t.serial_port
+                t.ptt_port()
             };
             match rig.ptt(false) {
                 Ok(()) => (Some(true), format!("Serial PTT on {shown}")),
@@ -5114,6 +5161,7 @@ mod tests {
             ptt_method: "cat".to_string(),
             rig_model: 1035,
             serial_port: "/dev/ttyUSB0".to_string(),
+            ptt_serial_port: String::new(),
             baud: 38400,
             icom_native_cat: false,
             rig_conn: "serial".to_string(),
@@ -5129,6 +5177,22 @@ mod tests {
             monitor_device: String::new(),
             monitor_level: 0.5,
         }
+    }
+
+    #[test]
+    fn ptt_port_prefers_dedicated_else_falls_back_to_cat_port() {
+        // The SO2R fix: RTS/DTR keying uses a dedicated PTT COM port when set (a u2R/MK2R
+        // routes keying on its own port), else the CAT serial port (prior single-port behavior).
+        let mut t = cat_transport(4532, None); // serial_port = /dev/ttyUSB0, ptt_serial_port = ""
+        assert_eq!(t.ptt_port(), "/dev/ttyUSB0", "empty dedicated port → CAT serial port");
+        t.ptt_serial_port = "COM16".to_string();
+        assert_eq!(t.ptt_port(), "COM16", "dedicated PTT port wins");
+        t.ptt_serial_port = "   ".to_string();
+        assert_eq!(t.ptt_port(), "/dev/ttyUSB0", "whitespace-only → fall back to CAT port");
+        // A changed PTT port must rebuild the rig so the keying line rebinds.
+        let mut t2 = cat_transport(4532, None);
+        t2.ptt_serial_port = "COM16".to_string();
+        assert!(t.rig_differs(&t2) || t2.rig_differs(&t), "PTT port change triggers a rig rebuild");
     }
 
     #[test]

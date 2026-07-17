@@ -33,6 +33,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Separate PTT serial port, for SO2R and external keying interfaces.** RTS/DTR PTT can now key on
+  its **own** COM port, independent of CAT — so a controller like the microHAM u2R/MK2R (or a homebrew
+  keyer) that routes PTT on, say, COM16 while CAT rides the radio's USB now works. Set it in
+  Settings ▸ Rig Control when PTT method is Serial RTS/DTR; leave it blank to keep the old behavior
+  (key on the CAT port). Selecting serial PTT no longer disables CAT — frequency and mode still track.
+- **Type a COM port when it's not in the dropdown.** The Serial Port and PTT Serial Port fields are now
+  editable comboboxes: some driver setups (virtual/SO2R COM ports) make Windows enumeration come back
+  empty, and you can now just type the port (e.g. `COM16`) instead of being stuck.
 - **Skip Tx1 (FT8/FT4), like WSJT-X.** A "Skip Tx1" checkbox in the Tx panel: when you answer a CQ,
   the QSO opens with your signal report (Tx2) instead of your grid (Tx1), saving a cycle. Standard
   callsigns only — a compound call (e.g. KD9TAW/P) still opens with the grid, since the report message

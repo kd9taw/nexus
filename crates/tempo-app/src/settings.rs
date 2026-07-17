@@ -159,6 +159,13 @@ pub struct Settings {
     pub rig_model_name: String,
     /// Serial port for CAT / serial-PTT, e.g. "COM5" or "/dev/ttyUSB0" ("" = none).
     pub serial_port: String,
+    /// Serial port for RTS/DTR PTT when it is NOT the CAT port — e.g. an SO2R
+    /// controller (microHAM u2R/MK2R, YCCC box) routes keying on its own COM port
+    /// while CAT rides the radio's USB. Empty = fall back to `serial_port` (the prior
+    /// behavior). Global on purpose: an SO2R controller routes ONE PTT line to the
+    /// selected radio, so it isn't per-radio. `#[serde(default)]` so old files load.
+    #[serde(default)]
+    pub ptt_serial_port: String,
     /// Serial baud rate for CAT.
     pub baud: u32,
     /// Rig connection type: "serial" (default; rigctld talks to `serial_port`/`baud`) or
@@ -1090,6 +1097,7 @@ impl Default for Settings {
             rig_model: 0,
             rig_model_name: "None / VOX".to_string(),
             serial_port: String::new(),
+            ptt_serial_port: String::new(),
             baud: 38400,
             rig_conn: "serial".to_string(),
             rig_addr: String::new(),

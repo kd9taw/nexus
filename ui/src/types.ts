@@ -1524,6 +1524,9 @@ export interface Settings {
   rigModelName: string
   /** Serial/COM port for rig control (e.g. "COM3" / "/dev/ttyUSB0"). */
   serialPort: string
+  /** Dedicated serial/COM port for RTS/DTR PTT when it differs from the CAT port
+   * (SO2R controllers key on their own COM port). Empty = key on `serialPort`. */
+  pttSerialPort: string
   /** Serial baud rate. */
   baud: number
   /** Rig connection: "serial" (default) or "network" (rigctld → rigAddr over TCP, e.g. a

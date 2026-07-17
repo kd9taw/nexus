@@ -1847,6 +1847,24 @@ export function SettingsPanel({
                 <span className="settings-hint">How transmit is keyed.</span>
               </label>
 
+              {(form.pttMethod === 'rts' || form.pttMethod === 'dtr') && (
+                <label className="settings-field">
+                  <span className="settings-label">PTT Serial Port</span>
+                  <input
+                    className="settings-input"
+                    list="serial-port-list"
+                    value={form.pttSerialPort}
+                    placeholder="e.g. COM16 — blank = use the CAT port"
+                    onChange={(e) => update('pttSerialPort', e.target.value)}
+                  />
+                  <span className="settings-hint">
+                    COM port your RTS/DTR keying line is on — e.g. an SO2R controller (u2R/MK2R)
+                    that routes PTT on its own port, separate from CAT. Leave blank to key on the
+                    CAT serial port.
+                  </span>
+                </label>
+              )}
+
               <div className="settings-field">
                 <span className="settings-label">Zero-config setup</span>
                 <div className="settings-input-row">
@@ -2042,18 +2060,22 @@ export function SettingsPanel({
               <label className="settings-field">
                 <span className="settings-label">Serial Port</span>
                 <div className="settings-input-row">
-                  <select
+                  {/* Combobox, not a bare <select>: some driver setups (virtual/SO2R COM
+                      ports) make enumeration come back empty, so the operator must be able
+                      to TYPE a port (e.g. COM16) — the datalist just offers the found ports. */}
+                  <input
                     className="settings-input"
+                    list="serial-port-list"
                     value={form.serialPort}
+                    placeholder="Select or type, e.g. COM16"
                     onChange={(e) => update('serialPort', e.target.value)}
-                  >
-                    <option value="">— Select port —</option>
+                  />
+                  {/* Shared by the CAT + PTT port inputs; renders nothing (suggestions only). */}
+                  <datalist id="serial-port-list">
                     {portOptions.map((p) => (
-                      <option key={p} value={p}>
-                        {p}
-                      </option>
+                      <option key={p} value={p} />
                     ))}
-                  </select>
+                  </datalist>
                   <button
                     type="button"
                     className="settings-refresh"
