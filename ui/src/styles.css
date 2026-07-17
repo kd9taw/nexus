@@ -13963,7 +13963,13 @@ select.settings-input {
   max-height: none;
 }
 .phone-cockpit .ph-scope-panel {
-  height: var(--ph-scope-h, 22vh);
+  /* Grow the bandscope into any spare vertical room so the cockpit fills the window
+     instead of leaving dead space at the bottom on a tall/wide screen. The
+     operator-resized height (--ph-scope-h) is the FLOOR: on a crowded/short window it
+     holds that height and the rest scrolls; on a roomy window the scope expands. */
+  flex: 1 1 var(--ph-scope-h, 22vh);
+  height: auto;
+  min-height: var(--ph-scope-h, 22vh);
   max-height: none;
 }
 /* Horizontal (height-dragging) splitter variant of the workspace .pane-splitter. */

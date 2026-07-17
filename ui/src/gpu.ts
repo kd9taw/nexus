@@ -10,9 +10,15 @@ export function gpuCapableForGlobe(): boolean {
       c.getContext('webgl')) as WebGLRenderingContext | null
     if (!gl) return false
     const dbg = gl.getExtension('WEBGL_debug_renderer_info')
-    const renderer = dbg
-      ? String(gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL))
-      : ''
+    // Fail CLOSED when the renderer is unreadable. WebKitGTK (Linux) masks
+    // WEBGL_debug_renderer_info by default, so `dbg` is null and we can't tell a real
+    // GPU from Mesa's llvmpipe software renderer (which still reports a huge
+    // MAX_TEXTURE_SIZE and would otherwise slip through as "capable"). Without a
+    // verifiable hardware renderer, default to the cheap 2-D map — the operator can
+    // still opt into the globe with the 🌐 toggle. This keeps software-GL laptops off
+    // the heavy bloomed globe that made the whole app crawl.
+    if (!dbg) return false
+    const renderer = String(gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL))
     const software = /swiftshader|llvmpipe|software|basic render|microsoft basic/i.test(
       renderer,
     )

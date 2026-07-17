@@ -8510,6 +8510,17 @@ fn open_download_page(app: tauri::AppHandle) -> Result<(), String> {
 /// Build and run the Tauri application.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // WebKitGTK's default DMABUF/GBM compositing renderer degrades to a slow software
+    // readback path on many Intel-iGPU / hybrid-graphics / newer-Mesa laptops, which
+    // makes EVERY webview paint (clicks, scroll, hover) crawl — the "super slow on a
+    // laptop, fine on a desktop dGPU" reports. Disabling it forces the reliable path.
+    // Must be set before the WebKitWebProcess is forked (it inherits this env), so this
+    // is the very first thing run() does. Harmless on machines where DMABUF worked.
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    }
+
     let mut settings = Settings::load(&settings_path());
 
     // One-time migration: an older build kept the Cloudlog/Wavelog API key in
