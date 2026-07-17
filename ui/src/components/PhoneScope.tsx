@@ -195,7 +195,10 @@ export function PhoneScope({
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
-    const ctx = canvas.getContext('2d')
+    // willReadFrequently: the scope scrolls via getImageData/putImageData every ~50ms
+    // (20×/sec); on a GPU-backed canvas that readback stalls the main thread. Keeping it
+    // CPU-backed removes the stall (the big laptop-slowness cause).
+    const ctx = canvas.getContext('2d', { willReadFrequently: true })
     if (!ctx) return
 
     let running = true

@@ -221,7 +221,8 @@ export default function Globe3D({
   const [size, setSize] = useState({ w: 0, h: 0 })
   const [ready, setReady] = useState(false)
   const [ok] = useState(webglOk)
-  const [spin, setSpin] = useState(true) // idle auto-rotate; on by default, operator-toggleable
+  const [spin, setSpin] = useState(false) // idle auto-rotate; OFF by default (continuous 60fps
+  // GPU load on weak/laptop iGPUs); operator-toggleable
   const [nowMs, setNowMs] = useState(() => Date.now())
   // Self-fetched space-weather feeds (aurora + PCA come from their own polls, like the 2-D map).
   const [auroraPts, setAuroraPts] = useState<AuroraPoint[]>([])

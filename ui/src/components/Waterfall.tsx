@@ -149,7 +149,11 @@ export function Waterfall({
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
-    const ctx = canvas.getContext('2d')
+    // willReadFrequently keeps this canvas CPU-backed. The waterfall scrolls by
+    // getImageData/putImageData every row (~8×/sec); on a GPU-backed canvas each
+    // getImageData forces a GPU→CPU readback that STALLS the main thread — the
+    // dominant cause of the "clicking a button takes forever" lag on laptop GPUs.
+    const ctx = canvas.getContext('2d', { willReadFrequently: true })
     if (!ctx) return
     // Marker/axis overlay context (transparent, cleared each frame). Optional — if it can't be
     // acquired, drawOverlay simply no-ops on the markers rather than crashing the spectrum loop.
