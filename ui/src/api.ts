@@ -637,6 +637,11 @@ export async function revealAllTxt(): Promise<void> {
   await invoke('reveal_all_txt')
 }
 
+/** Toggle Skip Tx1 (WSJT-X parity) — a session-only flag, resets each launch. */
+export async function setSkipTx1(enabled: boolean): Promise<void> {
+  await invoke('set_skip_tx1', { enabled })
+}
+
 /** Write text to the operator's Downloads folder; returns the full saved path. Reliable in a
  *  WebView2 window where a browser `<a download>` blob may silently fail. */
 export async function saveTextToDownloads(filename: string, text: string): Promise<string> {

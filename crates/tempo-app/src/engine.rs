@@ -171,6 +171,11 @@ pub struct Engine {
     /// Whether normal slot TX is enabled. False = Monitor-off (transmit muted):
     /// [`Engine::poll_tx`] returns nothing. Also forced false by the watchdog.
     tx_enabled: bool,
+    /// Skip Tx1 (WSJT-X parity): when answering a CQ, open the QSO with the report
+    /// (Tx2) instead of the grid (Tx1). A SESSION flag — deliberately not persisted, so
+    /// it resets to off every launch exactly like WSJT-X's control. Set by the UI via
+    /// `set_skip_tx1`; consumed in `call_station_ctx`.
+    pub skip_tx1: bool,
     /// Whether the operator is holding a steady tune carrier. While true,
     /// [`Engine::poll_tx`] suppresses normal slot TX (the radio loop plays a
     /// continuous carrier instead).
@@ -616,6 +621,7 @@ impl Engine {
             // station / arming Monitor all set it true explicitly. (Fixes the reported
             // unsolicited call on open.)
             tx_enabled: false,
+            skip_tx1: false,
             tuning: false,
             tx_watchdog: false,
             tx_watchdog_start: None,
@@ -3243,6 +3249,16 @@ impl Engine {
         self.call_station_ctx(dxcall, None, None, None, None);
     }
 
+    /// Toggle Skip Tx1 (WSJT-X parity) — a session-only preference (see the field).
+    pub fn set_skip_tx1(&mut self, on: bool) {
+        self.skip_tx1 = on;
+    }
+
+    /// Current Skip Tx1 state (for the snapshot / UI to reflect the toggle).
+    pub fn skip_tx1(&self) -> bool {
+        self.skip_tx1
+    }
+
     /// As [`call_station`], but pre-seeds the DX station's grid (e.g. the operator
     /// typed it into the directed-call entry, or it came from a roster/spot) so
     /// the contact logs with a grid even when we never decode the DX's own grid.
@@ -3318,6 +3334,7 @@ impl Engine {
             dxcall,
             context.as_ref().map(|(m, s)| (m, *s)),
             self.settings.prefer_rrr,
+            self.skip_tx1,
         );
         // Hound (DXpedition) QSOs end on the Fox's RR73 with NO parting 73 —
         // a 73 would land in the Fox's own segment (see qso.rs quiet_finish).

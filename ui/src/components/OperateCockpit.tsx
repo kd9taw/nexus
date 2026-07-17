@@ -20,6 +20,7 @@ import {
 } from '../txMessages'
 import { openPanelWindow, getSettings, notifyErase, setSettings } from '../api'
 import { pointRotatorAtCall, redecode, startCq, startQsoRecording, stopQsoRecording } from '../api'
+import { setSkipTx1 as setSkipTx1Cmd } from '../api'
 import { pushToast } from '../toast'
 import { RotorStrip } from './RotorStrip'
 import { Waterfall } from './Waterfall'
@@ -215,6 +216,13 @@ export function OperateCockpit({
   // Tuning step (Hz) for the header's TuningStrip nudge/step — shared with the
   // step selector, same control CW/Phone carry (dial-nudge + VFO/RIT/XIT).
   const [tuneStep, setTuneStep] = useState(100)
+  // Skip Tx1 (WSJT-X parity) — session-only UI state; the backend flag is likewise not
+  // persisted, so both reset to off each launch. The toggle pushes to the engine.
+  const [skipTx1, setSkipTx1] = useState(false)
+  const handleSkipTx1 = useCallback((v: boolean) => {
+    setSkipTx1(v)
+    setSkipTx1Cmd(v).catch(() => {})
+  }, [])
   const recording = snap.radio.qsoRecording
   const toggleRecord = () => {
     if (recBusy) return
@@ -888,6 +896,8 @@ export function OperateCockpit({
                   onGenerate={handleGenerate}
                   onClear={clearDx}
                   qsoMacros={qsoMacros}
+                  skipTx1={skipTx1}
+                  onSkipTx1={handleSkipTx1}
                 />
                 <div className="cockpit-rxfreq panel">
                   <OperateDecodes

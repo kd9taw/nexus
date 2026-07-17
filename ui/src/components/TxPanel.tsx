@@ -29,6 +29,11 @@ interface Props {
   /** Narrow single-column layout for the side rail (Classic two-pane): DX
    * fields wrap on one row, the six Tx rows stack below — no wide dead space. */
   compact?: boolean
+  /** Skip Tx1 (WSJT-X parity): when answering a CQ, open with the report (Tx2)
+   * instead of the grid (Tx1). Session-only — resets each launch, like WSJT-X. When
+   * `onSkipTx1` is absent the control is hidden. */
+  skipTx1?: boolean
+  onSkipTx1?: (v: boolean) => void
 }
 
 /**
@@ -54,6 +59,8 @@ export function TxPanel({
   onClear,
   qsoMacros,
   compact = false,
+  skipTx1 = false,
+  onSkipTx1,
 }: Props) {
   const canTx = dxCall.trim().length > 0
   const rows: { n: number; text: string }[] = [
@@ -111,6 +118,15 @@ export function TxPanel({
           <button type="button" className="txp-clear" onClick={onClear} title="Clear DX Call + Grid (F4)">
             Clear
           </button>
+          {onSkipTx1 && (
+            <label
+              className="txp-skiptx1"
+              title="Skip Tx1 — open a call with the report (Tx2) instead of your grid (Tx1), saving a cycle. Standard callsigns only (a compound call still sends its grid). Resets each launch, like WSJT-X."
+            >
+              <input type="checkbox" checked={skipTx1} onChange={(e) => onSkipTx1(e.target.checked)} />
+              Skip Tx1
+            </label>
+          )}
         </div>
       </div>
 

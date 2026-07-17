@@ -4921,6 +4921,17 @@ fn call_station(
     Ok(eng.snapshot())
 }
 
+/// Toggle Skip Tx1 (WSJT-X parity). Session-only — the engine flag resets to off each
+/// launch (not persisted), matching WSJT-X; the UI holds its own session state to match.
+#[tauri::command]
+fn set_skip_tx1(state: State<'_, SharedEngine>, enabled: bool) -> Result<(), String> {
+    state
+        .lock()
+        .map_err(|e| e.to_string())?
+        .set_skip_tx1(enabled);
+    Ok(())
+}
+
 /// Switch the top-level operating area: "dx" (FT8/FT4 structured) or "msg"
 /// (FT1/DX1 free-text chat). Atomically sets the area-appropriate tier + mode.
 #[tauri::command]
@@ -8892,6 +8903,7 @@ pub fn run() {
             civ_diagnostic_log,
             all_txt_location,
             reveal_all_txt,
+            set_skip_tx1,
             civ_diagnostic_status,
             broadcast,
             get_serial_ports,

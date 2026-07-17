@@ -27,6 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Skip Tx1 (FT8/FT4), like WSJT-X.** A "Skip Tx1" checkbox in the Tx panel: when you answer a CQ,
+  the QSO opens with your signal report (Tx2) instead of your grid (Tx1), saving a cycle. Standard
+  callsigns only — a compound call (e.g. KD9TAW/P) still opens with the grid, since the report message
+  can't carry it. Like WSJT-X, it's a per-session toggle and resets to off each launch.
 - **A first-class Memories section — repeaters, HF nets, calling frequencies, POTA/SOTA and digital
   watering holes in one place.** Replaces the small saved-frequency bank with a full manager: a sidebar
   of groups and ★ favorites, a clean list with an inline editor, and a CHIRP-style grid on demand.

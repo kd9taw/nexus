@@ -164,7 +164,7 @@ impl Station {
     ///
     /// [`start`]: Station::start
     pub fn answering(mycall: &str, mygrid: &str, dxcall: &str) -> Self {
-        Self::start(mycall, mygrid, dxcall, None, false)
+        Self::start(mycall, mygrid, dxcall, None, false, false)
     }
 
     /// Begin a directed QSO with `dxcall`, jumping straight to the Tx state the
@@ -196,6 +196,7 @@ impl Station {
         dxcall: &str,
         context: Option<(&Msg, i32)>,
         prefer_rrr: bool,
+        skip_tx1: bool,
     ) -> Self {
         let mycall_s: String = mycall.into();
         let mut dxgrid: Option<String> = None;
@@ -212,6 +213,25 @@ impl Station {
                 }),
                 format!("calling {dxcall} with grid"),
             )
+        };
+
+        // Skip Tx1 (WSJT-X parity): when WE initiate a call and already have the DX's
+        // SNR (we're answering their CQ), open with the report (Tx2) instead of our grid
+        // (Tx1), saving a cycle. Guarded to a STANDARD mycall — the report message can't
+        // pack a compound/nonstandard call, so those still open with the grid (this is
+        // exactly WSJT-X's `elide_tx1_not_allowed` restriction). No SNR context (a manual
+        // call with nothing decoded) also falls back to the grid.
+        let fresh_open = || match context {
+            Some((_, rpt)) if skip_tx1 && !crate::message::is_compound(&mycall_s) => (
+                State::AwaitRoger,
+                Some(Msg::Report {
+                    to: dxcall.into(),
+                    de: mycall_s.clone(),
+                    snr: rpt,
+                }),
+                format!("calling {dxcall} with report {rpt} (skip Tx1)"),
+            ),
+            _ => grid_start(),
         };
 
         // Only a message addressed to *us* advances the start state; a CQ or a
@@ -292,7 +312,9 @@ impl Station {
                 Msg::Bye73 { .. } => (State::Done, None, "got 73 → QSO complete".into()),
                 _ => grid_start(),
             },
-            _ => grid_start(),
+            // We're initiating (a CQ, a call to someone else, or no context) — normally
+            // Tx1 (grid), or Tx2 (report) when Skip Tx1 is on and we heard their SNR.
+            _ => fresh_open(),
         };
 
         Self {
@@ -815,7 +837,7 @@ mod start_context_tests {
 
     fn start(text: &str, snr: i32) -> Station {
         let m = Msg::parse(text);
-        Station::start(ME, MY_GRID, DX, Some((&m, snr)), false)
+        Station::start(ME, MY_GRID, DX, Some((&m, snr)), false, false)
     }
 
     #[test]
@@ -827,7 +849,7 @@ mod start_context_tests {
 
     #[test]
     fn no_context_starts_at_the_grid() {
-        let s = Station::start(ME, MY_GRID, DX, None, false);
+        let s = Station::start(ME, MY_GRID, DX, None, false, false);
         assert_eq!(s.state, State::AwaitReport);
         assert_eq!(s.pending_text().as_deref(), Some("W9XYZ KD9TAW EN61"));
     }
@@ -863,7 +885,7 @@ mod start_context_tests {
     #[test]
     fn dx_sent_r_report_with_rrr_preference_sends_rrr() {
         let m = Msg::parse("KD9TAW W9XYZ R-15");
-        let s = Station::start(ME, MY_GRID, DX, Some((&m, -8)), true);
+        let s = Station::start(ME, MY_GRID, DX, Some((&m, -8)), true, false);
         assert_eq!(s.state, State::Confirming);
         assert_eq!(s.pending_text().as_deref(), Some("W9XYZ KD9TAW RRR"));
     }
@@ -891,7 +913,7 @@ mod start_context_tests {
         // the report. Every over is the modem-faithful i3=4 form (compound call in full,
         // the other call in <...>), never a prefix-strippable bare form.
         let cq = Msg::parse("CQ PJ4/K1ABC");
-        let mut s = Station::start(ME, MY_GRID, "PJ4/K1ABC", Some((&cq, -10)), false);
+        let mut s = Station::start(ME, MY_GRID, "PJ4/K1ABC", Some((&cq, -10)), false, false);
         // Tx1: i3=4 call — DX hashed, my call in full, no grid.
         assert_eq!(s.pending_text().as_deref(), Some("<PJ4/K1ABC> KD9TAW"));
         // The compound DX answers grid-less (it cannot send a numeric report).
@@ -945,7 +967,7 @@ mod start_context_tests {
         // QSO still completes; it never emits a bare "W9XYZ KD9TAW/P R-11" whose prefix
         // the modem would silently strip.
         let m = Msg::parse("KD9TAW W9XYZ -09");
-        let s = Station::start("KD9TAW/P", MY_GRID, DX, Some((&m, -11)), false);
+        let s = Station::start("KD9TAW/P", MY_GRID, DX, Some((&m, -11)), false, false);
         assert_eq!(s.state, State::AwaitRr73);
         assert_eq!(s.pending_text().as_deref(), Some("<W9XYZ> KD9TAW/P RRR"));
     }
@@ -956,6 +978,39 @@ mod start_context_tests {
         let s = start("N0ABC W9XYZ -05", -8);
         assert_eq!(s.state, State::AwaitReport);
         assert_eq!(s.pending_text().as_deref(), Some("W9XYZ KD9TAW EN61"));
+    }
+
+    #[test]
+    fn skip_tx1_opens_with_the_report_for_a_standard_call() {
+        // WSJT-X "Skip Tx1": answering a CQ with skip_tx1 on opens at Tx2 (the report),
+        // not Tx1 (the grid) — one cycle saved. The DX's SNR (-12) becomes our report.
+        let cq = Msg::parse("CQ W9XYZ EN37");
+        let s = Station::start(ME, MY_GRID, DX, Some((&cq, -12)), false, true);
+        assert_eq!(s.state, State::AwaitRoger);
+        assert!(
+            matches!(s.pending, Some(Msg::Report { snr: -12, .. })),
+            "opened with the report, not the grid: {:?}",
+            s.pending
+        );
+    }
+
+    #[test]
+    fn skip_tx1_falls_back_to_grid_for_a_compound_call() {
+        // The report message can't pack a compound/nonstandard call, so Skip Tx1 must NOT
+        // apply — a compound station still opens with the grid (WSJT-X's own restriction).
+        let cq = Msg::parse("CQ W9XYZ EN37");
+        let s = Station::start("KD9TAW/P", MY_GRID, DX, Some((&cq, -12)), false, true);
+        assert_eq!(s.state, State::AwaitReport);
+        assert!(matches!(s.pending, Some(Msg::Grid { .. })));
+    }
+
+    #[test]
+    fn skip_tx1_off_opens_with_the_grid() {
+        // Baseline: without skip_tx1, answering a CQ opens with the grid (Tx1) as before.
+        let cq = Msg::parse("CQ W9XYZ EN37");
+        let s = Station::start(ME, MY_GRID, DX, Some((&cq, -12)), false, false);
+        assert_eq!(s.state, State::AwaitReport);
+        assert!(matches!(s.pending, Some(Msg::Grid { .. })));
     }
 
     #[test]
