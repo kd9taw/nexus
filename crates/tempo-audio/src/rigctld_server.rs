@@ -363,6 +363,32 @@ pub fn serve(listener: TcpListener, backend: Arc<dyn RigBackend>) {
     }
 }
 
+/// Like [`serve`], but returns (releasing the port) once `shutdown` is set — so the CAT
+/// broker can be turned on/off or re-pointed at a new port WITHOUT restarting Nexus.
+/// Accept is polled non-blocking ~5×/s so the flag is honored promptly.
+pub fn serve_until(
+    listener: TcpListener,
+    backend: Arc<dyn RigBackend>,
+    shutdown: Arc<std::sync::atomic::AtomicBool>,
+) {
+    use std::sync::atomic::Ordering;
+    let _ = listener.set_nonblocking(true);
+    while !shutdown.load(Ordering::Relaxed) {
+        match listener.accept() {
+            Ok((stream, _)) => {
+                let _ = stream.set_nonblocking(false); // per-client blocking reads
+                let b = Arc::clone(&backend);
+                std::thread::spawn(move || serve_connection(stream, b));
+            }
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            }
+            Err(_) => break,
+        }
+    }
+    // `listener` drops here → the port is released for a rebind.
+}
+
 /// Probe whether a rigctld (or compatible broker — maybe another Nexus) is already
 /// listening on `addr`, so we can connect THROUGH it instead of fighting for the
 /// serial port. Sends `\chk_vfo` and checks for any reply. Short timeout; never
@@ -725,6 +751,45 @@ mod tests {
         line.clear();
         rd.read_line(&mut line).unwrap();
         assert_eq!(line, "21074000\n");
+    }
+
+    #[test]
+    fn serve_until_serves_then_stops_and_frees_the_port_on_shutdown() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let backend: Arc<dyn RigBackend> = Arc::new(MockRig::default());
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let sd = shutdown.clone();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            serve_until(listener, backend, sd);
+            let _ = done_tx.send(()); // signals the accept loop returned
+        });
+
+        // It's live: a client can query freq through it.
+        let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        client
+            .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+            .unwrap();
+        let mut rd = BufReader::new(client.try_clone().unwrap());
+        client.write_all(b"f\n").unwrap();
+        let mut line = String::new();
+        rd.read_line(&mut line).unwrap();
+        assert_eq!(line, "14074000\n");
+
+        // Flip shutdown → the loop exits (hot-disable, no restart) and the port frees.
+        shutdown.store(true, Ordering::Relaxed);
+        assert!(
+            done_rx
+                .recv_timeout(std::time::Duration::from_secs(2))
+                .is_ok(),
+            "serve_until returns once shutdown is set"
+        );
+        assert!(
+            TcpListener::bind(("127.0.0.1", port)).is_ok(),
+            "the port is released for a rebind"
+        );
     }
 
     #[test]

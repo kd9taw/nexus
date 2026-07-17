@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **"Share my radio" (CAT broker) turns on without a restart.** Enabling the broker — or changing its
+  port — now takes effect immediately; you no longer have to restart Nexus. It also works while Nexus
+  is sharing an external rigctld, so a logger (WSJT-X / N1MM) pointed at the broker connects right away.
 - **A rig that rejects PTT no longer transmits into silence.** On FT8/FT4 and phone, if the radio
   NAK'd or timed out the key command, Nexus played (or armed) modem audio while the rig stayed in
   receive — dead air on the band with no warning. It now surfaces "the rig didn't accept PTT — check

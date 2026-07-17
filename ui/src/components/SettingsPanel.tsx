@@ -2434,7 +2434,8 @@ export function SettingsPanel({
                 </label>
                 <span className="settings-hint">
                   Run a rigctld-compatible server so WSJT-X / N1MM / loggers share this radio THROUGH Nexus
-                  (point them at Hamlib NET rigctl, localhost:{form.catBrokerPort}). Restart to apply.
+                  (point them at Hamlib NET rigctl, localhost:{form.catBrokerPort}). Takes effect right away
+                  — no restart. Works even when Nexus is sharing an external rigctld.
                 </span>
               </div>
 

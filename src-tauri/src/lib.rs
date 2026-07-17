@@ -8858,27 +8858,64 @@ pub fn run() {
 
     // CAT broker: let other apps (WSJT-X / N1MM / loggers) share the radio THROUGH
     // Nexus over the rigctld protocol. Localhost-only (never expose the rig to the
-    // network). Boot-time start when enabled; toggling needs a restart for now.
+    // network). A manager thread HOT-APPLIES the setting — turning "Share my radio" on
+    // starts the broker with no restart, turning it off (or changing the port) stops/
+    // rebinds it. Works whether Nexus owns rigctld or is coexisting onto an external one
+    // (the broker reads the shared radio through the Engine, not the daemon).
     #[cfg(feature = "radio")]
     {
-        let (broker_on, broker_port) = engine
-            .lock()
-            .map(|e| (e.settings().cat_broker, e.settings().cat_broker_port))
-            .unwrap_or((false, 4532));
-        if broker_on {
-            let backend: std::sync::Arc<dyn tempo_audio::rigctld_server::RigBackend> =
-                std::sync::Arc::new(EngineRig(engine.clone()));
-            std::thread::spawn(move || {
-                match std::net::TcpListener::bind(("127.0.0.1", broker_port)) {
-                    Ok(l) => tempo_audio::rigctld_server::serve(l, backend),
-                    Err(e) => conn_log(
-                        "CAT broker",
-                        "error",
-                        format!("couldn't bind 127.0.0.1:{broker_port}: {e}"),
-                    ),
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let mgr_engine = engine.clone();
+        std::thread::spawn(move || {
+            // The running broker as (port, shutdown flag); None = not serving.
+            let mut running: Option<(u16, std::sync::Arc<AtomicBool>)> = None;
+            loop {
+                let want = match mgr_engine.lock() {
+                    Ok(e) => e
+                        .settings()
+                        .cat_broker
+                        .then_some(e.settings().cat_broker_port),
+                    Err(_) => {
+                        std::thread::sleep(std::time::Duration::from_millis(1000));
+                        continue;
+                    }
+                };
+                let have = running.as_ref().map(|(p, _)| *p);
+                if want != have {
+                    // Stop the current broker (disabled, or the port changed).
+                    if let Some((_, shutdown)) = running.take() {
+                        shutdown.store(true, Ordering::Relaxed);
+                    }
+                    // Start on the wanted port.
+                    if let Some(port) = want {
+                        match std::net::TcpListener::bind(("127.0.0.1", port)) {
+                            Ok(l) => {
+                                let shutdown = std::sync::Arc::new(AtomicBool::new(false));
+                                let backend: std::sync::Arc<
+                                    dyn tempo_audio::rigctld_server::RigBackend,
+                                > = std::sync::Arc::new(EngineRig(mgr_engine.clone()));
+                                let sd = shutdown.clone();
+                                std::thread::spawn(move || {
+                                    tempo_audio::rigctld_server::serve_until(l, backend, sd)
+                                });
+                                running = Some((port, shutdown));
+                                conn_log(
+                                    "CAT broker",
+                                    "info",
+                                    format!("sharing this radio on 127.0.0.1:{port}"),
+                                );
+                            }
+                            Err(e) => conn_log(
+                                "CAT broker",
+                                "error",
+                                format!("couldn't bind 127.0.0.1:{port}: {e}"),
+                            ),
+                        }
+                    }
                 }
-            });
-        }
+                std::thread::sleep(std::time::Duration::from_millis(1000));
+            }
+        });
     }
 
     let prop_cache: PropCache = Arc::new(Mutex::new(None));
