@@ -350,7 +350,8 @@ pub fn build_fetch_body(api_key: &str) -> String {
 /// Split a FETCH response at the `ADIF=` field boundary. The ADIF payload itself contains `&`,
 /// `=`, and newlines, so it CANNOT be split as an ordinary `name=value` pair — QRZ always emits
 /// it last. Everything before the boundary is the small metadata header; everything after is the
-/// raw ADIF blob (verbatim — QRZ sends literal, un-encoded ADIF meant to be saved as an .adi).
+/// ADIF blob — which QRZ HTML-entity-ENCODES (`&lt;CALL:5&gt;…&lt;eor&gt;`), so it must be decoded
+/// back to literal `<…>` (see [`html_unescape`]) or an ADIF importer finds zero records.
 fn split_adif(body: &str) -> (&str, String) {
     let lower = body.to_ascii_lowercase();
     let mut search = 0;
@@ -359,11 +360,23 @@ fn split_adif(body: &str) -> (&str, String) {
         let at_boundary = idx == 0 || body.as_bytes()[idx - 1] == b'&';
         if at_boundary {
             let head_end = idx.saturating_sub(1); // drop the trailing '&' (0 stays 0)
-            return (&body[..head_end], body[idx + 5..].to_string());
+            return (&body[..head_end], html_unescape(&body[idx + 5..]));
         }
         search = idx + 5;
     }
     (body, String::new())
+}
+
+/// Decode the HTML entities QRZ uses in the FETCH ADIF payload. QRZ returns the ADIF
+/// with its angle brackets escaped — `&lt;CALL:5&gt;W1AW&lt;eor&gt;` — NOT literal, so
+/// without this an ADIF importer sees no `<tag>` markers and pulls back 0 QSOs even
+/// though RESULT=OK (the reported "sync from QRZ shows 0 QSOs" bug). `&amp;` is decoded
+/// LAST so an escaped literal `&amp;lt;` becomes `&lt;`, not `<`. Matches what working
+/// QRZ clients (e.g. k0swe/qrz-logbook) do.
+fn html_unescape(s: &str) -> String {
+    s.replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&amp;", "&")
 }
 
 /// Parse a QRZ Logbook FETCH response into its header + ADIF payload.
@@ -730,16 +743,34 @@ mod tests {
     }
 
     #[test]
-    fn fetch_splits_adif_payload_verbatim() {
-        // The ADIF payload itself carries `&`, `=`, `<`, and newlines — it must be
-        // cleaved off at the field boundary and returned untouched, not split as pairs.
-        let adif = "<CALL:5>W1AW &<QSO_DATE:8>20240101<APP_QRZLOG_STATUS:1>C<EOR>\n";
-        let body = format!("RESULT=OK&COUNT=1&ADIF={adif}");
+    fn fetch_decodes_html_encoded_adif_payload() {
+        // QRZ sends the ADIF with its angle brackets HTML-ENCODED (this is what real
+        // FETCH responses look like — the earlier "verbatim/literal" assumption is why
+        // sync silently returned 0 QSOs). parse_fetch must decode it back to literal
+        // `<...>` so the ADIF importer downstream finds records. `ADIF=` is last and the
+        // payload carries `&` (from the entities) + `=` + newlines, so it's cleaved at
+        // the field boundary, not split as pairs.
+        let encoded =
+            "&lt;CALL:5&gt;W1AW&lt;QSO_DATE:8&gt;20240101&lt;APP_QRZLOG_STATUS:1&gt;C&lt;eor&gt;\n";
+        let body = format!("RESULT=OK&COUNT=1&ADIF={encoded}");
         let f = parse_fetch(&body);
         assert!(f.ok);
         assert_eq!(f.count, 1);
-        assert_eq!(f.adif, adif);
+        assert_eq!(
+            f.adif,
+            "<CALL:5>W1AW<QSO_DATE:8>20240101<APP_QRZLOG_STATUS:1>C<eor>\n"
+        );
+        assert!(f.adif.contains("<eor>"), "records must have real ADIF markers");
         assert!(f.reason.is_none());
+    }
+
+    #[test]
+    fn fetch_leaves_literal_adif_unchanged() {
+        // Decoding is idempotent on already-literal brackets (defensive if QRZ ever
+        // stops encoding, or for hand-fed .adi content).
+        let adif = "<CALL:5>W1AW<QSO_DATE:8>20240101<eor>\n";
+        let f = parse_fetch(&format!("RESULT=OK&COUNT=1&ADIF={adif}"));
+        assert_eq!(f.adif, adif);
     }
 
     #[test]

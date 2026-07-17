@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **"Sync from QRZ" now actually imports your QSOs.** QRZ returns the fetched logbook as ADIF with its
+  angle brackets HTML-escaped (`&lt;call:5&gt;…`), which Nexus was treating as literal — so the importer
+  saw no records and reported 0 QSOs with no error, even after a full re-sync. Nexus now decodes the
+  ADIF before importing, matching how established QRZ clients read the response.
 - **The ALL.TXT decode log is now findable.** It moved to an app-named folder in your local app data
   (`%LOCALAPPDATA%\Nexus\ALL.TXT` on Windows — the same class of place WSJT-X keeps its own), the folder
   is created if missing, and Settings ▸ shows the exact path with a **"Reveal in folder"** button. The
