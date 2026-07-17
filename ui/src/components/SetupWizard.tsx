@@ -6,6 +6,8 @@ import type { AudioDevices, CatTestResult, DetectedRig, ImportStats, Settings } 
 import { detectRigs, discoverFlex, getAudioDevices, importAdif } from '../api'
 import { isValidGrid } from '../grid'
 import { findDaxDevices, isDaxPaired } from '../features/dax'
+import { STARTER_PACKS, importPack } from '../features/packs'
+import { memoriesStore } from '../features/memories'
 
 /** What the wizard collects beyond the goal profiles: station identity + rig.
  * Only the fields the operator actually touched are set — App merges this into
@@ -145,6 +147,32 @@ export function SetupWizard({ settings, onApply, onTestCat, onSkip }: Props) {
       return n
     })
   const [license, setLicense] = useState('open')
+
+  // --- Step 3: optional starter-channel packs. First run ONLY: snapshot whether the
+  // bank was empty when the wizard opened, and show the offer only then — so a returning
+  // operator who re-opens the wizard (it doubles as a Settings editor) never has packs
+  // they deleted silently re-added. Pre-check the two most broadly useful. ---
+  const [bankWasEmpty] = useState(() => memoriesStore.get().memories.length === 0)
+  const [packs, setPacks] = useState<Set<string>>(
+    () => new Set(bankWasEmpty ? ['na-calling', 'na-digital'] : []),
+  )
+  const togglePack = (id: string) =>
+    setPacks((s) => {
+      const n = new Set(s)
+      if (n.has(id)) n.delete(id)
+      else n.add(id)
+      return n
+    })
+  /** Seed the chosen starter packs into the shared Memories bank (idempotent — importPack
+   * dedupes). Called on wizard COMPLETION only, never on "I'll set it up myself". */
+  const seedPacks = () => {
+    if (packs.size === 0) return
+    memoriesStore.update((bank) => {
+      let b = bank
+      for (const p of STARTER_PACKS) if (packs.has(p.id)) b = importPack(b, p).bank
+      return b
+    })
+  }
 
   /** Only fields the operator actually changed vs the prefill go in the draft —
    * an untouched wizard must not rewrite settings it never asked about. */
@@ -576,6 +604,32 @@ export function SetupWizard({ settings, onApply, onTestCat, onSkip }: Props) {
               </button>
             ))}
           </div>
+
+          {bankWasEmpty && (
+            <>
+              <h3 className="wizard-modes-title">Start with some channels?</h3>
+              <p className="wizard-license-sub">
+                Optional — a ready-made set of common frequencies and nets, added to your Memories.
+                Change or remove any of them later in the Memories section.
+              </p>
+              <div className="wizard-modes">
+                {STARTER_PACKS.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    className={`wizard-mode${packs.has(p.id) ? ' sel' : ''}`}
+                    aria-pressed={packs.has(p.id)}
+                    onClick={() => togglePack(p.id)}
+                  >
+                    <span className="wizard-mode-label">{p.name}</span>
+                    <span className="wizard-mode-blurb">
+                      {p.memories.length} channels · {p.region}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
         </>
       )}
 
@@ -584,7 +638,10 @@ export function SetupWizard({ settings, onApply, onTestCat, onSkip }: Props) {
           <button
             type="button"
             className="wizard-everything"
-            onClick={() => onApply(['everything'], 'operate', [], license, draft())}
+            onClick={() => {
+              seedPacks()
+              onApply(['everything'], 'operate', [], license, draft())
+            }}
           >
             Turn everything on (expert)
           </button>
@@ -615,7 +672,10 @@ export function SetupWizard({ settings, onApply, onTestCat, onSkip }: Props) {
               type="button"
               className="wizard-go"
               disabled={ids.length === 0}
-              onClick={() => onApply(ids, landing, [...modes], license, draft())}
+              onClick={() => {
+                seedPacks()
+                onApply(ids, landing, [...modes], license, draft())
+              }}
             >
               {goLabel}
             </button>

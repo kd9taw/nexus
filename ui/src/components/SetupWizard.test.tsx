@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
 import { SetupWizard } from './SetupWizard'
 import * as api from '../api'
+import { memoriesStore, emptyBank, addMemory } from '../features/memories'
 
 vi.mock('../api', () => ({
   importAdif: vi.fn(),
@@ -69,5 +70,53 @@ describe('SetupWizard ADIF import step', () => {
     clickNext() // 2 log → 3 goals, no file chosen
     expect(screen.getByText(/What do you mostly want to do/)).toBeTruthy()
     expect(importAdif).not.toHaveBeenCalled()
+  })
+})
+
+describe('SetupWizard starter-pack offer', () => {
+  const gotoGoals = () => {
+    clickNext() // 0 → 1
+    clickNext() // 1 → 2
+    clickNext() // 2 → 3 goals
+  }
+
+  // Unmount any prior render (this file relies on auto-cleanup that isn't registered) so
+  // the step-3 headings — which recur in every render — resolve to a single element.
+  beforeEach(() => {
+    cleanup()
+    memoriesStore.set(emptyBank()) // first-run: a blank bank
+  })
+
+  it('offers packs on first run and seeds the pre-checked ones on completion', () => {
+    const { onApply } = renderWizard()
+    gotoGoals()
+    expect(screen.getByText(/Start with some channels/)).toBeTruthy()
+    // "Turn everything on (expert)" completes setup (no goal selection needed) — it must
+    // seed the packs checked by default (VHF/UHF Calling + HF Digital).
+    fireEvent.click(screen.getByRole('button', { name: /Turn everything on/ }))
+    expect(onApply).toHaveBeenCalledTimes(1)
+    const mems = memoriesStore.get().memories
+    expect(mems.some((m) => m.rxMhz === 146.52)).toBe(true) // na-calling: 2m FM Calling
+    expect(mems.some((m) => m.rxMhz === 14.074 && m.mode === 'FT8')).toBe(true) // na-digital
+    // POTA wasn't pre-checked, so its SSB-only channels shouldn't appear.
+    expect(mems.some((m) => m.rxMhz === 14.285)).toBe(false)
+  })
+
+  it('seeds nothing when the operator skips setup', () => {
+    const { onSkip } = renderWizard()
+    gotoGoals()
+    fireEvent.click(screen.getByRole('button', { name: /set it up myself/ }))
+    expect(onSkip).toHaveBeenCalledTimes(1)
+    expect(memoriesStore.get().memories).toHaveLength(0)
+  })
+
+  it('hides the offer once the operator already has memories (re-open never re-adds)', () => {
+    memoriesStore.set(addMemory(emptyBank(), { rxMhz: 146.52, mode: 'FM' }))
+    renderWizard()
+    clickNext()
+    clickNext()
+    clickNext()
+    expect(screen.getByText(/What do you mostly want to do/)).toBeTruthy() // on the goals step
+    expect(screen.queryByText(/Start with some channels/)).toBeNull()
   })
 })
