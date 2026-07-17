@@ -759,15 +759,8 @@ export function OperateCockpit({
         ) : (
           <>
             <section className="cockpit-waterfall panel">
-              <button
-                type="button"
-                className="wf-popout"
-                onClick={popOutWaterfall}
-                title="Pop the waterfall out into its own window (frees this space; drag to another monitor)"
-              >
-                ⧉
-              </button>
               <Waterfall
+                onPopOut={popOutWaterfall}
                 transmitting={snap.radio.transmitting}
                 rxOffsetHz={snap.radio.rxOffsetHz}
                 txOffsetHz={snap.radio.txOffsetHz}

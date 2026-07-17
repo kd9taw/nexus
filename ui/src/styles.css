@@ -13917,10 +13917,9 @@ select.settings-input {
   position: relative;
 }
 .wf-popout {
-  position: absolute;
-  top: var(--space-1);
-  right: var(--space-1);
-  z-index: 3;
+  /* In-flow: the last control in the waterfall header row (was absolutely positioned,
+     which floated it over the Zero knob). flex-shrink 0 so it keeps its size. */
+  flex: 0 0 auto;
   background: var(--bg-raised, rgba(0, 0, 0, 0.35));
   color: var(--text-dim);
   border: 1px solid var(--border);

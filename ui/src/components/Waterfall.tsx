@@ -53,6 +53,9 @@ interface Props {
    * pause the spectrum fetch/scroll/overlay and preserve the canvas backing store
    * so returning shows the accumulated waterfall intact (no CPU spent while away). */
   active?: boolean
+  /** Pop the waterfall into its own window. When set, a ⧉ button renders as the last
+   * item of the header row (kept in-flow so it never overlaps the Gain/Zero knobs). */
+  onPopOut?: () => void
 }
 
 // Default FT8/digital view window (Hz) — the FT8 signals live here, now spanning the full 4 kHz
@@ -72,7 +75,15 @@ function xToFreq(x: number, width: number, lo = F_MIN, hi = F_MAX): number {
   return lo + (x / width) * (hi - lo)
 }
 
-export function Waterfall({ transmitting, rxOffsetHz, txOffsetHz, theme, onTune, active = true }: Props) {
+export function Waterfall({
+  transmitting,
+  rxOffsetHz,
+  txOffsetHz,
+  theme,
+  onTune,
+  active = true,
+  onPopOut,
+}: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   // Separate transparent overlay for the axis + Rx/Tx markers, so they are NEVER baked into
   // the scrolling spectrum canvas (a moved marker used to freeze into the image and scroll up
@@ -579,6 +590,16 @@ export function Waterfall({ transmitting, rxOffsetHz, txOffsetHz, theme, onTune,
             }}
           />
         </label>
+        {onPopOut && (
+          <button
+            type="button"
+            className="wf-popout"
+            onClick={onPopOut}
+            title="Pop the waterfall out into its own window (frees this space; drag to another monitor)"
+          >
+            ⧉
+          </button>
+        )}
       </div>
       <div className="wf-stage">
         <canvas
