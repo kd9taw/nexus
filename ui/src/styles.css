@@ -12365,6 +12365,44 @@ select.settings-input {
   background: color-mix(in srgb, var(--text-dim) 12%, transparent);
 }
 
+/* ---- Spots freeform search (SpotsPanel head) ---- */
+.np-search {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  margin-left: auto;
+}
+.np-search input {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text);
+  font-size: 12px;
+  padding: var(--space-1) 26px var(--space-1) var(--space-3);
+  width: 240px;
+  transition: var(--transition);
+}
+.np-search input:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+.np-search input::placeholder {
+  color: var(--text-faint);
+}
+.np-search-clear {
+  position: absolute;
+  right: 6px;
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0 2px;
+}
+.np-search-clear:hover {
+  color: var(--text);
+}
+
 /* ---- CW/Phone scope honesty controls (PhoneScope header row) ---- */
 .ph-scope-dyn {
   flex: 0 0 auto;
@@ -15258,6 +15296,29 @@ select.settings-input {
 .rtty-afc-pill.locked {
   color: var(--ok, #2fbf71);
   border-color: var(--ok, #2fbf71);
+}
+/* RTTY sending indicator (header, beside the backend pill) — an over is on the air. */
+.rtty-tx-pill {
+  font-size: var(--fs-label);
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  color: var(--danger, #e5484d);
+  border: 1px solid var(--danger, #e5484d);
+  border-radius: 999px;
+  padding: 2px 10px;
+  margin-left: var(--space-2);
+}
+/* Their-call field in the macro row — feeds the {CALL} macro token. */
+.rtty-hiscall {
+  width: 9em;
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+}
+/* Stop button in the macro row — live (red-tinted) only while sending. */
+.rtty-stop:not(:disabled) {
+  color: var(--danger, #e5484d);
+  border-color: var(--danger, #e5484d);
 }
 /* SSTV Arm toggle (header) — armed state must read at a glance. */
 .sstv-arm {

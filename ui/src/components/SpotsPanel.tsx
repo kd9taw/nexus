@@ -35,6 +35,10 @@ export function SpotsPanel({ spots, bandPlan, selectedCall, onSelect, onWork, on
   const [bands, setBands] = useState<string[]>([]) // empty = all
   const [sort, setSort] = useState<{ key: SortKey; dir: 'asc' | 'desc' }>({ key: 'age', dir: 'asc' })
   const [filtersOpen, setFiltersOpen] = useState(false)
+  // Freeform search over the firehose: space-separated terms AND together, each term
+  // matching ANY field (call/entity/spotter/mode/band/frequency) — so "w1 20m cw"
+  // narrows to W1-calls spotted on 20 m CW.
+  const [query, setQuery] = useState('')
 
   const knownBands = useMemo(() => new Set(bandPlan.map((b) => b.band)), [bandPlan])
 
@@ -51,10 +55,15 @@ export function SpotsPanel({ spots, bandPlan, selectedCall, onSelect, onWork, on
   const hasActiveFilters = bands.length > 0 || MODE_CLASSES.some((c) => !modes[c])
 
   const rows = useMemo(() => {
+    const terms = query.toLowerCase().split(/\s+/).filter(Boolean)
     const filtered = spots.filter((s) => {
       const cls = s.mode as ModeClass
       if (MODE_CLASSES.includes(cls) && !modes[cls]) return false
       if (bands.length > 0 && !bands.includes(s.band)) return false
+      if (terms.length > 0) {
+        const hay = `${s.call} ${s.entity} ${s.spotter} ${s.mode} ${s.band} ${s.freqMhz.toFixed(4)}`.toLowerCase()
+        for (const t of terms) if (!hay.includes(t)) return false
+      }
       return true
     })
     const dir = sort.dir === 'asc' ? 1 : -1
@@ -84,7 +93,7 @@ export function SpotsPanel({ spots, bandPlan, selectedCall, onSelect, onWork, on
       return c * dir
     })
     return filtered
-  }, [spots, modes, bands, sort])
+  }, [spots, modes, bands, sort, query])
 
   const th = (key: SortKey, label: string) => (
     <button
@@ -108,6 +117,23 @@ export function SpotsPanel({ spots, bandPlan, selectedCall, onSelect, onWork, on
         <span className="np-count">{rows.length}</span>
         {spots.length !== rows.length && <span className="np-count np-count-filtered">of {spots.length}</span>}
         <span className="np-hint">every spot on the air — single-click to work it</span>
+        <span className="np-search">
+          <input
+            type="search"
+            value={query}
+            placeholder="Search call · entity · spotter · freq…"
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') setQuery('')
+            }}
+            aria-label="Search spots"
+          />
+          {query && (
+            <button type="button" className="np-search-clear" onClick={() => setQuery('')} title="Clear search">
+              ✕
+            </button>
+          )}
+        </span>
         <button
           type="button"
           className={`np-filter-toggle${filtersOpen || hasActiveFilters ? ' active' : ''}`}
