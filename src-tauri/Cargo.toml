@@ -73,3 +73,11 @@ custom-protocol = ["tauri/custom-protocol"]
 # card (+ optional rigctld) at runtime. Without it the shell serves app state but
 # does not key the radio — useful for UI work.
 radio = ["dep:tempo-audio", "tempo-audio/device", "tempo-audio/serial", "tempo-audio/ai-cw"]
+
+# Shipped binaries: strip DWARF at link time. A tester's heaptrack showed std's
+# panic-backtrace machinery (gimli) retaining ~68 MB parsing the binary's debug
+# info after a caught panic; with no DWARF there is nothing to parse, and the
+# installers shrink. The symbol table stays, so panic messages still name
+# functions. Dev builds keep full debug info.
+[profile.release]
+strip = "debuginfo"

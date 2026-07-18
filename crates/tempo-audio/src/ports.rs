@@ -18,7 +18,21 @@ pub fn available_ports() -> Vec<String> {
         Ok(ports) => ports.into_iter().map(|p| p.port_name).collect(),
         Err(_) => Vec::new(),
     })
-    .unwrap_or_default()
+    .unwrap_or_else(|_| {
+        // NEVER swallow silently: a per-poll panic here is invisible but costs real
+        // CPU (unwind + panic hook each time) — the "sluggish laptop" failure mode.
+        // Rate-limited so a storm doesn't also flood stderr.
+        use std::sync::atomic::{AtomicU32, Ordering};
+        static CAUGHT: AtomicU32 = AtomicU32::new(0);
+        let n = CAUGHT.fetch_add(1, Ordering::Relaxed) + 1;
+        if n == 1 || n % 100 == 0 {
+            eprintln!(
+                "nexus: serial-port enumeration panicked (caught; occurrence {n}) — \
+                 a driver/udev issue on this system; ports list returned empty"
+            );
+        }
+        Vec::new()
+    })
 }
 
 /// Names of the serial ports currently present.

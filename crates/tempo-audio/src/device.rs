@@ -72,7 +72,21 @@ pub fn available_devices() -> (Vec<String>, Vec<String>) {
             .unwrap_or_default();
         (disambiguate_names(inputs), disambiguate_names(outputs))
     })
-    .unwrap_or_else(|_| (Vec::new(), Vec::new()))
+    .unwrap_or_else(|_| {
+        // Surface caught enumeration panics (rate-limited) — silent catches hid a
+        // per-poll panic storm on one tester's laptop (unwind cost = sluggishness,
+        // and the panic machinery's backtrace cache = a phantom 68 MB "leak").
+        use std::sync::atomic::{AtomicU32, Ordering};
+        static CAUGHT: AtomicU32 = AtomicU32::new(0);
+        let n = CAUGHT.fetch_add(1, Ordering::Relaxed) + 1;
+        if n == 1 || n % 100 == 0 {
+            eprintln!(
+                "nexus: audio-device enumeration panicked (caught; occurrence {n}) — \
+                 a broken/virtual audio device on this system; device lists returned empty"
+            );
+        }
+        (Vec::new(), Vec::new())
+    })
 }
 
 /// Disambiguate duplicate device names for a UI picker: the FIRST occurrence of a name is kept
