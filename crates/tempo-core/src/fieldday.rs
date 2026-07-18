@@ -76,6 +76,11 @@ pub struct LoggedQso {
     pub band: String,
     /// Mode class for scoring + per-band-mode dupes: "DIG" | "CW" | "PH".
     pub mode: String,
+    /// The ACTUAL on-air mode behind a "DIG" class (ADIF name, uppercase:
+    /// "FT8", "RTTY", "SSTV"…). Empty = not recorded (legacy rows) — exports
+    /// fall back to the historical class map. WFD bans the WSJT modes but
+    /// allows RTTY/SSTV, so an export must never claim "FT8" for an RTTY QSO.
+    pub submode: String,
     pub slot: u64,
     /// Unix seconds when the contact was logged — Cabrillo requires a real
     /// `yyyy-mm-dd hhmm` per QSO line (the old `----------` placeholder would
@@ -150,6 +155,24 @@ impl FieldDayLog {
         slot: u64,
         when_unix: u64,
     ) -> bool {
+        self.log_submode_at(call, class, section, mode, "", slot, when_unix)
+    }
+
+    /// As [`log_mode_at`](Self::log_mode_at) but also recording the ACTUAL
+    /// on-air mode behind the scoring class (e.g. class "DIG", submode "RTTY")
+    /// so exports emit the real mode. Dupes stay keyed on the CLASS — FD/WFD
+    /// digital is ONE mode class, so an FT8 QSO dupes the same-band RTTY one.
+    #[allow(clippy::too_many_arguments)] // log_mode_at + the one extra field
+    pub fn log_submode_at(
+        &mut self,
+        call: &str,
+        class: &str,
+        section: &str,
+        mode: &str,
+        submode: &str,
+        slot: u64,
+        when_unix: u64,
+    ) -> bool {
         let mode = mode.to_ascii_uppercase();
         if self.is_dupe_mode(call, &mode) {
             return false;
@@ -162,6 +185,7 @@ impl FieldDayLog {
             section: section.to_string(),
             band: self.band.clone(),
             mode,
+            submode: submode.trim().to_ascii_uppercase(),
             slot,
             when_unix,
         });
@@ -213,12 +237,18 @@ impl FieldDayLog {
             s.push_str(&adif_field("CALL", &q.call));
             s.push_str(&adif_field(
                 "MODE",
-                // Mode class → ADIF MODE; the reverse map lives in
-                // [`merge_adif`](Self::merge_adif) — keep the two in step.
-                match q.mode.as_str() {
-                    "CW" => "CW",
-                    "PH" => "SSB",
-                    _ => "FT8",
+                // The recorded ACTUAL mode wins (an RTTY WFD QSO must export
+                // MODE=RTTY — FT8 is a banned mode there); rows without one
+                // fall back to the historical class map. The reverse map lives
+                // in [`merge_adif`](Self::merge_adif) — keep the two in step.
+                if q.submode.is_empty() {
+                    match q.mode.as_str() {
+                        "CW" => "CW",
+                        "PH" => "SSB",
+                        _ => "FT8",
+                    }
+                } else {
+                    q.submode.as_str()
                 },
             ));
             s.push_str(&adif_field("BAND", &q.band));
@@ -291,12 +321,14 @@ impl FieldDayLog {
         let Some(call) = f.get("CALL").filter(|c| !c.trim().is_empty()) else {
             return;
         };
-        // ADIF MODE → mode class: the reverse of the map in [`adif`](Self::adif)
-        // (every digital mode exports as FT8) — keep the two in step.
-        let mode = match f.get("MODE").map(|m| m.to_ascii_uppercase()).as_deref() {
-            Some("CW") => "CW",
-            Some("SSB") => "PH",
-            _ => "DIG",
+        // ADIF MODE → (mode class, actual mode): the reverse of the map in
+        // [`adif`](Self::adif) — keep the two in step. A digital MODE keeps its
+        // identity as the submode so RTTY/SSTV rows survive the round-trip.
+        let (mode, submode) = match f.get("MODE").map(|m| m.to_ascii_uppercase()) {
+            Some(m) if m == "CW" => ("CW", String::new()),
+            Some(m) if m == "SSB" => ("PH", String::new()),
+            Some(m) => ("DIG", m),
+            None => ("DIG", String::new()),
         };
         // QSO_DATE (yyyymmdd) + TIME_ON (hhmmss) → when_unix. Unparseable rows
         // stamp 0 and fall to the age gate (never a panic on garbage input).
@@ -331,6 +363,7 @@ impl FieldDayLog {
             section: f.get("ARRL_SECT").cloned().unwrap_or_default(),
             band,
             mode: mode.to_string(),
+            submode,
             slot: 0,
             when_unix,
         });
@@ -356,10 +389,13 @@ impl FieldDayLog {
             } else {
                 ("----------".to_string(), "----".to_string()) // HHMM is 4 chars
             };
-            // Mode token per Cabrillo 3.0: DG digital, CW, PH phone.
+            // Mode token per Cabrillo 3.0: CW, PH phone, RY for RTTY rows
+            // (WFD prefers it), DG for other/unrecorded digital — a legal
+            // fallback either event.
             let mo = match q.mode.as_str() {
                 "CW" => "CW",
                 "PH" => "PH",
+                _ if q.submode == "RTTY" => "RY",
                 _ => "DG",
             };
             // Per-QSO frequency from ITS band; the passed dial is only a fallback
@@ -818,6 +854,52 @@ mod tests {
             "restored rows keep their real timestamp: {cab}"
         );
         assert!(!cab.contains("----------"), "no placeholder after restore");
+    }
+
+    #[test]
+    fn adif_and_cabrillo_carry_the_actual_digital_mode() {
+        // An RTTY WFD QSO must never export MODE=FT8 (a banned mode there) —
+        // the recorded actual mode wins; rows without one keep the legacy
+        // FT8/DG fallback so old logs export unchanged.
+        let mut log = FieldDayLog::new("W9XYZ", Exchange::new("2M", "EPA"), "20m");
+        log.event = FdEvent::WinterFd;
+        assert!(log.log_submode_at("K1ABC", "1H", "CT", "DIG", " rtty ", 0, 1_782_583_500));
+        assert!(log.log_mode_at("K2DEF", "1O", "EMA", "DIG", 0, 1_782_583_560));
+        let adif = log.adif();
+        assert!(
+            adif.contains("<MODE:4>RTTY"),
+            "RTTY row exports its real (normalized) mode: {adif}"
+        );
+        assert!(adif.contains("<MODE:3>FT8"), "unrecorded row falls back");
+        let cab = log.cabrillo(14_080);
+        assert!(cab.contains(" RY "), "Cabrillo RY for the RTTY row: {cab}");
+        assert!(cab.contains(" DG "), "DG fallback for the unrecorded row");
+        // FD/WFD digital is ONE mode class: an RTTY try after the same-band
+        // FT8 contact is a dupe, and both rows score the digital 2 points.
+        assert!(
+            !log.log_submode_at("K2DEF", "1O", "EMA", "DIG", "RTTY", 0, 1_782_583_620),
+            "RTTY dupes the same-band digital contact"
+        );
+        assert_eq!(log.qso_points(), 4);
+    }
+
+    #[test]
+    fn actual_mode_survives_the_adif_round_trip() {
+        let mut log = FieldDayLog::new("W9XYZ", Exchange::new("2M", "EPA"), "20m");
+        log.event = FdEvent::WinterFd;
+        assert!(log.log_submode_at("K1ABC", "1H", "CT", "DIG", "RTTY", 0, 1_782_583_500));
+        let mut restored = FieldDayLog::new("W9XYZ", Exchange::new("2M", "EPA"), "20m");
+        restored.event = FdEvent::WinterFd;
+        restored.merge_adif(&log.adif(), 0);
+        assert_eq!(restored.qso_count(), 1);
+        let q = &restored.qsos()[0];
+        assert_eq!((q.mode.as_str(), q.submode.as_str()), ("DIG", "RTTY"));
+        assert!(
+            restored.is_dupe_mode("K1ABC", "DIG"),
+            "dupe key restored on the mode CLASS"
+        );
+        assert!(restored.adif().contains("<MODE:4>RTTY"), "re-export keeps RTTY");
+        assert!(restored.cabrillo(14_080).contains(" RY "));
     }
 
     #[test]

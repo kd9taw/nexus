@@ -103,6 +103,11 @@ pub struct FdRuleset {
     /// Tempo (FT1 keyboard chat) is a first-class FD contact surface for this
     /// event: WFD `true` (the digital-friendly event), SFD `false`.
     pub tempo_fd: bool,
+    /// On-air modes this event's rules BAN outright (uppercase ADIF-style
+    /// names). WFD 2026 bans every WSJT mode while explicitly keeping RTTY and
+    /// SSTV legal as Digital; ARRL FD bans none. Advisory data for a UI guard —
+    /// scoring and dupes never consult it.
+    pub banned_modes: &'static [&'static str],
     /// Algorithmic event window for a year (never hand-edited — spec §2.3).
     pub date: fn(u16) -> EventWindow,
 }
@@ -117,6 +122,14 @@ impl FdRuleset {
     /// Total points for a set of claimed bonus ids (unknown ids score nothing).
     pub fn bonus_points(&self, claimed: &[String]) -> u32 {
         claimed.iter().filter_map(|id| self.bonus(id)).sum()
+    }
+
+    /// True if the ACTUAL on-air mode (e.g. `FT8`, `RTTY`) is banned by this
+    /// event's rules (case-insensitive; whitespace trimmed). An empty mode — a
+    /// legacy row with no recorded actual mode — is never banned.
+    pub fn mode_banned(&self, mode: &str) -> bool {
+        let up = mode.trim().to_ascii_uppercase();
+        self.banned_modes.iter().any(|&m| m == up)
     }
 }
 
@@ -153,6 +166,13 @@ const DUPE_CALL_BAND_MODE: DupeRule = DupeRule {
     by_band: true,
     by_mode_class: true,
 };
+
+/// The WFD 2026 banned-mode list: every WSJT mode (the rules ban the whole
+/// WSJT-X suite by name while explicitly allowing RTTY and SSTV as Digital).
+/// Uppercase ADIF-style names — [`FdRuleset::mode_banned`] compares uppercased.
+const WFD_BANNED_MODES: &[&str] = &[
+    "FST4", "FT4", "FT8", "JT4", "JT9", "JT65", "Q65", "MSK144", "WSPR", "FST4W", "ECHO",
+];
 
 /// The ARRL Field Day bonus menu (id, label, points) — moved verbatim from the
 /// old `tempo_app::FD_BONUSES` so scores don't change. WFD reuses this table
@@ -695,6 +715,7 @@ pub static SFD_2026: FdRuleset = FdRuleset {
     bonuses: FD_BONUSES,
     dupe_rule: DUPE_CALL_BAND_MODE,
     tempo_fd: false,
+    banned_modes: &[],
     date: sfd_window,
 };
 
@@ -710,6 +731,7 @@ pub static WFD_2026: FdRuleset = FdRuleset {
     bonuses: FD_BONUSES,
     dupe_rule: DUPE_CALL_BAND_MODE,
     tempo_fd: true,
+    banned_modes: WFD_BANNED_MODES,
     date: wfd_window,
 };
 
@@ -722,11 +744,14 @@ fn sfd_window(year: u16) -> EventWindow {
 }
 
 /// Winter Field Day: last FULL weekend of January (both days in January — the
-/// Feb-spill correction), 1600Z Saturday (~24 h event).
+/// Feb-spill correction). Per the WFD rules the contest period is **30 hours**,
+/// 1600Z Saturday through 21:59Z Sunday — the exclusive 2200Z Sunday end here
+/// matches the official 21:59 close. (The old 24 h duration dropped QSOs made
+/// in the final six hours out of the app window.)
 fn wfd_window(year: u16) -> EventWindow {
     let sats = full_weekend_saturdays(year as i64, 1, 31);
     let sat = *sats.last().expect("January always has a full weekend");
-    window(year as i64, 1, sat, 16, 24 * 3600)
+    window(year as i64, 1, sat, 16, 30 * 3600)
 }
 
 const SATURDAY: i64 = 6; // 0 = Sunday … 6 = Saturday
@@ -920,6 +945,33 @@ mod tests {
         assert_eq!(full_weekend_saturdays(2026, 1, 31), vec![3, 10, 17, 24]);
         let wfd = wfd_window(2026);
         assert_eq!(wfd.start_unix % 86_400, 16 * 3600, "1600Z start");
-        assert!(wfd.end_unix > wfd.start_unix);
+        // WFD is a 30-HOUR event (1600Z Sat → 21:59Z Sun); the old 24 h window
+        // dropped the final six hours. Exclusive 2200Z Sunday end = 21:59 close.
+        assert_eq!(
+            wfd.end_unix - wfd.start_unix,
+            30 * 3600,
+            "30-hour WFD period"
+        );
+        assert_eq!(wfd.end_unix % 86_400, 22 * 3600, "2200Z Sunday end");
+    }
+
+    #[test]
+    fn wfd_bans_wsjt_modes_but_never_rtty_or_sstv() {
+        let wfd = ruleset(FdEvent::WinterFd, 2026);
+        // The whole WSJT suite is out at WFD 2026…
+        for m in ["FT8", "FT4", "FST4", "JT65", "Q65", "MSK144", "WSPR"] {
+            assert!(wfd.mode_banned(m), "{m} is banned at WFD");
+        }
+        assert!(wfd.mode_banned(" ft8 "), "case-insensitive + trimmed");
+        // …while RTTY and SSTV are explicitly legal Digital, and the classic
+        // mode classes are untouched. A legacy row with no recorded actual
+        // mode is never flagged.
+        for m in ["RTTY", "SSTV", "CW", "SSB", ""] {
+            assert!(!wfd.mode_banned(m), "{m:?} is not banned at WFD");
+        }
+        // ARRL FD bans nothing.
+        let sfd = ruleset(FdEvent::ArrlFd, 2026);
+        assert!(sfd.banned_modes.is_empty());
+        assert!(!sfd.mode_banned("FT8"));
     }
 }
