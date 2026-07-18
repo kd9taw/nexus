@@ -12,9 +12,15 @@
 //! one audio stream into one merge/print stage). TX lives elsewhere (AFSK in
 //! tempo-audio, FSK keyline in the service layer); both frame their bit
 //! streams with the shared [`baudot::BaudotEncoder`].
+//!
+//! [`seq`] is the auto-sequencer — a pure text-pattern QSO state machine over
+//! the free-running decoded stream (RTTY has no slot clock), with table-driven
+//! exchange schemas and a human-initiate gate.
 
 pub mod baudot;
 pub mod demod;
+pub mod seq;
 
 pub use baudot::{BaudotDecoder, BaudotEncoder};
 pub use demod::{DecodedChar, RttyConfig, RttyDemod, RttyDemodulator};
+pub use seq::{Action, RttySeq, SeqState};
