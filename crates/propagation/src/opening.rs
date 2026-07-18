@@ -54,6 +54,12 @@ pub struct OpeningConfig {
     /// even for a strong station) and at the floor of the enhancement modes
     /// (sporadic-E / tropo-ducting / aurora all ≥~800 km). Only applies on VHF.
     pub vhf_dx_km: f64,
+    /// VHF short-lift distance (km): the floor of the tropo-enhancement ambiguity zone
+    /// (500–700 km — a strong station's routine scatter can reach here, so ONE path
+    /// proves nothing). TWO distinct stations at/beyond this simultaneously — plus the
+    /// rate anomaly — is a corroborated short tropo lift and opens the band, catching
+    /// the quick 500–700 km openings the single-station 700 km sentinel would miss.
+    pub vhf_short_km: f64,
     /// Onset-slope reference (Δ rate, spots/min/window). Reserved as a rising-edge
     /// / terminator-ramp tuning knob — NOT a hard gate (see `raw_open`), since a
     /// plateauing opening has slope≈0 after its rising edge.
@@ -113,6 +119,7 @@ impl Default for OpeningConfig {
             min_far_rx: 5,
             min_far_tx: 3,
             vhf_dx_km: 700.0,
+            vhf_short_km: 500.0,
             slope_min: 0.0, // any positive onset; tune up to reject ramps
             kp_aurora: 6.0,
             sfi_tep: 150.0,
@@ -149,6 +156,15 @@ pub struct BandFeatures {
     /// VHF a single one opens the band (2m tropo/Es/aurora openings are often one
     /// distant station; see [`BandFeatures::raw_open`]).
     pub unique_far_dx: usize,
+    /// Distinct operator-anchored far stations beyond `vhf_short_km` (the 500 km
+    /// tropo-enhancement floor). On VHF, TWO of these at once = a corroborated short
+    /// tropo lift (one alone is within a strong station's routine scatter).
+    pub unique_far_short_dx: usize,
+    /// Distinct RECEIVERS within `region_near_km` of the operator copying a path of
+    /// `vhf_dx_km`+ length between OTHER stations — the receive-only sentinel: your
+    /// neighbors' ears prove a VHF opening even when you're not on the band at all.
+    /// Two independent ears are required to open (anti-superstation).
+    pub unique_near_dx_rx: usize,
     /// Far stations confirmed BOTH ways with the operator (me→X and X→me).
     pub reciprocal_pairs: usize,
     /// Distinct stations participating on EITHER end of ALL spots — the regional
@@ -208,6 +224,8 @@ impl BandFeatures {
             unique_far_rx: 0,
             unique_far_tx: 0,
             unique_far_dx: 0,
+            unique_far_short_dx: 0,
+            unique_near_dx_rx: 0,
             reciprocal_pairs: 0,
             unique_stations: 0,
             reciprocal_pairs_regional: 0,
@@ -255,14 +273,18 @@ impl BandFeatures {
             (cfg.min_far_rx, cfg.min_far_tx)
         };
         // Operator-anchored gate (v1): enough far stations on either direction, OR —
-        // on VHF — a SINGLE genuine-DX station (path ≥ vhf_dx_km, past routine
-        // troposcatter). 2m tropo/Es/aurora openings are frequently one distant
-        // station, which the 6m-tuned multi-station bar could never surface. The
-        // anomaly-z gate above still applies, so routine scatter (baseline, no spike)
-        // can't fabricate an open even when it reaches DX distance.
+        // on VHF — graduated DX-distance evidence. 2m tropo/Es/aurora openings are
+        // frequently ONE distant station, which the 6m-tuned multi-station bar could
+        // never surface. Rungs (research-set, see vhf_dx_km/vhf_short_km docs):
+        //   • 1 station ≥ 700 km — unambiguous DX (past any routine-scatter reach);
+        //   • 2 distinct stations ≥ 500 km — a corroborated SHORT tropo lift (one
+        //     alone is within a strong station's everyday scatter; two at once with
+        //     a rate anomaly is enhancement — catches the quick 500–700 km openings).
+        // The anomaly-z gate above still applies to every rung, so routine scatter
+        // (baseline, no spike) can't fabricate an open even at DX distance.
         let op_gate = self.unique_far_rx >= far_rx
             || self.unique_far_tx >= far_tx
-            || (vhf && self.unique_far_dx >= 1);
+            || (vhf && (self.unique_far_dx >= 1 || self.unique_far_short_dx >= 2));
         // Regional gate (Phase 2, opt-in): a band-wide surge near the operator.
         // Multi-condition so neither a single loud station (needs two-way pairs)
         // nor a uniform contest/Es lifting every band (needs band-specificity)
@@ -278,7 +300,16 @@ impl BandFeatures {
             && self.unique_near_rx >= cfg.min_regional_near_rx
             && self.reciprocal_pairs_regional >= cfg.min_regional_reciprocal
             && self.cross_band_share >= cfg.min_regional_cross_band_share;
-        op_gate || regional_gate
+        // Receive-only VHF sentinel (regional feed only): ≥2 DISTINCT receivers near
+        // the operator each copying a ≥ vhf_dx_km path between OTHER stations. Your
+        // neighbors' ears prove the opening even when you're parked on another band
+        // and transmitting nothing — the case where the alert matters most. Two
+        // independent ears keeps the anti-superstation rule (one big-antenna station
+        // can't fabricate it alone); the full 6m-scale regional_gate above stays for
+        // band-wide surges. Gated on regional_scope like the regional gate: only the
+        // PSK Reporter near-region feed carries trustworthy far↔far receive reports.
+        let regional_dx_gate = cfg.regional_scope && vhf && self.unique_near_dx_rx >= 2;
+        op_gate || regional_gate || regional_dx_gate
     }
 
     /// Is the band still "warm" (above the exit threshold)?
@@ -482,6 +513,10 @@ pub fn band_features(
     // Operator-anchored far stations beyond the VHF DX distance (genuine DX, not
     // routine troposcatter) — the single-station VHF open signal.
     let mut far_dx: HashSet<String> = HashSet::new();
+    // …and beyond the short-lift floor (500 km): two at once = corroborated tropo.
+    let mut far_short_dx: HashSet<String> = HashSet::new();
+    // Near-me receivers copying DX-length far↔far paths (the receive-only sentinel).
+    let mut near_dx_rx: HashSet<String> = HashSet::new();
     let mut near_rx: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut all_stations: HashSet<String> = HashSet::new();
     let mut dists: Vec<f64> = Vec::new();
@@ -521,12 +556,15 @@ pub fn band_features(
                 if let Some(c) = s.far_call(me_call) {
                     let cu = c.to_ascii_uppercase();
                     // The far station here is the RECEIVER that heard me → its own grid.
-                    if s.rx_grid
+                    let d = s
+                        .rx_grid
                         .as_deref()
-                        .and_then(|g| grid_distance_km(me_grid, g))
-                        .is_some_and(|d| d >= cfg.vhf_dx_km)
-                    {
+                        .and_then(|g| grid_distance_km(me_grid, g));
+                    if d.is_some_and(|d| d >= cfg.vhf_dx_km) {
                         far_dx.insert(cu.clone());
+                    }
+                    if d.is_some_and(|d| d >= cfg.vhf_short_km) {
+                        far_short_dx.insert(cu.clone());
                     }
                     far_rx.insert(cu);
                 }
@@ -536,12 +574,15 @@ pub fn band_features(
                 if let Some(c) = s.far_call(me_call) {
                     let cu = c.to_ascii_uppercase();
                     // The far station here is the TRANSMITTER I heard → its own grid.
-                    if s.tx_grid
+                    let d = s
+                        .tx_grid
                         .as_deref()
-                        .and_then(|g| grid_distance_km(me_grid, g))
-                        .is_some_and(|d| d >= cfg.vhf_dx_km)
-                    {
+                        .and_then(|g| grid_distance_km(me_grid, g));
+                    if d.is_some_and(|d| d >= cfg.vhf_dx_km) {
                         far_dx.insert(cu.clone());
+                    }
+                    if d.is_some_and(|d| d >= cfg.vhf_short_km) {
+                        far_short_dx.insert(cu.clone());
                     }
                     far_tx.insert(cu);
                 }
@@ -554,6 +595,16 @@ pub fn band_features(
                     if let Some(d) = grid_distance_km(me_grid, rxg) {
                         if d <= cfg.region_near_km {
                             near_rx.insert(s.rx_call.to_ascii_uppercase());
+                            // Receive-only sentinel: this local ear is copying a
+                            // DX-length path (tx↔rx ≥ vhf_dx_km) — the band is open
+                            // in the operator's region whether or not they're on it.
+                            if s.tx_grid
+                                .as_deref()
+                                .and_then(|txg| grid_distance_km(txg, rxg))
+                                .is_some_and(|p| p >= cfg.vhf_dx_km)
+                            {
+                                near_dx_rx.insert(s.rx_call.to_ascii_uppercase());
+                            }
                         }
                     }
                 }
@@ -583,6 +634,8 @@ pub fn band_features(
     bf.unique_far_rx = far_rx.len();
     bf.unique_far_tx = far_tx.len();
     bf.unique_far_dx = far_dx.len();
+    bf.unique_far_short_dx = far_short_dx.len();
+    bf.unique_near_dx_rx = near_dx_rx.len();
     bf.unique_near_rx = near_rx.len();
     bf.unique_stations = all_stations.len();
     let owned: Vec<PathSpot> = band_spots.iter().map(|s| (*s).clone()).collect();
@@ -674,12 +727,16 @@ pub fn classify(
         cfg.kp_aurora
     };
 
-    // TROPO — 2 m, geomagnetically quiet, continuous (no skip hole), 800–1600 km,
-    // directional corridor. SW-flat. (70 cm "≥ 2 m" loss test is Phase 2.)
+    // TROPO — 2 m, geomagnetically quiet, continuous (no skip hole), 500–1600 km,
+    // directional corridor. SW-flat. The 500 km floor matches the corroborated
+    // short-lift open rung (vhf_short_km): a quick 500–700 km lift that opened the
+    // band should read "Tropo", not "Unknown". The mode only SURFACES on bands the
+    // gate opened, so the gate's evidence bar (2 distinct ≥500 km stations + the
+    // rate anomaly) carries the honesty. (70 cm "≥ 2 m" loss test is Phase 2.)
     if band == Band::B2
         && kp < 4.0
         && !bf.skip_hole
-        && (800.0..=1600.0).contains(&bf.median_km)
+        && (500.0..=1600.0).contains(&bf.median_km)
         && bf.bearing_concentration > 0.5
     {
         let geom = clamp01(bf.bearing_concentration as f32);
@@ -1934,6 +1991,47 @@ mod tests {
         hf.anomaly_z = 6.0;
         hf.unique_far_dx = 1;
         assert!(!hf.raw_open(&cfg), "the single-DX-station path is VHF-only");
+    }
+
+    #[test]
+    fn two_short_lift_stations_open_but_one_does_not() {
+        let cfg = OpeningConfig::default();
+        // ONE station at 500–700 km is within a strong station's routine scatter —
+        // must NOT open (the false-positive the operator wants avoided).
+        let mut one = BandFeatures::empty(Band::B2);
+        one.anomaly_z = 6.0;
+        one.unique_far_short_dx = 1;
+        one.unique_far_tx = 1;
+        assert!(!one.raw_open(&cfg), "a single 500–700 km station is ambiguous");
+        // TWO distinct stations ≥500 km at once + the anomaly = a corroborated
+        // short tropo lift → open (the quick-lift catch).
+        let mut two = one.clone();
+        two.unique_far_short_dx = 2;
+        two.unique_far_tx = 2;
+        assert!(two.raw_open(&cfg), "two corroborating short-lift stations open");
+    }
+
+    #[test]
+    fn neighbor_ears_open_a_vhf_band_without_operator_participation() {
+        let mut cfg = OpeningConfig::default();
+        cfg.regional_scope = true; // the PSKR near-region feed is flowing
+        // The operator is parked on another band: NO operator-anchored evidence at
+        // all — but two distinct local receivers each copy a ≥700 km 2m path.
+        let mut ears = BandFeatures::empty(Band::B2);
+        ears.anomaly_z = 6.0;
+        ears.unique_near_dx_rx = 2;
+        assert!(ears.raw_open(&cfg), "two neighbor ears open the band receive-only");
+        // One ear alone = possibly a superstation — must NOT open.
+        let mut one_ear = ears.clone();
+        one_ear.unique_near_dx_rx = 1;
+        assert!(!one_ear.raw_open(&cfg), "a single local ear must not open");
+        // Without the regional feed the sentinel stays off (no trustworthy far↔far
+        // receive reports) — HF unaffected regardless.
+        let mut no_feed = ears.clone();
+        assert!(no_feed.raw_open(&cfg));
+        cfg.regional_scope = false;
+        no_feed.anomaly_z = 6.0;
+        assert!(!no_feed.raw_open(&cfg), "sentinel requires the regional feed");
     }
 
     /// Helper: a raw-open BandSignal with the given peaks (tracker unit input).
