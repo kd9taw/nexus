@@ -203,6 +203,7 @@ type SettingsTab =
   | 'phone'
   | 'digital'
   | 'cw'
+  | 'rtty'
   | 'frequencies'
   | 'alerts'
   | 'confirmations'
@@ -220,6 +221,7 @@ const SETTINGS_TABS: { id: SettingsTab; label: string }[] = [
   { id: 'phone', label: 'Phone' },
   { id: 'digital', label: 'Digital (FT8/FT4)' },
   { id: 'cw', label: 'CW' },
+  { id: 'rtty', label: 'RTTY' },
   { id: 'frequencies', label: 'Frequencies' },
   { id: 'alerts', label: 'Alerts' },
   { id: 'confirmations', label: 'Logbook & QSL' },
@@ -3556,6 +3558,122 @@ export function SettingsPanel({
                     </div>
                   </>
                 )}
+              </div>
+            </div>
+          </fieldset>
+          )}
+
+          {/* ---- RTTY — keying backend + signal parameters (TX + RX demod both) ---- */}
+          {tab === 'rtty' && (
+          <fieldset className="settings-section">
+            <legend>RTTY</legend>
+            <div className="settings-featgroup">
+              <span className="settings-featgroup-title">Keying</span>
+              <label className="settings-field">
+                <span className="settings-label">Keying backend</span>
+                <select
+                  className="settings-input"
+                  value={form.rttyBackend ?? 'afsk'}
+                  onChange={(e) => update('rttyBackend', e.target.value)}
+                >
+                  <option value="afsk">AFSK — soundcard tones through the rig in LSB (default)</option>
+                  <option value="fsk">True FSK — serial keyline (DTR/RTS), rig in RTTY mode</option>
+                </select>
+                <span className="settings-hint">
+                  How Nexus transmits RTTY. <strong>AFSK</strong> plays the two-tone waveform through
+                  the same TX audio path as FT8 (soundcard-clocked = jitter-free; set drive so ALC
+                  reads just zero). <strong>True FSK</strong> bit-bangs the rig&apos;s FSK input over a
+                  serial control line with the rig in RTTY mode — unlocking its narrow RTTY filters
+                  (e.g. the FTDX10&apos;s) — with PTT on CAT or its own line. Software FSK timing is
+                  casual/Field-Day grade; AFSK is the timing-cleanest path.
+                </span>
+              </label>
+              {form.rttyBackend === 'fsk' && (
+                <>
+                  <label className="settings-field">
+                    <span className="settings-label">FSK serial port</span>
+                    <input
+                      className="settings-input"
+                      type="text"
+                      value={form.rttyFskPort ?? ''}
+                      placeholder="COM8 — e.g. the FTDX10's USB Enhanced COM"
+                      onChange={(e) => update('rttyFskPort', e.target.value)}
+                      autoComplete="off"
+                      spellCheck={false}
+                    />
+                    <span className="settings-hint">
+                      The port whose control line feeds the rig&apos;s FSK input. Empty = the CAT
+                      serial port.
+                    </span>
+                  </label>
+                  <label className="settings-field">
+                    <span className="settings-label">FSK data line</span>
+                    <select
+                      className="settings-input"
+                      value={form.rttyFskLine ?? 'dtr'}
+                      onChange={(e) => update('rttyFskLine', e.target.value)}
+                    >
+                      <option value="dtr">DTR (the common wiring — RTS stays free for PTT)</option>
+                      <option value="rts">RTS</option>
+                    </select>
+                    <span className="settings-hint">
+                      Which control line carries the data bits. PTT must ride its OWN path — CAT
+                      PTT or the separate PTT line, never this one; Nexus refuses a send if they
+                      collide.
+                    </span>
+                  </label>
+                </>
+              )}
+            </div>
+            <div className="settings-featgroup">
+              <span className="settings-featgroup-title">Signal</span>
+              <label className="settings-field">
+                <span className="settings-label">Baud rate</span>
+                <select
+                  className="settings-input"
+                  value={String(form.rttyBaud ?? 45.45)}
+                  onChange={(e) => updateNum('rttyBaud', Number(e.target.value))}
+                >
+                  <option value="45.45">45.45 — the HF standard</option>
+                  <option value="75">75 — VHF / some nets</option>
+                </select>
+                <span className="settings-hint">
+                  Drives the TX bit clock and the RX demodulator (true 45.45, never rounded to 45).
+                </span>
+              </label>
+              <label className="settings-field">
+                <span className="settings-label">Shift (Hz)</span>
+                <select
+                  className="settings-input"
+                  value={String(form.rttyShiftHz ?? 170)}
+                  onChange={(e) => updateNum('rttyShiftHz', Number(e.target.value))}
+                >
+                  <option value="170">170 — the HF standard</option>
+                  <option value="425">425</option>
+                  <option value="850">850</option>
+                </select>
+                <span className="settings-hint">
+                  Mark/space spacing — the TX tone pair and the RX demodulator both.
+                </span>
+              </label>
+              <div className="settings-field">
+                <label className="settings-toggle">
+                  <span className="settings-label">Reverse (swap mark/space)</span>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={form.rttyReverse === true}
+                    className={`toggle${form.rttyReverse === true ? ' on' : ''}`}
+                    onClick={() => updateBool('rttyReverse', form.rttyReverse !== true)}
+                  >
+                    <span className="toggle-knob" />
+                  </button>
+                </label>
+                <span className="settings-hint">
+                  The convention is LSB with mark on the lower audio tone. Turn this on when
+                  deliberately running the opposite sideband (e.g. AFSK in USB/DATA-U) so the
+                  on-air sense stays correct — applies to TX and the RX decoder.
+                </span>
               </div>
             </div>
           </fieldset>

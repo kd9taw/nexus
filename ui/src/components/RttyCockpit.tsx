@@ -2,9 +2,18 @@ import { useEffect, useRef, useState } from 'react'
 import type { AppSnapshot, BandChannel, RttyState } from '../types'
 import { CockpitHeader } from './CockpitHeader'
 import { FrequencyControl } from './FrequencyControl'
-import { getLicensedBandPlan, getRttyState, rttyArm } from '../api'
+import {
+  getLicensedBandPlan,
+  getRttyState,
+  haltTx,
+  rttyAfcReset,
+  rttyArm,
+  rttyClear,
+  rttySend,
+  rttyStop,
+} from '../api'
 import { bandLabelForMhz } from '../band'
-import { pushToast } from '../toast'
+import { pushToast, withErrorToast } from '../toast'
 
 interface Props {
   /** Live snapshot — may be absent while the app is still connecting; the shell
@@ -22,12 +31,13 @@ interface Props {
 }
 
 /** Standard casual RTTY F-key set (599-not-5NN comes with the contest schemas).
- * Disabled placeholders — TX is a later, safety-reviewed wave (AFSK/FSK keying
- * + the auto-sequencer); the tooltips show the template each key will send. */
+ * Simple templates for now — {MYCALL} from the snapshot, {CALL} from the
+ * their-call field; the full auto-sequencer wiring is a later wave. The engine
+ * re-validates every gate (TX-enable, privileges, RTTY section) on each send. */
 const MACROS: { key: string; label: string; text: string }[] = [
   { key: 'F1', label: 'CQ', text: 'CQ CQ CQ DE {MYCALL} {MYCALL} K' },
   { key: 'F2', label: 'Answer', text: '{CALL} DE {MYCALL} {MYCALL} K' },
-  { key: 'F3', label: 'Exchange', text: '{CALL} DE {MYCALL} UR 599 599 {NAME} {NAME} K' },
+  { key: 'F3', label: 'Exchange', text: '{CALL} DE {MYCALL} UR 599 599 K' },
   { key: 'F4', label: '73', text: '{CALL} DE {MYCALL} TU 73 SK' },
 ]
 
@@ -64,11 +74,12 @@ function fmtAfc(hz: number): string {
 }
 
 /**
- * RTTY operating cockpit (Digital rail: FT · Tempo · RTTY · SSTV) — LIVE RX.
- * Arm the decoder and the tempo_core::rtty demod prints here with per-character
- * confidence fading + the acquire-then-freeze AFC readout. TX (macros/compose,
- * the AFSK/FSK keying paths and the FSK-vs-AFSK rig-mode policy) is a later,
- * safety-reviewed wave — those controls stay disabled. Mounted in a keep-alive
+ * RTTY operating cockpit (Digital rail: FT · Tempo · RTTY · SSTV) — live RX
+ * (arm the decoder; the tempo_core::rtty demod prints with per-character
+ * confidence fading + the acquire-then-freeze AFC readout) and operator-keyed
+ * TX (macro row + compose through the AFSK/FSK backend the Settings pick; every
+ * send is engine-gated on TX-enable, license privileges and the RTTY section
+ * owning the rig — nothing here ever keys on its own). Mounted in a keep-alive
  * host (like Operate) so the decoded stream keeps accumulating while the
  * operator is on another section.
  */
@@ -120,13 +131,62 @@ export function RttyCockpit({ snap, onSnap, active = true, onSetFrequency }: Pro
     onSetFrequency?.(mhz, band, snap?.radio.sideband || 'USB')
   }
 
-  const text = rtty?.text ?? ''
+  // --- TX: compose + macros. Simple {MYCALL}/{CALL} substitution for now (the
+  // auto-sequencer wave brings the full template layer). The ENGINE is the
+  // authority on every send — it re-checks TX-enable / privileges / section
+  // ownership and returns why a send was refused (surfaced as a toast).
+  const [text, setText] = useState('')
+  const [hisCall, setHisCall] = useState('')
+  // Live snapshot ref so send() reads the CURRENT privilege state (same pattern
+  // as the CW cockpit's keyboard handler).
+  const snapRef = useRef(snap)
+  snapRef.current = snap
+  const send = (t: string) => {
+    if (!t.trim()) return
+    const mycall = snapRef.current?.mycall?.trim() ?? ''
+    if (t.includes('{MYCALL}') && !mycall) {
+      pushToast('Set your callsign in Settings before transmitting', 'info', 3500)
+      return
+    }
+    if (t.includes('{CALL}') && !hisCall.trim()) {
+      pushToast('Enter their call first (the {CALL} field)', 'info', 3000)
+      return
+    }
+    // The engine blocks keying outside privileges anyway; surface why up front.
+    if (snapRef.current && !snapRef.current.radio.txAllowed) {
+      pushToast('TX locked — this frequency is outside your license privileges', 'info', 3500)
+      return
+    }
+    const expanded = t
+      .replace(/\{MYCALL\}/g, mycall)
+      .replace(/\{CALL\}/g, hisCall.trim().toUpperCase())
+    void withErrorToast(() => rttySend(expanded), 'RTTY send failed').then((s) => {
+      if (s) setRtty(s)
+    })
+  }
+  const sendTyped = () => {
+    send(text)
+    setText('')
+  }
+  const stop = () => {
+    // Stop RTTY (abort the over + drop the queue + unkey) AND drop any tune
+    // carrier / stray PTT — a true stop-everything, like the CW cockpit's Esc.
+    void rttyStop()
+      .then(setRtty)
+      .catch(() => {})
+    void haltTx()
+  }
+
+  const sending = rtty?.sending === true
+  const backend = (rtty?.backend ?? 'afsk').toUpperCase()
+
+  const text_rx = rtty?.text ?? ''
   const streamRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     // Autoscroll: newest text stays in view (same behavior as the CW transcript).
     const el = streamRef.current
     if (el) el.scrollTop = el.scrollHeight
-  }, [text])
+  }, [text_rx])
 
   return (
     <main className="layout single rtty-cockpit">
@@ -134,20 +194,31 @@ export function RttyCockpit({ snap, onSnap, active = true, onSetFrequency }: Pro
         <CockpitHeader
           snap={snap}
           onSnap={onSnap}
+          txActiveLabel="▲ RTTY"
+          onStopTx={stop}
           modeIndicator={
             <>
               <span
                 className="cw-mode-badge"
-                title="RTTY RX — 45.45 baud Baudot, 170 Hz shift (the HF standard). 75 baud + wide shifts come in a later build."
+                title="RTTY — Baudot/ITA2 at the configured baud + shift (45.45 / 170 Hz is the HF standard; change it in Settings → RTTY)"
               >
-                RTTY 45.45 · 170 Hz
+                RTTY {rtty ? `${rtty.baud} · ${rtty.shiftHz} Hz` : '45.45 · 170 Hz'}
               </span>
               <span
                 className="rtty-backend-pill"
-                title="Keying backend — AFSK (soundcard tones through the rig, the robust default) vs true FSK (serial keyline). The picker lands with the TX wiring."
+                title={
+                  backend === 'FSK'
+                    ? 'True FSK — data bits on the serial keyline, rig in RTTY mode (its narrow RTTY filters work). Change the backend in Settings → RTTY.'
+                    : 'AFSK — soundcard tones through the rig in LSB (soundcard-clocked, the robust default). Change the backend in Settings → RTTY.'
+                }
               >
-                AFSK
+                {backend}
               </span>
+              {sending && (
+                <span className="rtty-tx-pill" title="RTTY transmission on the air (Stop TX aborts)">
+                  TX ▲
+                </span>
+              )}
             </>
           }
           bandControl={
@@ -170,6 +241,12 @@ export function RttyCockpit({ snap, onSnap, active = true, onSetFrequency }: Pro
           }
           onCommitDial={onSetFrequency ? commitDial : undefined}
         />
+      )}
+
+      {rtty?.keyerError && (
+        <div className="cw-keyer-warn" role="alert">
+          ⚠ {rtty.keyerError}
+        </div>
       )}
 
       <div
@@ -196,18 +273,43 @@ export function RttyCockpit({ snap, onSnap, active = true, onSetFrequency }: Pro
               className={`rtty-afc-pill${rtty.afcLocked ? ' locked' : ''}`}
               title={
                 rtty.afcLocked
-                  ? 'AFC locked — acquired the mark/space pair and frozen on it (offset from the nominal 2125/2295 Hz tones)'
-                  : 'AFC offset from the nominal 2125/2295 Hz tone pair — locks once a signal is acquired'
+                  ? 'AFC locked — acquired the mark/space pair and frozen on it (offset from the nominal tones)'
+                  : 'AFC offset from the nominal mark/space tone pair — locks once a signal is acquired'
               }
             >
               {fmtAfc(rtty.afcHz)}
               {rtty.afcLocked ? ' 🔒' : ''}
             </span>
           )}
+          {armed && (
+            <button
+              type="button"
+              className="rtty-arm"
+              onClick={() => {
+                void rttyAfcReset()
+                  .then(setRtty)
+                  .catch(() => {})
+              }}
+              title="Re-acquire AFC — drop and rebuild the demodulator (use when it froze on the wrong signal)"
+            >
+              Re-tune
+            </button>
+          )}
+          <button
+            className="cw-decode-clear"
+            onClick={() => {
+              void rttyClear()
+                .then(setRtty)
+                .catch(() => {})
+            }}
+            title="Clear the decoded transcript"
+          >
+            Clear
+          </button>
         </div>
         <div className="cw-decode-text" ref={streamRef}>
-          {text ? (
-            confidenceRuns(text, rtty?.charConf ?? []).map((run, i) => (
+          {text_rx ? (
+            confidenceRuns(text_rx, rtty?.charConf ?? []).map((run, i) => (
               <span key={i} style={run.opacity < 1 ? { opacity: run.opacity } : undefined}>
                 {run.text}
               </span>
@@ -221,35 +323,58 @@ export function RttyCockpit({ snap, onSnap, active = true, onSetFrequency }: Pro
       </div>
 
       <div className="cw-macros rtty-macros" role="group" aria-label="RTTY macros">
+        <input
+          className="settings-input rtty-hiscall"
+          value={hisCall}
+          onChange={(e) => setHisCall(e.target.value.toUpperCase())}
+          placeholder="Their call…"
+          aria-label="Worked station callsign (the {CALL} macro token)"
+          autoComplete="off"
+          spellCheck={false}
+        />
         {MACROS.map((m) => (
           <button
             key={m.key}
             type="button"
             className="cw-macro"
-            disabled
-            title={`${m.text} — TX comes in a later, safety-reviewed build`}
+            onClick={() => send(m.text)}
+            title={m.text
+              .replace(/\{MYCALL\}/g, snap?.mycall ?? '{MYCALL}')
+              .replace(/\{CALL\}/g, hisCall.trim().toUpperCase() || '{CALL}')}
           >
             <span className="cw-macro-key">{m.key}</span>
             <span className="cw-macro-label">{m.label}</span>
           </button>
         ))}
+        <button
+          type="button"
+          className="cw-macro rtty-stop"
+          onClick={stop}
+          disabled={!sending}
+          title="Stop RTTY — abort the transmission in progress, drop anything queued, unkey"
+        >
+          <span className="cw-macro-key">Esc</span>
+          <span className="cw-macro-label">Stop</span>
+        </button>
       </div>
 
       <div className="cw-send">
         <input
           className="settings-input cw-type"
-          disabled
-          placeholder="Type RTTY to send… (TX comes in a later, safety-reviewed build)"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault()
+              sendTyped()
+            }
+          }}
+          placeholder="Type RTTY to send… (Enter)"
           autoComplete="off"
           spellCheck={false}
-          aria-label="RTTY compose (disabled — TX not wired yet)"
+          aria-label="RTTY compose"
         />
-        <button
-          type="button"
-          className="cw-send-btn"
-          disabled
-          title="TX comes in a later, safety-reviewed build"
-        >
+        <button type="button" className="cw-send-btn" onClick={sendTyped} disabled={!text.trim()}>
           Send
         </button>
       </div>

@@ -21,6 +21,6 @@ pub mod baudot;
 pub mod demod;
 pub mod seq;
 
-pub use baudot::{BaudotDecoder, BaudotEncoder};
+pub use baudot::{code_bits, encodable, BaudotDecoder, BaudotEncoder};
 pub use demod::{DecodedChar, RttyConfig, RttyDemod, RttyDemodulator};
 pub use seq::{Action, RttySeq, SeqState};

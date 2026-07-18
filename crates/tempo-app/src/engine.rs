@@ -537,6 +537,24 @@ pub struct Engine {
     rtty_afc_hz: f32,
     /// Whether the RTTY demodulator's AFC has acquired-then-frozen (locked).
     rtty_afc_locked: bool,
+    /// One-shot: drop + rebuild the RX demodulator (the AFC-reset command — a
+    /// wrong-neighbor acquire-then-freeze recovers by re-acquiring from scratch).
+    rtty_afc_reset: bool,
+    /// Queued RTTY transmissions, one whole message per entry (already uppercased
+    /// + ITA2-filtered). Filled ONLY by [`Engine::rtty_send_text`] — an explicit
+    /// operator send — never on arm/launch. The radio loop keys ONE message at a
+    /// time via [`Engine::poll_rtty_one`] (gated on tx_enabled + privileges +
+    /// the Rtty operating mode + not tuning), pacing on the real bit-stream
+    /// duration; Stop TX / halt clears this queue so the rest never keys.
+    rtty_queue: VecDeque<String>,
+    /// One-shot: abort the RTTY transmission in progress (the loop stops the FSK
+    /// keying thread / flushes the AFSK audio ring and unkeys PTT).
+    rtty_abort: bool,
+    /// True while the radio loop is keying an RTTY over (stamped by the loop each
+    /// tick; the cockpit's sending indicator).
+    rtty_sending: bool,
+    /// An RTTY keyer failure to surface (FSK port wouldn't open / PTT refused).
+    rtty_keyer_error: Option<String>,
     /// SSTV RX decoder armed (session-only runtime state, never persisted).
     sstv_armed: bool,
     /// Drain buffer for the SSTV decode thread (same pattern as `rtty_audio`).
@@ -562,6 +580,9 @@ const AI_CW_WINDOW: usize = 180_000;
 const QSO_WAV_WINDOW: usize = 720_000;
 /// RTTY decoded-character ring cap: ~4000 chars ≈ tens of minutes of copy at 45.45 baud.
 const RTTY_TEXT_CAP: usize = 4000;
+/// AFSK RTTY mark tone (Hz) — mirrors `tempo_audio::rtty_afsk::MARK_HZ` (tempo-app can't
+/// depend on tempo-audio); used only to judge where the AFSK emission lands vs the dial.
+const RTTY_AFSK_MARK_HZ: f64 = 2125.0;
 /// Cap on the armed RTTY/SSTV audio drain buffers (~10 s at 12 kHz). The decode
 /// threads normally empty these every ~100 ms; the cap only bites if a thread
 /// stalls, dropping oldest audio (garbling that decode) instead of growing RAM
@@ -588,9 +609,10 @@ pub struct SstvProgress {
     pub preview_rgb: Vec<u8>,
 }
 
-/// Compact RTTY RX state for the `get_rtty_state` poll: armed flag, AFC, and
-/// the decoded-text ring with per-character confidence (0–100, parallel to
-/// `text`'s chars — render low values faint).
+/// Compact RTTY state for the `get_rtty_state` poll: armed flag, AFC, the
+/// decoded-text ring with per-character confidence (0–100, parallel to `text`'s
+/// chars — render low values faint), plus the TX side (configured baud/shift/
+/// backend, the live sending flag, and any keyer failure to surface).
 #[derive(Debug, Clone, PartialEq)]
 pub struct RttyRxState {
     pub armed: bool,
@@ -598,6 +620,11 @@ pub struct RttyRxState {
     pub afc_locked: bool,
     pub text: String,
     pub conf: Vec<u8>,
+    pub baud: f64,
+    pub shift_hz: u32,
+    pub backend: String,
+    pub sending: bool,
+    pub keyer_error: Option<String>,
 }
 
 /// Window of recent decode DT samples used for the time-sync health median.
@@ -814,6 +841,11 @@ impl Engine {
             rtty_chars: VecDeque::new(),
             rtty_afc_hz: 0.0,
             rtty_afc_locked: false,
+            rtty_afc_reset: false,
+            rtty_queue: VecDeque::new(),
+            rtty_abort: false,
+            rtty_sending: false,
+            rtty_keyer_error: None,
             sstv_armed: false,
             sstv_audio: Vec::new(),
             sstv_progress: None,
@@ -1402,6 +1434,31 @@ impl Engine {
                         },
                     )
                 }),
+            // RTTY: park on the band's RTTY watering hole (the built-in plan the cockpit's
+            // band selector serves) — only if the operator may key the RTTY emission there.
+            OperatingMode::Rtty => crate::bandplan::rtty_band_plan()
+                .into_iter()
+                .find(|c| c.band == band)
+                .filter(|c| self.rtty_emission_ok(c.dial_mhz))
+                .map(|c| (c.dial_mhz, c.mode)),
+        }
+    }
+
+    /// May the operator's class key the RTTY EMISSION at `dial`? Judges the real RF span
+    /// per keying backend (keep in step with [`Self::tx_allowed`]'s Rtty arm): AFSK rides
+    /// LSB, so the mark/space audio pair (2125 / 2125+shift Hz) lands BELOW the dial;
+    /// true FSK keys the rig's RTTY mode where the dial reads the mark RF and space sits
+    /// `shift` below. Both edges of the span must be privileged.
+    fn rtty_emission_ok(&self, dial: f64) -> bool {
+        use crate::settings::OperatingMode;
+        let class = self.settings.license_class;
+        let shift = self.settings.rtty_shift_hz as f64 / 1_000_000.0;
+        let allow = |f: f64| crate::privileges::tx_allowed(class, f, OperatingMode::Rtty);
+        if self.settings.rtty_backend.eq_ignore_ascii_case("fsk") {
+            allow(dial - shift) && allow(dial)
+        } else {
+            let mark = RTTY_AFSK_MARK_HZ / 1_000_000.0;
+            allow(dial - mark - shift) && allow(dial - mark)
         }
     }
 
@@ -1423,6 +1480,7 @@ impl Engine {
         let om = match mode.to_ascii_lowercase().as_str() {
             "phone" => OperatingMode::Phone,
             "cw" => OperatingMode::Cw,
+            "rtty" => OperatingMode::Rtty,
             _ => OperatingMode::Digital,
         };
         self.settings.operating_mode = om;
@@ -1439,12 +1497,17 @@ impl Engine {
         // Re-assert the rig mode now even if the dial didn't change (e.g. picking CW while
         // already on a CW freq must still command CW, not wait for a dial change).
         self.immediate_retune = true;
-        // Phone and CW are MANUAL modes — there's no auto-sequencer (poll_tx is gated off
-        // for non-Digital), and the operator keys TX explicitly via PTT / the voice keyer
-        // / CW. Arm transmit on entry so those work, like a rig's live mic/key. (Digital
-        // is NOT auto-armed: the FT8 slot TX stays behind the Monitor / double-click /
-        // Call-CQ gate, so the app never auto-keys FT8 on launch — the safety invariant.)
-        if matches!(om, OperatingMode::Phone | OperatingMode::Cw) {
+        // Phone, CW and RTTY are MANUAL modes — there's no auto-sequencer (poll_tx is
+        // gated off for non-Digital), and the operator keys TX explicitly via PTT / the
+        // voice keyer / CW / an RTTY send. Arm transmit on entry so those work, like a
+        // rig's live mic/key. Arming keys NOTHING by itself — every one of those paths
+        // still waits for an explicit operator send. (Digital is NOT auto-armed: the FT8
+        // slot TX stays behind the Monitor / double-click / Call-CQ gate, so the app
+        // never auto-keys FT8 on launch — the safety invariant.)
+        if matches!(
+            om,
+            OperatingMode::Phone | OperatingMode::Cw | OperatingMode::Rtty
+        ) {
             self.set_tx_enabled(true);
         }
     }
@@ -3934,6 +3997,11 @@ impl Engine {
                                     // on its next tick — otherwise "Stop TX" is a no-op mid-CW.
         self.cw_queue.clear();
         self.cw_abort = true;
+        // Cut any in-progress RTTY the same way: drop every queued message and arm
+        // the one-shot abort so the radio loop stops the FSK keying thread / flushes
+        // the AFSK audio ring and unkeys on its next tick.
+        self.rtty_queue.clear();
+        self.rtty_abort = true;
         self.voice_tx = None; // drop any queued voice-keyer audio too
         self.tx_queue.clear();
         self.broadcast_queue.clear();
@@ -4089,6 +4157,10 @@ impl Engine {
             // any in-flight CW keeps sending. Mirror halt_tx's CW stop.
             self.cw_queue.clear();
             self.cw_abort = true;
+            // Same for RTTY: a disarm must abort the over in flight AND drop the
+            // queue, so nothing keys on a later re-enable.
+            self.rtty_queue.clear();
+            self.rtty_abort = true;
             self.tx_queue.clear();
             self.broadcast_queue.clear();
             self.app.set_transmitting(false);
@@ -4372,7 +4444,7 @@ impl Engine {
         self.rtty_afc_locked = afc_locked;
     }
 
-    /// The compact RTTY RX state the UI polls (`get_rtty_state`).
+    /// The compact RTTY state the UI polls (`get_rtty_state`).
     pub fn rtty_state(&self) -> RttyRxState {
         RttyRxState {
             armed: self.rtty_armed,
@@ -4384,7 +4456,228 @@ impl Engine {
                 .iter()
                 .map(|c| (c.confidence.clamp(0.0, 1.0) * 100.0).round() as u8)
                 .collect(),
+            baud: self.rtty_baud(),
+            shift_hz: self.rtty_shift_hz(),
+            backend: if self.rtty_fsk() { "fsk" } else { "afsk" }.to_string(),
+            // Sending = an over on the air (stamped by the loop) OR messages still
+            // queued behind it — the cockpit's TX indicator.
+            sending: self.rtty_sending || !self.rtty_queue.is_empty(),
+            keyer_error: self.rtty_keyer_error.clone(),
         }
+    }
+
+    /// Clear the decoded-RTTY transcript (the cockpit's Clear button). RX display
+    /// only — the demodulator keeps running.
+    pub fn rtty_clear(&mut self) {
+        self.rtty_chars.clear();
+    }
+
+    /// Request an RX demodulator rebuild (AFC re-acquire): the decode thread drops
+    /// its demod and builds a fresh one — the recovery for an acquire-then-freeze
+    /// AFC frozen on the wrong neighbor. RX only; no TX path touches this.
+    pub fn request_rtty_afc_reset(&mut self) {
+        self.rtty_afc_reset = true;
+        self.rtty_afc_hz = 0.0;
+        self.rtty_afc_locked = false;
+    }
+
+    /// Take + reset the one-shot demod-rebuild request (decode-thread only).
+    pub fn take_rtty_afc_reset(&mut self) -> bool {
+        std::mem::take(&mut self.rtty_afc_reset)
+    }
+
+    // ----- RTTY transmit — operator-initiated, mirroring the CW send path. -----
+    // Launch-safety: nothing here runs on startup or on arm. The queue fills ONLY
+    // via `rtty_send_text` (an explicit operator command) and the radio loop keys
+    // ONLY what `poll_rtty_one` hands it, behind every TX gate.
+
+    /// Queue RTTY text to transmit — validating every TX gate UP FRONT so a refused
+    /// send tells the operator why (instead of silently holding a queue): TX must be
+    /// armed (`tx_enabled`, the WSJT-X Enable-Tx discipline), the RTTY emission must
+    /// sit inside license privileges at the current dial (`tx_allowed`), the RTTY
+    /// section must own the rig (`operating_mode == Rtty` — this and the FT8/FT1
+    /// slot sequencer are mutually exclusive by construction), no tune carrier may
+    /// be up, and no foreign transmission may be in flight. Text is uppercased and
+    /// filtered to the ITA2 charset, so exactly what's queued is what keys. Sending
+    /// while RTTY itself is transmitting queues BEHIND the current over (type-ahead);
+    /// Stop TX / halt drops the whole queue.
+    pub fn rtty_send_text(&mut self, text: &str) -> Result<(), String> {
+        use crate::settings::OperatingMode;
+        if self.settings.operating_mode != OperatingMode::Rtty {
+            return Err("Not in the RTTY section — enter the RTTY cockpit first".to_string());
+        }
+        if !self.tx_enabled {
+            return Err("TX is off — enable TX first (Stop TX / the watchdog disarmed it)"
+                .to_string());
+        }
+        if !self.tx_allowed() {
+            return Err(
+                "TX locked — this frequency is outside your license privileges".to_string(),
+            );
+        }
+        if self.tuning {
+            return Err("Tune carrier is up — stop tuning first".to_string());
+        }
+        if self.app.radio.transmitting {
+            return Err("Another transmission is in flight — stop it first".to_string());
+        }
+        // FSK line-conflict guard: the FSK DATA line and a serial PTT line must never
+        // be the same physical line — PTT rides its own path (CAT PTT or the other
+        // line/port), or the data bits would double as the key.
+        if let Some(port) = self.rtty_fsk_port() {
+            let ptt = self.settings.ptt_method.trim().to_ascii_lowercase();
+            if ptt == "dtr" || ptt == "rts" {
+                let ptt_port = if self.settings.ptt_serial_port.trim().is_empty() {
+                    self.settings.serial_port.trim()
+                } else {
+                    self.settings.ptt_serial_port.trim()
+                };
+                if ptt_port.eq_ignore_ascii_case(&port)
+                    && ptt == self.rtty_fsk_line().trim().to_ascii_lowercase()
+                {
+                    return Err(
+                        "FSK keying and serial PTT share the same control line — give PTT its \
+                         own path (CAT PTT, or the other of DTR/RTS) so the data bits can't \
+                         double as the key"
+                            .to_string(),
+                    );
+                }
+            }
+        }
+        let up: String = text
+            .chars()
+            .map(|c| c.to_ascii_uppercase())
+            .filter(|&c| tempo_core::rtty::encodable(c))
+            .collect();
+        if up.trim().is_empty() {
+            return Err(
+                "Nothing to send — RTTY carries A–Z, 0–9 and basic punctuation".to_string(),
+            );
+        }
+        // Bound a SINGLE over: the TX watchdog is checked between queued messages
+        // (poll_rtty_one), so one message must never be able to key longer than the
+        // watchdog ceiling on its own. 1000 chars ≈ 2.75 min at 45.45 baud — well
+        // under the 6-minute default, and far beyond any human RTTY over.
+        const RTTY_MAX_SEND_CHARS: usize = 1000;
+        if up.chars().count() > RTTY_MAX_SEND_CHARS {
+            return Err(format!(
+                "Message too long — RTTY sends are capped at {RTTY_MAX_SEND_CHARS} characters \
+                 per over"
+            ));
+        }
+        // An explicit operator send restarts the TX-watchdog clock (see poll_rtty_one).
+        self.reset_tx_watchdog();
+        self.rtty_queue.push_back(up);
+        Ok(())
+    }
+
+    /// Stop RTTY: drop everything queued and abort the over in progress — the radio
+    /// loop consumes the one-shot abort, stops the FSK keying thread / flushes the
+    /// AFSK audio and unkeys PTT. The cockpit's Stop button (halt_tx also does this).
+    pub fn rtty_stop(&mut self) {
+        self.rtty_queue.clear();
+        self.rtty_abort = true;
+    }
+
+    /// Pop the next queued RTTY MESSAGE for the radio loop to key, or `None` while
+    /// any TX gate is down (Monitor off / outside privileges / not the RTTY section /
+    /// a tune carrier up — the queue is then HELD, so nothing keys unexpectedly; the
+    /// FT8/FT1 sequencer's `poll_tx` is gated off for non-Digital the same way, so
+    /// the two can never key together). One message per call: the loop paces on the
+    /// real bit-stream duration, so a Stop between messages drops the remainder
+    /// before it reaches the rig. The wall-clock TX watchdog applies here exactly as
+    /// it does to the FT8 slot — past the ceiling it trips BEFORE handing the
+    /// message out: TX disarms, the queue drops, and the abort unkeys.
+    pub fn poll_rtty_one(&mut self) -> Option<String> {
+        use crate::settings::OperatingMode;
+        if !self.tx_enabled
+            || !self.tx_allowed()
+            || self.tuning
+            || self.settings.operating_mode != OperatingMode::Rtty
+            || self.rtty_queue.is_empty()
+        {
+            return None;
+        }
+        // Wall-clock watchdog (WSJT-X semantics): timed from the last operator
+        // action — every rtty_send_text resets it, so this only bites a runaway.
+        let limit_secs = self.settings.tx_watchdog_min as u64 * 60;
+        if limit_secs > 0 {
+            let now = now_unix_secs();
+            let start = *self.tx_watchdog_start.get_or_insert(now);
+            if now.saturating_sub(start) >= limit_secs {
+                self.tx_watchdog = true;
+                self.tx_enabled = false;
+                self.rtty_queue.clear();
+                self.rtty_abort = true;
+                return None;
+            }
+        }
+        self.rtty_queue.pop_front()
+    }
+
+    /// Take + reset the one-shot RTTY abort flag (the loop stops the keyer, flushes
+    /// queued audio and unkeys).
+    pub fn take_rtty_abort(&mut self) -> bool {
+        std::mem::take(&mut self.rtty_abort)
+    }
+
+    /// True if RTTY keys via the true-FSK serial keyline (vs the default soundcard
+    /// AFSK) — also picks the rig mode (RTTY vs LSB, see `Settings::rig_mode`).
+    pub fn rtty_fsk(&self) -> bool {
+        self.settings.rtty_backend.eq_ignore_ascii_case("fsk")
+    }
+
+    /// The FSK keyline serial port when the RTTY backend is FSK: the dedicated
+    /// `rtty_fsk_port` when set, else the CAT `serial_port` (the same fallback the
+    /// RTS/DTR PTT line uses). `None` for AFSK, or when no port is configured at all.
+    pub fn rtty_fsk_port(&self) -> Option<String> {
+        if !self.rtty_fsk() {
+            return None;
+        }
+        let p = self.settings.rtty_fsk_port.trim();
+        let p = if p.is_empty() {
+            self.settings.serial_port.trim()
+        } else {
+            p
+        };
+        (!p.is_empty()).then(|| p.to_string())
+    }
+
+    /// Which control line carries the FSK data bits ("dtr"/"rts").
+    pub fn rtty_fsk_line(&self) -> String {
+        self.settings.rtty_fsk_line.clone()
+    }
+
+    /// RTTY baud rate for TX + RX. Sanitized: a zero/negative stored value falls
+    /// back to the 45.45 standard so a bit clock can never divide by zero.
+    pub fn rtty_baud(&self) -> f64 {
+        if self.settings.rtty_baud > 0.0 {
+            self.settings.rtty_baud
+        } else {
+            45.45
+        }
+    }
+
+    /// RTTY mark/space shift (Hz) for TX + RX (min 1 — a zero shift is no FSK).
+    pub fn rtty_shift_hz(&self) -> u32 {
+        self.settings.rtty_shift_hz.max(1)
+    }
+
+    /// Reversed mark/space sense (TX tone pair + RX demod).
+    pub fn rtty_reverse(&self) -> bool {
+        self.settings.rtty_reverse
+    }
+
+    /// Stamp whether the radio loop is keying an RTTY over right now (loop-only;
+    /// feeds the cockpit's sending indicator via `rtty_state`).
+    pub fn set_rtty_sending(&mut self, on: bool) {
+        self.rtty_sending = on;
+    }
+
+    /// Record (or clear) an RTTY keyer failure — the radio loop calls this after a
+    /// send (FSK port wouldn't open, rig refused PTT), so a silent no-TX has a cause.
+    pub fn set_rtty_keyer_error(&mut self, e: Option<String>) {
+        self.rtty_keyer_error = e;
     }
 
     // --- SSTV RX (armed decoder on the same tap; decode + image persistence run
@@ -4573,6 +4866,9 @@ impl Engine {
             }
             // CW: the carrier sits at the dial.
             OperatingMode::Cw => allow(dial),
+            // RTTY: judge the real mark/space RF span per keying backend (AFSK tones
+            // below the LSB dial; FSK shift below the RTTY-mode dial) — both edges.
+            OperatingMode::Rtty => self.rtty_emission_ok(dial),
         }
     }
 
@@ -6442,6 +6738,176 @@ mod tests {
         assert!(e.take_cw_abort());
         assert!(!e.take_cw_abort(), "abort is one-shot");
         assert_eq!(e.poll_cw_one(), None, "abort cleared the queue");
+    }
+
+    #[test]
+    fn rtty_launches_silent_and_arming_rx_creates_no_tx_state() {
+        let mut e = Engine::new("W9XYZ", "EN61", 0);
+        // Launch state: nothing queued, nothing pollable, no abort pending — the
+        // radio loop's RTTY dispatch can never key at startup.
+        assert_eq!(e.poll_rtty_one(), None);
+        assert!(!e.rtty_state().sending);
+        assert!(!e.take_rtty_abort());
+        // Arming the RX decoder is RX-only: still nothing pollable.
+        e.set_rtty_armed(true);
+        assert_eq!(e.poll_rtty_one(), None);
+        assert!(!e.rtty_state().sending);
+    }
+
+    #[test]
+    fn rtty_send_validates_every_tx_gate() {
+        let mut e = Engine::new("W9XYZ", "EN61", 0);
+        // Not in the RTTY section → refused: the section OWNS the rig for keying
+        // (the FT8/FT1 sequencer runs only in Digital, RTTY only in Rtty).
+        assert!(e.rtty_send_text("CQ TEST").is_err());
+        // Entering the RTTY section arms TX (a manual mode, like CW) — arming
+        // alone keys nothing; the queue stays empty until an explicit send.
+        e.set_operating_mode("rtty", false);
+        assert!(e.tx_enabled());
+        assert_eq!(e.poll_rtty_one(), None);
+        // Monitor off → refused with the reason (never a silent hold).
+        e.set_tx_enabled(false);
+        assert!(e.rtty_send_text("CQ TEST").unwrap_err().contains("TX is off"));
+        e.set_tx_enabled(true);
+        // Tune carrier up → refused.
+        e.set_tune(true);
+        assert!(e.rtty_send_text("CQ TEST").unwrap_err().contains("Tune"));
+        e.set_tune(false);
+        // License lockout: a Technician has no 20 m data privilege at all.
+        e.set_license_class("technician");
+        e.set_frequency(14.083, "20m", "LSB");
+        assert!(!e.tx_allowed());
+        assert!(e
+            .rtty_send_text("CQ TEST")
+            .unwrap_err()
+            .contains("license"));
+        // ...but 10 m data (28.080–28.100 window) is the Tech HF grant → allowed.
+        // (The cross-band QSY halts TX — the standing band-change invariant — so
+        // the operator re-arms, exactly like the TopBar TX button.)
+        e.set_frequency(28.083, "10m", "LSB");
+        assert!(!e.tx_enabled(), "a band change halts TX (existing invariant)");
+        e.set_tx_enabled(true);
+        assert!(e.tx_allowed());
+        e.rtty_send_text("CQ TEST").unwrap();
+        assert_eq!(e.poll_rtty_one(), Some("CQ TEST".to_string()));
+    }
+
+    #[test]
+    fn rtty_queue_uppercases_filters_and_stops() {
+        let mut e = Engine::new("W9XYZ", "EN61", 0);
+        e.set_operating_mode("rtty", false);
+        // Uppercased + filtered to the ITA2 charset ('%' has no mapping → dropped),
+        // so exactly what's queued is what keys.
+        e.rtty_send_text("cq de w9xyz 100%").unwrap();
+        assert_eq!(e.poll_rtty_one(), Some("CQ DE W9XYZ 100".to_string()));
+        assert_eq!(e.poll_rtty_one(), None, "drained");
+        assert!(!e.rtty_state().sending, "drained queue is not 'sending'");
+        // All-unmappable text refuses outright — nothing would key.
+        assert!(e.rtty_send_text("%*+=").is_err());
+        // A single over is length-bounded, so one pasted blob can never key past
+        // the watchdog ceiling on its own (the watchdog checks between messages).
+        assert!(e.rtty_send_text(&"A".repeat(1001)).unwrap_err().contains("too long"));
+        assert!(e.rtty_send_text(&"A".repeat(1000)).is_ok());
+        assert_eq!(e.poll_rtty_one().unwrap().len(), 1000);
+        // Disarming TX (Monitor off) aborts + DROPS the queue — nothing keys on a
+        // later re-enable (mirrors the CW disarm semantics).
+        e.rtty_send_text("TEST").unwrap();
+        assert!(e.rtty_state().sending, "queued = sending indicator on");
+        e.set_tx_enabled(false);
+        assert!(e.take_rtty_abort(), "disarm aborts the over in flight");
+        e.set_tx_enabled(true);
+        assert_eq!(e.poll_rtty_one(), None, "disarm dropped the queue");
+        // Stop drops the queue + arms the one-shot abort (the loop unkeys).
+        e.rtty_send_text("A LONG MESSAGE").unwrap();
+        e.rtty_stop();
+        assert!(e.take_rtty_abort());
+        assert!(!e.take_rtty_abort(), "abort is one-shot");
+        assert_eq!(e.poll_rtty_one(), None, "stop cleared the queue");
+    }
+
+    #[test]
+    fn rtty_halt_tx_aborts_clears_and_stays_stopped() {
+        let mut e = Engine::new("W9XYZ", "EN61", 0);
+        e.set_operating_mode("rtty", false);
+        e.rtty_send_text("CQ CQ DE W9XYZ").unwrap();
+        e.halt_tx();
+        assert!(e.take_rtty_abort(), "halt aborts the over in flight (unkey)");
+        assert!(!e.tx_enabled(), "halt disarms TX — stopped stays stopped");
+        assert_eq!(e.poll_rtty_one(), None, "nothing keys while disarmed");
+        e.set_tx_enabled(true);
+        assert_eq!(e.poll_rtty_one(), None, "halt dropped the queued messages");
+    }
+
+    #[test]
+    fn rtty_and_ft8_sequencers_never_key_together() {
+        let mut e = Engine::new("W9XYZ", "EN61", 0);
+        // RTTY owns the rig: the FT8/FT1 slot sequencer transmits NOTHING even
+        // with TX armed and a CQ queued (poll_tx is gated off for non-Digital).
+        e.set_operating_mode("rtty", false);
+        e.call_cq(None).unwrap();
+        for slot in 0..4 {
+            assert!(
+                e.poll_tx(slot).is_empty(),
+                "no FT8 keying while RTTY owns the rig"
+            );
+        }
+        // And vice versa: the RTTY queue is HELD while Digital owns the rig.
+        e.rtty_send_text("CQ TEST").unwrap();
+        e.set_operating_mode("digital", false);
+        assert_eq!(
+            e.poll_rtty_one(),
+            None,
+            "no RTTY keying while Digital owns the rig"
+        );
+        // Back in the RTTY section the held message keys normally.
+        e.set_operating_mode("rtty", false);
+        assert_eq!(e.poll_rtty_one(), Some("CQ TEST".to_string()));
+    }
+
+    #[test]
+    fn rtty_fsk_refuses_ptt_and_data_on_the_same_line() {
+        let mut e = Engine::new("W9XYZ", "EN61", 0);
+        let mut s = e.settings().clone();
+        s.rtty_backend = "fsk".into();
+        s.rtty_fsk_port = "COM7".into();
+        s.rtty_fsk_line = "dtr".into();
+        s.ptt_method = "dtr".into();
+        s.ptt_serial_port = "COM7".into();
+        e.apply_settings(s);
+        e.set_operating_mode("rtty", false);
+        let err = e.rtty_send_text("CQ").unwrap_err();
+        assert!(err.contains("same control line"), "{err}");
+        // PTT on the OTHER line of the same port is the classic legal wiring
+        // (DTR = FSK data, RTS = PTT).
+        let mut s = e.settings().clone();
+        s.ptt_method = "rts".into();
+        e.apply_settings(s);
+        e.set_operating_mode("rtty", false);
+        e.rtty_send_text("CQ").unwrap();
+    }
+
+    #[test]
+    fn rtty_fsk_port_falls_back_to_the_cat_serial_port() {
+        let mut e = Engine::new("W9XYZ", "EN61", 0);
+        assert_eq!(e.rtty_fsk_port(), None, "AFSK never opens a keyline");
+        let mut s = e.settings().clone();
+        s.rtty_backend = "fsk".into();
+        s.serial_port = "COM5".into();
+        e.apply_settings(s);
+        assert_eq!(
+            e.rtty_fsk_port().as_deref(),
+            Some("COM5"),
+            "empty FSK port = the CAT serial port"
+        );
+        let mut s = e.settings().clone();
+        s.rtty_fsk_port = "COM8".into();
+        e.apply_settings(s);
+        assert_eq!(e.rtty_fsk_port().as_deref(), Some("COM8"));
+        // State the cockpit polls: backend + baud/shift ride rtty_state.
+        let st = e.rtty_state();
+        assert_eq!(st.backend, "fsk");
+        assert_eq!(st.baud, 45.45);
+        assert_eq!(st.shift_hz, 170);
     }
 
     #[test]

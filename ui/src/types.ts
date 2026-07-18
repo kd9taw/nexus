@@ -765,7 +765,7 @@ export interface SkimHit {
  * visible). RX decode only — arming never touches any TX path. */
 export interface RttyState {
   armed: boolean
-  /** AFC offset from the nominal 2125/2295 Hz pair (Hz). */
+  /** AFC offset from the nominal mark/space pair (Hz). */
   afcHz: number
   /** AFC has acquired-then-frozen on a signal. */
   afcLocked: boolean
@@ -774,6 +774,17 @@ export interface RttyState {
   /** Per-character confidence 0–100, parallel to `text`'s chars — render low
    * values faint (the ATC soft metric). */
   charConf: number[]
+  /** Configured baud rate (true 45.45 by default). */
+  baud: number
+  /** Configured mark/space shift (Hz). */
+  shiftHz: number
+  /** Keying backend: 'afsk' (soundcard tones, rig in LSB) | 'fsk' (serial keyline,
+   * rig in RTTY mode). */
+  backend: string
+  /** An RTTY over is on the air or queued behind one (the TX indicator). */
+  sending: boolean
+  /** A keyer failure to surface (FSK port wouldn't open / rig refused PTT), else null. */
+  keyerError: string | null
 }
 
 /** One saved SSTV image in the local gallery (a BMP in the sstv-gallery folder
@@ -1550,6 +1561,22 @@ export interface Settings {
   cwKeyPort?: string
   /** Which line the serial keyline toggles: 'dtr' (default, CW convention) or 'rts'. */
   cwKeyLine?: string
+  /** RTTY keying backend: 'afsk' (default — soundcard tones, rig in LSB) or 'fsk'
+   * (true FSK serial keyline, rig in RTTY mode — unlocks its narrow filters). */
+  rttyBackend?: string
+  /** Which control line carries the FSK data bits: 'dtr' (default) or 'rts'.
+   * PTT rides its OWN path (CAT or the PTT serial line) — never this line. */
+  rttyFskLine?: string
+  /** Serial port for the FSK keying line (e.g. the FTDX10's USB Enhanced COM).
+   * Empty = the CAT serial port. */
+  rttyFskPort?: string
+  /** RTTY baud rate — true 45.45 by default (never 45); 75 is the other common rate. */
+  rttyBaud?: number
+  /** RTTY mark/space shift in Hz (170 = the HF standard). TX + RX demod both. */
+  rttyShiftHz?: number
+  /** Reverse the mark/space sense (TX tones + RX demod) — for running the
+   * opposite sideband (e.g. AFSK in USB/DATA-U). */
+  rttyReverse?: boolean
   band: string
   dialMhz: number
   sideband: string

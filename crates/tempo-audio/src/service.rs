@@ -426,6 +426,14 @@ pub fn run_radio(engine: Arc<Mutex<Engine>>, cfg: RadioConfig) -> Result<(), Str
             if let Some((_, wk)) = state.winkeyer.as_mut() {
                 let _ = wk.clear();
             }
+            // Cut any in-progress RTTY FSK keying the same way: abort the keying
+            // thread NOW (line parked at mark) rather than relying on Drop order.
+            // (The AFSK path is already covered — flush_output above dumps its
+            // queued audio and the ptt(false) unkeyed the carrier.)
+            #[cfg(feature = "serial")]
+            if let Some((_, _, k)) = state.rtty_keyer.as_ref() {
+                k.clear();
+            }
             SHUTDOWN_DONE.store(true, std::sync::atomic::Ordering::Relaxed);
             return Ok(());
         }
@@ -1005,6 +1013,15 @@ struct RadioLoop {
     /// Serial — opened on demand, reopened if the configured port or line changes.
     #[cfg(feature = "serial")]
     serial_keyer: Option<(String, String, crate::serial_keyer::SerialKeyer)>,
+    /// Unix-ms until which the current RTTY message is still keying — the next queued
+    /// message is held until then (poll pacing), and the PTT drop rides `tx_until_ms`.
+    /// 0.0 = idle / ready to send now.
+    rtty_busy_until: f64,
+    /// The open true-FSK keyline keyer (port + line + handle) when the RTTY backend is
+    /// FSK — opened on demand, reopened if the configured port or line changes, dropped
+    /// (line back to mark) when the operator switches to AFSK.
+    #[cfg(feature = "serial")]
+    rtty_keyer: Option<(String, String, crate::rtty_fsk::FskKeyer)>,
     /// Last manual-PTT (live phone) state we applied to the rig — only key on change.
     manual_ptt_applied: bool,
     /// Last RF power fraction we pushed to the rig — only set on change.
@@ -1157,6 +1174,9 @@ impl RadioLoop {
             winkeyer: None,
             #[cfg(feature = "serial")]
             serial_keyer: None,
+            rtty_busy_until: 0.0,
+            #[cfg(feature = "serial")]
+            rtty_keyer: None,
             manual_ptt_applied: false,
             last_rf_power: None,
             last_mic_gain: None,
@@ -1300,6 +1320,7 @@ impl RadioLoop {
         self.mode_giveup = None;
         self.last_cw_wpm = 0;
         self.cw_busy_until = 0.0;
+        self.rtty_busy_until = 0.0;
         self.last_fm = None;
         self.manual_ptt_applied = false;
         self.last_rf_power = None;
@@ -2342,6 +2363,164 @@ impl RadioLoop {
                                  Nexus's audio routed to the rig)."
                                     .to_string()
                             }));
+                        }
+                    }
+                }
+            }
+        }
+
+        // RTTY keying: feed ONE MESSAGE at a time, paced on the REAL bit-stream
+        // duration (fsk_schedule computes it from the framed Baudot stream — never
+        // guessed), so Stop TX between messages drops the rest of the queue before it
+        // reaches the rig. Operator-initiated only: the engine's poll_rtty_one gates
+        // on tx_enabled + privileges + the Rtty operating-mode ownership + not-tuning
+        // (the FT8/FT1 slot sequencer is gated off for non-Digital the same way, so
+        // the two can never key together). Send-and-done — no diddle idle in v1: PTT
+        // drops when the stop bit ends (tx_until_ms expiry), on Stop/halt (the abort
+        // below), on the watchdog trip (poll_rtty_one arms the abort), and at app
+        // exit (the SHUTDOWN flush).
+        {
+            let ready = now >= self.rtty_busy_until;
+            let (abort, msg, baud, shift, reverse, fsk_port_line) = {
+                let mut eng = engine.lock().map_err(|e| e.to_string())?;
+                // Keep the cockpit's sending indicator honest each tick: an over is
+                // "sending" until its computed duration has fully played out.
+                eng.set_rtty_sending(now < self.rtty_busy_until);
+                (
+                    eng.take_rtty_abort(),
+                    if ready { eng.poll_rtty_one() } else { None },
+                    eng.rtty_baud(),
+                    eng.rtty_shift_hz(),
+                    eng.rtty_reverse(),
+                    eng.rtty_fsk_port().map(|p| (p, eng.rtty_fsk_line())),
+                )
+            };
+            #[cfg(not(feature = "serial"))]
+            {
+                let _ = &fsk_port_line; // only the serial build keys the FSK line
+            }
+            // Switched away from the FSK keyer (AFSK now, or no port) → release the
+            // port; the keyer's Drop aborts any keying and parks the line at mark.
+            #[cfg(feature = "serial")]
+            if fsk_port_line.is_none() {
+                self.rtty_keyer = None;
+            }
+            if abort {
+                // Stop TX mid-over (Stop button, halt_tx, watchdog trip, TX disarm):
+                // stop the FSK keying thread NOW (line back to mark, queued bits
+                // dropped), dump any queued AFSK audio, and unkey immediately.
+                #[cfg(feature = "serial")]
+                if let Some((_, _, k)) = self.rtty_keyer.as_ref() {
+                    k.clear();
+                }
+                backend.flush_output();
+                let _ = rig.ptt(false);
+                self.tx_until_ms = None;
+                self.rtty_busy_until = 0.0; // a fresh send after Stop keys immediately
+                if let Ok(mut eng) = engine.lock() {
+                    eng.set_rtty_sending(false);
+                }
+            }
+            if let Some(text) = msg {
+                // Text → ITA2 codes → the over-the-air bit stream (5 data bits per
+                // char, LSB first). The SAME framed stream drives both backends, so
+                // the schedule's total is the true on-air duration in either.
+                let mut enc = tempo_core::rtty::BaudotEncoder::new(true);
+                let bits = tempo_core::rtty::code_bits(&enc.encode(&text));
+                let sched = crate::rtty_fsk::fsk_schedule(&bits, baud);
+                if sched.total_ms > 0.0 {
+                    // Hold the next queued message until this one has fully keyed
+                    // out + one character of clear air (send-and-done, no diddle).
+                    self.rtty_busy_until = now + sched.total_ms + 7.5 * (1000.0 / baud);
+                    let mut handled = false;
+                    // True FSK: the data bits ride the DTR/RTS keyline (the keyer
+                    // thread times the edges against absolute deadlines; rig in RTTY
+                    // mode). PTT rides its OWN path — CAT PTT or the separate PTT
+                    // serial line — via rig.ptt, NEVER the keyed line (the engine
+                    // refuses a send configured with both on one line).
+                    #[cfg(feature = "serial")]
+                    if let Some((port, line)) = &fsk_port_line {
+                        let reopen = self
+                            .rtty_keyer
+                            .as_ref()
+                            .map(|(p, l, _)| p != port || l != line)
+                            .unwrap_or(true);
+                        if reopen {
+                            self.rtty_keyer = crate::rtty_fsk::FskKeyer::open(
+                                port,
+                                crate::rtty_fsk::KeyLine::parse(line),
+                            )
+                            .ok()
+                            .map(|k| (port.clone(), line.clone(), k));
+                        }
+                        let open_err = self.rtty_keyer.is_none();
+                        let mut ptt_err = false;
+                        if let Some((_, _, k)) = self.rtty_keyer.as_ref() {
+                            // PTT immediately before the bits start; the computed
+                            // duration rides tx_until_ms so the existing expiry
+                            // unkeys the moment the final stop bit ends (+ tail).
+                            self.publish_tx_intent_now(); // before keying
+                            ptt_err = rig.ptt(true).is_err();
+                            k.send(bits.clone(), baud);
+                            let until = self.rtty_busy_until + crate::slot::TX_TAIL_MS;
+                            self.tx_until_ms =
+                                Some(self.tx_until_ms.map_or(until, |t| t.max(until)));
+                        }
+                        if open_err {
+                            // Nothing keyed — don't sit "busy" for a send that never started.
+                            self.rtty_busy_until = 0.0;
+                        }
+                        if let Ok(mut eng) = engine.lock() {
+                            eng.set_rtty_sending(!open_err);
+                            eng.set_rtty_keyer_error(if open_err {
+                                Some(format!(
+                                    "FSK keyline: couldn't open {port}. Check the port name and \
+                                     that nothing else (CAT, another app) has it open — or use \
+                                     the AFSK backend."
+                                ))
+                            } else if ptt_err {
+                                Some(
+                                    "FSK keyer: the rig didn't accept PTT. Check your PTT \
+                                     method (CAT, or the separate PTT line) — the FSK data \
+                                     line never doubles as PTT."
+                                        .to_string(),
+                                )
+                            } else {
+                                None
+                            });
+                        }
+                        handled = true; // the FSK backend owns this message (sent or errored)
+                    }
+                    if !handled {
+                        // Soundcard AFSK (rig in LSB): render the SAME framed bit
+                        // stream to the phase-continuous two-tone waveform and play
+                        // it through the SAME TX audio output the FT8 modem uses —
+                        // one route, so the operator's tx_level / drive / ALC
+                        // discipline applies to RTTY exactly as to FT8. PTT around
+                        // it like the soundcard CW keyer.
+                        let cfg = crate::rtty_afsk::AfskConfig {
+                            space_hz: crate::rtty_afsk::MARK_HZ + shift as f32,
+                            baud,
+                            reverse,
+                            ..crate::rtty_afsk::AfskConfig::default()
+                        };
+                        let buf = crate::rtty_afsk::afsk_char_samples(&bits, &cfg);
+                        if !buf.is_empty() {
+                            self.publish_tx_intent_now(); // before keying
+                            let ptt_err = rig.ptt(true).is_err();
+                            backend.play(&buf);
+                            let until = self.rtty_busy_until + crate::slot::TX_TAIL_MS;
+                            self.tx_until_ms =
+                                Some(self.tx_until_ms.map_or(until, |t| t.max(until)));
+                            if let Ok(mut eng) = engine.lock() {
+                                eng.set_rtty_sending(true);
+                                eng.set_rtty_keyer_error(ptt_err.then(|| {
+                                    "AFSK keyer: the rig didn't accept PTT. Check your PTT \
+                                     method + that Nexus's audio output is routed to the rig \
+                                     (like FT8)."
+                                        .to_string()
+                                }));
+                            }
                         }
                     }
                 }

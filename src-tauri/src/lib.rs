@@ -3923,13 +3923,14 @@ fn cw_skim(state: State<'_, SharedEngine>) -> Result<Vec<SkimHitDto>, String> {
         .collect())
 }
 
-/// Live RTTY RX decoder state for the cockpit poll (armed + AFC + the decoded-
-/// character ring tail with per-char confidence). RX decode only — no TX path.
+/// Live RTTY state for the cockpit poll: RX (armed + AFC + the decoded-character
+/// ring tail with per-char confidence) and TX (configured baud/shift/backend, the
+/// live sending flag, and any keyer failure to surface).
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct RttyStateDto {
     armed: bool,
-    /// AFC offset from the nominal 2125/2295 Hz pair (Hz).
+    /// AFC offset from the nominal mark/space pair (Hz).
     afc_hz: f32,
     /// AFC has acquired-then-frozen on a signal.
     afc_locked: bool,
@@ -3938,6 +3939,17 @@ struct RttyStateDto {
     /// Per-character confidence 0–100, parallel to `text`'s chars — render low
     /// values faint (the ATC soft metric).
     char_conf: Vec<u8>,
+    /// Configured baud rate (true 45.45 by default — never 45).
+    baud: f64,
+    /// Configured mark/space shift (Hz).
+    shift_hz: u32,
+    /// Keying backend: "afsk" (soundcard tones, rig in LSB) | "fsk" (serial
+    /// keyline, rig in RTTY mode).
+    backend: String,
+    /// An RTTY over is on the air or queued behind one (the TX indicator).
+    sending: bool,
+    /// A keyer failure to surface (FSK port wouldn't open / rig refused PTT), else null.
+    keyer_error: Option<String>,
 }
 
 fn rtty_state_dto(eng: &Engine) -> RttyStateDto {
@@ -3948,6 +3960,11 @@ fn rtty_state_dto(eng: &Engine) -> RttyStateDto {
         afc_locked: s.afc_locked,
         text: s.text,
         char_conf: s.conf,
+        baud: s.baud,
+        shift_hz: s.shift_hz,
+        backend: s.backend,
+        sending: s.sending,
+        keyer_error: s.keyer_error,
     }
 }
 
@@ -3960,10 +3977,47 @@ fn rtty_arm(state: State<'_, SharedEngine>, on: bool) -> Result<RttyStateDto, St
     Ok(rtty_state_dto(&eng))
 }
 
-/// The live RTTY RX state (poll while the RTTY cockpit is visible).
+/// The live RTTY state (poll while the RTTY cockpit is visible).
 #[tauri::command]
 fn get_rtty_state(state: State<'_, SharedEngine>) -> Result<RttyStateDto, String> {
     let eng = state.lock().map_err(|e| e.to_string())?;
+    Ok(rtty_state_dto(&eng))
+}
+
+/// Queue RTTY text to transmit — an explicit operator send, the ONLY way RTTY TX
+/// starts. The engine validates every gate up front (TX armed, license privileges
+/// at the current dial, the RTTY section owning the rig, no tune carrier, no other
+/// transmission) and returns WHY a send was refused; the radio loop keys the
+/// queued text via the configured backend (soundcard AFSK / true-FSK keyline).
+#[tauri::command]
+fn rtty_send(state: State<'_, SharedEngine>, text: String) -> Result<RttyStateDto, String> {
+    let mut eng = state.lock().map_err(|e| e.to_string())?;
+    eng.rtty_send_text(&text)?;
+    Ok(rtty_state_dto(&eng))
+}
+
+/// Stop RTTY now: abort the over in progress, drop everything queued, and unkey.
+#[tauri::command]
+fn rtty_stop(state: State<'_, SharedEngine>) -> Result<RttyStateDto, String> {
+    let mut eng = state.lock().map_err(|e| e.to_string())?;
+    eng.rtty_stop();
+    Ok(rtty_state_dto(&eng))
+}
+
+/// Clear the decoded-RTTY transcript (the cockpit's Clear button). RX display only.
+#[tauri::command]
+fn rtty_clear(state: State<'_, SharedEngine>) -> Result<RttyStateDto, String> {
+    let mut eng = state.lock().map_err(|e| e.to_string())?;
+    eng.rtty_clear();
+    Ok(rtty_state_dto(&eng))
+}
+
+/// Drop + rebuild the RTTY RX demodulator (fresh AFC acquire) — the recovery for
+/// an AFC frozen on the wrong neighbor. RX only; never touches TX.
+#[tauri::command]
+fn rtty_afc_reset(state: State<'_, SharedEngine>) -> Result<RttyStateDto, String> {
+    let mut eng = state.lock().map_err(|e| e.to_string())?;
+    eng.request_rtty_afc_reset();
     Ok(rtty_state_dto(&eng))
 }
 
@@ -9218,6 +9272,10 @@ pub fn run() {
             cw_skim,
             rtty_arm,
             get_rtty_state,
+            rtty_send,
+            rtty_stop,
+            rtty_clear,
+            rtty_afc_reset,
             sstv_arm,
             get_sstv_state,
             get_rig_models,

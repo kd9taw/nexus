@@ -32,21 +32,32 @@ pub fn spawn_rtty_rx(engine: Arc<Mutex<Engine>>) {
 fn run(engine: Arc<Mutex<Engine>>) {
     // The demodulator lives here, not in the engine: its FFT state is decode-
     // thread-private, and dropping it on disarm makes every re-arm a clean
-    // acquire (fresh AFC, fresh bit clock). Tone pair/baud = demod defaults
-    // (2125/2295 Hz, 45.45 baud, USOS on) for now.
+    // acquire (fresh AFC, fresh bit clock). Tone pair/baud follow the operator's
+    // RTTY settings (shift → space = 2125 + shift; reverse swaps the pair); a
+    // settings change or the cockpit's AFC-reset drops + rebuilds it the same
+    // clean-acquire way.
     let mut demod: Option<RttyDemodulator> = None;
+    let mut applied = (0.0f64, 0u32, false); // (baud, shift, reverse) the demod was built with
     loop {
         if SHUTDOWN.load(std::sync::atomic::Ordering::Relaxed) {
             return;
         }
         std::thread::sleep(POLL);
-        let armed = match engine.lock() {
-            Ok(e) => e.rtty_armed(),
-            Err(_) => false,
+        let (armed, cfg, reset) = match engine.lock() {
+            Ok(mut e) => (
+                e.rtty_armed(),
+                (e.rtty_baud(), e.rtty_shift_hz(), e.rtty_reverse()),
+                e.take_rtty_afc_reset(),
+            ),
+            Err(_) => continue,
         };
         if !armed {
             demod = None;
             continue;
+        }
+        if reset || cfg != applied {
+            demod = None; // rebuild below: fresh AFC acquire on the new config
+            applied = cfg;
         }
         let audio = match engine.lock() {
             Ok(mut e) => e.take_rtty_audio(),
@@ -55,7 +66,16 @@ fn run(engine: Arc<Mutex<Engine>>) {
         if audio.is_empty() {
             continue;
         }
-        let d = demod.get_or_insert_with(|| RttyDemodulator::new(RttyConfig::default()));
+        let d = demod.get_or_insert_with(|| {
+            let (baud, shift, reverse) = applied;
+            let (mark, space) = (2125.0f32, 2125.0 + shift as f32);
+            RttyDemodulator::new(RttyConfig {
+                mark_hz: if reverse { space } else { mark },
+                space_hz: if reverse { mark } else { space },
+                baud: baud as f32,
+                ..RttyConfig::default()
+            })
+        });
         // The heavy part — mixers, FFT filters, ATC, clock recovery — off-lock.
         let chars = d.feed(&audio);
         let (afc_hz, afc_locked) = (d.afc_offset_hz(), d.afc_locked());

@@ -3,20 +3,41 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
 import { RttyCockpit, confidenceRuns } from './RttyCockpit'
 import * as api from '../api'
+import * as toast from '../toast'
 import type { AppSnapshot, RttyState } from '../types'
 
 vi.mock('../api', () => ({
   getRttyState: vi.fn(),
   rttyArm: vi.fn(),
   getLicensedBandPlan: vi.fn(),
+  rttySend: vi.fn(),
+  rttyStop: vi.fn(),
+  rttyClear: vi.fn(),
+  rttyAfcReset: vi.fn(),
+  haltTx: vi.fn(),
 }))
-vi.mock('../toast', () => ({ pushToast: vi.fn() }))
+vi.mock('../toast', () => ({
+  pushToast: vi.fn(),
+  // Pass-through like the real one: run the action, null on failure.
+  withErrorToast: vi.fn(async (action: () => Promise<unknown>) => {
+    try {
+      return await action()
+    } catch {
+      return null
+    }
+  }),
+}))
 
 const getRttyState = api.getRttyState as ReturnType<typeof vi.fn>
 const rttyArm = api.rttyArm as ReturnType<typeof vi.fn>
 const getLicensedBandPlan = api.getLicensedBandPlan as ReturnType<typeof vi.fn>
+const rttySend = api.rttySend as ReturnType<typeof vi.fn>
+const rttyStop = api.rttyStop as ReturnType<typeof vi.fn>
+const haltTx = api.haltTx as ReturnType<typeof vi.fn>
+const pushToast = toast.pushToast as ReturnType<typeof vi.fn>
 
 const snap = {
+  mycall: 'KD9TAW',
   radio: {
     dialMhz: 14.08,
     band: '20m',
@@ -29,12 +50,27 @@ const snap = {
   },
 } as unknown as AppSnapshot
 
-const IDLE: RttyState = { armed: false, afcHz: 0, afcLocked: false, text: '', charConf: [] }
+const IDLE: RttyState = {
+  armed: false,
+  afcHz: 0,
+  afcLocked: false,
+  text: '',
+  charConf: [],
+  baud: 45.45,
+  shiftHz: 170,
+  backend: 'afsk',
+  sending: false,
+  keyerError: null,
+}
 
 beforeEach(() => {
   getRttyState.mockReset().mockResolvedValue(IDLE)
   rttyArm.mockReset().mockResolvedValue({ ...IDLE, armed: true })
   getLicensedBandPlan.mockReset().mockResolvedValue([])
+  rttySend.mockReset().mockResolvedValue({ ...IDLE, sending: true })
+  rttyStop.mockReset().mockResolvedValue(IDLE)
+  haltTx.mockReset().mockResolvedValue(snap)
+  pushToast.mockReset()
 })
 afterEach(cleanup)
 
@@ -44,22 +80,16 @@ describe('RttyCockpit RX wiring', () => {
     expect(screen.getByText('Arm RX to decode RTTY from the receive audio')).toBeTruthy()
     // No snapshot → no CockpitHeader (it needs live radio state).
     expect(document.querySelector('.cockpit-header')).toBeNull()
-    // The macro row + compose line stay disabled — TX is a later, safety-reviewed wave.
-    for (const label of ['CQ', 'Answer', 'Exchange', '73']) {
-      const btn = screen.getByText(label).closest('button')
-      expect(btn?.disabled, label).toBe(true)
-    }
-    expect(screen.getByLabelText('RTTY compose (disabled — TX not wired yet)')).toBeTruthy()
+    expect(screen.getByLabelText('RTTY compose')).toBeTruthy()
     await waitFor(() => expect(getRttyState).toHaveBeenCalled())
   })
 
   it('renders the mode badge + keying-backend pill with a snapshot', async () => {
     render(<RttyCockpit snap={snap} />)
-    expect(screen.getByText('RTTY 45.45 · 170 Hz')).toBeTruthy()
+    await screen.findByText('RTTY 45.45 · 170 Hz')
     expect(screen.getByText('AFSK')).toBeTruthy()
     // No onSetFrequency handler → the display-only band pill.
     expect(screen.getByText('20m')).toBeTruthy()
-    await waitFor(() => expect(getRttyState).toHaveBeenCalled())
   })
 
   it('offers the licensed RTTY band plan and QSYs through onSetFrequency', async () => {
@@ -85,6 +115,7 @@ describe('RttyCockpit RX wiring', () => {
 
   it('polls the decoder and renders confidence-faded text + the locked AFC pill', async () => {
     getRttyState.mockResolvedValue({
+      ...IDLE,
       armed: true,
       afcHz: 12.4,
       afcLocked: true,
@@ -118,6 +149,75 @@ describe('RttyCockpit RX wiring', () => {
   it('does not poll while inactive (hidden keep-alive host)', () => {
     render(<RttyCockpit snap={snap} active={false} />)
     expect(getRttyState).not.toHaveBeenCalled()
+  })
+})
+
+describe('RttyCockpit TX wiring', () => {
+  it('sends the CQ macro with {MYCALL} expanded — an explicit operator action', async () => {
+    render(<RttyCockpit snap={snap} />)
+    fireEvent.click(screen.getByText('CQ'))
+    await waitFor(() =>
+      expect(rttySend).toHaveBeenCalledWith('CQ CQ CQ DE KD9TAW KD9TAW K'),
+    )
+  })
+
+  it('refuses a {CALL} macro until their call is entered — then expands it', async () => {
+    render(<RttyCockpit snap={snap} />)
+    fireEvent.click(screen.getByText('Answer'))
+    expect(rttySend).not.toHaveBeenCalled()
+    expect(pushToast).toHaveBeenCalled()
+    fireEvent.change(screen.getByLabelText('Worked station callsign (the {CALL} macro token)'), {
+      target: { value: 'w1abc' },
+    })
+    fireEvent.click(screen.getByText('Answer'))
+    await waitFor(() =>
+      expect(rttySend).toHaveBeenCalledWith('W1ABC DE KD9TAW KD9TAW K'),
+    )
+  })
+
+  it('sends typed compose text on Send and clears the input', async () => {
+    render(<RttyCockpit snap={snap} />)
+    const input = screen.getByLabelText('RTTY compose') as HTMLInputElement
+    fireEvent.change(input, { target: { value: 'tu 73' } })
+    fireEvent.click(screen.getByText('Send'))
+    await waitFor(() => expect(rttySend).toHaveBeenCalledWith('tu 73'))
+    expect(input.value).toBe('')
+  })
+
+  it('refuses to key outside license privileges (surfaced up front)', () => {
+    const locked = {
+      ...snap,
+      radio: { ...snap.radio, txAllowed: false },
+    } as unknown as AppSnapshot
+    render(<RttyCockpit snap={locked} />)
+    fireEvent.click(screen.getByText('CQ'))
+    expect(rttySend).not.toHaveBeenCalled()
+    expect(pushToast).toHaveBeenCalledWith(
+      'TX locked — this frequency is outside your license privileges',
+      'info',
+      3500,
+    )
+  })
+
+  it('shows the sending pill while an over is on the air and Stop aborts + halts', async () => {
+    getRttyState.mockResolvedValue({ ...IDLE, sending: true })
+    render(<RttyCockpit snap={snap} />)
+    await screen.findByText('TX ▲')
+    const stop = screen.getByText('Stop').closest('button') as HTMLButtonElement
+    expect(stop.disabled).toBe(false)
+    fireEvent.click(stop)
+    expect(rttyStop).toHaveBeenCalled()
+    expect(haltTx).toHaveBeenCalled()
+  })
+
+  it('surfaces a keyer failure from the poll', async () => {
+    getRttyState.mockResolvedValue({
+      ...IDLE,
+      keyerError: 'FSK keyline: couldn’t open COM7.',
+    })
+    render(<RttyCockpit snap={snap} />)
+    await screen.findByRole('alert')
+    expect(screen.getByRole('alert').textContent).toContain('FSK keyline')
   })
 })
 

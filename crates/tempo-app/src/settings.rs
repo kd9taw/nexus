@@ -12,8 +12,11 @@ use std::path::Path;
 /// policy. **Digital** OBEYS the rig (max compatibility; FT8/FT4 live in an audio
 /// sub-carrier on USB/Data, so forcing the mode would break the operator's setup).
 /// **Phone** and **CW** actively FORCE the correct mode, because a voice op must be
-/// in USB/LSB and a CW op in CW. The phone/CW operating sections set this; the
-/// digital cockpit leaves it `Digital`.
+/// in USB/LSB and a CW op in CW. **Rtty** forces the mode per keying backend (rig
+/// RTTY for true FSK, LSB for soundcard AFSK — see [`Settings::rig_mode`]) and OWNS
+/// the rig for keying: the FT8/FT1 slot sequencer never keys while it's active, and
+/// the RTTY keyer never keys outside it. The phone/CW/RTTY operating sections set
+/// this; the digital cockpit leaves it `Digital`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum OperatingMode {
@@ -21,6 +24,7 @@ pub enum OperatingMode {
     Digital,
     Phone,
     Cw,
+    Rtty,
 }
 
 /// The operator's amateur license class — drives the transmit-privilege lockout + the
@@ -209,6 +213,35 @@ pub struct Settings {
     pub cw_key_line: String,
     /// CW sidetone / keyed-tone pitch in Hz (soundcard keyer + UI marker). Default 600.
     pub cw_pitch_hz: f32,
+    /// How RTTY is keyed: "afsk" (default — soundcard two-tone audio through the rig in
+    /// LSB; soundcard-clocked, the timing-cleanest path) or "fsk" (true FSK — bit-bang a
+    /// serial control line into the rig's FSK input, rig in RTTY mode, unlocking its
+    /// narrow RTTY filters). Also picks the RTTY rig-mode: see [`rig_mode`](Self::rig_mode).
+    #[serde(default = "default_rtty_backend")]
+    pub rtty_backend: String,
+    /// Which control line carries the FSK data bits when `rtty_backend == "fsk"`:
+    /// "dtr" (default — the common wiring, RTS left for PTT) or "rts". PTT must ride
+    /// its OWN path (CAT or the PTT serial line) — never this line.
+    #[serde(default = "default_rtty_fsk_line")]
+    pub rtty_fsk_line: String,
+    /// Serial port for the FSK keying line (when `rtty_backend == "fsk"`), e.g. the
+    /// FTDX10's USB *Enhanced* COM port. Empty = the CAT `serial_port` (the same
+    /// fallback the RTS/DTR PTT line uses).
+    #[serde(default)]
+    pub rtty_fsk_port: String,
+    /// RTTY baud rate — true 45.45 by default (never integerized to 45); 75.0 is the
+    /// other common amateur rate. Drives the TX bit clock AND the RX demodulator.
+    #[serde(default = "default_rtty_baud")]
+    pub rtty_baud: f64,
+    /// RTTY mark/space shift in Hz (170 = the HF standard). Drives the TX tone pair
+    /// (AFSK space = 2125 + shift) AND the RX demodulator.
+    #[serde(default = "default_rtty_shift_hz")]
+    pub rtty_shift_hz: u32,
+    /// Reverse the mark/space sense (TX tones + RX demod). The standard convention
+    /// is LSB with mark on the lower audio tone; set this when running the rig on
+    /// the opposite sideband (e.g. AFSK in USB/DATA-U) so the RF sense stays correct.
+    #[serde(default)]
+    pub rtty_reverse: bool,
     /// AI CW decoder (DeepCW model): the PRIMARY CW decode — dramatically better
     /// low-SNR copy than the classic Goertzel decoder (which still supplies the WPM
     /// estimate underneath). On by default; the model ships with the app.
@@ -721,6 +754,22 @@ fn default_cw_key_line() -> String {
     "dtr".to_string()
 }
 
+fn default_rtty_backend() -> String {
+    "afsk".to_string()
+}
+
+fn default_rtty_fsk_line() -> String {
+    "dtr".to_string()
+}
+
+fn default_rtty_baud() -> f64 {
+    45.45
+}
+
+fn default_rtty_shift_hz() -> u32 {
+    170
+}
+
 fn default_monitor_level() -> f32 {
     0.5
 }
@@ -1110,6 +1159,12 @@ impl Default for Settings {
             cw_key_port: String::new(),
             cw_key_line: default_cw_key_line(),
             cw_pitch_hz: 600.0,
+            rtty_backend: default_rtty_backend(), // "afsk" — soundcard-clocked, the robust default
+            rtty_fsk_line: default_rtty_fsk_line(), // "dtr" (RTS stays free for PTT)
+            rtty_fsk_port: String::new(),         // "" = the CAT serial port
+            rtty_baud: default_rtty_baud(),       // true 45.45, never 45
+            rtty_shift_hz: default_rtty_shift_hz(), // 170 Hz — the HF standard
+            rtty_reverse: false,
             ai_cw_enabled: true,
             rigctld_port: 4532,
             rotator_model: 0,
@@ -1700,6 +1755,18 @@ impl Settings {
                     "USB".to_string()
                 }
             }
+            // RTTY: the mode follows the keying backend, like CW's keyer split. True FSK
+            // needs the rig in its RTTY mode (Hamlib "RTTY" → Yaesu RTTY-L etc.) so the
+            // FSK input keys the shift AND the rig's narrow RTTY filters unlock; AFSK is
+            // an audio tone pair through SSB — LSB on every band (the RTTY convention:
+            // mark = lower audio = higher RF; `rtty_reverse` flips the TONES, not the
+            // sideband, for operators who deliberately run the other side).
+            OperatingMode::Rtty => if self.rtty_backend.eq_ignore_ascii_case("fsk") {
+                "RTTY"
+            } else {
+                "LSB"
+            }
+            .to_string(),
             // Digital: force the DATA submode (PKTUSB/PKTLSB → Yaesu DATA-U / Icom USB-D
             // / Kenwood DATA), USB-side by default — UNCONDITIONALLY, like Phone forces
             // SSB and CW forces CW. (No opt-out: FT8/FT4 are a data mode, and a rig
@@ -1719,6 +1786,22 @@ impl Settings {
 mod tests {
     #![allow(clippy::field_reassign_with_default)]
     use super::*;
+
+    #[test]
+    fn rtty_rig_mode_follows_the_keying_backend() {
+        let mut s = Settings::default();
+        s.operating_mode = OperatingMode::Rtty;
+        // AFSK (the default backend): audio tones through SSB — LSB on EVERY band
+        // (the RTTY convention), unlike Phone's band-aware sideband.
+        assert_eq!(s.rtty_backend, "afsk");
+        s.dial_mhz = 14.083;
+        assert_eq!(s.rig_mode(), "LSB");
+        s.dial_mhz = 7.080;
+        assert_eq!(s.rig_mode(), "LSB");
+        // True FSK: the rig's RTTY mode (unlocks its narrow RTTY filters).
+        s.rtty_backend = "fsk".to_string();
+        assert_eq!(s.rig_mode(), "RTTY");
+    }
 
     #[test]
     fn phone_fm_forces_fm_mode_else_sideband_by_band() {

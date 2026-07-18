@@ -710,7 +710,7 @@ export async function setFrequency(
  * on the current band (phone segment / CW segment / FT8 watering hole). Pass false for
  * incidental nav and the Needed click (which sets the spot's exact frequency itself). */
 export async function setOperatingMode(
-  mode: 'digital' | 'phone' | 'cw',
+  mode: 'digital' | 'phone' | 'cw' | 'rtty',
   followFreq: boolean,
 ): Promise<AppSnapshot> {
   return invoke<AppSnapshot>('set_operating_mode', { mode, followFreq })
@@ -1046,9 +1046,31 @@ export async function rttyArm(on: boolean): Promise<RttyState> {
   return invoke<RttyState>('rtty_arm', { on })
 }
 
-/** Live RTTY RX state (poll while the RTTY cockpit is visible). */
+/** Live RTTY state (poll while the RTTY cockpit is visible). */
 export async function getRttyState(): Promise<RttyState> {
   return invoke<RttyState>('get_rtty_state')
+}
+
+/** Queue RTTY text to transmit — an explicit operator send (the engine validates
+ * TX-enable / privileges / RTTY-section ownership and rejects with the reason). */
+export async function rttySend(text: string): Promise<RttyState> {
+  return invoke<RttyState>('rtty_send', { text })
+}
+
+/** Stop RTTY now: abort the over in progress, drop the queue, unkey. */
+export async function rttyStop(): Promise<RttyState> {
+  return invoke<RttyState>('rtty_stop')
+}
+
+/** Clear the decoded-RTTY transcript (display only). */
+export async function rttyClear(): Promise<RttyState> {
+  return invoke<RttyState>('rtty_clear')
+}
+
+/** Drop + rebuild the RTTY demodulator (fresh AFC acquire — the wrong-neighbor
+ * freeze recovery). RX only. */
+export async function rttyAfcReset(): Promise<RttyState> {
+  return invoke<RttyState>('rtty_afc_reset')
 }
 
 /** Arm/disarm the SSTV RX decoder (session-only; RX decode, never TX). */

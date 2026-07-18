@@ -109,6 +109,27 @@ pub enum Shift {
     Figures,
 }
 
+/// Whether `c` (case-insensitive) has an ITA2 mapping — the TX charset filter.
+/// Unmapped characters are silently dropped by [`BaudotEncoder::push_char`]; this
+/// lets callers strip them up front so the operator sees exactly what will key.
+pub fn encodable(c: char) -> bool {
+    let c = c.to_ascii_uppercase();
+    LETTERS.contains(&Some(c)) || FIGURES.contains(&Some(c))
+}
+
+/// Flatten encoded 5-bit codes to the over-the-air data-bit stream: 5 bits per
+/// code, LSB first (ITA2 transmits the low bit first). This is the `data_bits`
+/// input both TX paths frame (AFSK sample rendering / FSK keying schedule).
+pub fn code_bits(codes: &[u8]) -> Vec<bool> {
+    let mut out = Vec::with_capacity(codes.len() * 5);
+    for &code in codes {
+        for i in 0..5 {
+            out.push(code >> i & 1 == 1);
+        }
+    }
+    out
+}
+
 /// RX side: 5-bit codes in → printable characters out.
 #[derive(Debug, Clone)]
 pub struct BaudotDecoder {
@@ -346,6 +367,31 @@ mod tests {
         assert_eq!(codes.remove(0), FIGS);
         let got = decode_all(&mut BaudotDecoder::new(true), &codes);
         assert_eq!(got, "TOO A");
+    }
+
+    #[test]
+    fn encodable_matches_what_the_encoder_keeps() {
+        for c in "ABCXYZ abcz0159-?:$#!&()\"'./;,\r\n".chars() {
+            assert!(encodable(c), "{c:?} should be encodable");
+        }
+        for c in "%*+=@[]_~{}|^<>".chars() {
+            assert!(!encodable(c), "{c:?} has no ITA2 mapping");
+        }
+        // The filter and the encoder agree: a filtered string round-trips verbatim.
+        let kept: String = "UR 599 (50%) OK*".chars().filter(|&c| encodable(c)).collect();
+        assert_eq!(kept, "UR 599 (50) OK");
+        let codes = BaudotEncoder::new(true).encode(&kept);
+        assert_eq!(decode_all(&mut BaudotDecoder::new(true), &codes), kept);
+    }
+
+    #[test]
+    fn code_bits_are_lsb_first_five_per_code() {
+        // 'A' = 0x03 → 1,1,0,0,0 ; 'E' = 0x01 → 1,0,0,0,0.
+        assert_eq!(
+            code_bits(&[0x03, 0x01]),
+            vec![true, true, false, false, false, true, false, false, false, false]
+        );
+        assert!(code_bits(&[]).is_empty());
     }
 
     #[test]

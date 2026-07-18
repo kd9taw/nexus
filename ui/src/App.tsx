@@ -231,11 +231,16 @@ export default function App() {
   // click still QSYs. `followFreq` is true only for the three explicit mode tabs (Phone / CW /
   // Digital-Operate) — entering one drops the rig to that mode's home freq; the other digital
   // cockpits (chat/qso/…) set the mode only and keep their own band picker's frequency.
-  const lastOpModeRef = useRef<'digital' | 'phone' | 'cw'>('digital')
+  const lastOpModeRef = useRef<'digital' | 'phone' | 'cw' | 'rtty'>('digital')
   useEffect(() => {
-    const operating = !!featureById(view as FeatureId)?.workspace || view === 'cw' || view === 'phone'
+    const operating =
+      !!featureById(view as FeatureId)?.workspace ||
+      view === 'cw' ||
+      view === 'phone' ||
+      view === 'rtty'
     if (!operating) return
-    const mode = view === 'cw' ? 'cw' : view === 'phone' ? 'phone' : 'digital'
+    const mode =
+      view === 'cw' ? 'cw' : view === 'phone' ? 'phone' : view === 'rtty' ? 'rtty' : 'digital'
     // ALWAYS (re)assert the rig mode on entering an operating view. We must NOT skip it with a
     // same-value guard: the guard ref drifts out of sync with the real rig (handleDigitalMode
     // and the Needed click set the mode without going through here), which left the rig stuck
@@ -244,7 +249,8 @@ export default function App() {
     // genuine mode change, so returning to a mode you were already in never yanks the VFO.
     const changed = mode !== lastOpModeRef.current
     lastOpModeRef.current = mode
-    const followFreq = changed && (view === 'operate' || view === 'cw' || view === 'phone')
+    const followFreq =
+      changed && (view === 'operate' || view === 'cw' || view === 'phone' || view === 'rtty')
     void setOperatingMode(mode, followFreq)
       .then((s) => s && setSnap(s))
       .catch(() => {})
@@ -1360,10 +1366,15 @@ export default function App() {
         handleWorkspace('msg')
         return
       }
-      if (m === 'rtty' || m === 'sstv') {
-        // Skeleton sections (global, like CW/Phone pre-wiring): just navigate.
-        // RTTY's FSK-vs-AFSK rig-mode policy and SSTV's armed receiver land with
-        // the decoder wiring — entry asserts nothing on the rig today.
+      if (m === 'sstv') {
+        // SSTV is RX-first — entry asserts nothing on the rig; just navigate.
+        setView(m)
+        return
+      }
+      if (m === 'rtty') {
+        // Navigate; the [view] rig-mode effect asserts the RTTY policy (FSK
+        // backend → rig RTTY mode, AFSK → LSB) and re-homes to the band's RTTY
+        // watering hole on a genuine mode change — the same path as CW/Phone.
         setView(m)
         return
       }
@@ -1680,7 +1691,9 @@ export default function App() {
                   : 'SSB'
                 : lastOpModeRef.current === 'cw'
                   ? 'CW'
-                  : snap.link.tier
+                  : lastOpModeRef.current === 'rtty'
+                    ? 'RTTY'
+                    : snap.link.tier
             }
           />
         </main>
@@ -2004,9 +2017,19 @@ export default function App() {
           effectiveView === 'phone' ||
           effectiveView === 'cw' ||
           effectiveView === 'operate' ||
-          effectiveView === 'chat'
+          effectiveView === 'chat' ||
+          effectiveView === 'rtty' ||
+          effectiveView === 'sstv'
         }
-        hideDigitalChrome={effectiveView === 'phone' || effectiveView === 'cw'}
+        hideDigitalChrome={
+          effectiveView === 'phone' ||
+          effectiveView === 'cw' ||
+          // RTTY/SSTV are free-running modes with their OWN band selectors — the
+          // top control is fed the DIGITAL (FT8) plan, and the tier tiles / slot
+          // clock / DT readout are slot-sync furniture that means nothing here.
+          effectiveView === 'rtty' ||
+          effectiveView === 'sstv'
+        }
         tier={tier}
         onTierChange={handleTier}
         theme={theme}

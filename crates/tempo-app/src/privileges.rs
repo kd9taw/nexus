@@ -132,7 +132,8 @@ fn segments(class: LicenseClass) -> Vec<Seg> {
 fn allows(seg: &Seg, mode: OperatingMode) -> bool {
     match mode {
         OperatingMode::Cw => seg.cw,
-        OperatingMode::Digital => seg.data,
+        // RTTY is a data emission (§97.305 puts RTTY and data in the same segments).
+        OperatingMode::Digital | OperatingMode::Rtty => seg.data,
         OperatingMode::Phone => seg.phone,
     }
 }
@@ -241,6 +242,15 @@ mod tests {
         // 40 m phone floor: Extra 7.125, General 7.175.
         assert!(tx_allowed(Extra, 7.130, Phone));
         assert!(!tx_allowed(General, 7.130, Phone));
+    }
+
+    #[test]
+    fn rtty_rides_the_data_segments() {
+        use crate::settings::OperatingMode::Rtty;
+        assert!(tx_allowed(General, 14.083, Rtty)); // 20 m RTTY window: CW/data segment
+        assert!(!tx_allowed(General, 14.300, Rtty)); // never in a phone segment
+        assert!(!tx_allowed(Technician, 3.583, Rtty)); // Tech 80 m is CW-only — no RTTY
+        assert!(tx_allowed(Technician, 28.083, Rtty)); // 10 m: the one Tech HF data grant
     }
 
     #[test]
