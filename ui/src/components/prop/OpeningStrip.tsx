@@ -2,6 +2,7 @@
 // treatment. Only rendered when openings exist.
 import { Zap } from 'lucide-react'
 import type { OpeningView } from '../../types'
+import { modeClass } from './OpeningsLogPane'
 
 function agoLabel(secs: number): string {
   if (secs <= 0) return ''
@@ -35,7 +36,7 @@ export function OpeningStrip({
               {o.band} OPEN
             </span>
             {o.isNew && <span className="opening-new">NEW</span>}
-            <span className="opening-mode">{o.mode}</span>
+            <span className={`opening-mode opening-mode--${modeClass(o.mode)}`}>{o.mode}</span>
             <span className="opening-detail">
               point {o.octant} · ~{Math.round(o.maxKm).toLocaleString()} km · {o.stations} stations
               {o.reciprocalPairs > 0 && ` (${o.reciprocalPairs} 2-way)`} · {o.confidence}

@@ -875,6 +875,50 @@ fn census_path() -> PathBuf {
         .join("grid_census.json")
 }
 
+/// Persistent openings log — completed opening episodes (6m/2m tropo/Es/aurora …),
+/// oldest first on disk, capped so it can't grow unbounded. Sibling of settings.json.
+const OPENINGS_LOG_CAP: usize = 500;
+static OPENINGS_LOG: Mutex<Vec<propagation::OpeningEpisode>> = Mutex::new(Vec::new());
+
+fn openings_log_path() -> PathBuf {
+    settings_path()
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("openings_log.json")
+}
+
+/// Append newly-closed episodes to the openings log and persist it (atomic
+/// tmp+rename, best-effort — a failed write never disturbs the running app).
+fn record_opening_episodes(mut eps: Vec<propagation::OpeningEpisode>) {
+    if eps.is_empty() {
+        return;
+    }
+    let mut log = OPENINGS_LOG.lock().unwrap_or_else(|e| e.into_inner());
+    log.append(&mut eps);
+    if log.len() > OPENINGS_LOG_CAP {
+        let excess = log.len() - OPENINGS_LOG_CAP;
+        log.drain(..excess);
+    }
+    if let Ok(text) = serde_json::to_string(&*log) {
+        let path = openings_log_path();
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let tmp = path.with_extension("json.tmp");
+        if std::fs::write(&tmp, text).is_ok() {
+            let _ = std::fs::rename(&tmp, &path);
+        }
+    }
+}
+
+/// Historical opening episodes for the Connect openings-log pane, newest first.
+#[tauri::command]
+fn get_openings_log() -> Vec<propagation::OpeningEpisode> {
+    let log = OPENINGS_LOG.lock().unwrap_or_else(|e| e.into_inner());
+    log.iter().rev().cloned().collect()
+}
+
 /// Where the downloaded/imported POTA park directory CSV is cached (beside settings.json), so the
 /// list survives restarts and is searched offline. Losing it is harmless (re-download / re-import).
 fn parks_cache_path() -> PathBuf {
@@ -1364,6 +1408,9 @@ async fn get_propagation(
             &mut tr,
             regional_scope,
         );
+        // Journal any episodes the tracker just closed into the persistent
+        // openings log (the Connect historical-review pane reads it).
+        record_opening_episodes(tr.drain_closed());
     }
 
     // Rebuild the band advisor on the ANCHORED (operator-reachable) window — "best
@@ -8675,6 +8722,13 @@ pub fn run() {
                 }
             }
         }
+        // Openings log: restore the persisted episode history (missing/corrupt →
+        // empty, same best-effort contract as the census).
+        if let Ok(text) = std::fs::read_to_string(openings_log_path()) {
+            if let Ok(eps) = serde_json::from_str::<Vec<propagation::OpeningEpisode>>(&text) {
+                *OPENINGS_LOG.lock().unwrap_or_else(|e| e.into_inner()) = eps;
+            }
+        }
         eng.set_grid_rarity_resolver(propagation::gridrarity::effective_tier_u8);
         // LoTW-user marks: restore the persisted ARRL activity list (if the
         // operator ever fetched it) and wire the recency-windowed resolver.
@@ -9002,6 +9056,7 @@ pub fn run() {
             set_operating_mode,
             work_spot,
             get_connection_log,
+            get_openings_log,
             get_credentials_status,
             send_cw,
             set_cw_peer_info,
@@ -9263,6 +9318,11 @@ pub fn run() {
                 }
                 persist_conversations(app_handle.state::<SharedEngine>().inner());
                 persist_field_day_log(app_handle.state::<SharedEngine>().inner());
+                // An opening still in progress at quit becomes a journaled episode —
+                // a 6m Es evening isn't lost because the app closed mid-opening.
+                if let Ok(mut tr) = app_handle.state::<SharedOpeningTracker>().lock() {
+                    record_opening_episodes(tr.close_all(now_unix()));
+                }
             }
         });
 }

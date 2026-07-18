@@ -27,3 +27,18 @@ export const BAND_COLOR: Record<string, string> = {
 export function bandColor(band: string): string {
   return BAND_COLOR[band] ?? '#8aa0b0'
 }
+
+// Propagation-mode colors for opening visuals (map sectors, mode chips): one hue
+// per physical mode so "what KIND of opening" reads at a glance on every surface.
+// Keys are the backend PropMode labels carried in OpeningView.mode.
+export const OPENING_MODE_COLOR: Record<string, string> = {
+  Tropo: '#ffb347', // warm amber — weather-driven lift
+  'Sporadic-E': '#4dff88', // green — the classic Es flash
+  Aurora: '#c77dff', // violet — geomagnetic
+  F2: '#4dd2ff', // cyan — ionospheric DX
+}
+
+/** The color for a propagation-mode label; a neutral fallback for Unknown. */
+export function openingModeColor(mode: string): string {
+  return OPENING_MODE_COLOR[mode] ?? '#8aa0b0'
+}

@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] — 0.11.0 (in progress)
 
+### Added
+
+- **2m openings are now detected — and every opening is classified, tiered, mapped, and
+  logged.** The detector needed several distinct stations to call a VHF band open (right
+  for a 6m Es cloud, impossible for 2m tropo/aurora, which are often ONE distant
+  station): now a single genuine-DX station beyond 700 km — past the everyday
+  troposcatter ceiling, at the floor of the real opening modes — opens a VHF band.
+  On top of that:
+  - **Tiered opening alerts by propagation mode.** Sporadic-E and F2 go loud (rare and
+    brief — grab-it-now, with a beep); **Aurora** goes loud with operating guidance
+    ("beam north — signals sound raspy, CW & SSB work best"); **tropo** raises an
+    informative note (lifts last hours). Routine local/scatter activity never alerts.
+  - **Opening sectors on the map.** Both the 2-D map and the 3-D globe now draw each
+    live opening as a wedge from your QTH toward the opening — amber for tropo, green
+    for Es, violet for aurora, cyan for F2 — sized to the longest path heard, so you
+    can see where and what kind at a glance. The live Openings pane's mode chips use
+    the same colors.
+  - **A persistent openings log.** Every opening episode is journaled when it ends
+    (band, mode, start/duration, peak strength, longest DX, station count, direction)
+    and survives restarts — an opening in progress when you quit is saved too. A new
+    **Openings Log** pane in Connect reviews the history with 6m/2m filters: "how many
+    real 2m openings this month, and did I catch them?"
+
 ### Changed
 
 - **RX audio level meter now reads in dB, like WSJT-X.** It was a linear 0–1 bar whose

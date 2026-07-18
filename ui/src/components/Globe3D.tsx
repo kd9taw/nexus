@@ -12,7 +12,7 @@ import Globe, { type GlobeMethods } from 'react-globe.gl'
 import earthUrl from '../assets/earth-relief.webp'
 import earthNightUrl from '../assets/earth-night.webp'
 import { gridToLatLon } from '../grid'
-import { bandColor } from '../bandColors'
+import { bandColor, openingModeColor } from '../bandColors'
 import { subsolarPoint, usStateBorders, flareField, flareRScale, destinationPoint, rangeRing } from '../mapGeo'
 import { getAurora, getPca, getSatellites, getLog } from '../api'
 import cqzonesUrl from '../data/cqzones.geojson?url'
@@ -241,6 +241,7 @@ export default function Globe3D({
     muf: true,
     pca: true,
     heat: true,
+    openings: true,
     grid: false,
     sats: false,
     rings: true,
@@ -724,6 +725,38 @@ export default function Globe3D({
       greylineLines.push(circle)
     }
     syncLines(g, linesRef.current, 'greyline', greylineLines, '#ffc86e', 0.75, show.greyline, 0.004)
+    // Opening sectors — mode-colored wedge outlines from the QTH toward each live
+    // opening's bearing (±22.5°) out to its longest path, matching the 2-D map's
+    // sector layer (tropo amber / Es green / aurora violet / F2 cyan). One
+    // syncLines key per mode so each keeps its own color; empty modes clear.
+    const openingsByMode = new Map<string, [number, number][][]>()
+    if (show.openings && qth) {
+      for (const o of prop?.openings ?? []) {
+        if (!(o.maxKm > 0)) continue
+        const outline: [number, number][] = [[qth.lat, qth.lon]]
+        for (let i = 0; i <= 16; i++) {
+          const d = destinationPoint(qth, o.bearingDeg - 22.5 + (45 * i) / 16, o.maxKm)
+          outline.push([d.lat, d.lon])
+        }
+        outline.push([qth.lat, qth.lon])
+        const arr = openingsByMode.get(o.mode) ?? []
+        arr.push(outline)
+        openingsByMode.set(o.mode, arr)
+      }
+    }
+    for (const mode of ['Tropo', 'Sporadic-E', 'Aurora', 'F2', 'Unknown']) {
+      const lines = openingsByMode.get(mode) ?? []
+      syncLines(
+        g,
+        linesRef.current,
+        `openings-${mode}`,
+        lines,
+        openingModeColor(mode),
+        0.9,
+        show.openings && lines.length > 0,
+        0.006,
+      )
+    }
     syncCloud(
       g,
       cloudsRef.current,
@@ -732,7 +765,7 @@ export default function Globe3D({
       4,
       show.coverage,
     )
-  }, [ready, nowMs, qth, show.rings, show.cqzones, show.coverage, show.greyline, cqzones, workedGrids])
+  }, [ready, nowMs, qth, show.rings, show.cqzones, show.coverage, show.greyline, show.openings, cqzones, workedGrids, prop])
 
   // My decodes + DXpeditions as distinct point clouds.
   useEffect(() => {
@@ -796,6 +829,7 @@ export default function Globe3D({
               ['arcs', 'Heard-me arcs'],
               ['dxped', 'DXpeditions'],
               ['heat', 'Band heat'],
+              ['openings', 'Opening sectors'],
               ['flare', 'Flare blackout'],
               ['aurora', 'Aurora'],
               ['muf', 'MUF'],

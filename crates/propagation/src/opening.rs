@@ -17,7 +17,11 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::geo::{bearing_deg, geomagnetic_lat_deg, grid_distance_km, maidenhead_to_latlon};
+use serde::{Deserialize, Serialize};
+
+use crate::geo::{
+    bearing_deg, compass_octant, geomagnetic_lat_deg, grid_distance_km, maidenhead_to_latlon,
+};
 use crate::model::{Band, PathSpot, PropMode, Side, SpaceWx};
 
 #[inline]
@@ -838,6 +842,41 @@ struct OpeningState {
     /// grace window) — its true onset is unknown, so `onset_secs` is reported 0.
     onset_known: bool,
     mode: PropMode,
+    /// Episode peaks, tracked while open so the close can journal an honest
+    /// summary of how good the opening got (not just its dying window).
+    peak_z: f32,
+    peak_km: f64,
+    peak_stations: u32,
+    peak_bearing_deg: f64,
+}
+
+/// One completed opening episode — the persistent openings-log record. Serialized
+/// to disk (camelCase, mirrored in ui/src/types.ts), so new fields need
+/// `#[serde(default)]` for back-compat with older log files.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpeningEpisode {
+    /// Band label ("6m", "2m", …).
+    pub band: String,
+    /// Propagation-mode label ("Tropo", "Sporadic-E", "Aurora", …) — the latest
+    /// confident classification while the episode was open.
+    pub mode: String,
+    pub started_utc: i64,
+    pub ended_utc: i64,
+    pub duration_secs: i64,
+    /// False when the opening was already live at startup (seeded) — the true
+    /// start is unknown and `duration_secs` under-counts.
+    pub onset_known: bool,
+    /// Peak onset-anomaly z over the episode.
+    pub peak_z: f32,
+    /// Longest operator-anchored path seen (km).
+    pub max_km: f64,
+    /// Most distinct stations seen in one window.
+    pub peak_stations: u32,
+    /// Mean path bearing at the peak-distance window.
+    pub bearing_deg: f64,
+    /// Compass octant of `bearing_deg` ("NE", …).
+    pub octant: String,
 }
 
 /// A surfaced opening event from the tracker.
@@ -870,6 +909,8 @@ pub struct OpeningTracker {
     cfg: OpeningConfig,
     states: HashMap<Band, OpeningState>,
     start_time: Option<i64>,
+    /// Episodes closed since the last [`Self::drain_closed`] — the openings-log feed.
+    closed: Vec<OpeningEpisode>,
 }
 
 impl Default for OpeningTracker {
@@ -884,7 +925,44 @@ impl OpeningTracker {
             cfg,
             states: HashMap::new(),
             start_time: None,
+            closed: Vec::new(),
         }
+    }
+
+    /// Build the journal record for a closing episode from its tracked peaks.
+    fn episode_of(band: Band, st: &OpeningState, ended: i64) -> OpeningEpisode {
+        OpeningEpisode {
+            band: band.label().to_string(),
+            mode: st.mode.label().to_string(),
+            started_utc: st.onset_time,
+            ended_utc: ended,
+            duration_secs: (ended - st.onset_time).max(0),
+            onset_known: st.onset_known,
+            peak_z: st.peak_z,
+            max_km: st.peak_km,
+            peak_stations: st.peak_stations,
+            bearing_deg: st.peak_bearing_deg,
+            octant: compass_octant(st.peak_bearing_deg).to_string(),
+        }
+    }
+
+    /// Take the episodes closed since the last call (the openings-log feed).
+    pub fn drain_closed(&mut self) -> Vec<OpeningEpisode> {
+        std::mem::take(&mut self.closed)
+    }
+
+    /// Close every still-open episode at `now` and return ALL pending episodes
+    /// (previously closed + the just-flushed). For app exit, so an opening in
+    /// progress when the operator quits still reaches the openings log.
+    pub fn close_all(&mut self, now: i64) -> Vec<OpeningEpisode> {
+        let mut flushed = std::mem::take(&mut self.closed);
+        for (band, st) in self.states.iter_mut() {
+            if st.open {
+                st.open = false;
+                flushed.push(Self::episode_of(*band, st, now));
+            }
+        }
+        flushed
     }
 
     fn min_dwell(mode: PropMode) -> i64 {
@@ -931,6 +1009,10 @@ impl OpeningTracker {
                 onset_time: now,
                 onset_known: false,
                 mode,
+                peak_z: 0.0,
+                peak_km: 0.0,
+                peak_stations: 0,
+                peak_bearing_deg: 0.0,
             });
 
             // Update the consecutive-window counters.
@@ -953,12 +1035,20 @@ impl OpeningTracker {
                     st.onset_time = now;
                     st.onset_known = false;
                     st.mode = mode;
+                    st.peak_z = 0.0;
+                    st.peak_km = 0.0;
+                    st.peak_stations = 0;
+                    st.peak_bearing_deg = 0.0;
                 } else if !in_grace && st.open_windows >= cfg.enter_windows {
                     // Genuine in-session onset → alert once.
                     st.open = true;
                     st.onset_time = now;
                     st.onset_known = true;
                     st.mode = mode;
+                    st.peak_z = 0.0;
+                    st.peak_km = 0.0;
+                    st.peak_stations = 0;
+                    st.peak_bearing_deg = 0.0;
                     is_new = true;
                 }
             } else {
@@ -972,6 +1062,26 @@ impl OpeningTracker {
                     st.open = false;
                     st.open_windows = 0;
                     st.closed_windows = 0;
+                    // Journal the completed episode for the openings log.
+                    let ep = Self::episode_of(band, st, now);
+                    self.closed.push(ep);
+                }
+            }
+
+            if st.open {
+                // Track episode peaks (an honest "how good did it get" summary) and
+                // keep the latched mode current with the latest confident
+                // classification — the logged mode matches what the UI showed.
+                st.peak_z = st.peak_z.max(features.anomaly_z);
+                st.peak_stations = st
+                    .peak_stations
+                    .max((features.unique_far_rx + features.unique_far_tx) as u32);
+                if features.max_km > st.peak_km {
+                    st.peak_km = features.max_km;
+                    st.peak_bearing_deg = features.bearing_mean_deg;
+                }
+                if mode != PropMode::Unknown {
+                    st.mode = mode;
                 }
             }
 
@@ -1824,5 +1934,65 @@ mod tests {
         hf.anomaly_z = 6.0;
         hf.unique_far_dx = 1;
         assert!(!hf.raw_open(&cfg), "the single-DX-station path is VHF-only");
+    }
+
+    /// Helper: a raw-open BandSignal with the given peaks (tracker unit input).
+    fn open_sig_peaks(band: Band, mode: PropMode, z: f32, max_km: f64, far: usize) -> BandSignal {
+        let mut f = BandFeatures::empty(band);
+        f.anomaly_z = z;
+        f.max_km = max_km;
+        f.bearing_mean_deg = 45.0;
+        f.unique_far_tx = far;
+        BandSignal {
+            band,
+            features: f,
+            mode,
+            confidence: 0.8,
+            raw_open: true,
+            warm: false,
+        }
+    }
+
+    #[test]
+    fn tracker_journals_a_closed_episode_with_peaks() {
+        let cfg = OpeningConfig::default();
+        let mut tr = OpeningTracker::new(cfg);
+        // Arm the grace clock, then jump past it so the onset is genuine.
+        tr.update(0, &[]);
+        tr.update(8_000, &[open_sig_peaks(Band::B2, PropMode::Tropo, 5.0, 900.0, 1)]);
+        let evs = tr.update(8_600, &[open_sig_peaks(Band::B2, PropMode::Tropo, 6.0, 1200.0, 2)]);
+        assert!(evs.iter().any(|e| e.band == Band::B2 && e.is_new), "opens with is_new");
+        tr.update(9_200, &[open_sig_peaks(Band::B2, PropMode::Tropo, 5.0, 1500.0, 1)]);
+        // Three consecutive closed windows past min-dwell → close + journal.
+        for t in [9_800, 10_400, 11_000] {
+            tr.update(t, &[]);
+        }
+        let eps = tr.drain_closed();
+        assert_eq!(eps.len(), 1, "one journaled episode");
+        let ep = &eps[0];
+        assert_eq!(ep.band, "2m");
+        assert_eq!(ep.mode, "Tropo");
+        assert_eq!(ep.started_utc, 8_600);
+        assert_eq!(ep.ended_utc, 11_000);
+        assert_eq!(ep.duration_secs, 2_400);
+        assert!(ep.onset_known);
+        assert_eq!(ep.peak_z, 6.0, "peak z, not the dying window's");
+        assert_eq!(ep.max_km, 1500.0, "longest path over the whole episode");
+        assert_eq!(ep.octant, "NE");
+        assert!(tr.drain_closed().is_empty(), "drain empties the journal");
+    }
+
+    #[test]
+    fn close_all_flushes_an_in_progress_episode_at_exit() {
+        let mut tr = OpeningTracker::new(OpeningConfig::default());
+        tr.update(0, &[]);
+        tr.update(8_000, &[open_sig_peaks(Band::B6, PropMode::SporadicE, 5.0, 1400.0, 3)]);
+        tr.update(8_600, &[open_sig_peaks(Band::B6, PropMode::SporadicE, 7.0, 1800.0, 5)]);
+        let eps = tr.close_all(9_000);
+        assert_eq!(eps.len(), 1, "the live episode is flushed at exit");
+        assert_eq!(eps[0].band, "6m");
+        assert_eq!(eps[0].mode, "Sporadic-E");
+        assert_eq!(eps[0].ended_utc, 9_000);
+        assert!(tr.close_all(9_100).is_empty(), "nothing left open after the flush");
     }
 }

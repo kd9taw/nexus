@@ -37,7 +37,8 @@ import {
   subscribeSnapshot,
 } from './api'
 import { withErrorToast, pushToast } from './toast'
-import { processDecodes, txEarcon } from './alerts'
+import { doubleBeep, processDecodes, txEarcon } from './alerts'
+import { openingToastSpec } from './openingAlert'
 import { announce } from './announce'
 import { Announcer } from './components/Announcer'
 import { loadWatchlist, type WatchFilter } from './watchlist'
@@ -409,7 +410,9 @@ export default function App() {
               .then((passes) => checkSatAlarms(passes, Date.now()))
               .catch(() => {})
           }
-          // Loud one-shot alert when a band comes alive (the flagship moment).
+          // One-shot alert when a band comes alive, TIERED by propagation mode:
+          // Es/F2/aurora loud (rare + fleeting, aurora with operating guidance),
+          // tropo an informative note (openingAlert.ts owns the tiering).
           const tnow = Date.now()
           for (const o of p.openings) {
             if (!o.isNew) continue
@@ -417,11 +420,9 @@ export default function App() {
             const last = openingAlertRef.current.get(key) ?? 0
             if (tnow - last < OPENING_ALERT_COOLDOWN_MS) continue
             openingAlertRef.current.set(key, tnow)
-            pushToast(
-              `⚡ ${o.band} open — ${o.mode} · point ${o.octant} · ${o.stations} stns`,
-              'success',
-              8000,
-            )
+            const spec = openingToastSpec(o)
+            if (spec.beepHz != null) doubleBeep(spec.beepHz)
+            pushToast(spec.message, spec.kind, spec.ttlMs, spec.prominent ? { prominent: true } : {})
           }
           // Honest-state: surface non-live propagation in the Now-Bar lane.
           if (p.source === 'offline') {

@@ -168,6 +168,23 @@ export interface OpeningView {
   isNew: boolean
   note: string
 }
+/** One completed opening episode from the persistent openings log
+ * (get_openings_log; mirrors propagation::OpeningEpisode). */
+export interface OpeningEpisode {
+  band: string
+  /** Propagation-mode label: "Tropo" | "Sporadic-E" | "Aurora" | "F2" | "Unknown". */
+  mode: string
+  startedUtc: number
+  endedUtc: number
+  durationSecs: number
+  /** False when the opening was already live at startup — duration under-counts. */
+  onsetKnown: boolean
+  peakZ: number
+  maxKm: number
+  peakStations: number
+  bearingDeg: number
+  octant: string
+}
 export interface WorkableCard {
   call: string
   entity: string

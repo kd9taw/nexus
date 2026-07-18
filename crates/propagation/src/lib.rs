@@ -90,7 +90,7 @@ pub use needalert::{
 };
 pub use opening::{
     classify as classify_opening, detect as detect_openings_v2, reciprocity, BandFeatures,
-    BandSignal, OpeningConfig, OpeningEvent, OpeningTracker,
+    BandSignal, OpeningConfig, OpeningEpisode, OpeningEvent, OpeningTracker,
 };
 pub use pota::{parse_pota_spots, parse_sota_spots, OtaSpot};
 pub use predict::{

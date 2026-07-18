@@ -21,6 +21,7 @@ import { InsightFeed } from '../prop/InsightFeed'
 import { ChasePane } from '../prop/ChasePane'
 import { ChaseFeedPane } from '../prop/ChaseFeedPane'
 import { SatPassesPane } from '../prop/SatPassesPane'
+import { OpeningsLogPane } from '../prop/OpeningsLogPane'
 import { RotorPane } from '../prop/RotorPane'
 import { MiniSpectrum } from '../MiniSpectrum'
 import { ContestCalendarPane } from '../ContestCalendarPane'
@@ -367,6 +368,16 @@ export const PANES: PaneDef[] = [
       c.prop && c.prop.source !== 'offline' ? (
         <OpeningStrip openings={c.prop.openings} onBandClick={c.toggleFocusBand} />
       ) : null,
+  },
+  {
+    id: 'openingsLog',
+    title: 'Openings Log',
+    category: 'core',
+    // Self-fetching pane (get_openings_log) — the Basic line stays a static
+    // honest hint because the history lives inside the component.
+    basic: () =>
+      'A historical record of every detected band opening (6m/2m tropo, Es, aurora) builds here.',
+    expert: () => <OpeningsLogPane />,
   },
   {
     id: 'spacewx',

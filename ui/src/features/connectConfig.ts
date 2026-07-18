@@ -12,7 +12,7 @@ export type SlotId = (typeof SLOT_IDS)[number]
 /** Every assignable pane. Core (B1) map to existing panels; B2 adds Tier-1 panes
  *  (pickable — DEFAULT_SLOTS keeps the approved core layout). B3 appends here too. */
 export const PANE_IDS = [
-  'advisory', 'bandAdvisor', 'selection', 'outlook', 'openings', 'spacewx', 'getout',
+  'advisory', 'bandAdvisor', 'selection', 'outlook', 'openings', 'openingsLog', 'spacewx', 'getout',
   'bestband', 'activity', 'beacons', 'insights', 'chase',
   'greyline', 'bandHours', 'esNowcast', 'measuredMuf', 'chaseFeed', 'satPasses', 'rotor', 'contests',
   'scope',

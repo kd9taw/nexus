@@ -26,6 +26,7 @@ import { getAurora, getDeclination, getPca, getSatellites, getLog, getLogStats }
 import cqzonesUrl from '../data/cqzones.geojson?url'
 import { satChasingSet, toggleSatChasing } from '../features/satChase'
 import { gridToLatLon, haversineKm, bearingDeg, magneticDeg, type LatLon } from '../grid'
+import { openingModeColor } from '../bandColors'
 import {
   basemap,
   usStateBorders,
@@ -146,7 +147,7 @@ const INTENT_PRESETS: Record<
   // Ragchew: globe, who-can-I-hear (signal), calm — dxped off.
   casual: { kind: 'globe', colorBy: 'snr', layers: { dxped: false, rings: true, heat: false } },
   // 6m/VHF: heat ON — visualizing the Es/F2 opening footprint IS this intent.
-  vhf: { kind: 'globe', colorBy: 'snr', layers: { dxped: false, rings: true, heat: true } },
+  vhf: { kind: 'globe', colorBy: 'snr', layers: { dxped: false, rings: true, heat: true, openings: true } },
 }
 
 /** The operator's chosen projection is persisted (like the Connect intent) so a torn-off
@@ -209,6 +210,7 @@ type LayerKey =
   | 'grid'
   | 'rings'
   | 'heat'
+  | 'openings'
   | 'liveSpots'
   | 'stations'
   | 'paths'
@@ -239,6 +241,9 @@ const DEFAULT_LAYERS: Record<LayerKey, Layer> = {
   sats: { label: 'Satellites (amateur)', visible: false, opacity: 0.9 },
   rings: { label: 'Range rings', visible: true, opacity: 0.55 },
   heat: { label: 'Band heat (openings)', visible: true, opacity: 0.55 },
+  // Free until a real event: sectors draw only while a band is actually open,
+  // so the default-on layer costs nothing on a quiet band.
+  openings: { label: 'Opening sectors (mode)', visible: true, opacity: 0.8 },
   liveSpots: { label: 'Live spots (cluster/RBN)', visible: true, opacity: 0.9 },
   stations: { label: 'My decodes', visible: true, opacity: 1 },
   paths: { label: 'Selected path', visible: true, opacity: 1 },
@@ -483,16 +488,17 @@ export function MapView({
   // satellite layer joins it: the icons interpolate along their tracks, so a
   // 1 s tick is what makes the birds visibly MOVE between the 30 s polls.
   const heatPulsing = layers.heat.visible && hasOpening
+  const openingsPulsing = layers.openings.visible && hasOpening
   const flarePulsing = layers.flare.visible && flareActive
   const satsMoving = layers.sats.visible && sats != null && sats.birds.length > 0
   useEffect(() => {
-    if (!heatPulsing && !flarePulsing && !satsMoving) return
+    if (!heatPulsing && !openingsPulsing && !flarePulsing && !satsMoving) return
     const id = setInterval(() => {
       // No redraws for a hidden tab (the fx rAF has the same guard).
       if (!document.hidden) setPulseTick((t) => t + 1)
     }, 1_000)
     return () => clearInterval(id)
-  }, [heatPulsing, flarePulsing, satsMoving])
+  }, [heatPulsing, openingsPulsing, flarePulsing, satsMoving])
   // Apply the Connect intent preset (soft) whenever it changes — sets projection,
   // default color-by, and which optional layers are on. The user can still tweak
   // any control afterwards; switching intent re-applies.
@@ -1291,6 +1297,51 @@ export function MapView({
         ctx.globalAlpha = layers.heat.opacity
         ctx.imageSmoothingEnabled = true
         ctx.drawImage(off, 0, 0, w, h)
+        ctx.globalAlpha = 1
+      }
+    }
+
+    // Opening sectors — WHERE and WHAT KIND: for each live opening, a wedge from
+    // the QTH toward the opening's mean bearing (±22.5°, the reported octant's
+    // width) out to its longest observed path, colored by propagation mode
+    // (tropo amber / Es green / aurora violet / F2 cyan — bandColors.ts). Free on
+    // a quiet band: no openings ⇒ nothing draws. Sits under the live-spot dots so
+    // the stations that PROVE the opening render on top of its footprint.
+    if (layers.openings.visible && me) {
+      for (const o of prop?.openings ?? []) {
+        if (!(o.maxKm > 0)) continue
+        const color = openingModeColor(o.mode)
+        const pulse = 0.75 + 0.25 * Math.sin(Date.now() / 700)
+        // Wedge outline: QTH → arc across the far edge → back. Sampled along
+        // great-circle destination points so it follows the projection.
+        const STEPS = 16
+        const pts: Array<[number, number]> = []
+        const start = o.bearingDeg - 22.5
+        for (let i = 0; i <= STEPS; i++) {
+          const brg = start + (45 * i) / STEPS
+          const p = project(proj, destinationPoint(me, brg, o.maxKm))
+          if (p) pts.push(p)
+        }
+        const qth = project(proj, me)
+        if (!qth || pts.length < 2) continue
+        ctx.beginPath()
+        ctx.moveTo(qth[0], qth[1])
+        for (const [px, py] of pts) ctx.lineTo(px, py)
+        ctx.closePath()
+        ctx.globalAlpha = layers.openings.opacity * 0.16 * pulse
+        ctx.fillStyle = color
+        ctx.fill()
+        ctx.globalAlpha = layers.openings.opacity * 0.85
+        ctx.strokeStyle = color
+        ctx.lineWidth = 1.2
+        ctx.stroke()
+        // Mode tag at the sector's far edge (readable "what kind" on the map).
+        const mid = pts[Math.floor(pts.length / 2)]
+        ctx.font = 'bold 10px system-ui'
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'bottom'
+        ctx.fillStyle = color
+        ctx.fillText(`${o.band} ${o.mode}`, mid[0], mid[1] - 3)
         ctx.globalAlpha = 1
       }
     }

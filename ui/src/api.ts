@@ -109,6 +109,11 @@ export async function getPropagation(): Promise<PropagationSnapshot> {
   return invoke<PropagationSnapshot>('get_propagation')
 }
 
+/** Historical opening episodes (newest first) — the Connect openings-log pane. */
+export async function getOpeningsLog(): Promise<import('./types').OpeningEpisode[]> {
+  return invoke('get_openings_log')
+}
+
 /** Per-path HF outlook to a station's grid (the PathPredictor seam). */
 export async function getPathOutlook(grid: string): Promise<PathPrediction> {
   return invoke<PathPrediction>('get_path_outlook', { grid })
