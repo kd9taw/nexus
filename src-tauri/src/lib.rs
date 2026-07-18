@@ -4183,9 +4183,29 @@ fn get_licensed_band_plan(
     ];
     let eng = state.lock().map_err(|e| e.to_string())?;
     let class = eng.settings().license_class;
+    // RTTY / SSTV: fixed standard watering-hole channels (like WSJT-X's per-mode
+    // dials), license-filtered per band — a Technician sees only the bands their
+    // class can key there (RTTY rides digital privileges, SSTV rides phone).
+    let lower = mode.to_ascii_lowercase();
+    if lower == "rtty" || lower == "sstv" {
+        let (plan, priv_mode) = if lower == "rtty" {
+            (tempo_app::bandplan::rtty_band_plan(), OperatingMode::Digital)
+        } else {
+            (tempo_app::bandplan::sstv_band_plan(), OperatingMode::Phone)
+        };
+        return Ok(plan
+            .into_iter()
+            .filter(|c| {
+                // Channel band ids may carry a suffix ("2m-call") — privilege-check
+                // the base band.
+                let base = c.band.split('-').next().unwrap_or(&c.band);
+                tempo_app::privileges::segment_start(class, base, priv_mode).is_some()
+            })
+            .collect());
+    }
     // The caller (the cockpit) passes its mode explicitly — the engine's operating_mode is
     // set asynchronously on section entry, so reading it here would race the first mount.
-    let mode = match mode.to_ascii_lowercase().as_str() {
+    let mode = match lower.as_str() {
         "phone" => OperatingMode::Phone,
         "cw" => OperatingMode::Cw,
         _ => OperatingMode::Digital,

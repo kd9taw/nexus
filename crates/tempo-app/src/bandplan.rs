@@ -120,6 +120,40 @@ pub fn ft4_band_plan() -> Vec<BandChannel> {
     ]
 }
 
+/// The **standard RTTY activity frequencies** — the classic watering holes where
+/// RTTY actually happens (contest/DX activity windows), so a band pick in the RTTY
+/// cockpit lands in the action like WSJT-X's per-mode dials do. Dials are LSB per
+/// the RTTY convention (mark = higher RF / lower audio); the cockpit's rig-mode
+/// policy handles FSK-mode rigs separately.
+pub fn rtty_band_plan() -> Vec<BandChannel> {
+    vec![
+        ch("160m", "HF", 1.838, "LSB", "160 m · RTTY", "RTTY is rare here; shared with PSK31 1.838 — listen first"),
+        ch("80m", "HF", 3.580, "LSB", "80 m · RTTY", "the classic 3.580–3.600 RTTY window's low edge"),
+        ch("40m", "HF", 7.080, "LSB", "40 m · RTTY", "US activity 7.080–7.100; EU/DX runs ~7.043 — tune down for DX"),
+        ch("30m", "HF", 10.142, "LSB", "30 m · RTTY", "10.140–10.150 data half; secondary band — tread lightly"),
+        ch("20m", "HF", 14.083, "LSB", "20 m · RTTY", "the 14.080–14.090 RTTY window, above the FT4 cluster at 14.080"),
+        ch("17m", "HF", 18.105, "LSB", "17 m · RTTY", "18.100–18.108 window, above FT8 18.100's audio cluster"),
+        ch("15m", "HF", 21.083, "LSB", "15 m · RTTY", "the 21.080–21.100 RTTY window, above JS8 21.078"),
+        ch("12m", "HF", 24.920, "LSB", "12 m · RTTY", "24.910–24.930 data segment, clear of FT8 24.915"),
+        ch("10m", "HF", 28.083, "LSB", "10 m · RTTY", "the 28.080–28.100 RTTY window — Technician-accessible"),
+    ]
+}
+
+/// The **standard SSTV calling frequencies** — where images actually appear,
+/// including the ISS downlink (the biggest SSTV driver: ARISS events transmit
+/// PD120 on 145.800 FM). Phone-segment dials, phone sideband conventions.
+pub fn sstv_band_plan() -> Vec<BandChannel> {
+    vec![
+        ch("80m", "HF", 3.845, "LSB", "80 m · SSTV", "US SSTV calling; EU runs 3.730"),
+        ch("40m", "HF", 7.171, "LSB", "40 m · SSTV", "US SSTV calling; EU runs 7.165"),
+        ch("20m", "HF", 14.230, "USB", "20 m · SSTV", "THE worldwide SSTV calling frequency (alt 14.233 when busy)"),
+        ch("15m", "HF", 21.340, "USB", "15 m · SSTV", "worldwide 15 m SSTV calling"),
+        ch("10m", "HF", 28.680, "USB", "10 m · SSTV", "worldwide 10 m SSTV calling"),
+        ch("2m", "VHF", 145.800, "FM", "2 m · ISS downlink", "ARISS events transmit PD120 images here — the SSTV event of the year, FM"),
+        ch("2m-call", "VHF", 144.500, "FM", "2 m · SSTV calling", "terrestrial VHF SSTV calling (regional conventions vary — check locally)"),
+    ]
+}
+
 /// The band/calling plan for the active tier: FT8/FT4 use the standard WSJT-X
 /// watering holes (so you call where everyone else does); FT1/DX1 use Nexus's
 /// native off-cluster plan (those are new narrow modes that must avoid mutual QRM).
@@ -279,5 +313,22 @@ mod tests {
         // The full standard set is present (13 + 23 cm for the IC-9700 class).
         assert_eq!(ft8_band_plan().len(), 14);
         assert!(ft8_band_plan().iter().all(|c| c.mode == "USB"));
+    }
+
+    #[test]
+    fn rtty_and_sstv_plans_pin_the_standard_watering_holes() {
+        // RTTY: classic activity windows, LSB convention (mark = higher RF).
+        let rtty = rtty_band_plan();
+        let r20 = rtty.iter().find(|c| c.band == "20m").unwrap();
+        assert!((r20.dial_mhz - 14.083).abs() < 1e-9, "20m RTTY in the .080–.090 window");
+        assert!(rtty.iter().all(|c| c.mode == "LSB"), "RTTY channels are LSB");
+        // SSTV: 14.230 is THE calling frequency; the ISS downlink must be present
+        // (ARISS events are the biggest SSTV driver) and FM.
+        let sstv = sstv_band_plan();
+        let s20 = sstv.iter().find(|c| c.band == "20m").unwrap();
+        assert!((s20.dial_mhz - 14.230).abs() < 1e-9, "20m SSTV = 14.230");
+        let iss = sstv.iter().find(|c| c.band == "2m").unwrap();
+        assert!((iss.dial_mhz - 145.800).abs() < 1e-9, "ISS downlink 145.800");
+        assert_eq!(iss.mode, "FM");
     }
 }
