@@ -3059,12 +3059,13 @@ h2 {
    App shell
    =========================================================================== */
 .app {
-  /* Compensate the height for `zoom`: at zoom<1 a plain height:100% is laid out
-     at full viewport height then scaled DOWN, leaving dead space at the bottom;
-     dividing by --ui-zoom makes the scaled box fill the viewport exactly (no-op at
-     100%). This also aligns the shell height with --vh-eff (= innerHeight/zoom),
-     which the interior panes size against, so the two agree at every zoom level. */
-  height: calc(100% / var(--ui-zoom, 1));
+  /* Natural height; useViewport MEASURES the rendered box each resize/zoom change
+     and applies a pixel correction so the shell always ends exactly at the window
+     bottom. A static calc() can't do this: `zoom`'s interaction with percentage
+     heights differs across engine versions (the operator-reported dead band at the
+     bottom of every view was a semantics mismatch) — closing the loop on the real
+     measurement is correct everywhere. */
+  height: 100%;
   display: flex;
   flex-direction: column;
   background: var(--bg);

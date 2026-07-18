@@ -45,6 +45,23 @@ export function useViewport(scale?: number): void {
       const d = document.documentElement
       d.setAttribute('data-viewport', classifyViewport(effW))
       d.style.setProperty('--vh-eff', `${effH}px`)
+      // Fill-to-bottom correction: measure the app shell's RENDERED height and fix
+      // any shortfall with an explicit pixel height. `zoom` × percentage-height
+      // semantics vary across engine versions (a static calc() left a dead band at
+      // the bottom of every view on some builds); measuring the real box and
+      // correcting in layout units is right regardless of which semantic applies.
+      const app = document.querySelector<HTMLElement>('.app')
+      if (app) {
+        app.style.height = '' // re-measure the stylesheet's natural 100% first
+        const visual = app.getBoundingClientRect().height // post-zoom visual px
+        const gap = window.innerHeight - visual
+        if (Math.abs(gap) > 1) {
+          const layoutH = parseFloat(getComputedStyle(app).height) // layout px
+          if (Number.isFinite(layoutH)) {
+            app.style.height = `${layoutH + gap / zoom}px`
+          }
+        }
+      }
     }
     const onResize = () => {
       cancelAnimationFrame(raf)
