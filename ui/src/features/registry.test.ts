@@ -18,6 +18,8 @@ const EXPECTED_SECTIONS: FeatureId[] = [
   'operate',
   'cw',
   'phone',
+  'rtty',
+  'sstv',
   'connect',
   'needed',
   'spots',

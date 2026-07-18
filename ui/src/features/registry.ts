@@ -14,6 +14,8 @@ export type View =
   | 'operate'
   | 'cw'
   | 'phone'
+  | 'rtty'
+  | 'sstv'
   | 'connect'
   | 'dxped'
   | 'sats'
@@ -122,6 +124,33 @@ export const FEATURES: FeatureDef[] = [
     view: 'phone',
     // Global (no workspace): the Phone (SSB/FM) cockpit — PTT + rig control + logging.
     oneLine: 'Phone (SSB) operating — PTT, band-aware sideband, RF power, panadapter.',
+  },
+  {
+    id: 'rtty',
+    label: 'RTTY',
+    kind: 'section',
+    category: 'Operate',
+    core: false, // toggleable in Settings ▸ Features (on by default, like every non-staged section)
+    dependsOn: [],
+    // Mode, not a goal — same doctrine as CW/Phone: a goal profile never auto-enables it.
+    intents: [],
+    view: 'rtty',
+    // Global (no workspace): entering the skeleton asserts nothing on the rig; the
+    // FSK/AFSK rig-mode policy lands with the TX wiring.
+    oneLine: 'RTTY operating — 45.45 baud Baudot: streaming decode, F-key macros, FSK/AFSK keying.',
+  },
+  {
+    id: 'sstv',
+    label: 'SSTV',
+    kind: 'section',
+    category: 'Operate',
+    core: false, // toggleable in Settings ▸ Features (on by default, like every non-staged section)
+    dependsOn: [],
+    // Mode, not a goal — same doctrine as CW/Phone: a goal profile never auto-enables it.
+    intents: [],
+    view: 'sstv',
+    // Global (no workspace — RX-first): viewing the gallery never touches the rig.
+    oneLine: 'SSTV — slow-scan images auto-decode into a gallery (Martin/Scottie/Robot/PD).',
   },
   {
     id: 'logbook',

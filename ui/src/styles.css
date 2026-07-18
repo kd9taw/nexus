@@ -15143,3 +15143,114 @@ select.settings-input {
   flex: none;
   max-height: 30vh;
 }
+
+/* ===========================================================================
+   RTTY cockpit + SSTV view — Digital-rail UI shells (decoder wiring lands next
+   build). Both mount in keep-alive hosts mirroring .operate-host so the future
+   decoders keep accumulating in the background across navigation.
+   =========================================================================== */
+.rtty-host,
+.sstv-host {
+  display: contents;
+}
+.rtty-host[hidden],
+.sstv-host[hidden] {
+  display: none;
+}
+/* Triple-class (0,3,0) so `.layout.single` can't collapse the flex chain — same
+   fix as `.layout.single.cw-cockpit`. */
+.layout.single.rtty-cockpit,
+.layout.single.sstv-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  overflow-y: auto;
+  min-height: 0;
+}
+/* Muted dashed placeholder pill (band slot etc.) — reads as "not wired yet". */
+.cockpit-ph-pill {
+  font-size: var(--fs-label);
+  font-weight: 700;
+  color: var(--text-dim);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  padding: 3px 10px;
+}
+/* FSK/AFSK keying-backend indicator beside the RTTY mode badge. */
+.rtty-backend-pill {
+  font-size: var(--fs-label);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 10px;
+  margin-left: var(--space-2);
+}
+/* RTTY decoded stream — reuses the CW transcript panel, taller (RTTY prints fast). */
+.rtty-stream .cw-decode-text {
+  height: 14em;
+}
+.rtty-macros .cw-macro:disabled {
+  opacity: 0.4;
+}
+/* SSTV Arm toggle (header) — disabled until the armed VIS receiver lands. */
+.sstv-arm {
+  padding: 6px var(--space-4);
+  border-radius: var(--radius-sm);
+  font-weight: 800;
+  color: var(--text-dim);
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+}
+.sstv-arm:disabled {
+  opacity: 0.4;
+}
+/* SSTV live image canvas — the progressive decode area (empty state for now). */
+.sstv-canvas {
+  flex: 1;
+  min-height: 240px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-2, rgba(0, 0, 0, 0.2));
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.sstv-canvas-empty {
+  color: var(--text-faint);
+  font-style: italic;
+  font-size: var(--fs-body);
+  text-align: center;
+  padding: var(--space-6);
+}
+/* Gallery of received images (placeholder grid until the decoder lands). */
+.sstv-gallery {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-3) var(--space-4);
+}
+.sstv-gallery-head {
+  font-size: var(--fs-label);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+  margin-bottom: var(--space-2);
+}
+.sstv-gallery-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: var(--space-2);
+}
+.sstv-gallery-empty {
+  grid-column: 1 / -1;
+  color: var(--text-faint);
+  font-style: italic;
+  text-align: center;
+  padding: var(--space-4);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+}

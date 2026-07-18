@@ -18,6 +18,8 @@ import {
   Cable,
   Bookmark,
   Settings,
+  Type,
+  Image as ImageIcon,
 } from 'lucide-react'
 import { Tooltip, TooltipProvider } from './ui/Tooltip'
 import { type FeatureId, type View } from '../features/registry'
@@ -37,12 +39,13 @@ interface Props {
   /** Live radio tier (FT1/DX1/FT8/FT4) — picks which Digital sub-item is active. */
   tier: Tier
   /** Choose a Digital sub-mode: 'digital' opens the weak-signal cockpit on its
-   * last FT8/FT4 tier; 'tempo' opens the FT1/DX1 free-text calling cockpit. */
+   * last FT8/FT4 tier; 'tempo' opens the FT1/DX1 free-text calling cockpit;
+   * 'rtty' / 'sstv' open their sections. */
   onDigitalMode: (m: DigitalMode) => void
 }
 
-/** The two cockpits grouped under "Digital" in the rail. */
-export type DigitalMode = 'digital' | 'tempo'
+/** The cockpits grouped under "Digital" in the rail (FT · Tempo · RTTY · SSTV). */
+export type DigitalMode = 'digital' | 'tempo' | 'rtty' | 'sstv'
 
 interface DigitalSub {
   mode: DigitalMode
@@ -72,6 +75,22 @@ const DIGITAL_SUBS: DigitalSub[] = [
     icon: MessageSquare,
     title: 'Tempo — two-way free-text calling (FT1 / DX1), with Roam (coordinated QSY) inside',
     active: (v) => v === 'chat',
+  },
+  // RTTY + SSTV are opt-in sections (feature-gated like Phone/CW, on by default) —
+  // the render filters them out of the group when disabled.
+  {
+    mode: 'rtty',
+    label: 'RTTY',
+    icon: Type,
+    title: 'RTTY — Baudot teletype (45.45 baud): streaming decode + F-key macros',
+    active: (v) => v === 'rtty',
+  },
+  {
+    mode: 'sstv',
+    label: 'SSTV',
+    icon: ImageIcon,
+    title: 'SSTV — slow-scan TV: received images decode into the gallery',
+    active: (v) => v === 'sstv',
   },
 ]
 
@@ -160,7 +179,11 @@ export function ModeNav({ view, mode, enabled, onSelect, tier, onDigitalMode }: 
           {enabled.cw !== false && navBtn(CW)}
           <div className="mode-nav-group" role="group" aria-label="Digital modes">
             <span className="mode-nav-group-label">Digital</span>
-            {DIGITAL_SUBS.map((s) => {
+            {DIGITAL_SUBS.filter(
+              // FT + Tempo are core (always shown); RTTY/SSTV hide when disabled
+              // in Settings ▸ Features (their DigitalMode doubles as FeatureId).
+              (s) => s.mode === 'digital' || s.mode === 'tempo' || enabled[s.mode] !== false,
+            ).map((s) => {
               const Icon = s.icon
               const active = s.active(view, tier)
               return (

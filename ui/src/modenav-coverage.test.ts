@@ -8,11 +8,12 @@ import { ITEMS } from './components/ModeNav'
 // this. This test asserts every enable-able (non-core) section view is reachable
 // from the rail, so the whole class of bug can't recur.
 //
-// Two non-core section views are rendered by DEDICATED buttons rather than the
-// generic ITEMS array (Phone + CW get their own operating-group buttons), so they
-// are reachable without an ITEMS entry. Core sections (operate/chat/connect/needed/
-// logbook/settings) are excluded by the non-core filter below.
-const DEDICATED_BUTTON_VIEWS: FeatureId[] = ['phone', 'cw']
+// Some non-core section views are rendered by DEDICATED buttons rather than the
+// generic ITEMS array (Phone + CW get their own operating-group buttons; RTTY +
+// SSTV are Digital-group sub-buttons), so they are reachable without an ITEMS
+// entry. Core sections (operate/chat/connect/needed/logbook/settings) are
+// excluded by the non-core filter below.
+const DEDICATED_BUTTON_VIEWS: FeatureId[] = ['phone', 'cw', 'rtty', 'sstv']
 
 describe('ModeNav rail covers every opt-in section', () => {
   it('every enable-able (non-core) section view has a way into it from the rail', () => {

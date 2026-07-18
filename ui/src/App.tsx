@@ -68,6 +68,8 @@ import { NowBar } from './components/NowBar'
 import { AwardsJourney } from './components/AwardsJourney'
 import { CwCockpit } from './components/CwCockpit'
 import { PhoneCockpit } from './components/PhoneCockpit'
+import { RttyCockpit } from './components/RttyCockpit'
+import { SstvView } from './components/SstvView'
 import { PotaSotaView, type OtaSpotClickArg } from './components/PotaSotaView'
 import { StatsView } from './components/StatsView'
 import { DxpeditionsView } from './components/DxpeditionsView'
@@ -1358,6 +1360,13 @@ export default function App() {
         handleWorkspace('msg')
         return
       }
+      if (m === 'rtty' || m === 'sstv') {
+        // Skeleton sections (global, like CW/Phone pre-wiring): just navigate.
+        // RTTY's FSK-vs-AFSK rig-mode policy and SSTV's armed receiver land with
+        // the decoder wiring — entry asserts nothing on the rig today.
+        setView(m)
+        return
+      }
       const wantTier: Tier = tierRef.current === 'FT4' ? 'FT4' : 'FT8'
       setArea('dx')
       try {
@@ -1805,6 +1814,13 @@ export default function App() {
       // in the background across navigation). This case renders nothing in the slot.
       workspace = null
       break
+    case 'rtty':
+    case 'sstv':
+      // Same keep-alive pattern as Operate: RTTY's decoded stream and SSTV's
+      // always-armed VIS receiver must survive navigation, so both live in
+      // persistent hosts below. Nothing in the slot.
+      workspace = null
+      break
     case 'connect':
       workspace = (
         <ConnectView
@@ -2081,6 +2097,21 @@ export default function App() {
             active={effectiveView === 'operate'}
           />
         </div>
+        {/* RTTY + SSTV keep-alive hosts (same pattern as .operate-host): the decoded
+            RTTY stream and the always-armed SSTV VIS receiver must keep accumulating
+            while the operator is on another section. Skeletons this build — these
+            hosts are the seam the decoders wire into. Gated on the feature toggle so
+            a disabled section mounts nothing. */}
+        {isViewEnabled('rtty') && (
+          <div className="rtty-host" hidden={effectiveView !== 'rtty'}>
+            <RttyCockpit snap={snap} onSnap={setSnap} />
+          </div>
+        )}
+        {isViewEnabled('sstv') && (
+          <div className="sstv-host" hidden={effectiveView !== 'sstv'}>
+            <SstvView snap={snap} onSnap={setSnap} />
+          </div>
+        )}
         {workspace}
       </div>
 
