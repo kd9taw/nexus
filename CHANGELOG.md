@@ -5,6 +5,16 @@ All notable changes to Nexus (formerly Tempo) are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.1] — 2026-07-18 — fill-to-bottom fix
+
+### Fixed
+
+- **The interface now truly fills to the bottom of the window on every view and at
+  every UI scale.** The app shell's height is measured against the real rendered box
+  each resize/zoom change and corrected in pixels, instead of trusting a zoom formula
+  whose semantics vary across WebView versions — the persistent dead band at the
+  bottom of the screen is gone. (Operator-verified live.)
+
 ## [0.11.0] — 2026-07-18 — RTTY + SSTV (beta), openings intelligence, and a decode-accuracy milestone
 
 ### Added
