@@ -6,10 +6,20 @@ cmake_minimum_required(VERSION 3.20)
 project(libft1 LANGUAGES Fortran C CXX)
 
 # ---------------------------------------------------------------------------
-# Reference WSJT-X source tree (READ-ONLY). Sources are referenced by absolute
-# path; nothing is copied.
+# WSJT-X-derived modem source. The complete corresponding source (GPL-3.0 §6)
+# is vendored in-tree at libft1/vendor/wsjtx/ and used by DEFAULT, so a fresh
+# clone builds the modem with no external checkout. See vendor/wsjtx/README.md
+# for provenance and license.
+#
+# To build against a different WSJT-X tree instead, override at configure time:
+#     -DWX=/path/to/wsjtx-source        (its lib/ must hold the sources)
 # ---------------------------------------------------------------------------
-set(WX "/home/kd9taw/work/twowayfd/ft1/research/phase2/wsjtx-source")
+set(WX "${CMAKE_CURRENT_SOURCE_DIR}/vendor/wsjtx" CACHE PATH "WSJT-X-derived modem source tree (contains lib/)")
+if(NOT IS_DIRECTORY "${WX}/lib")
+    message(FATAL_ERROR
+        "WSJT-X modem source not found at ${WX}/lib. The vendored copy lives at "
+        "libft1/vendor/wsjtx/; override with -DWX=/path/to/wsjtx-source if needed.")
+endif()
 set(LIB "${WX}/lib")
 
 # ---------------------------------------------------------------------------
