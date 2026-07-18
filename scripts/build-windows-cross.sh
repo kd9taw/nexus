@@ -74,10 +74,17 @@ fi
 
 # 3 — libft1 modem test exes (proves the native chain on Windows) ------------
 bold "3/5  libft1 Windows test exes"
-cmake -S "$REPO/libft1" -B "$REPO/libft1/build-win" -G "$GEN" \
+# Configure/build output goes to a log; on FAILURE the log is dumped so CI and
+# operators see the real error (a bare >/dev/null swallowed ninja/CMake errors).
+LIBFT1_LOG="$REPO/libft1/build-win-configure.log"
+if ! cmake -S "$REPO/libft1" -B "$REPO/libft1/build-win" -G "$GEN" \
   -DCMAKE_TOOLCHAIN_FILE="$REPO/libft1/mingw-w64.cmake" \
-  -DFFTW_MINGW_PREFIX="$FFTW_MINGW_PREFIX" -DCMAKE_BUILD_TYPE=Release >/dev/null
-cmake --build "$REPO/libft1/build-win" >/dev/null
+  -DFFTW_MINGW_PREFIX="$FFTW_MINGW_PREFIX" -DCMAKE_BUILD_TYPE=Release >"$LIBFT1_LOG" 2>&1; then
+  cat "$LIBFT1_LOG"; die "libft1 CMake configure failed (log above)"
+fi
+if ! cmake --build "$REPO/libft1/build-win" >"$LIBFT1_LOG" 2>&1; then
+  tail -n 80 "$LIBFT1_LOG"; die "libft1 build failed (last 80 lines above)"
+fi
 for e in dx1_test_standalone roundtrip ft1_test_standalone acquire; do
   [ -f "$REPO/libft1/build-win/$e.exe" ] && ok "$e.exe" || warn "$e.exe not produced"
 done
