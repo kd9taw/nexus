@@ -1770,7 +1770,9 @@ impl Engine {
                 let lsb = self
                     .sideband_override
                     .as_deref()
-                    .map_or(self.settings.dial_mhz < 10.0, |m| m.eq_ignore_ascii_case("lsb"));
+                    .map_or(self.settings.dial_mhz < 10.0, |m| {
+                        m.eq_ignore_ascii_case("lsb")
+                    });
                 return if lsb { "PKTLSB" } else { "PKTUSB" }.to_string();
             }
             if let Some(m) = &self.sideband_override {
@@ -7848,14 +7850,26 @@ mod tests {
         e.set_license_class("extra");
         e.set_frequency(14.290, "20m", "USB");
         e.set_operating_mode("phone", false);
-        assert_eq!(e.rig_mode_effective(), "USB", "idle Phone → plain USB (voice = mic)");
+        assert_eq!(
+            e.rig_mode_effective(),
+            "USB",
+            "idle Phone → plain USB (voice = mic)"
+        );
         // Queue an image → DATA submode commanded BEFORE the loop keys PTT.
         e.sstv_send(sstv_img_samples(), "PD-120".into()).unwrap();
-        assert_eq!(e.rig_mode_effective(), "PKTUSB", "queued SSTV → DATA-USB (codec-routed)");
+        assert_eq!(
+            e.rig_mode_effective(),
+            "PKTUSB",
+            "queued SSTV → DATA-USB (codec-routed)"
+        );
         // Loop takes the job (sstv_tx → None) and marks it sending → still DATA on the air.
         let _ = e.poll_sstv_tx();
         e.set_sstv_sending(true);
-        assert_eq!(e.rig_mode_effective(), "PKTUSB", "sending SSTV → still DATA");
+        assert_eq!(
+            e.rig_mode_effective(),
+            "PKTUSB",
+            "sending SSTV → still DATA"
+        );
         // Image done → plain USB restores so the next voice PTT keys the mic, not the codec.
         e.set_sstv_sending(false);
         assert_eq!(e.rig_mode_effective(), "USB", "idle again → plain USB");
