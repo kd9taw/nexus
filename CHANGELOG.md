@@ -5,6 +5,52 @@ All notable changes to Nexus (formerly Tempo) are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0] — 2026-07-19 — Tester punch-list, a QSO that can't be lost, and honest message status
+
+### Fixed — CW cockpit tester punch-list (SourceForge tickets #1–#3, tomsk666)
+
+- **CW Pitch field was unreadable.** The box showed a sliver of a digit instead of the value.
+  A shared input style declared later in the stylesheet overrode the field's own padding,
+  leaving almost no room once the browser drew its spinner arrows. It reproduced at every
+  window size — an ultrawide just made it obvious. Proper width, spinner suppressed.
+- **CW speed is remembered.** WPM was runtime-only with no saved setting, so every launch
+  reset it to 25 — while the keyer backend and pitch beside it *did* save, which is what made
+  it look arbitrary. Now persisted, written once when you finish adjusting rather than on every
+  slider tick. The decoder's automatic speed-matching deliberately does NOT overwrite your
+  stored speed.
+- **Nexus reopens where you left it, and no longer reconfigures your radio at launch.** The
+  app always reopened on the FT4/8 pane AND commanded the rig into DATA — worse, it *saved*
+  that over your real operating mode, so a station left on 40m LSB for a net came up in DATA-L
+  and relaunching could not recover it. The section is restored, and launching no longer
+  overwrites your mode.
+
+### Fixed — a completed contact can no longer be lost
+
+- **A QSO waiting in the confirm-before-log popup is now journalled to disk the moment it is
+  held.** Previously it existed only in memory: a crash, power cut, or unattended reboot while
+  the popup waited destroyed a real contact the other station had already logged, with no trace
+  anywhere. It is restored on the next launch, and cleared once you confirm or discard.
+
+### Changed — Tempo chat: message status tells the truth
+
+- **A queued message says whether it actually went out.** Every directed message goes through
+  store-and-forward, so "waiting for the recipient to be heard" and "transmitted, awaiting
+  acknowledgement" both rendered an identical "Sent". A held message now reads **"Waiting to
+  send"** until it first transmits.
+- **A message that can never be sent says so.** The queue does not survive a restart, so a
+  message still held when you close is gone. It now reads **"Not sent — abandoned on restart"**
+  instead of claiming it was sent. (Persisting the queue itself is still to come.)
+- **Deleting a conversation now stops the radio.** The ✕ removed the thread but left its queued
+  messages transmitting — up to eight more attempts, and indefinitely for a station never heard.
+  Deleting now cancels that traffic, confirms first, and persists immediately. The ✕ is also
+  visible without hovering and reachable by keyboard.
+
+### Fixed — layout
+
+- **Reverted a pixel floor on the Classic-rail Stations roster.** It was reintroducing the
+  vertical-clipping bug that adaptive layout fixed (hard floors sum past a short window and
+  clip). The roster keeps its larger share of the rail.
+
 ## [0.12.0] — 2026-07-18 — RTTY goes hands-free, SSTV FSK-ID + a real FT8 sensitivity fix
 
 ### Fixed — on-air transmit pass (RTTY/SSTV) + Raspberry Pi

@@ -123,12 +123,24 @@ impl AppState {
         self.inbox.roster.clear();
     }
 
-    /// Archive (hide) a conversation thread — drops it from the in-memory thread map
-    /// and clears the active peer if it was selected. A deliberate operator action
-    /// (the recents-list hide affordance); the `*` band feed re-creates on the next
-    /// broadcast, and a directed peer re-creates when next heard.
+    /// Delete a conversation thread — drops it from the in-memory thread map, cancels any
+    /// still-queued outbound messages for that peer, and clears the active peer if it was
+    /// selected. A deliberate operator action (the recents-list ✕).
+    ///
+    /// Dropping the store-and-forward entries is the part that matters ON THE AIR: without
+    /// it, deleting a thread left the radio transmitting its queued messages for up to
+    /// [`MAX_SEND_ATTEMPTS`] releases, and a message to a never-heard peer (`attempts == 0`,
+    /// which `purge` never collects) would have queued indefinitely.
+    ///
+    /// The thread is not suppressed: the `*` band feed re-creates on the next broadcast, and
+    /// a directed peer re-creates if that station transmits to us again. That is intended —
+    /// this deletes history, it does not block a station.
+    ///
+    /// (Wire name kept as `archive_conversation` across the Tauri/TS boundary; renaming it
+    /// would touch six files for zero behavior change.)
     pub fn archive_conversation(&mut self, peer: &str) {
         self.conversations.remove(peer);
+        self.store.drop_for(peer);
         if self.active_peer.as_deref() == Some(peer) {
             self.active_peer = None;
         }
@@ -167,20 +179,35 @@ impl AppState {
     /// Restore persisted conversation threads at startup (the in-memory map is empty
     /// then), so chat history survives an app restart. Keyed by peer.
     pub fn load_conversations(&mut self, convs: Vec<Conversation>) {
-        for c in convs {
+        for mut c in convs {
             // Drop PHANTOM threads persisted before the FT1 gate above: a directed
-            // conversation whose messages are ALL inbound and non-FT1 (folded FT8/FT4
-            // QSO fragments — never a real chat). Keep the `*` band feed and any thread
-            // with operator participation (an outbound message) or a genuine FT1 message,
-            // so a real unanswered inbound chat survives. This cleans an operator's
-            // existing conversations.json of the leaked decode "chats" on next launch.
+            // conversation whose messages are ALL inbound and explicitly tagged with a
+            // non-FT1 tier (folded FT8/FT4 QSO fragments — never a real chat). Keep the
+            // `*` band feed and any thread with operator participation (an outbound
+            // message) or a genuine FT1 message, so a real unanswered inbound chat
+            // survives. An untagged message (`tier: None`, written before ChatMessage
+            // carried a tier) is KEPT — we can't prove it was a decode leak, and dropping
+            // a real old chat is the worse error. This cleans an operator's existing
+            // conversations.json of the leaked decode "chats" on next launch.
             let phantom = c.peer != "*"
                 && !c.messages.is_empty()
                 && c.messages
                     .iter()
-                    .all(|m| !m.outbound && m.tier != Some(Tier::Ft1));
+                    .all(|m| !m.outbound && matches!(m.tier, Some(t) if t != Tier::Ft1));
             if phantom {
                 continue;
+            }
+            // `StoreForward` is NOT persisted, so a restart silently drops the whole queue
+            // while conversations.json restores the bubbles. A message that was HELD when we
+            // closed will therefore never transmit — mark it ABANDONED rather than merely
+            // clearing `stored`, which left it rendering as a plain "Sent" and had the
+            // operator believing it went out. Messages that were already on the air
+            // (`stored == false`) are untouched: those genuinely were sent.
+            for m in &mut c.messages {
+                if m.stored {
+                    m.stored = false;
+                    m.abandoned = true;
+                }
             }
             self.conversations.insert(c.peer.clone(), c);
         }
@@ -300,6 +327,8 @@ impl AppState {
             tier: Some(self.link.tier),
             delivered: false, // flips true when the recipient's id-bearing ACK arrives
             ack_id: Some(ack_id), // confirm THIS message by its store chunk-id
+            stored: true,     // HELD until the peer is heard and the queue releases it
+            abandoned: false,
         };
         self.conversation_mut(peer).messages.push(msg);
     }
@@ -324,6 +353,8 @@ impl AppState {
             tier: Some(tier),
             delivered: false, // broadcasts have no per-recipient ACK
             ack_id: None,
+            stored: false, // broadcasts go out directly, never via the store queue
+            abandoned: false,
         };
         self.conversation_mut("*").messages.push(msg);
     }
@@ -381,11 +412,19 @@ impl AppState {
         // mutable/immutable split borrow is sound.
         let mut frames = Vec::new();
         let mut bodies = Vec::new();
-        for (_to, body, fs) in self.store.due(&self.inbox.roster, slot, window, backoff) {
+        // A `Some(body)` is the message's FIRST release — it just went on the air, so the
+        // held bubble stops saying "waiting". Collected here and applied AFTER the loop:
+        // calling a `&mut self` helper inside would break the split borrow above.
+        let mut released_to = Vec::new();
+        for (to, body, fs) in self.store.due(&self.inbox.roster, slot, window, backoff) {
             if let Some(b) = body {
                 bodies.push(b);
+                released_to.push(to);
             }
             frames.extend(fs);
+        }
+        for peer in released_to {
+            self.mark_conversation_on_air(&peer);
         }
         (frames, bodies)
     }
@@ -510,6 +549,17 @@ impl AppState {
         }
     }
 
+    /// Clear `stored` on the OLDEST still-held outbound message to `peer` — it just went on
+    /// the air for the first time (one release clears one bubble, FIFO, mirroring
+    /// `mark_conversation_delivered`).
+    fn mark_conversation_on_air(&mut self, peer: &str) {
+        if let Some(conv) = self.conversations.get_mut(peer) {
+            if let Some(m) = conv.messages.iter_mut().find(|m| m.outbound && m.stored) {
+                m.stored = false;
+            }
+        }
+    }
+
     /// Fold any inbound messages the inbox has newly attributed into per-peer
     /// conversation threads. Idempotent across calls via the `drained` cursor.
     fn drain_inbox(&mut self) {
@@ -543,7 +593,9 @@ impl AppState {
                 dt_sec: None,
                 tier: Some(self.link.tier),
                 delivered: false,
-                ack_id: None, // inbound — no outbound id to confirm
+                ack_id: None,  // inbound — no outbound id to confirm
+                stored: false, // inbound — nothing of ours is queued
+                abandoned: false,
             };
             self.conversation_mut(&peer).messages.push(msg);
         }
@@ -895,6 +947,97 @@ mod tests {
     }
 
     #[test]
+    fn deleting_a_thread_cancels_its_queued_traffic_but_not_other_peers() {
+        let mut app = AppState::new("K2DEF", "FN31");
+        app.send_message("W9XYZ", "HI");
+        app.send_message("W9XYZ", "AGAIN");
+        app.send_message("K7ABC", "HELLO");
+        assert_eq!(app.store.pending(), 3, "all three queued");
+
+        app.archive_conversation("W9XYZ");
+        assert_eq!(
+            app.store.pending(),
+            1,
+            "deleting the thread cancels ONLY that peer's queued messages — otherwise the \
+             radio keeps transmitting to a conversation the operator deleted"
+        );
+
+        // The surviving message must still be releasable: prove it by hearing K7ABC and
+        // draining the queue. If drop_for had over-matched, there'd be no frames here.
+        app.observe(&[dec("K2DEF K7ABC EN61", -5)], 1);
+        let (frames, _) = app.due_frames(1, 30, 4);
+        assert!(
+            frames.iter().any(|f| f.contains("K7ABC")),
+            "K7ABC's message still releases after W9XYZ's thread was deleted: {frames:?}"
+        );
+    }
+
+    #[test]
+    fn a_held_message_is_marked_stored_until_it_first_goes_on_the_air() {
+        let mut app = AppState::new("K2DEF", "FN31");
+        app.set_tier(Tier::Ft1);
+        app.send_message("W9XYZ", "HI");
+
+        let held = |a: &AppState| a.conversation("W9XYZ").unwrap().messages[0].stored;
+        assert!(
+            held(&app),
+            "queued for a peer we have not heard — held, not on the air"
+        );
+
+        // Peer still unheard: the queue releases nothing, so it stays held.
+        let (frames, _) = app.due_frames(1, 30, 4);
+        assert!(frames.is_empty(), "nothing releases for an absent peer");
+        assert!(held(&app), "still held while the peer is absent");
+
+        // Hear the peer → the message releases → the bubble stops claiming "waiting".
+        app.observe(&[dec("K2DEF W9XYZ EN61", -5)], 2);
+        let (frames, bodies) = app.due_frames(2, 30, 4);
+        assert!(!frames.is_empty(), "released once the peer is present");
+        assert_eq!(bodies.len(), 1, "one first-release body");
+        assert!(
+            !held(&app),
+            "cleared on FIRST release — it is now sent-awaiting-ACK, not held"
+        );
+        assert!(
+            !app.conversation("W9XYZ").unwrap().messages[0].delivered,
+            "on the air is NOT delivered — that still waits for the ACK"
+        );
+    }
+
+    #[test]
+    fn a_restored_held_message_is_marked_abandoned_not_sent() {
+        // StoreForward is not persisted, so a restart drops the queue while the bubbles come
+        // back. A message that was HELD can never transmit now. Clearing `stored` alone made it
+        // render as a plain "Sent" — an INVISIBLE broken promise, worse than the visible one:
+        // the operator believes it went out and never re-sends. It must say so instead.
+        let mut app = AppState::new("K2DEF", "FN31");
+        let mut sender = AppState::new("K2DEF", "FN31");
+        sender.send_message("W9XYZ", "HI");
+        let persisted = sender.export_conversations();
+        assert!(
+            persisted[0].messages[0].stored,
+            "precondition: it was held when persisted"
+        );
+
+        app.load_conversations(persisted);
+        assert_eq!(
+            app.store.pending(),
+            0,
+            "precondition: the queue did NOT survive the restart"
+        );
+        let m = &app.conversation("W9XYZ").unwrap().messages[0];
+        assert!(
+            !m.stored,
+            "no longer 'waiting to send' — there is no queue left to send it"
+        );
+        assert!(
+            m.abandoned,
+            "and it must SAY it was abandoned — rendering a never-transmitted message as \
+             'Sent' is the app asserting something false"
+        );
+    }
+
+    #[test]
     fn observe_directed_decode_updates_roster_and_creates_attributed_inbound() {
         let mut app = AppState::new("K2DEF", "FN31");
         app.set_tier(Tier::Ft1); // conversation folding is a Tempo (FT1) feature
@@ -979,6 +1122,8 @@ mod tests {
             tier: Some(tier),
             delivered: false,
             ack_id: None,
+            stored: false,
+            abandoned: false,
         };
         let outbound = ChatMessage {
             outbound: true,
@@ -1005,6 +1150,15 @@ mod tests {
                 peer: "*".into(),
                 messages: vec![inbound(Tier::Ft8)],
             },
+            // Untagged legacy message (persisted before ChatMessage carried a
+            // tier) → kept; we can't prove it was a decode leak.
+            Conversation {
+                peer: "LEGACY".into(),
+                messages: vec![ChatMessage {
+                    tier: None,
+                    ..inbound(Tier::Ft1)
+                }],
+            },
         ]);
         assert!(app.conversation("PHANTOM").is_none(), "FT8 phantom dropped");
         assert!(
@@ -1016,6 +1170,10 @@ mod tests {
             "operator-participated kept"
         );
         assert!(app.conversation("*").is_some(), "band feed kept");
+        assert!(
+            app.conversation("LEGACY").is_some(),
+            "untagged legacy thread kept"
+        );
     }
 
     #[test]
@@ -1120,6 +1278,7 @@ mod tests {
             "freqHz",
             "dtSec",
             "tier",
+            "stored",
         ] {
             assert!(msg.get(key).is_some(), "missing message.{key}: {msg}");
         }

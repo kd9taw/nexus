@@ -51,7 +51,7 @@ module ft8_cabi
   integer, parameter :: F8_NH1     = 1920            ! NFFT1/2 = (2*1920)/2
   integer, parameter :: F8_NZ      = F8_NSPS * F8_NN ! 151680
   integer, parameter :: F8_MAXCAND = 600
-  integer, parameter :: F8_MAXDEC  = 100
+  integer, parameter :: F8_MAXDEC  = 200   ! stock WSJT-X per-period cap (MAXDEC)
 
   ! Interop result struct. Layout MUST match ft8_decode_t in libft1.h.
   !   off 0  float sync; 4 int snr; 8 float dt; 12 float freq;
@@ -398,6 +398,8 @@ contains
        end do
     end if
 
+    ! ndec == max_out here means the cap was hit and the weakest decodes were
+    ! dropped: raise F8_MAXDEC and the Rust MAX_DECODES (crates/ft8) together.
     ndec = min(ndecodes, max_out)
   end function ft8_decode_frame
 

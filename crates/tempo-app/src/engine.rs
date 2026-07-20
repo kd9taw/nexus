@@ -202,6 +202,8 @@ pub struct Engine {
     /// rewritten here on every logged contact and merged back in when a Field
     /// Day mode starts, so a mid-event restart loses nothing.
     fd_log_path: Option<PathBuf>,
+    /// Durable journal for the single QSO held by the prompt-to-log popup.
+    pending_qso_path: Option<PathBuf>,
     /// Callsign → DXCC entity resolver, injected by the command layer (which owns
     /// the cty.dat table) so tempo-app stays DXCC-free. `None` in headless tests
     /// (new-DXCC highlighting simply stays off). See [`Engine::set_dxcc_resolver`].
@@ -370,8 +372,6 @@ pub struct Engine {
     cw_peer_call: String,
     cw_peer_name: String,
     cw_peer_state: String,
-    /// CW keyer speed in WPM (drives the rig's `KEYSPD`). Default 25.
-    cw_wpm: u32,
     /// One-shot: the operator hit Abort — the radio loop calls `rig.stop_morse` and
     /// clears the queue, then resets this.
     cw_abort: bool,
@@ -829,6 +829,7 @@ impl Engine {
             logbook: Logbook::new(),
             log_path: None,
             fd_log_path: None,
+            pending_qso_path: None,
             dxcc_resolve: None,
             grid_rarity_resolve: None,
             lotw_resolve: None,
@@ -879,7 +880,6 @@ impl Engine {
             cw_peer_call: String::new(),
             cw_peer_name: String::new(),
             cw_peer_state: String::new(),
-            cw_wpm: 25,
             cw_abort: false,
             manual_ptt: false,
             rf_power: None,
@@ -1893,8 +1893,13 @@ impl Engine {
     }
 
     /// Set the CW keyer speed in WPM (clamped 5..=50).
+    ///
+    /// Lives in `settings` (not a duplicate engine field) exactly like `cw_pitch_hz`, so it
+    /// persists and cannot drift from what gets saved. The CALLER decides whether to write
+    /// settings to disk — the CW decoder's automatic speed-match also lands here, and the
+    /// operator's stored preference must not be overwritten by whatever the last station sent.
     pub fn set_cw_wpm(&mut self, wpm: u32) {
-        self.cw_wpm = wpm.clamp(5, 50);
+        self.settings.cw_wpm = wpm.clamp(5, 50);
     }
 
     /// Operator CW decode sensitivity in [0, 1] (0.5 = the original gates; higher catches
@@ -1943,7 +1948,7 @@ impl Engine {
 
     /// Current CW keyer speed (WPM) — for the radio loop's `set_keyspd` + the snapshot.
     pub fn cw_wpm(&self) -> u32 {
-        self.cw_wpm
+        self.settings.cw_wpm
     }
 
     /// True if CW uses the SOUNDCARD keyer (the loop generates a keyed tone + PTT,
@@ -2551,6 +2556,60 @@ impl Engine {
     /// rewritten on every FD contact and restored when FD mode starts.
     pub fn set_fd_log_path(&mut self, path: PathBuf) {
         self.fd_log_path = Some(path);
+    }
+
+    /// Point the prompt-to-log hold at its durable journal. Called once by the shell at
+    /// startup, beside [`Self::set_fd_log_path`].
+    pub fn set_pending_qso_path(&mut self, path: PathBuf) {
+        self.pending_qso_path = Some(path);
+    }
+
+    /// Journal (or clear) the QSO held by the prompt-to-log popup.
+    ///
+    /// Written the MOMENT the hold changes, not at exit: a finished contact — exchange
+    /// complete, the other station already logged it — sat only in memory while the popup
+    /// waited, so a crash, a power cut, or an unattended reboot destroyed a real QSO with no
+    /// trace. An exit hook would only have covered a clean quit. Mirrors the Field Day
+    /// journal (`persist_fd_log`), which already got this right per contact.
+    ///
+    /// Same write-tmp + fsync + rename as the FD journal, so a crash mid-write cannot leave a
+    /// truncated record. `None` removes the file — a confirmed or discarded QSO must not come
+    /// back on the next launch.
+    pub fn persist_pending_qso(&self) {
+        let Some(path) = &self.pending_qso_path else {
+            return;
+        };
+        let Some(rec) = &self.pending_log else {
+            let _ = std::fs::remove_file(path);
+            return;
+        };
+        let dto: crate::dto::LoggedQso = rec.clone().into();
+        let Ok(text) = serde_json::to_string(&dto) else {
+            return;
+        };
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let tmp = path.with_extension("json.tmp");
+        let res = std::fs::File::create(&tmp)
+            .and_then(|mut f| {
+                std::io::Write::write_all(&mut f, text.as_bytes())?;
+                f.sync_all() // on disk BEFORE the rename publishes it
+            })
+            .and_then(|()| std::fs::rename(&tmp, path));
+        if let Err(e) = res {
+            eprintln!("tempo: failed to journal the pending QSO: {e}");
+        }
+    }
+
+    /// Restore a QSO left in the prompt-to-log popup by a previous session (crash, power
+    /// loss, or a quit with the popup open) so the operator can still log it. Called by the
+    /// shell at startup AFTER [`Self::set_pending_qso_path`]. Ignored if a QSO is already
+    /// held — a live hold outranks a restored one.
+    pub fn load_pending_qso(&mut self, rec: QsoRecord) {
+        if self.pending_log.is_none() {
+            self.pending_log = Some(rec);
+        }
     }
 
     /// Flush the in-memory Field Day contest log to `fd_log_path` as ADIF
@@ -3764,12 +3823,14 @@ impl Engine {
     /// (possibly operator-edited) record; logs it and clears the pending hold.
     pub fn confirm_pending_log(&mut self, rec: QsoRecord) {
         self.pending_log = None;
+        self.persist_pending_qso(); // clears the journal — it's in the log now
         self.log_qso(rec);
     }
 
     /// Discard a QSO held by the prompt-to-log popup without logging it.
     pub fn discard_pending_log(&mut self) {
         self.pending_log = None;
+        self.persist_pending_qso(); // clears the journal — the operator said no
     }
 
     /// Operator "Resend": re-arm the current QSO message so a stalled (or just
@@ -3812,6 +3873,7 @@ impl Engine {
                                     // instead of writing silently, so manual + auto behave the same.
         if self.settings.prompt_to_log {
             self.pending_log = Some(rec);
+            self.persist_pending_qso(); // a real contact — journal it before the popup waits
         } else {
             self.log_qso(rec);
         }
@@ -4975,6 +5037,7 @@ impl Engine {
                     if self.settings.prompt_to_log {
                         // Hold for the operator's confirm-before-log popup.
                         self.pending_log = Some(rec);
+                        self.persist_pending_qso(); // journal before the popup waits
                     } else {
                         self.log_qso(rec);
                     }
@@ -5711,7 +5774,7 @@ impl Engine {
         s.radio.time_sync_ok = self.time_sync_ok();
         s.radio.cat_ok = self.cat_status.0;
         s.radio.cat_detail = self.cat_status.1.clone();
-        s.radio.cw_wpm = self.cw_wpm;
+        s.radio.cw_wpm = self.settings.cw_wpm;
         s.radio.split_tx_mhz = self.split_tx_mhz;
         s.radio.cw_keyer = match self.settings.cw_keyer {
             crate::settings::CwKeyerBackend::Cat => "cat",
@@ -6781,6 +6844,7 @@ impl Engine {
                     // Hold for the operator's confirm-before-log popup instead of
                     // writing it silently.
                     self.pending_log = Some(rec);
+                    self.persist_pending_qso(); // journal before the popup waits
                 } else {
                     self.log_qso(rec);
                 }
@@ -10452,6 +10516,73 @@ mod tests {
             e.snapshot().pending_log.is_none(),
             "hold cleared after confirm"
         );
+    }
+
+    #[test]
+    fn a_held_qso_survives_a_crash_and_comes_back_on_next_launch() {
+        // The failure this closes: a finished contact — exchange complete, the OTHER station
+        // already logged it — sat only in memory while the confirm popup waited. A crash or
+        // power cut in that window destroyed a real QSO with no trace anywhere.
+        let dir = std::env::temp_dir().join(format!("nexus-pendingqso-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("pending_qso.json");
+
+        let mut e = Engine::new("K2DEF", "FN31", 0);
+        e.settings.prompt_to_log = true;
+        e.set_pending_qso_path(path.clone());
+        e.call_station("W9XYZ");
+        e.ingest_decodes_for_test(&[dec_snr("K2DEF W9XYZ -10", -7)], 1);
+        e.ingest_decodes_for_test(&[dec_snr("K2DEF W9XYZ RR73", -7)], 3);
+        assert!(e.snapshot().pending_log.is_some(), "held for confirm");
+        assert!(
+            path.exists(),
+            "journalled the MOMENT it was held — an exit hook would miss a crash"
+        );
+
+        // Simulate the crash: this engine simply vanishes, nothing is flushed.
+        drop(e);
+
+        // Next launch restores the hold, so the operator can still log the contact.
+        let mut relaunched = Engine::new("K2DEF", "FN31", 0);
+        relaunched.set_pending_qso_path(path.clone());
+        let text = std::fs::read_to_string(&path).expect("journal readable after the crash");
+        let q: crate::dto::LoggedQso = serde_json::from_str(&text).expect("journal parses");
+        relaunched.load_pending_qso(q.into());
+        let pending = relaunched
+            .snapshot()
+            .pending_log
+            .expect("the contact came back");
+        assert_eq!(pending.call, "W9XYZ", "the SAME station, not a blank hold");
+
+        // Confirming logs it and clears the journal, so it cannot resurrect next launch.
+        relaunched.confirm_pending_log(pending.into());
+        assert_eq!(relaunched.get_log().len(), 1, "logged exactly once");
+        assert!(
+            !path.exists(),
+            "journal removed on confirm — a logged QSO must not come back"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn discarding_a_held_qso_clears_its_journal() {
+        let dir = std::env::temp_dir().join(format!("nexus-pendingqso-d-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("pending_qso.json");
+
+        let mut e = Engine::new("K2DEF", "FN31", 0);
+        e.settings.prompt_to_log = true;
+        e.set_pending_qso_path(path.clone());
+        e.call_station("W9XYZ");
+        e.ingest_decodes_for_test(&[dec_snr("K2DEF W9XYZ -10", -7)], 1);
+        e.ingest_decodes_for_test(&[dec_snr("K2DEF W9XYZ RR73", -7)], 3);
+        assert!(path.exists(), "journalled while held");
+        e.discard_pending_log();
+        assert!(
+            !path.exists(),
+            "a discarded QSO must not be restored on the next launch"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

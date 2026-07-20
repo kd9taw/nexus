@@ -142,6 +142,17 @@ impl StoreForward {
             .retain(|p| !p.delivered && p.attempts < max_attempts);
         before - self.queue.len()
     }
+
+    /// Drop every queued message for `to`, delivered or not; returns how many were dropped.
+    /// The operator deleted the conversation, so nothing further for that peer may go on the
+    /// air. Without this, deleting a thread leaves its messages transmitting for up to
+    /// `MAX_SEND_ATTEMPTS` releases — and a message to a never-heard peer stays at
+    /// `attempts == 0`, which `purge` never collects, so it would queue indefinitely.
+    pub fn drop_for(&mut self, to: &str) -> usize {
+        let before = self.queue.len();
+        self.queue.retain(|p| p.to != to);
+        before - self.queue.len()
+    }
 }
 
 #[cfg(test)]
@@ -237,5 +248,29 @@ mod tests {
         sf.mark_delivered("N0XYZ");
         assert_eq!(sf.purge(5), 1);
         assert_eq!(sf.pending(), 1);
+    }
+
+    #[test]
+    fn drop_for_cancels_one_peers_queue_including_what_purge_would_never_collect() {
+        let mut sf = StoreForward::new("W9XYZ", "EN37");
+        sf.queue("N0XYZ", "ONE", 0);
+        sf.queue("N0XYZ", "TWO", 0);
+        sf.queue("K2DEF", "THREE", 0);
+
+        // Never released (peer unheard) → attempts stays 0, which `purge` NEVER collects:
+        // without drop_for these would sit queued forever.
+        assert_eq!(
+            sf.purge(8),
+            0,
+            "purge cannot reach a never-released message"
+        );
+
+        assert_eq!(
+            sf.drop_for("N0XYZ"),
+            2,
+            "both of that peer's messages dropped"
+        );
+        assert_eq!(sf.pending(), 1, "the other peer is untouched");
+        assert_eq!(sf.drop_for("N0XYZ"), 0, "idempotent");
     }
 }

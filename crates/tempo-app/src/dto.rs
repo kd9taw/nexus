@@ -227,6 +227,25 @@ pub struct ChatMessage {
     /// + broadcasts.
     #[serde(default)]
     pub ack_id: Option<char>,
+    /// For an OUTBOUND directed message: still HELD in the store-and-forward queue, never
+    /// yet released on the air because the recipient hasn't been heard. Cleared the moment
+    /// the message first transmits. `false` for inbound + broadcasts.
+    ///
+    /// This is the distinction the operator can't otherwise see: EVERY directed message goes
+    /// through store-and-forward (`send_message` has no send-now path), so "held, going
+    /// nowhere" and "transmitted, awaiting ACK" both used to render an identical "✓ Sent".
+    #[serde(default)]
+    pub stored: bool,
+    /// For an OUTBOUND directed message: it was still HELD when the app last closed, and the
+    /// store-and-forward queue does not survive a restart — so it will never transmit. Set at
+    /// load time; the operator must re-send it themselves.
+    ///
+    /// This exists so the app stops asserting something false. Clearing `stored` alone made a
+    /// never-transmitted message render as a plain "Sent" — trading a VISIBLE broken promise
+    /// for an INVISIBLE one, which is worse: the operator believes it went out and never
+    /// re-sends. Persisting the queue is the real fix (see the backlog); until then, say so.
+    #[serde(default)]
+    pub abandoned: bool,
 }
 
 /// A per-peer thread of chat messages.

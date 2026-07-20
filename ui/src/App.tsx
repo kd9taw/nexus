@@ -225,6 +225,23 @@ export default function App() {
     }
     // Merged sections — honor old deeplinks.
     if (h === 'propagation' || h === 'map') return 'connect'
+    // Reopen where the operator left off (SF ticket #3). Same shape as `nexus.operateLayout`
+    // below. Re-validated against the CURRENT enabled sections, so a section that was since
+    // disabled (or removed in an update) falls back to the profile landing instead of opening
+    // a dead view. Ranks below a deeplink — an explicit hash is a stronger intent.
+    //
+    // SAFETY: restoring the VIEW must not command the radio. That is guaranteed by the mount
+    // guard on the rig-mode effect below — without it, restoring to CW/Phone/RTTY would both
+    // reconfigure the rig and ARM TRANSMIT at launch (engine.rs set_operating_mode arms TX for
+    // the manual modes). Do not remove that guard.
+    try {
+      const last = localStorage.getItem('nexus.view')
+      if (last && sectionIds.includes(last) && features.enabled[last as FeatureId] !== false) {
+        return last as View
+      }
+    } catch {
+      /* unreadable storage — fall through to the landing */
+    }
     return features.landing
   })
   // Bird handed off from a map satellite click — the Satellites section opens on it.
@@ -241,7 +258,40 @@ export default function App() {
   // Digital-Operate) — entering one drops the rig to that mode's home freq; the other digital
   // cockpits (chat/qso/…) set the mode only and keep their own band picker's frequency.
   const lastOpModeRef = useRef<'digital' | 'phone' | 'cw' | 'rtty'>('digital')
+  // Guard refs for the rig-mode effect below. `opModeSeeded` is set once, by whichever comes
+  // first: the persisted-operating-mode seed (that effect lives further down, where `settings`
+  // is in scope) or a genuine view change — an operator's click outranks any seed, because the
+  // click IS the intent.
+  const opModeSeeded = useRef(false)
+  const didMountOpMode = useRef(false)
+
+  // Remember the section for next launch (read back in the `view` initializer above). One
+  // effect rather than 16 `setView` call sites — every navigation path, present and future,
+  // is covered by construction. Writing the restored value again on mount is a harmless no-op.
   useEffect(() => {
+    try {
+      localStorage.setItem('nexus.view', view)
+    } catch {
+      /* ignore persist failure — a forgotten section is not worth surfacing */
+    }
+  }, [view])
+
+  useEffect(() => {
+    // ── LAUNCH IS A READ-ONLY ACT ──────────────────────────────────────────────────
+    // This effect also runs on mount, where `view` is merely the restored/landing section —
+    // NOT a statement of operator intent. Letting it fire commanded the rig into DATA at every
+    // launch and PERSISTED that over the operator's real saved mode (set_operating_mode saves
+    // settings), so a station parked on 40m LSB for a net came up in DATA-L, unrecoverable by
+    // relaunching. It would also ARM TRANSMIT, since set_operating_mode arms TX for the manual
+    // modes (engine.rs). SF ticket #3.
+    //
+    // This is a MOUNT guard, NOT the same-value guard the comment below rightly forbids —
+    // every subsequent view change still re-asserts unconditionally.
+    if (!didMountOpMode.current) {
+      didMountOpMode.current = true
+      return
+    }
+    opModeSeeded.current = true // an explicit view change outranks the booted-mode seed
     const operating =
       !!featureById(view as FeatureId)?.workspace ||
       view === 'cw' ||
@@ -666,6 +716,19 @@ export default function App() {
   useEffect(() => {
     settingsRef.current = settings
   }, [settings])
+  // Seed the rig-mode guard from the mode the operator last worked in (persisted). Settings
+  // load async, so this can't live in the mount guard above; keying on the VALUE rather than
+  // the settings object means it settles once and doesn't re-fire. Without seeding, the guard
+  // would sit at its 'digital' default, so the operator's first click into a section could
+  // compute `changed` wrongly and needlessly yank the VFO. See the mount guard above.
+  useEffect(() => {
+    if (opModeSeeded.current) return
+    const booted = settings?.operatingMode
+    if (booted === 'phone' || booted === 'cw' || booted === 'rtty' || booted === 'digital') {
+      lastOpModeRef.current = booted
+      opModeSeeded.current = true
+    }
+  }, [settings?.operatingMode])
   // Ding/dong when the dial crosses your TX privileges (default on).
   useBandEdgeTones(snap?.radio.txAllowed, settings?.bandEdgeTones ?? true)
   // User watch list (localStorage) — fed to the decode alerter. Re-synced when the manager
@@ -780,10 +843,20 @@ export default function App() {
     )
   }, [])
 
+  // Confirm here rather than in StationList so every host (cockpit, detached panel) gets
+  // the same guard. Unconditional is right: the recents list only renders threads that
+  // have messages, so there is no empty-thread case to skip. The copy names the
+  // non-obvious consequence — deleting also cancels still-queued outbound traffic.
   const handleArchive = useCallback((peer: string) => {
+    if (
+      !window.confirm(
+        `Delete the conversation with ${peer}? Any messages still waiting to send will be cancelled. This can't be undone.`,
+      )
+    )
+      return
     void withErrorToast(
       () => apiArchiveConversation(peer),
-      'Could not archive conversation',
+      'Could not delete conversation',
     ).then((s) => s && setSnap(s))
   }, [])
 

@@ -151,8 +151,8 @@ export function StationList({
                 type="button"
                 className="recent-archive"
                 onClick={() => onArchive(r.peer)}
-                title="Hide this conversation"
-                aria-label={`Archive conversation with ${r.peer}`}
+                title="Delete this conversation"
+                aria-label={`Delete conversation with ${r.peer}`}
               >
                 ✕
               </button>

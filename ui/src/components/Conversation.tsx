@@ -52,6 +52,15 @@ function deliveryStage(
   if (!m.outbound) return undefined
   // A real RR73 ACK came back → genuinely delivered (not a heuristic).
   if (m.delivered) return 'delivered'
+  // Two known-truth states, both checked BEFORE the guesses below. 'on-air' in particular
+  // only means "newest outbound bubble while the radio is keying SOMETHING" — a beacon, a
+  // broadcast, another peer's traffic — so without these, a message that never went out
+  // could claim to be going out.
+  //   abandoned = it was held when the app closed; the queue didn't survive, so it NEVER
+  //               transmits and the operator must re-send. Terminal.
+  //   held      = still queued this session, waiting for the peer to be heard.
+  if (m.abandoned) return 'abandoned'
+  if (m.stored) return 'held'
   const isLastOutbound =
     conv.messages.slice(index + 1).every((x) => !x.outbound)
   // The "a later inbound implies they heard us" guess only holds for a DIRECTED thread.

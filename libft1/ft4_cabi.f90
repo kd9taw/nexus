@@ -23,7 +23,7 @@ module ft4_cabi
   integer, parameter :: F4_NN     = 103
   integer, parameter :: F4_NSPS   = 576
   integer, parameter :: F4_NMAX   = 72576           ! 21 * 3456
-  integer, parameter :: F4_MAXDEC = 100
+  integer, parameter :: F4_MAXDEC = 200   ! stock WSJT-X per-period cap (MAXDEC)
 
   ! Interop result struct. Layout MUST match ft4_decode_t in libft1.h
   ! (identical layout to ft8_decode_t: 64 bytes).
@@ -192,6 +192,8 @@ contains
     call decoder%decode(ft4_collect_cb, iwave_l, nqso_progress, nfqso, &
          nfa, nfb, ndepth_l, lapcqonly, ncontest, mycall_f, hiscall_f)
 
+    ! ncopy == max_out here means the cap was hit and the weakest decodes were
+    ! dropped: raise F4_MAXDEC and the Rust MAX_DECODES (crates/ft4) together.
     ncopy = min(g4_count, max_out)
     do i = 1, ncopy
        out(i)%sync = g4_results(i)%sync

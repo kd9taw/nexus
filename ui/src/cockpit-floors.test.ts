@@ -24,7 +24,11 @@ const PANE_SELECTORS = new Set([
 
 describe('cockpit panes have no px min-height floor', () => {
   it('none of the Operate cockpit panes declare a nonzero px min-height', () => {
+    // Strip CSS comments FIRST: the rule-body scan below is a plain regex, so a comment that
+    // merely MENTIONS a floor (e.g. one explaining why a px floor was reverted) tripped this
+    // guard as if the declaration were live. Analyse the CSS, not the prose.
     const css = readFileSync(fileURLToPath(new URL('./styles.css', import.meta.url)), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
     const offenders: string[] = []
     // Walk simple `selector { body }` rules (no nesting in this file).
     const ruleRe = /([^{}]+)\{([^{}]*)\}/g

@@ -94,7 +94,7 @@ export const NEED_CHIP: Record<
   NewState: { label: 'STATE', short: 'ST', cls: 'state', title: 'New US state (WAS) — best-guess from the grid' },
   Confirm: {
     label: 'CONFIRM',
-    short: 'CFM',
+    short: 'CNF',
     cls: 'confirm',
     title: 'Worked — needs a confirmation',
   },

@@ -1,5 +1,5 @@
 ! FT1 - 4-CPM turbo equalization mode for WSJT-X
-! Copyright (C) 2026 KD9TAW
+! Copyright (C) 2026 Seth McCall, KD9TAW
 !
 ! This file is part of WSJT-X.  GPLv3 (see genft1.f90 header).
 !

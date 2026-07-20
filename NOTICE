@@ -328,15 +328,3 @@ code (GPL-3.0). The **full AGPL-3.0 license text ships with the model** at
 `resources/deepcw/LICENSE.AGPL-3.0.txt` (bundled in the installer), so the
 model's license travels with the binary as AGPLv3 §4 requires; the model's
 corresponding source is the upstream e04/deepcw-engine repository above.
-
----
-
-## Development tooling
-
-Portions of Nexus were developed with the assistance of **Claude**, Anthropic's
-AI coding assistant (Claude Code). It was used as a pair-programming and code-
-review tool across the codebase; all contributions were directed, reviewed, and
-accepted by the author (**KD9TAW**), who remains responsible for the code and
-its licensing. This acknowledgment is offered in the spirit of the transparency
-this NOTICE aims for; it creates no additional license obligation — all such
-work is original Nexus code under **GPL-3.0**.

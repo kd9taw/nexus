@@ -213,6 +213,13 @@ pub struct Settings {
     pub cw_key_line: String,
     /// CW sidetone / keyed-tone pitch in Hz (soundcard keyer + UI marker). Default 600.
     pub cw_pitch_hz: f32,
+    /// Operator CW sending speed in WPM. Persisted so it survives a restart — an operator
+    /// who works at 15 shouldn't be reset to the 25 default every launch (SF ticket #2).
+    /// Global, not per-radio: WPM is a property of the OPERATOR's fist, and the two sibling
+    /// CW controls (`cw_keyer`, `cw_pitch_hz`) are already global, so scoping this one
+    /// per-radio would split a single toolbar across two persistence scopes.
+    #[serde(default = "default_cw_wpm")]
+    pub cw_wpm: u32,
     /// How RTTY is keyed: "afsk" (default — soundcard two-tone audio through the rig in
     /// LSB; soundcard-clocked, the timing-cleanest path) or "fsk" (true FSK — bit-bang a
     /// serial control line into the rig's FSK input, rig in RTTY mode, unlocking its
@@ -765,6 +772,11 @@ fn default_cw_key_line() -> String {
     "dtr".to_string()
 }
 
+/// Default CW sending speed (WPM) — matches the engine's historical seed.
+fn default_cw_wpm() -> u32 {
+    25
+}
+
 fn default_rtty_backend() -> String {
     "afsk".to_string()
 }
@@ -1170,6 +1182,7 @@ impl Default for Settings {
             cw_key_port: String::new(),
             cw_key_line: default_cw_key_line(),
             cw_pitch_hz: 600.0,
+            cw_wpm: default_cw_wpm(),
             rtty_backend: default_rtty_backend(), // "afsk" — soundcard-clocked, the robust default
             rtty_fsk_line: default_rtty_fsk_line(), // "dtr" (RTS stays free for PTT)
             rtty_fsk_port: String::new(),         // "" = the CAT serial port

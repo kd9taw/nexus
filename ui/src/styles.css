@@ -4320,6 +4320,9 @@ select optgroup {
 .recent-row.active .recent-open {
   color: var(--text);
 }
+/* Delete-thread ✕. Faintly visible AT REST (opacity 0 made it undiscoverable — the
+   operator asked for a delete affordance that was already here), full strength on
+   hover/focus. `:focus-within` on the row keeps it keyboard-reachable. */
 .recent-archive {
   flex: 0 0 auto;
   padding: 0 var(--space-2);
@@ -4327,15 +4330,18 @@ select optgroup {
   border: none;
   color: var(--text-faint);
   cursor: pointer;
-  opacity: 0;
+  opacity: 0.4;
   font-size: var(--fs-micro);
+  transition: opacity 0.12s ease, color 0.12s ease;
 }
 .recent-row:hover .recent-archive,
+.recent-row:focus-within .recent-archive,
 .recent-row.active .recent-archive {
   opacity: 1;
 }
-.recent-archive:hover {
-  color: var(--alert-warning, var(--accent));
+.recent-archive:hover,
+.recent-archive:focus-visible {
+  color: var(--state-bad, var(--alert-warning, var(--accent)));
 }
 .recent-call {
   font-weight: 700;
@@ -4583,6 +4589,18 @@ select optgroup {
 }
 .delivery.sent {
   opacity: 0.5;
+}
+/* Never transmitted and never will be — the queue didn't survive the restart. Warn-coloured
+   because this one needs operator action (re-send), unlike the passive held state. */
+.delivery.abandoned {
+  color: var(--state-bad, var(--alert-warning, var(--accent)));
+  opacity: 1;
+}
+/* Held in store-and-forward — never transmitted. Deliberately dimmer and cooler than
+   the on-air/confirmed ramp: nothing has happened on the air yet. */
+.delivery.held {
+  color: var(--text-faint);
+  opacity: 0.7;
 }
 .delivery.on-air {
   color: var(--state-ok);
@@ -5707,10 +5725,24 @@ select optgroup {
 .cw-wpm input[type='range'] {
   width: 160px;
 }
-.cw-pitch {
-  width: 5.5ch;
+/* CW pitch entry. Uses `input.cw-pitch` (0,1,1) deliberately: the element carries
+   `settings-input cw-pitch`, and `.settings-input` (0,1,0) is declared LATER in this file, so
+   an equal-specificity `.cw-pitch` lost the padding to it — 5.5ch of box minus 12px/side of
+   inherited padding left ~17px of content, and Chromium's spin-button ate most of that, so the
+   value rendered as a clipped sliver at every window size (SF ticket #1). Element+class wins
+   regardless of order. Spinner suppressed the same way `.freq-manual` (:3560) does — this is a
+   toolbar field, and the arrows cost more width than they're worth. */
+input.cw-pitch {
+  width: 4.5rem;
   padding: 2px 6px;
+  text-align: right;
   font-variant-numeric: tabular-nums;
+  -moz-appearance: textfield;
+}
+input.cw-pitch::-webkit-outer-spin-button,
+input.cw-pitch::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
 }
 .cw-wpm-val {
   font-family: var(--font-mono);
@@ -9403,7 +9435,9 @@ select.settings-input {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  max-height: 240px;
+  /* Show more of the band activity. Grows with the window but never shrinks below the
+     old fixed height, so small screens are unaffected. */
+  max-height: clamp(240px, 38vh, 460px);
   border-top: 1px solid var(--border-soft);
   background: var(--bg-elev);
 }
@@ -11164,7 +11198,18 @@ select.settings-input {
   min-height: 0;
 }
 .cockpit-lower.classic .cockpit-roster {
+  /* The Stations roster shares the classic rail with the (often empty) decode list, and
+     collapsed to ~1 row in the stacked/magnified layout. Give it a bigger SHARE so it shows
+     several calls.
+     Round 2: the share (`flex: 1.8`) is the part that fixes this. A `min-height: 160px` floor
+     was also added in round 1 and is REVERTED here — hard px floors on these panes are exactly
+     what caused the vertical-clipping bug the adaptive-layout work fixed (they sum past a short
+     window, then clip or whole-rail-scroll), and `cockpit-floors.test.ts` guards against them.
+     It failed from round 1 until now. Panes must shrink freely and let their inner scrollers
+     absorb overflow, while the whole UI fit-scales. If the roster still reads too short on a
+     short window, raise the flex share or trim sibling chrome — do NOT reintroduce a px floor. */
   min-height: 0;
+  flex: 1.8 1 0;
 }
 /* 1080p fit: tighten the classic rail's Tx machine (~50px back — smaller rows,
    no CQ hint line) and the roster chrome. Scoped to the classic rail only;

@@ -592,6 +592,14 @@ export interface ChatMessage {
   /** Outbound directed message the recipient acknowledged (an RR73 ACK came back) —
    * a REAL delivery confirmation, not the "a later reply implies they heard us" guess. */
   delivered?: boolean
+  /** Outbound directed message still HELD in the store-and-forward queue — never yet
+   * released on the air, because the recipient hasn't been heard. Cleared on its first
+   * transmission. Distinguishes "going nowhere" from "sent, awaiting ACK". */
+  stored?: boolean
+  /** Outbound directed message that was still HELD when the app last closed. The
+   * store-and-forward queue does not survive a restart, so it will NEVER transmit —
+   * the operator must re-send. Shown as "Not sent" rather than a misleading "Sent". */
+  abandoned?: boolean
 }
 
 export interface Conversation {

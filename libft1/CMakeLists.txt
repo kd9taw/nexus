@@ -130,11 +130,8 @@ set(LIBFT1_SOURCES
 
     # --- FT8 native decode (lib/ft8) : Nexus ---
     #     Full-frame decode via the core primitives (ft8apset -> sync8 -> ft8b),
-    #     wrapped behind a C ABI in ft8_cabi.f90 (no nzhsym/shmem machinery; the
-    #     a7 cross-cycle AP table IS wired in via ft8_a7.f90 below).
+    #     wrapped behind a C ABI in ft8_cabi.f90 (no nzhsym/a7/shmem machinery).
     ${CMAKE_CURRENT_SOURCE_DIR}/ft8_cabi.f90
-    ${LIB}/ft8/ft8_a7.f90                 # module ft8_a7: cross-cycle AP table
-                                          #   (ft8_a7_save + ft8_a7d replay)
     ${LIB}/ft8/genft8.f90                 # genft8 + entry get_ft8_tones_from_77bits
     ${LIB}/ft8/gen_ft8wave.f90            # tones -> waveform (also used by subtractft8)
     ${LIB}/ft8/ft8apset.f90               # a-priori symbol setup (calls stdcall)
@@ -181,7 +178,6 @@ set(LIBFT1_SOURCES
     ${LIB}/deg2grid.f90                   # grid <-> lat/long (unpack77 grid)
     ${LIB}/packjt.f90                     # module packjt (used by packjt77)
     ${LIB}/crc.f90                        # module crc (binds C crc14/get_crc14)
-    ${LIB}/db.f90                         # power -> dB (ft8_a7d SNR estimate)
     ${LIB}/indexx.f90
     ${LIB}/platanh.f90
     ${LIB}/nuttal_window.f90              # spectral window (ft1_sync)

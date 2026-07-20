@@ -5,12 +5,12 @@
 **One app from antenna to award — FT8/FT4 digital, CW, and SSB phone in a single modern operations center.**
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](COPYING)
-![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-0078D6)
-[![Release](https://img.shields.io/github/v/release/kd9taw/nexus?label=release)](https://github.com/kd9taw/nexus/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/kd9taw/nexus/total?label=downloads)](https://github.com/kd9taw/nexus/releases)
+![Platform](https://img.shields.io/badge/platform-Windows-0078D6)
+[![Release](https://img.shields.io/badge/release-v0.7.1-blue)](https://sourceforge.net/projects/nexus-ham-radio/files/)
+[![Downloads](https://img.shields.io/sourceforge/dt/nexus-ham-radio?label=downloads)](https://sourceforge.net/projects/nexus-ham-radio/files/)
 ![Status](https://img.shields.io/badge/status-beta-orange)
 
-[![Download](https://img.shields.io/badge/⬇_Download-Windows_·_Linux-0078D6?style=for-the-badge)](https://github.com/kd9taw/nexus/releases/latest)
+[![Download for Windows](https://img.shields.io/badge/⬇_Download_for_Windows-.exe-0078D6?style=for-the-badge&logo=windows)](https://sourceforge.net/projects/nexus-ham-radio/files/latest/download)
 [![Operator manual](https://img.shields.io/badge/📖_Operator_manual-docs-8957e5?style=for-the-badge)](docs/manual/)
 
 <sub>Offline installer — bundles WebView2 **and Hamlib**, per-user install, no admin rights. ·
@@ -126,9 +126,8 @@ logs, never shown back to the UI beyond “configured.”
 
 ## Quick start
 
-1. **[Download the installer](https://github.com/kd9taw/nexus/releases/latest)** — Windows `.exe` or
-   Linux `.AppImage`/`.deb`, offline, bundles WebView2 and Hamlib, per-user, no admin needed.
-   (Also mirrored on [SourceForge](https://sourceforge.net/projects/nexus-ham-radio/files/).)
+1. **[Download the Windows installer](https://sourceforge.net/projects/nexus-ham-radio/files/latest/download)** — offline,
+   bundles WebView2 and Hamlib, per-user, no admin needed.
 2. Plug in the radio, open **Settings ▸ Rig & Audio**, click **Detect my radio**.
 3. Answer the first-run wizard: callsign, grid, license class, and what you want to do.
 4. Watch decodes arrive. Double-click a station — the sequencer runs the QSO, and the contact
@@ -137,8 +136,8 @@ logs, never shown back to the UI beyond “configured.”
 New here? Start with **[Getting Started](docs/manual/Getting-Started.md)**.
 
 > The installer is **unsigned** (cross-compiled on Linux), so SmartScreen may warn — *More info →
-> Run anyway*. Verify the download against the `SHA-256` published on the
-> [GitHub release](https://github.com/kd9taw/nexus/releases/latest).
+> Run anyway*. Verify the download against the `SHA-256` on the
+> [download page](https://sourceforge.net/projects/nexus-ham-radio/files/).
 
 ## Status — the honest version
 
@@ -222,10 +221,6 @@ Nexus is **free software under the [GNU GPL v3](COPYING)** (GPL-3.0-only).
 - **[Hamlib](https://hamlib.github.io/)** — bundled `rigctld` for CAT control (GPL/LGPL).
 - **[FFTW](https://www.fftw.org/)** (GPL), **[Tauri](https://tauri.app/)**, React,
   [cpal](https://github.com/RustAudio/cpal), Natural Earth basemap (public domain).
-- **[DeepCW](https://github.com/e04/deepcw-engine)** — the AI CW decoder model by **e04** (AGPL-3.0).
-- Built with the help of **[Claude](https://www.anthropic.com/claude-code)** (Anthropic's AI coding
-  assistant) as a pair-programming and review tool; all work directed and reviewed by the author.
-  See **[NOTICE](NOTICE)** for the full attribution and license heritage.
 
 This is **experimental amateur-radio software**. You are responsible for operating within your
 license privileges and local regulations. Nexus never transmits on launch; ARRL Field Day
@@ -237,10 +232,10 @@ contributions welcome — see **[CONTRIBUTING.md](CONTRIBUTING.md)** and the
 
 <div align="center"><sub>
 
-**[⬇ Download](https://github.com/kd9taw/nexus/releases/latest)** ·
+**[⬇ Download](https://sourceforge.net/projects/nexus-ham-radio/files/latest/download)** ·
 **[📖 Manual](docs/manual/)** ·
 **[💬 Discussion group](https://groups.io/g/hamradiotools)** ·
-**[🐛 Report a bug](https://github.com/kd9taw/nexus/issues)** ·
-**[📦 SourceForge mirror](https://sourceforge.net/projects/nexus-ham-radio/)**
+**[🐛 Report a bug](https://sourceforge.net/p/nexus-ham-radio/tickets/)** ·
+**[📦 Project page](https://sourceforge.net/projects/nexus-ham-radio/)**
 
 </sub></div>

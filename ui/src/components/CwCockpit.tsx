@@ -448,10 +448,19 @@ export function CwCockpit({
     void setCwKeyer(keyer, p).then((s) => s && onSnap?.(s))
   }
 
-  const changeWpm = (w: number) => {
+  // Debounced persist. The live change always goes out immediately; the SAVE lands once the
+  // operator stops moving (slider drag and PgUp/PgDn autorepeat both fire continuously, and
+  // each save fsyncs the whole settings file). `persist: false` is the decoder's automatic
+  // speed-match — it should track the station being worked WITHOUT overwriting the operator's
+  // own stored speed. SF ticket #2.
+  const wpmCommit = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const changeWpm = (w: number, persist = true) => {
     const v = Math.max(WPM_MIN, Math.min(WPM_MAX, Math.round(w)))
     setWpm(v)
-    void setCwWpm(v)
+    void setCwWpm(v, false)
+    if (!persist) return
+    clearTimeout(wpmCommit.current)
+    wpmCommit.current = setTimeout(() => void setCwWpm(v, true), 600)
   }
   // Live snapshot ref so the keyboard handler (bound once, `[]` deps) reads the CURRENT
   // TX-allowed privilege state through send() — not whatever existed at mount.
@@ -499,7 +508,7 @@ export function CwCockpit({
     void selectPeer(call)
       .then((s) => s && onSnap?.(s))
       .catch(() => {})
-    if (!wpmTouched.current && decoded.wpm >= WPM_MIN) changeWpm(decoded.wpm)
+    if (!wpmTouched.current && decoded.wpm >= WPM_MIN) changeWpm(decoded.wpm, false)
     // The log fills continuously from the confirmed worked station (see cwLive on LogEntry) —
     // call now, then RST + name as they're decoded through the QSO.
   }

@@ -249,8 +249,11 @@ export async function selectPeer(peer: string | null): Promise<AppSnapshot> {
   return invoke<AppSnapshot>('select_peer', { peer })
 }
 
-/** Archive (hide) a conversation thread from the recents list. Returns the fresh
- * snapshot. The thread re-creates if the peer is heard again (or you broadcast). */
+/** Delete a conversation thread from the recents list, and cancel any messages still
+ * queued for that peer so nothing further for it goes on the air. Persists immediately.
+ * Returns the fresh snapshot. This deletes history, it does not block a station: the
+ * thread re-creates if the peer is heard again (or you broadcast).
+ * (Wire name stays `archive_conversation`.) */
 export async function archiveConversation(peer: string): Promise<AppSnapshot> {
   return invoke<AppSnapshot>('archive_conversation', { peer })
 }
@@ -814,8 +817,11 @@ export async function setCwPeerInfo(call: string, name: string, peerState: strin
 }
 
 /** Set the CW keyer speed in WPM (5–50). */
-export async function setCwWpm(wpm: number): Promise<AppSnapshot> {
-  return invoke<AppSnapshot>('set_cw_wpm', { wpm })
+/** Set CW sending speed. `commit` persists it to settings — pass false for the continuous
+ * paths (slider drag, decoder auto speed-match) and true once the operator settles, so a
+ * drag can't fsync the settings file ~45 times. */
+export async function setCwWpm(wpm: number, commit = false): Promise<AppSnapshot> {
+  return invoke<AppSnapshot>('set_cw_wpm', { wpm, commit })
 }
 
 /** Abort CW in progress (Esc) — stops the rig keyer + clears the queue. */

@@ -28,6 +28,7 @@ import {
   getAllSpots,
   getLog,
   selectPeer,
+  archiveConversation,
   setFrequency,
   workSpot,
   subscribeSnapshot,
@@ -191,6 +192,17 @@ export function DetachedPanel({ panel }: { panel: string }) {
     // `null` is a real command — it clears the engine's active peer (deselect on
     // empty-map click / ✕ / re-click a dot); swallowing it left selection stuck.
     void selectPeer(call).catch(() => {})
+  }
+  // Mirrors App.tsx's handleArchive — the detached window had a silent no-op here, so the
+  // ✕ did nothing at all in this panel.
+  const onArchive = (peer: string) => {
+    if (
+      !window.confirm(
+        `Delete the conversation with ${peer}? Any messages still waiting to send will be cancelled. This can't be undone.`,
+      )
+    )
+      return
+    apply(archiveConversation(peer))
   }
   const onWorkSpot = (t: SpotTarget) => {
     const mode = modeClassOf(t.mode).toLowerCase() as 'cw' | 'phone' | 'digital'
@@ -426,7 +438,7 @@ export function DetachedPanel({ panel }: { panel: string }) {
         onSelect={onSelect}
         onCall={(call) => onCall(call)}
         conversations={snap.conversations as Conv[]}
-        onArchive={() => {}}
+        onArchive={onArchive}
         bandActive={selected === '*'}
         bandUnread={0}
         onSelectBand={() => onSelect('*')}

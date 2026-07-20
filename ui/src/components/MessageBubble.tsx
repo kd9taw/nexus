@@ -6,7 +6,7 @@ interface Props {
   delivery?: DeliveryStage
 }
 
-export type DeliveryStage = 'sent' | 'on-air' | 'confirmed' | 'delivered'
+export type DeliveryStage = 'abandoned' | 'held' | 'sent' | 'on-air' | 'confirmed' | 'delivered'
 
 function techSubline(m: ChatMessage): string {
   const parts: string[] = []
@@ -17,17 +17,25 @@ function techSubline(m: ChatMessage): string {
   return parts.join(' · ')
 }
 
-function DeliveryTicks({ stage }: { stage: DeliveryStage }) {
+function DeliveryTicks({ stage, to }: { stage: DeliveryStage; to?: string | null }) {
+  // 'held' names WHY it hasn't gone out — the operator can't tell a queued message from a
+  // transmitted one otherwise, since every directed message goes via store-and-forward.
   const label =
-    stage === 'sent'
-      ? 'Sent'
-      : stage === 'on-air'
-        ? 'On air'
-        : stage === 'delivered'
-          ? 'Delivered' // a real RR73 ACK came back
-          : 'Confirmed' // inferred from a later reply
+    stage === 'abandoned'
+      ? 'Not sent — abandoned on restart. Send it again.'
+      : stage === 'held'
+      ? `Waiting to send${to ? ` — ${to} not heard yet` : ''}`
+      : stage === 'sent'
+        ? 'Sent'
+        : stage === 'on-air'
+          ? 'On air'
+          : stage === 'delivered'
+            ? 'Delivered' // a real RR73 ACK came back
+            : 'Confirmed' // inferred from a later reply
   return (
     <span className={`delivery ${stage}`} title={label} aria-label={label}>
+      {stage === 'abandoned' && '⚠'}
+      {stage === 'held' && '⋯'}
       {stage === 'sent' && '✓'}
       {stage === 'on-air' && '✓✓'}
       {stage === 'confirmed' && '✓✓'}
@@ -48,7 +56,7 @@ export function MessageBubble({ message, delivery }: Props) {
         <span className="bubble-text">{message.text}</span>
         <span className="bubble-meta">
           {sub && <span className="bubble-tech">{sub}</span>}
-          {message.outbound && delivery && <DeliveryTicks stage={delivery} />}
+          {message.outbound && delivery && <DeliveryTicks stage={delivery} to={message.to} />}
         </span>
       </div>
     </div>

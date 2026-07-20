@@ -1,0 +1,18 @@
+# Build context for the aarch64 (Raspberry Pi) build — keep it lean. The container
+# rebuilds everything from source, so host build outputs / deps must NOT be shipped in.
+target/
+**/target/
+ui/node_modules/
+scripts/node_modules/
+node_modules/
+.git/
+ref/
+nexus-mirror-backup-2026-07-17.git/
+.nexus-detached-tempo-git/
+libft1/build-linux/
+libft1/build-win/
+*.log
+*.png
+*.jpg
+*.jpeg
+pi-out/

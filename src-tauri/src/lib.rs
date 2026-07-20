@@ -869,6 +869,18 @@ fn fd_backup_path() -> PathBuf {
         .join("fieldday_backup.adi")
 }
 
+/// Durable journal for the ONE QSO held by the prompt-to-log popup (beside settings.json).
+/// The engine rewrites it the moment the hold changes and deletes it once the operator
+/// confirms or discards, so a crash or power cut while the popup waits can't destroy a real
+/// contact the other station has already logged.
+fn pending_qso_path() -> PathBuf {
+    settings_path()
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("pending_qso.json")
+}
+
 /// Where the grid-activity census is persisted (beside settings.json): a small
 /// bounded JSON of decayed per-grid heard counts — the demote-only refinement
 /// evidence for the rarity gems. Losing it is harmless (it re-accumulates).
@@ -1124,16 +1136,34 @@ fn select_peer(
     Ok(eng.snapshot())
 }
 
-/// Archive (hide) a conversation thread (the recents-list hide affordance).
+/// Delete a conversation thread (the recents-list ✕). Also cancels any still-queued
+/// outbound messages for that peer, so nothing further for it goes on the air.
 /// Returns the refreshed snapshot.
+///
+/// Persists IMMEDIATELY rather than waiting for the 15 s periodic save: without this, a
+/// crash or power loss inside that window resurrects the deleted thread from
+/// conversations.json on next launch. A failed write is logged, not returned — the
+/// in-memory delete already succeeded and the periodic save will retry.
 #[tauri::command]
 fn archive_conversation(
     state: State<'_, SharedEngine>,
     peer: String,
 ) -> Result<AppSnapshot, String> {
-    let mut eng = state.lock().map_err(|e| e.to_string())?;
-    eng.archive_conversation(&peer);
-    Ok(eng.snapshot())
+    // Scope the lock: `persist_conversations` locks internally, and `SharedEngine` is a
+    // non-reentrant std Mutex — calling it inside this scope would self-deadlock.
+    let (snap, text) = {
+        let mut eng = state.lock().map_err(|e| e.to_string())?;
+        eng.archive_conversation(&peer);
+        (
+            eng.snapshot(),
+            serde_json::to_string(&eng.export_conversations()).ok(),
+        )
+    };
+    match text {
+        Some(t) if write_conversations_atomic(&t) => {}
+        _ => eprintln!("archive_conversation: failed to persist conversations for {peer}"),
+    }
+    Ok(snap)
 }
 
 /// Switch the waveform mode/tier ("FT1" | "FT8" | "FT4" | "DX1"). Operator-
@@ -4812,9 +4842,20 @@ fn set_cw_peer_info(
 
 /// Set the CW keyer speed in WPM (5–50).
 #[tauri::command]
-fn set_cw_wpm(state: State<'_, SharedEngine>, wpm: u32) -> Result<AppSnapshot, String> {
+fn set_cw_wpm(state: State<'_, SharedEngine>, wpm: u32, commit: bool) -> Result<AppSnapshot, String> {
     let mut eng = state.lock().map_err(|e| e.to_string())?;
     eng.set_cw_wpm(wpm);
+    // `commit` gates the DISK write, not the live change. Two reasons it isn't unconditional:
+    // (1) this is driven by a range slider — one drag is ~45 calls, and each save is a
+    //     create-tmp + write + fsync + rename of the whole settings file;
+    // (2) the CW decoder's automatic speed-match calls the same path, and matching the
+    //     station you're working must not overwrite the operator's own stored speed.
+    // The UI commits once after the operator settles. SF ticket #2.
+    if commit {
+        if let Err(e) = eng.settings().save(&settings_path()) {
+            eprintln!("tempo: set_cw_wpm save failed: {e}");
+        }
+    }
     Ok(eng.snapshot())
 }
 
@@ -9285,6 +9326,16 @@ pub fn run() {
         // written per contact and restored when FD mode starts, so a mid-event
         // restart loses nothing.
         eng.set_fd_log_path(fd_backup_path());
+        // A contact left in the confirm-before-log popup by a previous session (crash, power
+        // loss, or a quit with the popup open) is a REAL QSO — the other station logged it.
+        // Restore the hold so the operator can still log it. Best-effort: a missing or corrupt
+        // journal just means there was nothing pending.
+        eng.set_pending_qso_path(pending_qso_path());
+        if let Ok(text) = std::fs::read_to_string(pending_qso_path()) {
+            if let Ok(q) = serde_json::from_str::<tempo_app::dto::LoggedQso>(&text) {
+                eng.load_pending_qso(q.into());
+            }
+        }
         // Restore-on-launch (spec §1.1): if the operator left the Field Day
         // master switch on, re-enter FD (passive S&P) so a crash/restart during a
         // 24-hour contest comes back operating and the durable journal (set just
