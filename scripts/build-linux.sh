@@ -57,7 +57,11 @@ ok "cc/gfortran/cmake ($GEN)/node, system FFTW3f$([ "$GUI" = 1 ] && echo ', webk
 
 # 2 — libft1 native modem test exes (proves the native chain; system FFTW3f via pkg-config) --
 bold "2/4  libft1 native modem test exes"
-cmake -S "$REPO/libft1" -B "$REPO/libft1/build-linux" -G "$GEN" -DCMAKE_BUILD_TYPE=Release >/dev/null
+# WX selects the WSJT-X-derived modem source. Unset (the normal case) means the in-tree
+# vendored copy at libft1/vendor/wsjtx. Export WX=/path/to/wsjtx-source to build against a
+# different checkout; ft1-sys/build.rs reads the same variable, so both stay in step.
+cmake -S "$REPO/libft1" -B "$REPO/libft1/build-linux" -G "$GEN" -DCMAKE_BUILD_TYPE=Release \
+  ${WX:+-DWX="$WX"} >/dev/null
 cmake --build "$REPO/libft1/build-linux" >/dev/null
 for e in dx1_test_standalone roundtrip ft1_test_standalone acquire; do
   [ -f "$REPO/libft1/build-linux/$e" ] && ok "$e" || warn "$e not produced"

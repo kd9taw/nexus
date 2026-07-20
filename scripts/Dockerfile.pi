@@ -1,0 +1,52 @@
+# syntax=docker/dockerfile:1
+# aarch64 build of Nexus for Raspberry Pi 3/4/5 (64-bit Raspberry Pi OS, Bookworm) → .deb.
+#
+# Build (from repo root, needs QEMU binfmt: `docker run --privileged --rm tonistiigi/binfmt --install arm64`):
+#   docker buildx build --platform linux/arm64 -f scripts/Dockerfile.pi \
+#       --target export --output type=local,dest=pi-out/bookworm .
+# → pi-out/bookworm/Nexus_<ver>_arm64.deb
+#
+# Pi OS moved to Trixie (Debian 13) in late 2025 while a large installed base is still on
+# Bookworm (12), and a .deb built on one won't reliably install on the other (libc/GTK/webkit
+# ABI). So this is a BUILD MATRIX, not a port — same source, two bases:
+#   --build-arg BASE=bookworm  --output type=local,dest=pi-out/bookworm
+#   --build-arg BASE=trixie    --output type=local,dest=pi-out/trixie
+# Separate dest dirs because tauri names both files identically (Nexus_<ver>_arm64.deb) —
+# a shared dest would have one silently overwrite the other.
+#
+# Verified 2026-07-19: every build dep below resolves on BOTH bases, incl.
+# libwebkit2gtk-4.1-dev (Trixie 2.52.3 — Trixie also ships webkitgtk-6.0 but kept 4.1).
+# The webkit VERSION differs, so re-run the webview smoke (waterfall/map render, DMABUF-off)
+# on a Trixie Pi before calling it supported.
+ARG BASE=bookworm
+FROM debian:${BASE} AS build
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates curl wget file git xz-utils python3 \
+      build-essential cmake ninja-build gfortran pkg-config \
+      libssl-dev libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
+      librsvg2-dev libxdo-dev libsoup-3.0-dev libfftw3-dev libboost-dev patchelf \
+      libasound2-dev libudev-dev \
+    && rm -rf /var/lib/apt/lists/*
+# Debian's apt node (18) is too old for the vite build — use NodeSource 22 (matches the dev box).
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs && rm -rf /var/lib/apt/lists/*
+# Rust pinned to CI's toolchain.
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
+      --default-toolchain 1.93.1 --profile minimal
+ENV PATH="/root/.cargo/bin:${PATH}"
+WORKDIR /src
+COPY . .
+# The WSJT-X-derived modem source is vendored in-tree at libft1/vendor/wsjtx and is what
+# CMakeLists.txt uses by DEFAULT, so nothing needs staging here — the checkout is
+# self-contained. (This previously had to recreate an absolute dev-box path inside the
+# image because CMakeLists hardcoded it; WX is now an overridable CACHE PATH, so if you
+# ever need a different tree, pass `--build-arg WX=/opt/wsjtx-source` and COPY it there.)
+# Pi OS is Debian → ship the .deb only (arm64 AppImage tooling is flaky under emulation).
+# sed only the container's copy, so the host's running build is untouched.
+RUN sed -i 's/--bundles deb,appimage/--bundles deb/' scripts/build-linux.sh \
+    && ./scripts/build-linux.sh
+RUN mkdir /out && cp src-tauri/target/release/bundle/deb/*.deb /out/
+
+FROM scratch AS export
+COPY --from=build /out/ /

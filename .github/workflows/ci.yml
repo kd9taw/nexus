@@ -261,3 +261,77 @@ jobs:
           --manifest-path src-tauri/Cargo.toml
           --target x86_64-pc-windows-gnu
           --features radio,custom-protocol
+
+  # Job 6 — Raspberry Pi .deb, one per live Pi OS base. Runs on GitHub's hosted
+  # arm64 runner (free for public repos), so the aarch64 build is NATIVE: the same
+  # image under QEMU on a dev box takes 45+ minutes and is 5-20x slower.
+  #
+  # Two bases, not one: Pi OS moved to Trixie (Debian 13) in late 2025 while a large
+  # installed base is still on Bookworm (12). Trixie bumps libc/GTK/webkit2gtk, so a
+  # .deb built on one will not reliably install on the other. This is a BUILD MATRIX,
+  # not a port — identical source, two runtimes.
+  #
+  # fail-fast is off deliberately: if Trixie breaks (its webkit is a different major
+  # version) the Bookworm .deb — the one most users need — must still be produced.
+  #
+  # NOTE: a green build proves the .deb COMPILES and PACKAGES. It does not prove the
+  # app RENDERS. The webview smoke test (waterfall, map/globe, Settings) still has to
+  # run on real hardware before a base is called supported — see tasks/pi-trixie-plan.md.
+  pi-deb:
+    name: Raspberry Pi .deb (${{ matrix.base }})
+    runs-on: ubuntu-24.04-arm
+    strategy:
+      fail-fast: false
+      matrix:
+        base: [bookworm, trixie]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # No QEMU/binfmt setup: the runner is already aarch64, so `--platform
+      # linux/arm64` selects the native architecture and the container runs at
+      # full speed. The Debian base image supplies every build dep, so nothing
+      # is installed on the runner itself.
+      #
+      # The WSJT-X-derived modem source is vendored in-tree at libft1/vendor/wsjtx
+      # and is CMake's default WX, so the checkout is self-contained — no external
+      # tree to stage, which is what previously forced a dev-box path into the image.
+      - name: Build .deb in a debian:${{ matrix.base }} container
+        run: >
+          docker buildx build
+          --platform linux/arm64
+          -f scripts/Dockerfile.pi
+          --build-arg BASE=${{ matrix.base }}
+          --progress=plain
+          --target export
+          --output type=local,dest=pi-out/${{ matrix.base }}
+          .
+
+      # tauri names BOTH bases' output Nexus_<ver>_arm64.deb. Publishing them
+      # side by side without a suffix means one silently overwrites the other and
+      # a tester has no way to tell which OS their download was built for.
+      - name: Tag the artifact with its base, and verify it is genuinely arm64
+        run: |
+          set -euo pipefail
+          deb=$(find pi-out/${{ matrix.base }} -name '*.deb' -print -quit)
+          [ -n "$deb" ] || { echo "no .deb produced"; exit 1; }
+          ver=$(dpkg-deb -f "$deb" Version)
+          arch=$(dpkg-deb -f "$deb" Architecture)
+          echo "package: $(dpkg-deb -f "$deb" Package) / $ver / $arch"
+          [ "$arch" = "arm64" ] || { echo "expected arm64, got $arch"; exit 1; }
+          # Prove the payload is really ARM — an x86 binary with an arm64 filename
+          # installs cleanly and then fails to exec on the Pi.
+          dpkg-deb -x "$deb" /tmp/debcheck
+          bin=$(find /tmp/debcheck/usr/bin -type f -print -quit)
+          file "$bin" | tee /tmp/filetype
+          grep -q 'ARM aarch64' /tmp/filetype || { echo "payload is not ARM aarch64"; exit 1; }
+          mv "$deb" "pi-out/${{ matrix.base }}/Nexus_${ver}_arm64_${{ matrix.base }}.deb"
+          sha256sum pi-out/${{ matrix.base }}/*.deb
+
+      - name: Upload .deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: nexus-pi-${{ matrix.base }}
+          path: pi-out/${{ matrix.base }}/*.deb
+          if-no-files-found: error
+          retention-days: 30

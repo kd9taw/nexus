@@ -48,6 +48,9 @@ fn main() {
         out.to_str().unwrap(),
         "-DCMAKE_BUILD_TYPE=Release",
     ]);
+    if let Some(wx) = wx_override() {
+        cfg.arg(format!("-DWX={wx}"));
+    }
     // On Windows the Fortran sources require the GNU toolchain (MSVC has no
     // Fortran). Use Ninja if present, else MinGW Makefiles — both drive gfortran.
     // Build from an MSYS2/MinGW environment with the GNU Rust target
@@ -135,6 +138,9 @@ fn build_cross_windows(libft1_src: &std::path::Path, out: &std::path::Path) {
         &format!("-DCMAKE_TOOLCHAIN_FILE={}", toolchain.display()),
         &format!("-DFFTW_MINGW_PREFIX={fftw_prefix}"),
     ]);
+    if let Some(wx) = wx_override() {
+        cfg.arg(format!("-DWX={wx}"));
+    }
     if which("ninja") {
         cfg.args(["-G", "Ninja"]);
     } else {
@@ -203,16 +209,34 @@ fn emit_rerun(libft1_src: &std::path::Path) {
         emit_rerun_glob(&libft1_src.join(rel));
     }
 
-    // The FT1 modem Fortran lives OUTSIDE tempo/, in the WSJT-X FT1 fork that
-    // CMakeLists.txt references via `set(WX ...)`. CMake's own dependency tracking
-    // is correct, but Cargo will not re-run CMake (and so links a stale libft1.a)
-    // unless one of these files is registered here. Watch every modem .f90 in the
-    // FT1 + FT8 lib dirs per-file: a bare directory rerun-if-changed catches only
-    // add/remove, NOT content edits. Keep WX in sync with CMakeLists.txt.
-    let wx_lib = libft1_src.join("../../ft1/research/phase2/wsjtx-source/lib");
+    // The modem Fortran lives under WX — by default the in-tree vendored copy at
+    // libft1/vendor/wsjtx, or an external WSJT-X checkout when WX is overridden.
+    // CMake's own dependency tracking is correct, but Cargo will not re-run CMake
+    // (and so links a stale libft1.a) unless one of these files is registered here.
+    // Watch every modem .f90 in the FT1 + FT8 lib dirs per-file: a bare directory
+    // rerun-if-changed catches only add/remove, NOT content edits.
+    //
+    // This MUST resolve the same WX the CMake configure above used, or edits go
+    // unnoticed and the stale archive links silently — `emit_rerun_glob` skips
+    // missing paths, so a wrong path fails quietly rather than erroring.
+    let wx_lib = match wx_override() {
+        Some(wx) => PathBuf::from(wx).join("lib"),
+        None => libft1_src.join("vendor/wsjtx/lib"),
+    };
     emit_rerun_glob(&wx_lib.join("ft1")); // FT1 modem (turbo, ldpc348, bcjr, sync, harq, ...)
     emit_rerun_glob(&wx_lib.join("ft8")); // shared deps (osd174_91, ldpc_174_91 parity, ...)
     emit_rerun_glob(&wx_lib.join("ft1_decode.f90")); // live decode + HARQ driver
+}
+
+/// The `WX` override (WSJT-X-derived modem source tree) if the environment sets one.
+///
+/// `libft1/CMakeLists.txt` declares WX as a CACHE PATH defaulting to the in-tree
+/// `libft1/vendor/wsjtx`, so the common case needs no override at all. Setting `WX`
+/// points the build at a different checkout (the FT1 research fork, or a container's
+/// staged copy) without editing any tracked file.
+fn wx_override() -> Option<String> {
+    println!("cargo:rerun-if-env-changed=WX");
+    env::var("WX").ok().filter(|s| !s.is_empty())
 }
 
 /// Emit `cargo:rerun-if-changed` for `p`. If `p` is a directory, recurse one level
