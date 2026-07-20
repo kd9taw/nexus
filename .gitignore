@@ -43,3 +43,12 @@ libft1/build-win-configure.log
 pi-out/
 *.deb
 *.AppImage
+
+# Internal planning notes live in the PRIVATE kd9taw/nexus-notes repo and are cloned
+# here for convenience. They are deliberately NOT part of the published source.
+#
+# They used to be tracked here and removed from every publish by a manual scrub. That
+# scrub is what let a stale hand-merged libft1/CMakeLists.txt ship source that could
+# not compile for two releases (2026-07-20). Keeping notes out of this repo means the
+# published tree IS the tree that gets built and tested — nothing to strip, no drift.
+tasks/
