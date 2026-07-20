@@ -55,6 +55,22 @@ fi
 GEN=Ninja; command -v ninja >/dev/null || GEN="Unix Makefiles"
 ok "cc/gfortran/cmake ($GEN)/node, system FFTW3f$([ "$GUI" = 1 ] && echo ', webkit2gtk-4.1, patchelf')"
 
+# The DeepCW AI CW model (AGPL-3.0, (c) e04) is NOT committed — it is gitignored and staged
+# into src-tauri/resources/deepcw by the caller (see that folder's README.md). Tauri's resource
+# glob matches the directory whether or not the model is in it, so a missing model bundles a
+# .deb that installs fine, runs fine, and silently has no AI CW decoder — 14 MB lighter with no
+# error anywhere. A CI checkout has no way to obtain the file, so this is the DEFAULT there,
+# not an edge case. Fail loudly instead of shipping a quietly-lobotomised build.
+if [ "$GUI" = 1 ]; then
+  dcw="$REPO/src-tauri/resources/deepcw"
+  for f in model.onnx model.onnx.json; do
+    [ -s "$dcw/$f" ] || die "missing $dcw/$f — the DeepCW model is gitignored and must be staged
+  before bundling, or the build silently ships without the AI CW decoder.
+  See src-tauri/resources/deepcw/README.md for provenance and how to fetch/fold it."
+  done
+  ok "DeepCW model staged ($(du -h "$dcw/model.onnx" | cut -f1))"
+fi
+
 # 2 — libft1 native modem test exes (proves the native chain; system FFTW3f via pkg-config) --
 bold "2/4  libft1 native modem test exes"
 # WX selects the WSJT-X-derived modem source. Unset (the normal case) means the in-tree

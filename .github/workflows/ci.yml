@@ -288,6 +288,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # The DeepCW AI CW model is AGPL-3.0 (c) e04 and is NOT committed (15 MB binary,
+      # gitignored — see src-tauri/resources/deepcw/README.md). A checkout therefore never
+      # has it, and Tauri's resource glob matches the directory regardless, so without this
+      # step the build silently produces a package ~14 MB lighter with no AI CW decoder and
+      # no error. build-linux.sh hard-fails if these are absent, so this step is load-bearing.
+      - name: Stage the DeepCW model (not committed — AGPL-3.0 (c) e04)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release download deepcw-model-v1 --repo "${{ github.repository }}" \
+            --pattern 'model.onnx*' --dir src-tauri/resources/deepcw --clobber
+          # Pin by digest: a silently-swapped model would change decode behaviour with no
+          # other visible signal.
+          echo "a7b3b4aa2610d3e88b8c7d4420eceee31be2d0ae595b3413264334f3ffb1eab5  src-tauri/resources/deepcw/model.onnx" | sha256sum -c -
+          echo "b4342157b90229ee7380e165f3d8036179b80d1e6ae02f2557388b7fcd558c01  src-tauri/resources/deepcw/model.onnx.json" | sha256sum -c -
+
       # No QEMU/binfmt setup: the runner is already aarch64, so `--platform
       # linux/arm64` selects the native architecture and the container runs at
       # full speed. The Debian base image supplies every build dep, so nothing
@@ -325,6 +342,13 @@ jobs:
           bin=$(find /tmp/debcheck/usr/bin -type f -print -quit)
           file "$bin" | tee /tmp/filetype
           grep -q 'ARM aarch64' /tmp/filetype || { echo "payload is not ARM aarch64"; exit 1; }
+          # Assert the AI CW model actually made it INTO the package. The staging step and
+          # build-linux.sh both guard the inputs; this checks the output, because the failure
+          # this catches (a package that installs and runs with the decoder silently absent)
+          # is invisible to every other check. 2026-07-20: shipped exactly that, 14 MB light.
+          m=/tmp/debcheck/usr/lib/Nexus/resources/deepcw/model.onnx
+          [ -s "$m" ] || { echo "DeepCW model missing from the package"; exit 1; }
+          echo "a7b3b4aa2610d3e88b8c7d4420eceee31be2d0ae595b3413264334f3ffb1eab5  $m" | sha256sum -c -
           mv "$deb" "pi-out/${{ matrix.base }}/Nexus_${ver}_arm64_${{ matrix.base }}.deb"
           sha256sum pi-out/${{ matrix.base }}/*.deb
 
