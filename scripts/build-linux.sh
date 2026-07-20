@@ -95,14 +95,21 @@ bold "4/4  Nexus GUI app + .deb + AppImage"
 cargo tauri --version >/dev/null 2>&1 || { warn "installing tauri-cli…"; cargo install tauri-cli --version "^2" --locked; }
 [ -f "$REPO/src-tauri/icons/128x128.png" ] || python3 "$REPO/scripts/gen-icons.py"
 # Linux uses the SYSTEM Hamlib (rigctld on PATH / the .deb's libhamlib-utils dependency), so DON'T
-# ship the Windows hamlib .dll/.exe in the Linux bundle. A README keeps the tauri.conf resource glob
-# non-empty. The Windows build re-stages the real binaries via fetch-hamlib.sh, so this is safe.
-rm -rf "$REPO/src-tauri/resources/hamlib"
-mkdir -p "$REPO/src-tauri/resources/hamlib"
-cat > "$REPO/src-tauri/resources/hamlib/README.txt" <<'EOF'
-On Linux, Nexus uses the system Hamlib (rigctld) for CAT rig control.
-The .deb depends on libhamlib-utils; AppImage users: sudo apt install libhamlib-utils
-EOF
+# ship the Windows hamlib .dll/.exe in the Linux bundle. The Windows build re-stages the real
+# binaries via fetch-hamlib.sh, so removing them here is safe.
+#
+# Remove ONLY the untracked Windows binaries. This used to `rm -rf` the whole directory and
+# recreate it with just a README — which DELETED four TRACKED Hamlib license files
+# (AUTHORS/COPYING/COPYING.LIB/LICENSE) on every run, leaving the working tree dirty and, worse,
+# one `git add -A` away from committing the removal of the license texts Hamlib's LGPL requires
+# us to ship. The tracked README.txt is byte-identical to what that heredoc wrote, so nothing
+# was gained by recreating it. Bit us for real on 2026-07-20.
+find "$REPO/src-tauri/resources/hamlib" -type f \
+  \( -name '*.dll' -o -name '*.exe' -o -name '*.lib' -o -name '*.def' \) -delete
+git -C "$REPO" diff --quiet -- src-tauri/resources/hamlib || \
+  die "build-linux.sh modified TRACKED files under src-tauri/resources/hamlib — refusing to
+  continue. Those are the LGPL license texts Hamlib requires us to distribute; restore with
+  'git checkout -- src-tauri/resources/hamlib/'."
 ( cd "$REPO/src-tauri" && cargo tauri build --features radio,custom-protocol --bundles deb,appimage )
 ok "Nexus .deb + AppImage"
 
