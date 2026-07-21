@@ -159,7 +159,6 @@ pub struct CpalBackend {
     _out_stream: Stream,
     in_ring: Arc<Mutex<VecDeque<f32>>>,
     out_ring: Arc<Mutex<VecDeque<f32>>>,
-    out_rate: u32,
     /// Anti-aliased device-rate → 12 kHz decimator for the RX/decode path,
     /// carrying filter history + phase across [`capture`](AudioBackend::capture)
     /// calls (vs the old stateless per-block linear resample that folded
@@ -546,7 +545,8 @@ impl CpalBackend {
             _out_stream: out_stream,
             in_ring,
             out_ring,
-            out_rate,
+            // The device output rate lives inside tx_rs now — play() resamples
+            // through it, so the raw rate no longer needs a field of its own.
             capture_rs: CaptureResampler::new(in_rate, MODEM_RATE),
             tx_rs: CaptureResampler::new(MODEM_RATE, out_rate),
             rx_level,

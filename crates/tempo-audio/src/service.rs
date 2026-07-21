@@ -1083,6 +1083,20 @@ impl Drop for DecodeWorker {
     }
 }
 
+/// Record of a boundary whose TX decision already ran at t=0 (see
+/// `RadioLoop::boundary_keyed`).
+#[derive(Clone, Copy)]
+struct KeyedBoundary {
+    slot: u64,
+    /// Whether the boundary decision actually transmitted (feeds the deferred
+    /// WSJT-X status emission's `decoding`/`transmitting` phases).
+    tx_this_slot: bool,
+    /// Dial (Hz) captured BEFORE keying — Split Operation may move the TX dial, and
+    /// the status emission must report the pre-shift RX dial exactly as the
+    /// deferred path always has.
+    dial_hz: u64,
+}
+
 struct RadioLoop {
     cur_tier: Tier,
     clock: SlotClock,
@@ -1203,6 +1217,14 @@ struct RadioLoop {
     /// Slot index whose WSJT-X-style EARLY decode pass already ran (once per
     /// RX slot; the boundary decode then ingests only the stragglers).
     early_done_slot: Option<u64>,
+    /// A slot whose boundary TX decision already ran AT the boundary (the WSJT-X
+    /// key-at-boundary ordering, taken when the just-ended slot's early decode had
+    /// folded): the slot, whether it actually keyed, and the pre-key dial for the
+    /// deferred status emission. `finish_boundary` consults this so the straggler
+    /// decode's drain runs housekeeping ONLY — keying again would double-transmit
+    /// the slot. Never cleared per-slot: slots are monotonic, so a stale entry can
+    /// never match a future boundary; reset on a tier switch (new slot numbering).
+    boundary_keyed: Option<KeyedBoundary>,
     /// Fake-It split moved the VFO for the playing over — restore THIS dial
     /// (Hz) when the over ends (PTT drop / hard stop).
     fake_it_restore: Option<u64>,
@@ -1338,6 +1360,7 @@ impl RadioLoop {
             err_owner: ErrOwner::None,
             psk_spots: Vec::new(),
             early_done_slot: None,
+            boundary_keyed: None,
             fake_it_restore: None,
             audio_rig_split: false,
             last_psk_flush: now_unix_ms(),
@@ -3388,6 +3411,10 @@ impl RadioLoop {
             self.rx = RxRing::with_capacity(eng.active_capture_samples());
             self.last_slot = None;
             self.prev_slot_was_tx = false;
+            // Slot indices renumber with the new period — stale per-slot markers from
+            // the old tier must not coincidentally match a new tier's slot.
+            self.early_done_slot = None;
+            self.boundary_keyed = None;
         }
 
         // --- Decode-worker results: fold any completed decode, then act on it. The
@@ -3487,11 +3514,32 @@ impl RadioLoop {
             if crate::slot::slot_wants_decode(currently_tx, prev_was_tx, self.rx.is_empty()) {
                 if !self.decode_in_flight {
                     self.last_slot = Some(slot);
+                    // Capture the just-ended slot's audio BEFORE any keying — a TX
+                    // start clears the ring (own-carrier guard) and the straggler
+                    // decode needs the pure RX frame.
                     let frame = self.rx.frame();
+                    // WSJT-X key-at-boundary (operator-approved 2026-07-21): when the
+                    // just-ended RX slot's EARLY decode already folded (FT8/FT4 native —
+                    // dispatched at 11.8 s / 5.5 s and drained above), the
+                    // auto-sequencer's inputs are ready NOW. Run the TX decision AT the
+                    // boundary — exactly WSJT-X's ordering (it keys at t=0 and decodes
+                    // in parallel; stragglers can't change an in-flight over there
+                    // either) — and let the boundary decode chase stragglers alongside.
+                    // `finish_boundary`'s boundary_keyed guard turns that decode's
+                    // drain into housekeeping-only, so the slot can never key twice.
+                    // Without a folded early pass (FT1/DX1, companion sources, first
+                    // slot, busy worker) the deferred decode→TX ordering below is
+                    // UNCHANGED — this deliberately narrows the new behavior to the
+                    // path that produced the ~1-2 s late TX.
+                    if self.early_done_slot == Some(slot.wrapping_sub(1)) {
+                        let _ =
+                            self.key_boundary_tx(&mut eng, rig, backend, now, slot, false, None);
+                    }
                     let job = eng.build_decode_job(frame, slot, DecodePass::Boundary);
                     self.decode.dispatch(job);
                     self.decode_in_flight = true;
-                    // TX decision deferred until this result is drained (next ticks).
+                    // TX decision (when not already keyed above) deferred until this
+                    // result is drained (next ticks).
                 }
                 // else: worker busy -> leave last_slot unset so we retry next tick.
             } else {
@@ -3541,9 +3589,60 @@ impl RadioLoop {
         did_rx: bool,
         rx_frame: Option<Vec<f32>>,
     ) -> Result<(), String> {
+        // Key-at-boundary (the WSJT-X ordering, operator-approved 2026-07-21): when
+        // this slot's TX decision already ran AT the boundary, this call is the
+        // straggler decode's housekeeping only — keying again would double-transmit
+        // the slot.
+        if let Some(k) = self.boundary_keyed {
+            if k.slot == slot {
+                return self.emit_boundary_housekeeping(
+                    eng,
+                    sinks,
+                    now,
+                    k.dial_hz,
+                    did_rx,
+                    k.tx_this_slot,
+                    rx_frame,
+                );
+            }
+        }
+        // Deferred path (unchanged behavior): TX decision with the just-ended slot's
+        // decode ALREADY folded (inline when there was nothing to decode, or via the
+        // worker result otherwise), then the housekeeping back-to-back.
         let cur_dial = eng.settings().dial_hz();
-        // TX decision, with the just-ended slot's decode ALREADY folded (inline
-        // when there was nothing to decode, or via the worker result otherwise).
+        let action = self.key_boundary_tx(eng, rig, backend, now, slot, did_rx, rx_frame);
+        let did_rx = action.did_rx;
+        let tx_this_slot = action.tx_this_slot;
+        self.emit_boundary_housekeeping(
+            eng,
+            sinks,
+            now,
+            cur_dial,
+            did_rx,
+            tx_this_slot,
+            action.rx_frame,
+        )
+    }
+
+    /// The TX half of a slot boundary: run the auto-sequencer's transmit decision and
+    /// key NOW. Everything transmit-critical lives here — and nothing else — so the
+    /// key-at-boundary path can run it at t=0 while the straggler decode chases in
+    /// parallel. Records `boundary_keyed` so `finish_boundary` never keys the same
+    /// slot twice.
+    #[allow(clippy::too_many_arguments)] // mirrors slot_tx_phase's boundary parameter set
+    fn key_boundary_tx<B: AudioBackend>(
+        &mut self,
+        eng: &mut Engine,
+        rig: &mut Rig,
+        backend: &mut B,
+        now: f64,
+        slot: u64,
+        did_rx: bool,
+        rx_frame: Option<Vec<f32>>,
+    ) -> crate::slot::SlotAction {
+        // Dial BEFORE keying: Split Operation may shift the TX dial inside
+        // slot_tx_phase, and the deferred status emission reports the pre-shift dial.
+        let dial_hz = eng.settings().dial_hz();
         let action = crate::slot::slot_tx_phase(
             eng,
             rig,
@@ -3570,10 +3669,37 @@ impl RadioLoop {
         // Remember whether THIS slot was a transmit slot so the next boundary
         // knows not to decode our own carrier (and to decode it otherwise).
         self.prev_slot_was_tx = action.tx_this_slot;
+        // The boundary owns the slot now — drain any still-pending immediate-TX
+        // request (it either just fired via the slot core's parity path, or its
+        // moment passed; leaving it set would key mid-slot LATER, off-cycle).
+        let _ = eng.take_immediate_tx();
+        self.boundary_keyed = Some(KeyedBoundary {
+            slot,
+            tx_this_slot: action.tx_this_slot,
+            dial_hz,
+        });
+        action
+    }
+
+    /// The non-transmit half of a slot boundary: period-WAV save, WSJT-X/PSK network
+    /// emission, and the Field Day club push. Runs back-to-back with the TX half on
+    /// the deferred path, or at the straggler decode's drain on the key-at-boundary
+    /// path. Touches no TX state and never keys.
+    #[allow(clippy::too_many_arguments)]
+    fn emit_boundary_housekeeping(
+        &mut self,
+        eng: &mut Engine,
+        sinks: &Sinks,
+        now: f64,
+        cur_dial: u64,
+        did_rx: bool,
+        tx_this_slot: bool,
+        rx_frame: Option<Vec<f32>>,
+    ) -> Result<(), String> {
         // Save the received period as a WAV when asked (WSJT-X's Save menu:
         // "all" = every RX period, "decodes" = only periods that produced
         // one). Best-effort — a full disk must never stall the radio loop.
-        if let Some(frame) = &action.rx_frame {
+        if let Some(frame) = &rx_frame {
             let mode = eng.settings().save_wav.clone();
             let want = match mode.as_str() {
                 "all" => true,
@@ -3612,13 +3738,6 @@ impl RadioLoop {
                 }
             }
         }
-        // The boundary owns the slot now — drain any still-pending immediate-TX
-        // request (it either just fired via the slot core's parity path, or its
-        // moment passed; leaving it set would key mid-slot LATER, off-cycle).
-        let _ = eng.take_immediate_tx();
-        let did_rx = action.did_rx;
-        let tx_this_slot = action.tx_this_slot;
-
         // Snapshot once for BOTH the WSJT-X/PSK emission and the club-network
         // Field Day push below. The club push has to run on every slot boundary
         // an FD session is live — whether or not the WSJT-X/PSK sinks are on —
@@ -5805,6 +5924,131 @@ mod tests {
         assert!(rig.keyed, "PTT keyed on the TX slot");
         assert!(state.tx_until_ms.is_some(), "TX hold deadline set");
         assert!(!backend.played.is_empty(), "TX audio played to the backend");
+    }
+
+    /// The FT8 late-TX fix (operator-approved key-at-boundary, 2026-07-21): when the
+    /// just-ended RX slot's EARLY decode has already folded, the boundary step keys
+    /// PTT and plays the TX audio ON THAT SAME TICK — not 1–2 s later when the
+    /// straggler boundary decode drains (the old deferred ordering that made every
+    /// over start late; WSJT-X keys at t=0 and decodes in parallel). And when the
+    /// straggler result DOES drain, the boundary_keyed guard must make it
+    /// housekeeping-only: no second key, no second wave (the double-TX guard).
+    #[test]
+    fn early_folded_boundary_keys_at_boundary_and_never_double_keys() {
+        // parity 0 → even slots transmit; FT8 → 15 s slots (the reported mode).
+        let engine = Arc::new(Mutex::new(Engine::new("W9XYZ", "EN37", 0)));
+        engine.lock().unwrap().set_tier(Tier::Ft8);
+        let mut backend = MockBackend::new();
+        let mut rig = Rig::vox();
+        let mut state = loop_state();
+        let (sinks, mut ra, mut rr) = (no_sinks(), mock_reopen_audio(), mock_reopen_rig());
+
+        // Slot 0 boundary: nothing queued, empty ring — consumed with no TX.
+        state
+            .step(
+                &engine,
+                &mut backend,
+                &mut rig,
+                &sinks,
+                100.0,
+                &mut ra,
+                &mut rr,
+            )
+            .unwrap();
+        assert!(!rig.keyed, "nothing to send yet");
+
+        // Queue an over, then strip the broadcast's immediate-TX arming so the ONLY
+        // way it can key is the boundary path under test.
+        {
+            let mut e = engine.lock().unwrap();
+            e.broadcast("CQ TEST W9XYZ EN37");
+            let _ = e.take_immediate_tx();
+        }
+        // Slot 1 boundary: ring still empty → no decode; odd slot → not our parity.
+        state
+            .step(
+                &engine,
+                &mut backend,
+                &mut rig,
+                &sinks,
+                15_020.0,
+                &mut ra,
+                &mut rr,
+            )
+            .unwrap();
+        assert!(!rig.keyed, "odd slot: not our TX parity");
+
+        // Mid slot 1: capture RX audio (so the slot-2 boundary wants a decode) and
+        // mark slot 1's early pass as folded — the key-at-boundary precondition.
+        backend.queue_capture(vec![0.001f32; 12_000]);
+        state
+            .step(
+                &engine,
+                &mut backend,
+                &mut rig,
+                &sinks,
+                22_000.0,
+                &mut ra,
+                &mut rr,
+            )
+            .unwrap();
+        assert!(!state.rx.is_empty(), "capture landed in the ring");
+        state.early_done_slot = Some(1);
+
+        // Slot 2 boundary — THE assertion: keyed on this very tick, straggler decode
+        // dispatched in parallel and still in flight.
+        state
+            .step(
+                &engine,
+                &mut backend,
+                &mut rig,
+                &sinks,
+                30_020.0,
+                &mut ra,
+                &mut rr,
+            )
+            .unwrap();
+        assert!(
+            rig.keyed,
+            "keyed AT the boundary, not after the decode drained"
+        );
+        assert!(
+            !backend.played.is_empty(),
+            "TX audio played at the boundary"
+        );
+        assert!(
+            state.decode_in_flight,
+            "straggler boundary decode running in parallel with the over"
+        );
+        let played_after_key = backend.played.len();
+
+        // Let the straggler decode drain (real worker thread). Its drain must be
+        // housekeeping ONLY — the played sample count must not grow.
+        let mut drained = false;
+        for i in 0..500 {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            state
+                .step(
+                    &engine,
+                    &mut backend,
+                    &mut rig,
+                    &sinks,
+                    30_040.0 + f64::from(i),
+                    &mut ra,
+                    &mut rr,
+                )
+                .unwrap();
+            if !state.decode_in_flight {
+                drained = true;
+                break;
+            }
+        }
+        assert!(drained, "straggler decode drained");
+        assert_eq!(
+            backend.played.len(),
+            played_after_key,
+            "no second wave: the straggler drain is housekeeping only (double-TX guard)"
+        );
     }
 
     #[test]
