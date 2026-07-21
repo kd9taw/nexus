@@ -2,6 +2,7 @@
 // (no JSX) so it mirrors features/state.ts and can be unit-tested without React. The
 // id vocabulary + DEFAULT_SLOTS live here; components/connect/* build on top.
 import { useCallback, useState } from 'react'
+import { assignIn, coercePlacement, type PaneLayoutSpec } from './paneLayout'
 
 export type ConnectMode = 'basic' | 'expert'
 
@@ -59,30 +60,19 @@ function migrateLegacyMode(): ConnectMode {
   }
 }
 
-/** Full record from DEFAULT_SLOTS, overlaid with valid persisted placements. Unknown
- *  slot keys / unknown pane ids are dropped; a slot added later (B2/B3) auto-fills from
- *  defaults. Mirrors coerceEnabled's "missing → safe default" (features/state.ts). */
+/** This view's pane-grid vocabulary. The placement RULES (defaults fill, unknown-id
+ *  drop, permutation repair, swap-on-assign) live in features/paneLayout so Operate and
+ *  later views share them; `storageKey` is unused here because Connect persists the
+ *  placement inside its own config blob alongside mode/overlays. */
+const CONNECT_PANES: PaneLayoutSpec<SlotId, PaneId> = {
+  slotIds: SLOT_IDS,
+  paneIds: PANE_IDS,
+  defaults: DEFAULT_SLOTS,
+  storageKey: STORAGE_KEY,
+}
+
 function coerceSlots(raw: unknown): Record<SlotId, PaneId> {
-  const out: Record<SlotId, PaneId> = { ...DEFAULT_SLOTS }
-  if (raw && typeof raw === 'object') {
-    for (const s of SLOT_IDS) {
-      const v = (raw as Record<string, unknown>)[s]
-      if (isPaneId(v)) out[s] = v
-    }
-  }
-  // Enforce the permutation invariant ("nothing vanishes") even against a corrupted /
-  // hand-edited store that placed one pane in two slots: walk in order, and on a repeat
-  // swap in the first pane not yet placed. assignPane preserves the permutation, so this
-  // only fires on external corruption.
-  const used = new Set<PaneId>()
-  for (const s of SLOT_IDS) {
-    if (used.has(out[s])) {
-      const fill = PANE_IDS.find((p) => !used.has(p))
-      if (fill) out[s] = fill
-    }
-    used.add(out[s])
-  }
-  return out
+  return coercePlacement(CONNECT_PANES, raw)
 }
 
 function coerceOverlays(raw: unknown): Record<string, boolean> {
@@ -162,13 +152,7 @@ export function useConnectConfig(): ConnectConfigApi {
 
   const assignPane = useCallback(
     (slotId: SlotId, paneId: PaneId) =>
-      setCfg((c) => {
-        const slots = { ...c.slots }
-        const prev = SLOT_IDS.find((s) => slots[s] === paneId && s !== slotId)
-        if (prev) slots[prev] = slots[slotId] // swap
-        slots[slotId] = paneId
-        return commit({ ...c, slots })
-      }),
+      setCfg((c) => commit({ ...c, slots: assignIn(CONNECT_PANES, c.slots, slotId, paneId) })),
     [commit],
   )
 
