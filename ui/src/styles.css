@@ -7861,6 +7861,16 @@ input.cw-pitch::-webkit-inner-spin-button {
 .log-scroll {
   flex: 1;
   overflow-y: auto;
+  position: relative; /* rows-offset measurement + the sticky search/header block */
+}
+/* Search + column headers live INSIDE the scroll container, BELOW the globe band
+   (operator layout call, 2026-07-21): sticky so they pin to the top the moment the
+   globe scrolls away. Opaque background — rows scroll beneath them. */
+.log-sticky {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: var(--bg);
 }
 /* 3-D QSO globe band atop the Logbook. Lives INSIDE .log-scroll so it scrolls away
    with the list — prominent on arrival, full-height log once you scroll down. Height

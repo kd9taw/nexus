@@ -17,6 +17,7 @@ const spot = (over: Partial<SpotRow>): SpotRow => ({
   corroborators: [],
   ageSecs: 30,
   comment: '',
+  licensed: true,
   ...over,
 })
 

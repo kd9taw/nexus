@@ -63,6 +63,10 @@ export function SpotsPanel({ spots, bandPlan, selectedCall, onSelect, onWork, on
   // matching ANY field (call/entity/spotter/mode/band/frequency) — so "w1 20m cw"
   // narrows to W1-calls spotted on 20 m CW.
   const [query, setQuery] = useSessionState('nexus.spots.query', '')
+  // Privilege filter (operator 2026-07-21): hide spots you may not transmit to. The
+  // `licensed` flag is computed backend-side from the SAME tables as the TX lockout;
+  // an Open-class (non-US) operator has every spot licensed, so the toggle is a no-op.
+  const [licensedOnly, setLicensedOnly] = useSessionState('nexus.spots.licensedOnly', false)
 
   const knownBands = useMemo(() => new Set(bandPlan.map((b) => b.band)), [bandPlan])
 
@@ -76,11 +80,12 @@ export function SpotsPanel({ spots, bandPlan, selectedCall, onSelect, onWork, on
   const toggleBand = (b: string) =>
     setBands((prev) => (prev.includes(b) ? prev.filter((x) => x !== b) : [...prev, b]))
 
-  const hasActiveFilters = bands.length > 0 || MODE_CLASSES.some((c) => !modes[c])
+  const hasActiveFilters = bands.length > 0 || MODE_CLASSES.some((c) => !modes[c]) || licensedOnly
 
   const rows = useMemo(() => {
     const terms = query.toLowerCase().split(/\s+/).filter(Boolean)
     const filtered = spots.filter((s) => {
+      if (licensedOnly && !s.licensed) return false
       const cls = s.mode as ModeClass
       if (MODE_CLASSES.includes(cls) && !modes[cls]) return false
       if (bands.length > 0 && !bands.includes(s.band)) return false
@@ -117,7 +122,7 @@ export function SpotsPanel({ spots, bandPlan, selectedCall, onSelect, onWork, on
       return c * dir
     })
     return filtered
-  }, [spots, modes, bands, sort, query])
+  }, [spots, modes, bands, sort, query, licensedOnly])
 
   const th = (key: SortKey, label: string) => (
     <button
@@ -206,6 +211,16 @@ export function SpotsPanel({ spots, bandPlan, selectedCall, onSelect, onWork, on
               </button>
             ))}
           </div>
+          <div className="np-filter-sep" aria-hidden="true" />
+          <button
+            type="button"
+            className={`np-chip${licensedOnly ? ' active' : ''}`}
+            aria-pressed={licensedOnly}
+            onClick={() => setLicensedOnly((v) => !v)}
+            title="Show only spots you may transmit to under your license class (Settings ▸ license). Open class sees everything either way."
+          >
+            My privileges
+          </button>
           {hasActiveFilters && (
             <button
               type="button"

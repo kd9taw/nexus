@@ -65,7 +65,7 @@ describe('Logbook virtualization', () => {
     await waitFor(() => expect(container.querySelector('.log-scroll > div')).not.toBeNull())
     // The virtualizer is engaged over the FULL set — the spacer reserves the whole scroll height
     // (~5000 rows) even though only a small window is realized.
-    const spacer = container.querySelector('.log-scroll > div') as HTMLElement
+    const spacer = container.querySelector('.log-rows') as HTMLElement
     expect(parseInt(spacer.style.height, 10)).toBeGreaterThan(5000 * 30)
     // A real (small) window is realized — proves rows actually render (catches a dropped scroll
     // ref / broken wiring, which would leave getVirtualItems() empty while the spacer still sized).

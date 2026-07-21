@@ -5857,13 +5857,25 @@ struct SpotRow {
     /// Seconds since the spot was received; -1 if unknown (no receive stamp).
     age_secs: i64,
     comment: String,
+    /// True when the operator's license class may TRANSMIT at this spot's frequency in
+    /// its mode (privileges::tx_allowed; `Open` class ⇒ always true). Drives the Spots
+    /// panel's "my privileges" filter — computed here so the legal band data has ONE
+    /// source of truth (the same tables as the TX lockout).
+    licensed: bool,
 }
 
 /// Raw spot firehose for the Spots panel — every recent spot (CW/Phone/Digital, all
 /// sources), newest first, NOT filtered by operator needs. The buffer's age-based
 /// retention (≈20 min) bounds the set; the UI applies band/mode/age filters client-side.
 #[tauri::command]
-fn get_all_spots(spots: State<'_, SharedSpots>) -> Vec<SpotRow> {
+fn get_all_spots(spots: State<'_, SharedSpots>, state: State<'_, SharedEngine>) -> Vec<SpotRow> {
+    use tempo_app::settings::{LicenseClass, OperatingMode};
+    // One class read for the whole batch; a poisoned lock degrades to Open (= no gate),
+    // never a wrongly-hidden spot.
+    let class = state
+        .lock()
+        .map(|e| e.settings().license_class)
+        .unwrap_or(LicenseClass::Open);
     let now = now_unix();
     let recent = match spots.lock() {
         Ok(buf) => buf.recent_within(
@@ -5887,17 +5899,28 @@ fn get_all_spots(spots: State<'_, SharedSpots>) -> Vec<SpotRow> {
             } else {
                 -1
             };
+            let mode_label = propagation::classify_spot_mode(freq).label();
+            let licensed = tempo_app::privileges::tx_allowed(
+                class,
+                freq,
+                match mode_label {
+                    "Phone" => OperatingMode::Phone,
+                    "CW" => OperatingMode::Cw,
+                    _ => OperatingMode::Digital,
+                },
+            );
             SpotRow {
                 call: cs.dx_call.clone(),
                 entity,
                 zone,
                 band,
                 freq_mhz: freq,
-                mode: propagation::classify_spot_mode(freq).label().to_string(),
+                mode: mode_label.to_string(),
                 spotter: cs.spotter.clone(),
                 corroborators: cs.corroborators.clone(),
                 age_secs,
                 comment: cs.comment.clone(),
+                licensed,
             }
         })
         .collect();

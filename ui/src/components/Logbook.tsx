@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import type { LoggedQso } from '../types'
 import { gpuCapableForGlobe } from '../gpu'
@@ -8,10 +8,6 @@ import { gpuCapableForGlobe } from '../gpu'
 // machine that fails `gpuCapableForGlobe` never pays for the chunk at all.
 const QsoGlobe = lazy(() => import('./QsoGlobe'))
 
-/** Height (px) of the globe band; must match `.log-globe-band` in styles.css. The
- * virtualizer needs the number as `scrollMargin` so row windowing stays exact with
- * the band occupying the top of the scroll container. */
-const GLOBE_BAND_H = 320
 import {
   deleteQso,
   editQso,
@@ -83,7 +79,7 @@ function parseReport(s: string): string | null {
 }
 
 // Sortable columns. `band` sorts by frequency (more meaningful than the label string).
-type SortKey = 'call' | 'country' | 'band' | 'freq' | 'mode' | 'time' | 'qsl'
+type SortKey = 'call' | 'country' | 'band' | 'freq' | 'mode' | 'sent' | 'rcvd' | 'time' | 'park' | 'qsl'
 function sortVal(q: LoggedQso, k: SortKey): string | number {
   switch (k) {
     case 'call':
@@ -95,15 +91,21 @@ function sortVal(q: LoggedQso, k: SortKey): string | number {
       return q.freqMhz
     case 'mode':
       return q.mode.toUpperCase()
+    case 'sent':
+      return (q.rstSent ?? '').toUpperCase()
+    case 'rcvd':
+      return (q.rstRcvd ?? '').toUpperCase()
     case 'time':
       return q.whenUnix
+    case 'park':
+      return (q.ota?.theirRef ?? q.ota?.myRef ?? '').toUpperCase()
     case 'qsl':
       return q.awardConfirmed ? 2 : q.confirmed ? 1 : 0
   }
 }
 /** Sensible default direction when switching TO a column: text ascending, numeric/time descending. */
 function defaultAsc(k: SortKey): boolean {
-  return k === 'call' || k === 'country' || k === 'mode'
+  return k === 'call' || k === 'country' || k === 'mode' || k === 'sent' || k === 'rcvd' || k === 'park'
 }
 
 export function Logbook({
@@ -420,15 +422,29 @@ export function Logbook({
   // Virtualize the row list: at 10k QSOs the old render put ~150k DOM nodes on screen (heavy scroll
   // + a full reconcile every dial-poll re-render). Now only the visible window mounts.
   const scrollRef = useRef<HTMLDivElement>(null)
+  const rowsWrapRef = useRef<HTMLDivElement>(null)
+  const [listOffset, setListOffset] = useState(0)
   const rowVirtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => scrollRef.current,
     estimateSize: () => 43, // ~row height; measureElement corrects per row
     overscan: 12,
-    // The globe band sits INSIDE the scroll container above the rows (so it scrolls
-    // away, per the operator's chosen layout). scrollMargin tells the virtualizer the
-    // list starts that far into the scroll space; the row transform subtracts it back.
-    scrollMargin: globeShown ? GLOBE_BAND_H : 0,
+    // The globe band + sticky search/header block sit INSIDE the scroll container
+    // above the rows (globe scrolls away; search+headers pin). scrollMargin tells the
+    // virtualizer how far into the scroll space the list starts — MEASURED, because
+    // the sticky block's height isn't a constant; the row transform subtracts it back.
+    scrollMargin: listOffset,
+  })
+
+  // Measure where the rows actually start inside .log-scroll (globe + sticky block).
+  useLayoutEffect(() => {
+    const el = rowsWrapRef.current
+    if (!el) return
+    const measure = () => setListOffset(el.offsetTop)
+    measure()
+    const ro = new ResizeObserver(measure)
+    if (el.parentElement) ro.observe(el.parentElement)
+    return () => ro.disconnect()
   })
 
   const submit = async (e: React.FormEvent) => {
@@ -605,30 +621,6 @@ export function Logbook({
         </div>
       </div>
 
-      <div className="log-searchbar">
-        <input
-          className="settings-input log-search"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search call / grid / band / mode / date…"
-          autoComplete="off"
-          spellCheck={false}
-        />
-        <button
-          type="button"
-          className={`log-filter-chip${needsConfirmOnly ? ' active' : ''}`}
-          onClick={() => setNeedsConfirmOnly((v) => !v)}
-          aria-pressed={needsConfirmOnly}
-          title="Show only contacts without an award-eligible (LoTW/paper) confirmation. Rows you've already sent a QSL request for stay here — a request is not a confirmation."
-        >
-          needs confirmation
-        </button>
-        {search.trim() && (
-          <button type="button" className="log-search-clear" onClick={() => setSearch('')} title="Clear">
-            ✕
-          </button>
-        )}
-      </div>
 
       {showForm && (
         <form className="logbook-form" onSubmit={submit}>
@@ -715,19 +707,6 @@ export function Logbook({
       )}
 
       <div className="log-table logbook-table" role="table">
-        <div className="log-row logbook-row head" role="row">
-          {th('Call', 'call')}
-          {th('Country', 'country')}
-          {th('Band', 'band')}
-          {th('Freq', 'freq')}
-          {th('Mode', 'mode')}
-          <span className="log-cell" role="columnheader">Sent</span>
-          <span className="log-cell" role="columnheader">Rcvd</span>
-          {th('Time (UTC)', 'time')}
-          <span className="log-cell" role="columnheader">Park</span>
-          {th('QSL', 'qsl')}
-          <span className="log-cell" role="columnheader" aria-label="Edit / delete"></span>
-        </div>
         <div className="log-scroll" ref={scrollRef}>
           {globeShown && (
             <div className="log-globe-band">
@@ -736,12 +715,57 @@ export function Logbook({
               </Suspense>
             </div>
           )}
+          {/* Search + column headers BELOW the globe (operator 2026-07-21) — sticky, so
+              once the globe scrolls away they pin to the top and the table reads normally. */}
+          <div className="log-sticky">
+      <div className="log-searchbar">
+        <input
+          className="settings-input log-search"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search call / grid / band / mode / date…"
+          autoComplete="off"
+          spellCheck={false}
+        />
+        <button
+          type="button"
+          className={`log-filter-chip${needsConfirmOnly ? ' active' : ''}`}
+          onClick={() => setNeedsConfirmOnly((v) => !v)}
+          aria-pressed={needsConfirmOnly}
+          title="Show only contacts without an award-eligible (LoTW/paper) confirmation. Rows you've already sent a QSL request for stay here — a request is not a confirmation."
+        >
+          needs confirmation
+        </button>
+        {search.trim() && (
+          <button type="button" className="log-search-clear" onClick={() => setSearch('')} title="Clear">
+            ✕
+          </button>
+        )}
+      </div>
+        <div className="log-row logbook-row head" role="row">
+          {th('Call', 'call')}
+          {th('Country', 'country')}
+          {th('Band', 'band')}
+          {th('Freq', 'freq')}
+          {th('Mode', 'mode')}
+          {th('Sent', 'sent')}
+          {th('Rcvd', 'rcvd')}
+          {th('Time (UTC)', 'time')}
+          {th('Park', 'park')}
+          {th('QSL', 'qsl')}
+          <span className="log-cell" role="columnheader" aria-label="Edit / delete"></span>
+        </div>
+          </div>
           {log.length === 0 && <p className="empty">No logged contacts yet.</p>}
           {log.length > 0 && rows.length === 0 && (
             <p className="empty">No contacts match “{deferredSearch.trim()}”.</p>
           )}
           {rows.length > 0 && (
-            <div style={{ height: rowVirtualizer.getTotalSize(), position: 'relative', width: '100%' }}>
+            <div
+              ref={rowsWrapRef}
+              className="log-rows"
+              style={{ height: rowVirtualizer.getTotalSize(), position: 'relative', width: '100%' }}
+            >
               {rowVirtualizer.getVirtualItems().map((vrow) => {
                 const { q, i } = rows[vrow.index]
                 return (

@@ -1242,6 +1242,8 @@ export interface SpotRow {
   /** Seconds since received; -1 if unknown. */
   ageSecs: number
   comment: string
+  /** Operator may transmit at this freq+mode (license privileges; Open class ⇒ true). */
+  licensed: boolean
 }
 
 /** A QRZ.com callsign-lookup result. grid/state are subscriber-only and routinely
