@@ -25,7 +25,7 @@ import {
   uploadLotwReport,
 } from '../api'
 import { pushToast, withErrorToast } from '../toast'
-import { qrzPushQso, clublogPushQso, hrdlogPushQso, openQrzPage, syncQrz } from '../api'
+import { qrzPushQso, clublogPushQso, hrdlogPushQso, openQrzPage, syncQrz, downloadLotwReport } from '../api'
 
 interface Props {
   /** Default band / freq / mode for new manual entries (from the radio). */
@@ -555,6 +555,26 @@ export function Logbook({
             title="Reconcile a LoTW ADIF export into the log — upgrades confirmations + credit on existing QSOs"
           >
             Sync confirmations
+          </button>
+          <button
+            type="button"
+            className="export-btn"
+            onClick={async () => {
+              // The authenticated in-app LoTW download also existed but hid in Settings
+              // (same story as QRZ, same day): fetches lotwreport.adi with the keychain
+              // credentials + the incremental high-water cursor, merges confirmations.
+              const r = await withErrorToast(() => downloadLotwReport(), 'LoTW fetch failed')
+              if (r) {
+                pushToast(
+                  `LoTW — ${r.newlyConfirmed} newly confirmed, ${r.newlyCredited} credited`,
+                  'success',
+                )
+                load()
+              }
+            }}
+            title="Fetch confirmations directly from LoTW (no file download — uses the LoTW credentials saved in Settings ▸ Logbook & QSL)"
+          >
+            Fetch LoTW
           </button>
           <button
             type="button"
