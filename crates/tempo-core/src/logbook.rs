@@ -386,6 +386,20 @@ impl Logbook {
     }
 
     /// True if `call` appears anywhere in the log (worked on any band).
+    /// The set of every worked callsign (uppercased), built in one O(n) pass. For a caller
+    /// that tests MANY stations against the log at once — the roster snapshot — this turns an
+    /// O(roster × log) sweep of [`worked_before`](Self::worked_before) into O(log + roster):
+    /// build the set once, then O(1) membership per station. Rebuilt on each call from the
+    /// live records, so there is no cached index to desync with edits/deletes/imports. This is
+    /// the fix for the waterfall stall: `snapshot()` ran the multiplicative sweep under the
+    /// engine mutex that the waterfall's spectrum fetch also needs.
+    pub fn worked_call_set(&self) -> std::collections::HashSet<String> {
+        self.records
+            .iter()
+            .map(|r| r.call.to_ascii_uppercase())
+            .collect()
+    }
+
     pub fn worked_before(&self, call: &str) -> bool {
         self.records
             .iter()

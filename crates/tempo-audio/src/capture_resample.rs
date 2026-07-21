@@ -37,8 +37,13 @@
 //! - **Group delay:** (FIR_TAPS-1)/2 = 31.5 input-rate samples ≈ 0.66 ms at
 //!   48 kHz — negligible, and the decoder re-syncs on the FT8 slot grid anyway.
 //!
-//! Playback (12k → device rate) deliberately keeps `resample_linear`:
-//! upsampling has no aliasing hazard worth a filter today.
+//! The TX/playback path (12k → device rate) now uses this same resampler too (as
+//! `tx_rs` in `device.rs`). Upsampling has no *aliasing* hazard, but the old
+//! `resample_linear` there imposed a periodic envelope RIPPLE — straight-chord
+//! interpolation of the ~1.5 kHz tone at 8 samples/cycle droops by a
+//! fractional-phase-dependent amount that cycles at a non-integer device ratio,
+//! printing amplitude modulation onto the constant-envelope FT8/FT4 waveform. The
+//! polyphase reconstruction keeps the envelope flat, matching WSJT-X.
 
 /// Number of FIR taps. 64 matches the tempo-sstv resampler; its Hann stopband
 /// (~44 dB) comfortably clears WSJT-X's 40 dB spec.

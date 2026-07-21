@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import type { Conversation as Conv, NeedAlert, NeedTag, Station } from '../types'
+import type { Conversation as Conv, NeedAlert, NeedTag, Station, Tier } from '../types'
 import { StationCard } from './StationCard'
 
 type Presence = Station['presence'] | 'offline'
@@ -18,7 +18,7 @@ interface Props {
    * station is worth working (like the decode feed), not just the top tier. */
   needAlertsByCall?: Map<string, NeedAlert[]>
   onSelect: (call: string) => void
-  onCall: (call: string) => void
+  onCall: (call: string, tier?: Tier | null) => void
   /** Open conversation threads (incl. the "*" band feed) — drives the recents list
    * so a thread stays reachable after its peer drops off the live roster. */
   conversations: Conv[]

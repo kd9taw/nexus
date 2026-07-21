@@ -870,13 +870,27 @@ export default function App() {
   }, [])
 
   const handleCall = useCallback(
-    (call: string, grid?: string, message?: string, snr?: number, freq?: number) => {
+    (call: string, grid?: string, message?: string, snr?: number, freq?: number, tier?: Tier | null) => {
       // Clicking your OWN line (your CQ / TX echo): the engine guards against
       // the self-QSO, but without this the command still returns a snapshot and
       // we'd flash a FALSE "Working KD9TAW" success toast.
       const me = mycallRef.current.trim().toUpperCase()
       if (me && call.trim().toUpperCase().split('/')[0] === me.split('/')[0]) {
         pushToast(`${call} is your own call`, 'info', 2500)
+        return
+      }
+      // Route by the CONTACT's protocol, not the current view: a Tempo/FT1 contact stays in
+      // Tempo. Working one means OPENING THE CONVERSATION with them (select_peer) in Chat —
+      // NOT running the FT8 call sequence (apiCallStation) or bouncing to the Operate cockpit,
+      // which is what wrongly yanked an FT1 contact into FT8. `handleWorkspace('msg')` switches
+      // area+view to Tempo the same way the mode picker does. (tier null/undefined = keep the
+      // current FT8/digital behaviour below — the "tier: None = keep" convention.)
+      if (tier === 'FT1') {
+        handleWorkspace('msg')
+        void withErrorToast(() => apiSelectPeer(call), `Could not open ${call}`).then((s) => {
+          if (s) setSnap(s)
+        })
+        pushToast(`▶ ${call} — open in Tempo`, 'success', 3000)
         return
       }
       void withErrorToast(
@@ -894,7 +908,15 @@ export default function App() {
         }
       })
     },
-    [],
+    [handleWorkspace],
+  )
+
+  // Roster/StationCard adapter: a card knows only the callsign + its protocol tier, so it
+  // calls onCall(call, tier). handleCall's other params (grid/message/snr/freq) are only used
+  // by the FT8 call-sequence path, so pass them undefined here and route by tier.
+  const handleWorkStation = useCallback(
+    (call: string, tier?: Tier | null) => handleCall(call, undefined, undefined, undefined, undefined, tier),
+    [handleCall],
   )
 
   // Fire decode alerts (beep + toast) whenever the decode feed changes, gated by the
@@ -1707,7 +1729,7 @@ export default function App() {
       needByCall={needByCall}
       needAlertsByCall={needAlertsByCall}
       onSelect={handleSelect}
-      onCall={handleCall}
+      onCall={handleWorkStation}
       conversations={snap.conversations}
       onArchive={handleArchive}
       bandActive={activePeer === '*'}

@@ -90,8 +90,13 @@ pub fn driver_hint(chip: UsbSerialChip, os: HostOs) -> Option<DriverHint> {
         (Cp210x, Windows) => DriverHint {
             chip: "Silicon Labs CP210x",
             bundled: false,
-            note: "Windows needs the Silicon Labs CP210x VCP driver — install it, then Retry.",
-            url: "https://www.silabs.com/developer-tools/usb-to-uart-bridge-vcp-drivers",
+            // Modern Win10/11 install the CP210x VCP driver automatically via Windows Update
+            // (this is the FT-710 / FTDX10 / FT-991A built-in USB bridge), so DON'T tell the
+            // operator they must go install it — that + the old /developer-tools/ URL (now
+            // dead; Silicon Labs moved it to /software-and-tools/) sent FT-710 users chasing a
+            // driver that isn't on the page. Word it conditionally, like the CH340/macOS arm.
+            note: "Windows usually installs the Silicon Labs CP210x driver automatically — install it manually only if the COM port never appears.",
+            url: "https://www.silabs.com/software-and-tools/usb-to-uart-bridge-vcp-drivers",
         },
         (Cp210x, MacOs | Linux) => DriverHint {
             chip: "Silicon Labs CP210x",

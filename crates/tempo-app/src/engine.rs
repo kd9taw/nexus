@@ -4131,6 +4131,13 @@ impl Engine {
             self.chat_cq_paused = true;
         }
         self.app.send_message(peer, text);
+        // Sending a directed reply IS an explicit "put this on the air" action, exactly like
+        // broadcast() — so arm TX, or the queued message never transmits without a separate
+        // Enable-Tx click and the operator sees it sit in "waiting" forever (half of the
+        // "reply won't send" bug). It stays store-and-forward gated: poll_tx still only
+        // releases it once the peer is present (Roster::is_active), so arming here cannot put
+        // a message on the air for an absent peer — it just opens the path for when they are.
+        self.arm_tx_now();
         // NOTE: the own-TX band-activity row is recorded when the message is actually
         // RELEASED on the air (poll_tx, via due_frames' first-release body) — not here at
         // compose time, which showed a phantom row for a store-and-forward message held for
@@ -5967,8 +5974,14 @@ impl Engine {
         let mut s = self.app.snapshot();
         // Mark roster stations worked-before (B4) from the persistent logbook, and
         // resolve each one's DXCC country (DX chasers scan the roster by country).
+        //
+        // Build the worked-call set ONCE (O(log)) instead of calling worked_before per station
+        // (O(roster × log)). This snapshot runs under the engine mutex on the 300 ms UI poll and
+        // again every slot boundary; the old multiplicative sweep held the lock long enough to
+        // stall the waterfall's spectrum fetch (which needs the same lock) for 1–2 s at low CPU.
+        let worked = self.logbook.worked_call_set();
         for st in &mut s.stations {
-            st.worked = self.logbook.worked_before(&st.call);
+            st.worked = worked.contains(&st.call.to_ascii_uppercase());
             if let Some(resolve) = &self.dxcc_resolve {
                 st.country = resolve(&st.call);
             }
@@ -9034,6 +9047,19 @@ mod tests {
         assert!(!e.tx_enabled());
         e.broadcast("QRZ?");
         assert!(e.tx_enabled(), "an explicit broadcast arms TX too");
+    }
+
+    #[test]
+    fn directed_send_arms_tx() {
+        // A directed reply is an explicit "send this" action just like broadcast — it must
+        // arm TX, or the queued message sits in "waiting" forever with no Enable-Tx click
+        // (half of the "reply won't send" bug). It stays store-and-forward gated: arming does
+        // not put it on the air until the peer is present.
+        let mut e = Engine::new("KD9TAW", "EN52", 0);
+        e.set_tier(Tier::Ft1);
+        assert!(!e.tx_enabled());
+        e.send_message("W9XYZ", "MEET AT NOON");
+        assert!(e.tx_enabled(), "sending a directed reply arms TX");
     }
 
     #[test]

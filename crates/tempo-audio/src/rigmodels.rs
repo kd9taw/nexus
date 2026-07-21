@@ -38,6 +38,13 @@ pub fn rig_models() -> Vec<(u32, &'static str)> {
         (3085, "Icom IC-705"),
         (3078, "Icom IC-7610"),
         (3081, "Icom IC-9700"),
+        // IC-7760 (split control-head/RF-deck flagship). Verified index 92 in the bundled
+        // Hamlib 4.7.1 riglist.h → model 3092. Driven via Hamlib rigctld, NOT Nexus's native
+        // CI-V/scope path (that stays limited to the hardware-verified 7300-family): the 7760
+        // is typically LAN-connected, which uses Hamlib anyway, and its scope stream is
+        // unverified. Adding it here is what makes CAT work — before, the 7760 was absent from
+        // every table, so it fell through to a wrong/zero model and CAT was dead.
+        (3092, "Icom IC-7760"),
         (3070, "Icom IC-7100"),
         (3013, "Icom IC-718"),
         (3060, "Icom IC-7000"),

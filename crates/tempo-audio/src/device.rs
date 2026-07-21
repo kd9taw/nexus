@@ -166,6 +166,16 @@ pub struct CpalBackend {
     /// 6–24 kHz energy into the decoder passband). Owned here so its state is
     /// per-capture-stream and never reset mid-stream.
     capture_rs: CaptureResampler,
+    /// Anti-aliased 12 kHz → device-rate UPsampler for the TX/playback path, the
+    /// mirror of `capture_rs`. The old stateless `resample_linear` drew straight
+    /// chords between the modem's 12 kHz samples (~8 per cycle at 1.5 kHz); at a
+    /// non-integer device ratio the chord's amplitude droop cycles, printing a
+    /// periodic envelope RIPPLE onto what should be a flat constant-envelope FT8/FT4
+    /// signal (the beaded-waveform bug — Nexus vs WSJT-X, 2026-07-21). The polyphase
+    /// windowed-sinc reconstructs the sinusoid faithfully, so the envelope stays flat
+    /// like WSJT-X's. Stateful: carries filter history across `play` calls, so the
+    /// continuous phone/monitor streams get no per-chunk seam either.
+    tx_rs: CaptureResampler,
     /// Smoothed RX input RMS (0.0–1.0), updated on the audio thread. Rendered as
     /// a WSJT-X-style dB level in the UI.
     rx_level: Arc<Mutex<f32>>,
@@ -538,6 +548,7 @@ impl CpalBackend {
             out_ring,
             out_rate,
             capture_rs: CaptureResampler::new(in_rate, MODEM_RATE),
+            tx_rs: CaptureResampler::new(MODEM_RATE, out_rate),
             rx_level,
             rx_gain,
             tx_level: 1.0,
@@ -575,7 +586,10 @@ impl AudioBackend for CpalBackend {
     }
 
     fn play(&mut self, samples: &[f32]) {
-        let dev = resample_linear(samples, MODEM_RATE, self.out_rate);
+        // Anti-aliased, stateful UPsample 12 kHz → device rate (see `tx_rs`). The old
+        // `resample_linear` here put a periodic amplitude ripple on the constant-envelope
+        // FT8/FT4 waveform; the polyphase reconstruction keeps it flat like WSJT-X.
+        let dev = self.tx_rs.process(samples);
         let level = self.tx_level;
         let mut ring = self.out_ring.lock().unwrap_or_else(|e| e.into_inner());
         ring.extend(dev.iter().map(|s| s * level));

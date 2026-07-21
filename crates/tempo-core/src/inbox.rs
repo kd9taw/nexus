@@ -12,7 +12,7 @@
 use crate::message::{looks_like_call, Msg};
 use crate::roster::Roster;
 use crate::text::{self, Reassembler};
-use modes::Decode;
+use modes::{Decode, ModeKind};
 
 /// Prefix that marks free text as an open broadcast (sender embedded).
 pub const BROADCAST_PREFIX: &str = "DE";
@@ -117,11 +117,11 @@ impl Inbox {
                                 self.owed_acks.push((from, id));
                             }
                         }
-                        self.push_text(full, slot);
+                        self.push_text(full, slot, d.snr, d.mode);
                     }
                     // else: a partial chunk — buffered, nothing to emit yet.
                 } else {
-                    self.push_text(d.message.clone(), slot);
+                    self.push_text(d.message.clone(), slot, d.snr, d.mode);
                 }
                 continue;
             }
@@ -140,7 +140,7 @@ impl Inbox {
         }
     }
 
-    fn push_text(&mut self, text: String, slot: u64) {
+    fn push_text(&mut self, text: String, slot: u64, snr: i32, mode: Option<ModeKind>) {
         // An open broadcast embeds its sender as a `DE <CALL> ` prefix (FT8-style "to
         // everyone"). Route it to the band-activity bucket (to = None) when we're NOT mid
         // directed exchange, OR when its embedded sender is a DIFFERENT station than the
@@ -162,6 +162,15 @@ impl Inbox {
             }
             _ => self.directed_message(text, slot),
         };
+        // Presence unification (the "reply stuck waiting" fix): a free-text/broadcast frame
+        // carries no structured sender, so `Roster::observe` skipped it above — but WE just
+        // attributed it to `msg.from`. Refresh that peer's roster presence so the
+        // store-and-forward release gate (`Roster::is_active`) sees the same peer the operator
+        // sees in this conversation. Done BEFORE the display dedup below: hearing a resend
+        // still proves the peer is present, even when we suppress the duplicate bubble.
+        if let Some(from) = &msg.from {
+            self.roster.mark_heard(from, slot, snr, mode);
+        }
         // Resend dedup: store-and-forward retransmits the same message every few cycles
         // until it's ACKed, and the reassembler re-emits each completed copy. Skip an
         // identical message (same sender + recipient + text) within a short window so it
@@ -360,6 +369,37 @@ mod tests {
         assert!(
             !last.directed_to_me,
             "sign-off cleared the directed-to-me context"
+        );
+    }
+
+    #[test]
+    fn freetext_and_broadcast_refresh_roster_presence() {
+        // THE "reply stuck waiting" fix. The store-and-forward release gate reads the roster
+        // (Roster::is_active). Free-text and `DE <CALL>` broadcast frames are Msg::Other, so
+        // Roster::observe skips them — but the operator sees the peer in the conversation and
+        // expects to be able to reply. Presence must track what the operator sees.
+        //
+        // A peer heard ONLY via an open broadcast (never a structured frame):
+        let mut inbox = Inbox::new("K2DEF");
+        inbox.observe(&[dec("DE W9XYZ HELLO ALL")], 5);
+        assert!(
+            inbox.roster.is_active("W9XYZ", 5, 30),
+            "a broadcast-heard peer must be present to the release gate"
+        );
+
+        // A peer who identifies (directed to me) then sends free-text chunks: presence must
+        // advance to the LATEST chunk slot, not stay stuck at the identify slot.
+        let mut inbox = Inbox::new("K2DEF");
+        inbox.observe(&[dec("K2DEF W9XYZ EN37")], 0); // structured identify → roster at slot 0
+        let frames = text::chunk("MEET AT NOON", 'A');
+        let last_slot = frames.len() as u64; // chunks at slots 1..=len
+        for (i, f) in frames.iter().enumerate() {
+            inbox.observe(&[dec(f)], (i as u64) + 1);
+        }
+        let heard = inbox.roster.get("W9XYZ").expect("peer in roster");
+        assert_eq!(
+            heard.last_heard_slot, last_slot,
+            "presence advances to the latest free-text chunk, not the identify slot"
         );
     }
 

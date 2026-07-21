@@ -1,4 +1,4 @@
-import type { NeedTag, Station } from '../types'
+import type { NeedTag, Station, Tier } from '../types'
 import { bearingLabel, distanceLabel } from '../grid'
 import { RarityChip } from './RarityChip'
 import { NEED_CHIP } from '../features/needVisuals'
@@ -17,7 +17,7 @@ interface Props {
   needAll: NeedTag[]
   onSelect: (call: string) => void
   /** Work / call this station (enters QSO answering it). */
-  onCall: (call: string) => void
+  onCall: (call: string, tier?: Tier | null) => void
 }
 
 
@@ -49,7 +49,7 @@ export function StationCard({
       className={`station-card${selected ? ' selected' : ''}${station.worked ? ' worked' : ''}${
         chip ? ` needed need-${chip.cls}` : ''
       }`}
-      onDoubleClick={() => onCall(station.call)}
+      onDoubleClick={() => onCall(station.call, station.tier)}
       title={`Double-click to work ${station.call}`}
     >
       <button
@@ -92,7 +92,7 @@ export function StationCard({
       <button
         type="button"
         className="station-work"
-        onClick={() => onCall(station.call)}
+        onClick={() => onCall(station.call, station.tier)}
         title={`Work ${station.call}`}
       >
         Work

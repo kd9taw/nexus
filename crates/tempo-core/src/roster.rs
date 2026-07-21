@@ -71,6 +71,32 @@ impl Roster {
         }
     }
 
+    /// Refresh presence for a station the inbox attributed from a FREE-TEXT or broadcast
+    /// frame — content that carries no structured sender, so [`observe`](Self::observe)
+    /// skipped it (`Msg::sender()` is `None` for `Msg::Other`). The inbox knows the sender by
+    /// temporal association or a `DE <CALL>` prefix; calling this keeps the roster — which the
+    /// store-and-forward release gate reads via [`is_active`](Self::is_active) — in step with
+    /// the peer the operator actually sees in the conversation. Without it, replying to a peer
+    /// heard only via chat/broadcast never releases (the "message stuck waiting" bug). No grid
+    /// (free text carries none); keeps any grid already learned from a prior structured frame.
+    pub fn mark_heard(&mut self, call: &str, slot: u64, snr: i32, mode: Option<ModeKind>) {
+        let entry = self
+            .stations
+            .entry(call.to_string())
+            .or_insert_with(|| HeardStation {
+                call: call.to_string(),
+                grid: None,
+                snr,
+                last_heard_slot: slot,
+                heard_count: 0,
+                mode,
+            });
+        entry.snr = snr;
+        entry.last_heard_slot = slot;
+        entry.heard_count += 1;
+        entry.mode = mode;
+    }
+
     pub fn get(&self, call: &str) -> Option<&HeardStation> {
         self.stations.get(call)
     }
