@@ -15888,3 +15888,17 @@ html[data-panel='needed'] {
 .openings-log-th.active {
   color: var(--accent);
 }
+
+/* POTA/SOTA sort picker — matches the filter-chip row it sits in. */
+.pota-sort-pick {
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 2px 6px;
+  background: color-mix(in srgb, var(--bg-elev) 75%, transparent);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.pota-sort-pick:hover {
+  border-color: var(--accent);
+}

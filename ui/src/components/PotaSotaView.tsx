@@ -41,11 +41,42 @@ function spotKey(s: OtaSpot): string {
 }
 
 /** Sort spots: bandOpen first, then newPark, then by most-recent (preserve API order). */
-function sortSpots(spots: OtaSpot[]): OtaSpot[] {
+/** How the spot list is ordered. 'value' is the default: workable-now first (band open,
+ * then a new park) — the "why should I care" ranking. The rest are plain column sorts
+ * (sortable-everywhere, 2026-07-21); this list is cards, not a grid, so the control is a
+ * picker rather than clickable headers. */
+export type OtaSort = 'value' | 'activator' | 'reference' | 'band' | 'mode'
+
+function sortSpots(spots: OtaSpot[], key: OtaSort, asc: boolean): OtaSpot[] {
+  const val = (s: OtaSpot): string | number => {
+    switch (key) {
+      case 'activator':
+        return s.activator.toUpperCase()
+      case 'reference':
+        return s.reference.toUpperCase()
+      case 'band':
+        return s.freqKhz // frequency orders bands meaningfully
+      case 'mode':
+        return spotDisplayMode(s.mode)
+      case 'value':
+        return s.bandOpen ? 2 : s.newPark ? 1 : 0
+    }
+  }
   return [...spots].sort((a, b) => {
-    const ao = a.bandOpen ? 2 : a.newPark ? 1 : 0
-    const bo = b.bandOpen ? 2 : b.newPark ? 1 : 0
-    return bo - ao // descending
+    const va = val(a)
+    const vb = val(b)
+    const c =
+      typeof va === 'number' && typeof vb === 'number'
+        ? va - vb
+        : String(va).localeCompare(String(vb))
+    // 'value' is inherently descending (best first); tiebreak always falls back to it so
+    // an equal column keeps the workable-now stations on top.
+    const dir = key === 'value' ? !asc : asc
+    const primary = dir ? c : -c
+    if (primary !== 0) return primary
+    const av = a.bandOpen ? 2 : a.newPark ? 1 : 0
+    const bv = b.bandOpen ? 2 : b.newPark ? 1 : 0
+    return bv - av
   })
 }
 
@@ -91,6 +122,8 @@ export function PotaSotaView({ snap, onHunt, onSnap }: Props) {
   // hunters (the POTA majority) see every spot out of the box, and REMEMBERS the
   // operator's last choice across reloads — so a CW hunter sets 'CW' once and it
   // sticks, without hiding SSB activity from everyone else on first run.
+  const [sortKey, setSortKey] = useState<OtaSort>('value')
+  const [sortAsc, setSortAsc] = useState(false)
   const [modeFilter, setModeFilter] = useState<string>(
     () => localStorage.getItem('nexus.ota.modeFilter') ?? 'All',
   )
@@ -165,6 +198,8 @@ export function PotaSotaView({ snap, onHunt, onSnap }: Props) {
       if (modeFilter !== 'All' && spotDisplayMode(s.mode) !== modeFilter) return false
       return true
     }),
+    sortKey,
+    sortAsc,
   )
 
   const hunt = snap.hunt ?? null
@@ -484,6 +519,33 @@ export function PotaSotaView({ snap, onHunt, onSnap }: Props) {
             ))}
           </div>
         )}
+
+        {/* Sort (sortable-everywhere). Cards, not a column grid — so a picker rather
+            than clickable headers; the arrow flips direction. */}
+        <div className="pota-filter-row" role="group" aria-label="Sort spots">
+          <span className="pota-filter-label">Sort</span>
+          <select
+            className="pota-sort-pick"
+            value={sortKey}
+            onChange={(e) => setSortKey(e.target.value as OtaSort)}
+            title="How the spot list is ordered"
+          >
+            <option value="value">Workable now</option>
+            <option value="activator">Activator</option>
+            <option value="reference">Reference</option>
+            <option value="band">Band / freq</option>
+            <option value="mode">Mode</option>
+          </select>
+          <button
+            type="button"
+            className="filter-chip"
+            onClick={() => setSortAsc((v) => !v)}
+            title={sortAsc ? 'Ascending — click for descending' : 'Descending — click for ascending'}
+            aria-label={sortAsc ? 'Sort ascending' : 'Sort descending'}
+          >
+            {sortAsc ? '▲' : '▼'}
+          </button>
+        </div>
       </div>
 
       {/* Spot list */}
