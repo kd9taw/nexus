@@ -26,6 +26,7 @@ import { RotorStrip } from './RotorStrip'
 import { Waterfall } from './Waterfall'
 import { Splitter } from './Splitter'
 import { buildHighlightMap, OperateDecodes } from './OperateDecodes'
+import { DecodeHistory } from '../decodeHistory'
 import { OperateQsoStrip } from './OperateQsoStrip'
 import { SpotDialog } from './SpotDialog'
 import { OperateRoster } from './OperateRoster'
@@ -196,6 +197,12 @@ export function OperateCockpit({
   // Live next-slot countdown: the snapshot's nextSlotMs only updates each poll,
   // so anchor it to wall-clock on each new value and tick locally for a smooth
   // 1-second cadence (the WSJT-X period clock operators watch).
+  // Cockpit-owned decode histories, one per pane role, shared by BOTH layouts —
+  // the cockpit stays mounted across layout switches (and navigation), so the
+  // decode window survives Classic ↔ Roster instead of wiping to "no decodes"
+  // mid-session (operator report 2026-07-21).
+  const bandHistRef = useRef(new DecodeHistory())
+  const rxHistRef = useRef(new DecodeHistory())
   const slotBase = useRef({ ms: snap.radio.nextSlotMs, at: Date.now() })
   useEffect(() => {
     slotBase.current = { ms: snap.radio.nextSlotMs, at: Date.now() }
@@ -830,6 +837,7 @@ export function OperateCockpit({
                       strip — roster mode = decode window + roster on one page
                       (operator request); only Rx Frequency stays compact. */}
                   <OperateDecodes
+                    history={bandHistRef.current}
                     decodes={snap.recentDecodes}
                     slot={snap.radio.slot}
                     rxOffsetHz={snap.radio.rxOffsetHz}
@@ -845,6 +853,7 @@ export function OperateCockpit({
                 </div>
                 <div className="cockpit-rxfreq panel">
                   <OperateDecodes
+                    history={rxHistRef.current}
                     decodes={snap.recentDecodes}
                     slot={snap.radio.slot}
                     rxOffsetHz={snap.radio.rxOffsetHz}
@@ -869,6 +878,7 @@ export function OperateCockpit({
                   and the Stations roster ride the side rail. */}
               <div className="cockpit-decodes panel">
                 <OperateDecodes
+                    history={bandHistRef.current}
                   decodes={snap.recentDecodes}
                   slot={snap.radio.slot}
                   rxOffsetHz={snap.radio.rxOffsetHz}
@@ -901,6 +911,7 @@ export function OperateCockpit({
                 />
                 <div className="cockpit-rxfreq panel">
                   <OperateDecodes
+                    history={rxHistRef.current}
                     decodes={snap.recentDecodes}
                     slot={snap.radio.slot}
                     rxOffsetHz={snap.radio.rxOffsetHz}

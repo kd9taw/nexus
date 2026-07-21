@@ -1,9 +1,15 @@
 // Lean 3-D "world of contacts" globe for the top of the Logbook: every logged QSO's
-// grid square as a glowing dot on the same textured day/night earth as the Connect
-// globe (identical material recipe), with the same gentle 0.3°/frame auto-spin and a
-// ▶/⏸ toggle. DELIBERATELY not Globe3D: no propagation spots, no aurora/MUF/PCA
-// layers, no insight rail, no background pollers — the logbook band shows *your*
-// contacts and nothing else, and can never destabilize the Connect globe.
+// grid square as a small flat band-colored dot hugging the earth — the SAME visual
+// language as the 2-D map's live spots (small round dots in the app's band palette),
+// on the same textured day/night earth as the Connect globe. Gentle 0.3°/frame
+// auto-spin with a ▶/⏸ toggle. DELIBERATELY not Globe3D: no propagation layers, no
+// insight rail, no background pollers — the logbook band shows *your* contacts and
+// nothing else, and can never destabilize the Connect globe.
+//
+// The dots are ONE THREE.Points cloud (the same technique as the Connect globe's
+// coverage/space-weather layers): per-vertex band colors, a soft round sprite so
+// they read as the 2-D map's dots (react-globe.gl's default points layer extrudes
+// CYLINDERS — 1,500 squares looked like rivets on a ball; operator veto 2026-07-21).
 //
 // Resource story (the operator's hard requirement): the Logbook view is rendered
 // inside App's view switch, so this component UNMOUNTS when you leave the Logbook —
@@ -17,8 +23,12 @@ import Globe, { type GlobeMethods } from 'react-globe.gl'
 import earthUrl from '../assets/earth-relief.webp'
 import earthNightUrl from '../assets/earth-night.webp'
 import { gridToLatLon } from '../grid'
+import { BAND_COLOR, bandColor } from '../bandColors'
 import { subsolarPoint } from '../mapGeo'
 import type { LoggedQso } from '../types'
+
+/** Low→high band order = BAND_COLOR's key order (the app's canonical band list). */
+const BAND_ORDER = Object.keys(BAND_COLOR)
 
 /** Spin preference; '0' = off. Default ON — the slow rotation is the point of the band. */
 const SPIN_KEY = 'nexus.logbook.globespin'
@@ -26,13 +36,37 @@ const SPIN_KEY = 'nexus.logbook.globespin'
 interface GridPoint {
   lat: number
   lng: number
-  /** QSOs logged in this 4-char square (drives the dot size + tooltip). */
+  /** QSOs logged in this 4-char square (drives dot brightness). */
   n: number
+  /** Band of the square's most recent QSO — the dot's colour, same palette as the map. */
+  band: string
+}
+
+/** Soft round dot sprite (bright core, quick falloff) so the GPU points render as the
+ * 2-D map's round dots instead of PointsMaterial's default squares. Built once. */
+function dotSprite(): THREE.CanvasTexture {
+  const c = document.createElement('canvas')
+  c.width = 64
+  c.height = 64
+  const ctx = c.getContext('2d')
+  if (ctx) {
+    const g = ctx.createRadialGradient(32, 32, 0, 32, 32, 32)
+    g.addColorStop(0, 'rgba(255,255,255,1)')
+    g.addColorStop(0.45, 'rgba(255,255,255,0.95)')
+    g.addColorStop(0.7, 'rgba(255,255,255,0.28)')
+    g.addColorStop(1, 'rgba(255,255,255,0)')
+    ctx.fillStyle = g
+    ctx.fillRect(0, 0, 64, 64)
+  }
+  const tex = new THREE.CanvasTexture(c)
+  tex.colorSpace = THREE.SRGBColorSpace
+  return tex
 }
 
 export default function QsoGlobe({ qsos }: { qsos: LoggedQso[] }) {
   const wrapRef = useRef<HTMLDivElement>(null)
   const globeRef = useRef<GlobeMethods | undefined>(undefined)
+  const cloudRef = useRef<THREE.Points | null>(null)
   const [size, setSize] = useState({ w: 0, h: 0 })
   const [ready, setReady] = useState(false)
   const [spin, setSpin] = useState(() => {
@@ -42,6 +76,25 @@ export default function QsoGlobe({ qsos }: { qsos: LoggedQso[] }) {
       return true
     }
   })
+  // Band filter — grids are a PER-BAND achievement (VUCC): a 2m square is its own
+  // trophy and must never be pooled with the HF squares (operator, 2026-07-21).
+  // 'all' = every band together (the overview); a specific band shows only ITS
+  // squares and ITS count.
+  const [band, setBand] = useState<string>('all')
+
+  // Bands present in the log, in the app's canonical low→high order.
+  const bandsInLog = useMemo(() => {
+    const seen = new Set<string>()
+    for (const q of qsos) if (q.band) seen.add(q.band)
+    return [...seen].sort((a, b) => {
+      const ia = BAND_ORDER.indexOf(a)
+      const ib = BAND_ORDER.indexOf(b)
+      if (ia !== -1 && ib !== -1) return ia - ib
+      if (ia !== -1) return -1
+      if (ib !== -1) return 1
+      return a.localeCompare(b)
+    })
+  }, [qsos])
 
   // Measure the band BEFORE paint — react-globe.gl sizes to the whole window when
   // width/height are undefined (the same trap Globe3D guards against).
@@ -56,25 +109,36 @@ export default function QsoGlobe({ qsos }: { qsos: LoggedQso[] }) {
   }, [])
 
   // QSOs → unique 4-char grid squares → dots. The dedupe is what keeps a 50k-QSO FT8
-  // log at a few hundred points instead of 50k (the proven Globe3D coverage pipeline);
-  // the per-square count survives as dot weight. QSOs with no grid are skipped — the
-  // DXCC-centroid fallback is a planned fast-follow (needs a backend resolve).
+  // log at ~a thousand points instead of 50k (the proven Globe3D coverage pipeline).
+  // Each square carries its QSO count (brightness) and its most recent QSO's band
+  // (colour — the same band palette as the 2-D map's spots). Grid-less QSOs are
+  // skipped; the DXCC-centroid fallback is a planned fast-follow.
   const points = useMemo<GridPoint[]>(() => {
-    const counts = new Map<string, number>()
+    const acc = new Map<string, { n: number; band: string; when: number }>()
     for (const q of qsos) {
+      // Per-band counting (VUCC semantics): a selected band sees only its own squares.
+      if (band !== 'all' && q.band !== band) continue
       const gr = (q.grid ?? '').trim().toUpperCase()
-      if (gr.length >= 4) {
-        const key = gr.slice(0, 4)
-        counts.set(key, (counts.get(key) ?? 0) + 1)
+      if (gr.length < 4) continue
+      const key = gr.slice(0, 4)
+      const cur = acc.get(key)
+      if (cur) {
+        cur.n += 1
+        if (q.whenUnix >= cur.when) {
+          cur.when = q.whenUnix
+          cur.band = q.band
+        }
+      } else {
+        acc.set(key, { n: 1, band: q.band, when: q.whenUnix })
       }
     }
     const pts: GridPoint[] = []
-    counts.forEach((n, gr) => {
+    acc.forEach((v, gr) => {
       const ll = gridToLatLon(gr)
-      if (ll) pts.push({ lat: ll.lat, lng: ll.lon, n })
+      if (ll) pts.push({ lat: ll.lat, lng: ll.lon, n: v.n, band: v.band })
     })
     return pts
-  }, [qsos])
+  }, [qsos, band])
 
   // Same material recipe as the Connect globe (Globe3D) so the two read as one app:
   // day relief darkened to the cool blue-grey, city lights as a dim night-side glow.
@@ -118,6 +182,67 @@ export default function QsoGlobe({ qsos }: { qsos: LoggedQso[] }) {
       ambient.dispose()
     }
   }, [ready])
+
+  // The worked-grid dot cloud — the 2-D map's spot language on the sphere: flat,
+  // round, band-colored, hugging the surface. One GPU draw for the whole log.
+  useEffect(() => {
+    const g = globeRef.current
+    if (!g || !ready) return
+    const pos = new Float32Array(points.length * 3)
+    const col = new Float32Array(points.length * 3)
+    const tmp = new THREE.Color()
+    for (let i = 0; i < points.length; i++) {
+      const pt = points[i]
+      const c = g.getCoords(pt.lat, pt.lng, 0.004)
+      pos[i * 3] = c.x
+      pos[i * 3 + 1] = c.y
+      pos[i * 3 + 2] = c.z
+      // Band palette colour, brightened a touch for busier squares (log-scaled) —
+      // the same "more activity reads brighter" cue as the map without size games.
+      tmp.set(bandColor(pt.band))
+      const boost = 0.72 + Math.min(0.28, Math.log10(pt.n + 1) * 0.2)
+      col[i * 3] = tmp.r * boost
+      col[i * 3 + 1] = tmp.g * boost
+      col[i * 3 + 2] = tmp.b * boost
+    }
+    let cloud = cloudRef.current
+    if (!cloud) {
+      const mat = new THREE.PointsMaterial({
+        size: 5.5, // screen-space px — the 2-D map's ~2.8 px radius dots
+        map: dotSprite(),
+        vertexColors: true,
+        transparent: true,
+        opacity: 0.95,
+        sizeAttenuation: false,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      })
+      cloud = new THREE.Points(new THREE.BufferGeometry(), mat)
+      cloudRef.current = cloud
+      g.scene().add(cloud)
+    }
+    cloud.geometry.setAttribute('position', new THREE.BufferAttribute(pos, 3))
+    cloud.geometry.setAttribute('color', new THREE.BufferAttribute(col, 3))
+    return () => {
+      // Full teardown on unmount/data change re-runs: the effect rebuilds attributes
+      // in place, so only dispose when the component goes away.
+    }
+  }, [ready, points])
+
+  // Dispose the cloud with the component (the WebGL context dies with the unmount,
+  // but explicit disposal keeps three.js bookkeeping clean on remount cycles).
+  useEffect(() => {
+    return () => {
+      const cloud = cloudRef.current
+      if (cloud) {
+        cloud.geometry.dispose()
+        const m = cloud.material as THREE.PointsMaterial
+        m.map?.dispose()
+        m.dispose()
+        cloudRef.current = null
+      }
+    }
+  }, [])
 
   // The slow spin — the identical mechanism and speed as the Connect globe.
   useEffect(() => {
@@ -164,9 +289,26 @@ export default function QsoGlobe({ qsos }: { qsos: LoggedQso[] }) {
       >
         {spin ? '⏸ Spin' : '▶ Spin'}
       </button>
-      <span className="qso-globe-count">
-        {points.length} grid square{points.length === 1 ? '' : 's'} worked
-      </span>
+      <div className="qso-globe-hud">
+        <select
+          className="qso-globe-band-pick"
+          value={band}
+          onChange={(e) => setBand(e.target.value)}
+          style={band === 'all' ? undefined : { color: bandColor(band), borderColor: bandColor(band) }}
+          title="Grid squares are a per-band achievement (VUCC) — view one band's squares on their own"
+        >
+          <option value="all">All bands</option>
+          {bandsInLog.map((b) => (
+            <option key={b} value={b}>
+              {b}
+            </option>
+          ))}
+        </select>
+        <span className="qso-globe-count">
+          {points.length} grid square{points.length === 1 ? '' : 's'}
+          {band === 'all' ? ' worked' : ` on ${band}`}
+        </span>
+      </div>
       {size.w > 0 && size.h > 0 && (
         <Globe
           ref={globeRef}
@@ -178,18 +320,6 @@ export default function QsoGlobe({ qsos }: { qsos: LoggedQso[] }) {
           showAtmosphere
           atmosphereColor="#68a8e2"
           atmosphereAltitude={0.18}
-          pointsData={points}
-          pointLat="lat"
-          pointLng="lng"
-          // Coverage blue (matches Globe3D's "My coverage" cloud) — reads as "mine".
-          pointColor={() => '#4da3ff'}
-          pointAltitude={0.012}
-          // Busier squares get slightly larger dots (log-scaled, capped).
-          pointRadius={(d: object) => 0.26 + Math.min(0.3, Math.log10((d as GridPoint).n + 1) * 0.18)}
-          pointLabel={(d: object) => {
-            const p = d as GridPoint
-            return `${p.n} QSO${p.n === 1 ? '' : 's'}`
-          }}
         />
       )}
     </div>

@@ -102,6 +102,12 @@ interface Props {
    * invoke onErase (avoids echoing back to the logger).
    */
   clearTick?: number
+  /** Externally-owned rolling history. The cockpit passes one per pane role so the
+   * decode window SURVIVES a Classic ↔ Roster layout switch — with the default
+   * component-local history, the switch remounts this pane and the accumulated
+   * decodes vanished ("no decodes" mid-session; operator report 2026-07-21). When
+   * omitted (detached panels, other hosts) a private history is used as before. */
+  history?: DecodeHistory
 }
 
 /** Stay auto-scrolled while within this many px of the bottom (scroll up
@@ -153,8 +159,14 @@ export function OperateDecodes({
   needAlertsByCall = NO_NEEDS,
   onErase,
   clearTick = 0,
+  history,
 }: Props) {
-  const histRef = useRef(new DecodeHistory())
+  // Cockpit-owned history when provided (survives layout remounts); private otherwise.
+  const localHistRef = useRef<DecodeHistory | null>(null)
+  if (history == null && localHistRef.current == null) {
+    localHistRef.current = new DecodeHistory()
+  }
+  const histRef = { current: history ?? (localHistRef.current as DecodeHistory) }
   const [, setTick] = useState(0)
   const [filterState, setFilter] = useState<DecodeFilter>('all')
   const filter = lockedFilter ?? filterState

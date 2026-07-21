@@ -7877,15 +7877,34 @@ input.cw-pitch::-webkit-inner-spin-button {
   position: absolute;
   inset: 0;
 }
-.qso-globe-count {
+.qso-globe-hud {
   position: absolute;
   top: 8px;
   left: 8px;
   z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.qso-globe-count {
   font-size: 0.72rem;
   font-weight: 600;
   color: var(--text-dim);
   pointer-events: none;
+}
+/* Band picker on the QSO globe — grids are a per-band achievement (VUCC), so a 2m
+   chaser can view 2m squares on their own. Text takes the band's colour. */
+.qso-globe-band-pick {
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 2px 6px;
+  background: color-mix(in srgb, var(--bg-elev) 75%, transparent);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.qso-globe-band-pick:hover {
+  border-color: var(--accent);
 }
 .log-globe-loading {
   display: grid;
