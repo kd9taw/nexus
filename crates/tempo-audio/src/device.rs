@@ -192,13 +192,16 @@ pub struct CpalBackend {
     /// mic, opened via [`AudioBackend::set_voice_mic`] only while a recording is in
     /// progress. `None` = no mic stream (recordings read the shared input). Opening /
     /// closing it never touches the main capture/TX streams.
-    voice_mic: Option<VoiceMic>,
+    voice_mic: Option<CaptureStream>,
 }
 
-/// The transient voice-mic input stream + its capture ring. Downmixes the device to
-/// mono at its native rate into a lock-guarded ring; [`CpalBackend::voice_capture`]
-/// drains + resamples it to 12 kHz. Dropping this stops and frees the device.
-struct VoiceMic {
+/// A named mono capture stream + its ring. Downmixes the device to mono at its native
+/// rate into a lock-guarded ring; [`CaptureStream::drain`] drains + resamples to 12 kHz.
+/// Dropping this stops and frees the device.
+///
+/// Used for the transient voice mic, and reusable for any second capture device that
+/// needs its own stream independent of the main RX tap.
+pub(crate) struct CaptureStream {
     _stream: Stream,
     ring: Arc<Mutex<VecDeque<f32>>>,
     rate: u32,
@@ -207,13 +210,13 @@ struct VoiceMic {
     device: String,
 }
 
-impl VoiceMic {
+impl CaptureStream {
     /// Open a mono capture stream on the named input device. The caller MUST already
     /// hold [`AUDIO_HOST_LOCK`]. Unlike the main input / monitor pickers this does NOT
-    /// fall back to the system default: a missing named mic returns `Err` so the loop
-    /// falls back to the shared capture tap (recording the wrong default device would
-    /// reintroduce the very "records the band" surprise this feature fixes).
-    fn open(name: &str) -> Result<Self, String> {
+    /// fall back to the system default: a missing named device returns `Err` so the
+    /// caller falls back to the shared capture tap (opening the wrong default device
+    /// would reintroduce the very "records the band" surprise this deliberately avoids).
+    pub(crate) fn open(name: &str) -> Result<Self, String> {
         let host = cpal::default_host();
         let dev = pick_device(host.input_devices().ok(), Some(name), None)
             .ok_or_else(|| format!("voice-mic input device {name:?} not found"))?;
@@ -290,6 +293,16 @@ impl VoiceMic {
             rate,
             device: name.to_string(),
         })
+    }
+
+    /// Drain the ring and resample the device's native rate to 12 kHz. Body moved
+    /// verbatim from `CpalBackend::voice_capture`, which now delegates here.
+    pub(crate) fn drain(&self) -> Vec<f32> {
+        let dev: Vec<f32> = {
+            let mut ring = self.ring.lock().unwrap_or_else(|e| e.into_inner());
+            ring.drain(..).collect()
+        };
+        resample_linear(&dev, self.rate, MODEM_RATE)
     }
 }
 
@@ -656,7 +669,7 @@ impl AudioBackend for CpalBackend {
                 }
                 let _guard = AUDIO_HOST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
                 self.voice_mic = None; // free any prior device first
-                self.voice_mic = Some(VoiceMic::open(name)?);
+                self.voice_mic = Some(CaptureStream::open(name)?);
                 Ok(())
             }
         }
@@ -665,14 +678,10 @@ impl AudioBackend for CpalBackend {
     /// 12 kHz mono samples captured from the voice-mic stream since the last call (empty
     /// when no mic stream is open), resampled from the mic device's native rate.
     fn voice_capture(&mut self) -> Vec<f32> {
-        let Some(mic) = self.voice_mic.as_ref() else {
-            return Vec::new();
-        };
-        let dev: Vec<f32> = {
-            let mut ring = mic.ring.lock().unwrap_or_else(|e| e.into_inner());
-            ring.drain(..).collect()
-        };
-        resample_linear(&dev, mic.rate, MODEM_RATE)
+        self.voice_mic
+            .as_ref()
+            .map(CaptureStream::drain)
+            .unwrap_or_default()
     }
 }
 
