@@ -44,12 +44,38 @@ pub fn tqsl_args(station_location: Option<&str>, adif_path: &str) -> Vec<String>
 /// `11` (network)→`None` (retry, no stamp).
 pub fn classify_tqsl_exit(code: i32, stderr: &str) -> Option<UploadOutcome> {
     match code {
-        0 | 9 => Some(UploadOutcome::Pending),
+        0 => Some(UploadOutcome::Pending),
+        // 9 = TQSL_EXIT_QSOS_SUPPRESSED: SOME records were dropped and the rest signed.
+        // We invoke TQSL with `-x -a compliant`, which sets ignore_err = true, so a bad
+        // record is skipped SILENTLY. TQSL does not tell us WHICH, and the caller stamps one
+        // outcome across the whole batch — so calling this "Pending" (an is_sent state) marks
+        // the dropped QSO as delivered, removes it from lotw_unsent_indices() forever, and it
+        // is never retried despite never reaching LoTW. Losing a QSO permanently is far worse
+        // than re-offering the accepted ones, which LoTW simply dedupes.
+        9 => Some(UploadOutcome::Rejected),
+        // 8 = TQSL_EXIT_NO_QSOS: normally "every record was already uploaded" (a true
+        // Duplicate). But it is ALSO what we get when every record was rejected — e.g. an
+        // whole batch of one unsupported mode. Only the stderr distinguishes them, and
+        // guessing Duplicate would silently bury the entire batch.
+        8 if stderr_has_rejections(stderr) => Some(UploadOutcome::Rejected),
         8 => Some(UploadOutcome::Duplicate),
         5 if stderr_is_auth(stderr) => Some(UploadOutcome::AuthFail),
         11 => None, // network — retryable, do not stamp
         _ => Some(UploadOutcome::Rejected),
     }
+}
+
+/// Did TQSL report dropping records, rather than finding them already uploaded? Distinguishes
+/// "nothing to do" from "nothing survived validation" on exit 8, and is deliberately broad:
+/// a false Rejected costs one harmless re-offer that LoTW dedupes, a false Duplicate loses
+/// the QSO permanently.
+fn stderr_has_rejections(stderr: &str) -> bool {
+    let s = stderr.to_ascii_lowercase();
+    s.contains("invalid")
+        || s.contains("ignored")
+        || s.contains("suppressed")
+        || s.contains("rejected")
+        || s.contains("could not be processed")
 }
 
 /// Does the TQSL stderr indicate a credential / certificate / station-location
@@ -170,8 +196,20 @@ mod tests {
     fn exit_codes_map_exhaustively() {
         use UploadOutcome::*;
         assert_eq!(classify_tqsl_exit(0, ""), Some(Pending));
-        assert_eq!(classify_tqsl_exit(9, ""), Some(Pending)); // partial = success
+        // 9 was previously mapped to Pending ("partial = success"). That is the exact belief
+        // that loses a QSO: TQSL runs with -x -a compliant, so a rejected record is skipped
+        // SILENTLY and unidentified, and the caller stamps ONE outcome across the whole
+        // batch. Pending is an is_sent() state, so the dropped QSO left lotw_unsent_indices()
+        // permanently without ever reaching LoTW.
+        assert_eq!(classify_tqsl_exit(9, ""), Some(Rejected));
         assert_eq!(classify_tqsl_exit(8, ""), Some(Duplicate)); // all dupes (terminal!)
+                                                                // ...but exit 8 with rejection evidence is NOT "already uploaded" — it is "nothing
+                                                                // survived validation", and calling it Duplicate would bury the entire batch.
+        assert_eq!(
+            classify_tqsl_exit(8, "Invalid MODE (TEMPOFAST)"),
+            Some(Rejected)
+        );
+        assert_eq!(classify_tqsl_exit(8, "1 QSO ignored"), Some(Rejected));
         assert_eq!(classify_tqsl_exit(2, "rejected"), Some(Rejected));
         assert_eq!(classify_tqsl_exit(3, ""), Some(Rejected));
         assert_eq!(classify_tqsl_exit(4, ""), Some(Rejected));

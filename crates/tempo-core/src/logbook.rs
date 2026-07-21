@@ -705,7 +705,25 @@ pub fn adif_record(r: &QsoRecord) -> String {
     }
     out.push_str(&field("BAND", &r.band));
     out.push_str(&field("FREQ", &format!("{:.6}", r.freq_mhz)));
-    out.push_str(&field("MODE", &r.mode));
+    // Novel Tempo protocols ride as MFSK submodes. The ADIF Mode enumeration is CLOSED
+    // (47 values; "DATA" is not among them — that exists only inside LoTW), so a bare
+    // <MODE:9>TempoFast is rejected outright by TQSL: its cascade is MODE%SUBMODE ->
+    // SUBMODE -> MODE, all three miss, and the record is dropped with "Invalid MODE".
+    // SUBMODE is data type String and is explicitly NOT validated against its enumeration,
+    // so MODE=MFSK + an unregistered SUBMODE is spec-legal today with no coordination.
+    // MFSK is the honest family, not a flag of convenience: TempoFast is 4-CPM h=1/2 BT=0.3,
+    // the same continuous-phase FSK family as FST4 (4-GFSK), which already lives under MFSK.
+    // APP_TEMPO_MODE preserves the exact protocol for round-trip fidelity into our own log;
+    // it is never the primary carrier, because an APP_-only mode is invisible to every
+    // uploader.
+    match adif_submode(&r.mode) {
+        Some(sub) => {
+            out.push_str(&field("MODE", "MFSK"));
+            out.push_str(&field("SUBMODE", sub));
+            out.push_str(&field("APP_TEMPO_MODE", &r.mode));
+        }
+        None => out.push_str(&field("MODE", &r.mode)),
+    }
     out.push_str(&field("QSO_DATE", &format!("{y:04}{mo:02}{d:02}")));
     out.push_str(&field("TIME_ON", &format!("{h:02}{mi:02}{s:02}")));
     // TIME_OFF / QSO_DATE_OFF — the contact's end (closing 73/RR73), when recorded.
@@ -837,6 +855,19 @@ pub fn adif_record_with_station(r: &QsoRecord, station_call: &str, my_grid: &str
 /// Emit the ADIF fields for one OTA side. SOTA uses its dedicated `*_SOTA_REF` field;
 /// every other program (POTA, WWFF) uses the generic `SIG`/`SIG_INFO` pair. Empty
 /// when not activating/hunting that side.
+/// ADIF SUBMODE for a Nexus-native protocol, or `None` for anything already in the ADIF
+/// Mode enumeration (FT8, CW, SSB, RTTY, ...), which is emitted verbatim.
+///
+/// Uppercase on the wire: TQSL uppercases everything anyway, ADIF enumeration values are
+/// case-insensitive, and house style for new submodes is uppercase (FST4W, SCAMP_FAST).
+fn adif_submode(mode: &str) -> Option<&'static str> {
+    match mode.trim().to_ascii_uppercase().as_str() {
+        "TEMPOFAST" => Some("TEMPOFAST"),
+        "TEMPODEEP" => Some("TEMPODEEP"),
+        _ => None,
+    }
+}
+
 fn ota_fields(
     sig: &str,
     sig_info: &str,
@@ -1217,6 +1248,54 @@ mod tests {
             credit_submitted: Vec::new(),
             upload: Default::default(),
             ota: Default::default(),
+        }
+    }
+
+    #[test]
+    fn tempofast_rides_as_an_mfsk_submode_not_a_bare_invalid_mode() {
+        // <MODE:9>TempoFast is rejected outright by TQSL — its cascade is MODE%SUBMODE ->
+        // SUBMODE -> MODE, all three miss, "Invalid MODE", record dropped. MODE=MFSK resolves
+        // to LoTW's DATA group and uploads.
+        let mut r = rec("W1AW", "20m", 1_700_000_000);
+        r.mode = "TempoFast".into();
+        let adif = adif_record(&r);
+        assert!(adif.contains("<MODE:4>MFSK"), "must ride as MFSK: {adif}");
+        assert!(adif.contains("TEMPOFAST"), "submode missing: {adif}");
+        assert!(
+            !adif.contains("<MODE:9>TempoFast"),
+            "must NOT emit the bare invalid mode: {adif}"
+        );
+        // Round-trip fidelity: our own log can still tell TempoFast from TempoDeep.
+        assert!(adif.contains("APP_TEMPO_MODE"), "app field missing: {adif}");
+    }
+
+    #[test]
+    fn tempodeep_gets_its_own_submode_not_tempofasts() {
+        let mut r = rec("W1AW", "20m", 1_700_000_000);
+        r.mode = "TempoDeep".into();
+        let adif = adif_record(&r);
+        assert!(adif.contains("TEMPODEEP"), "{adif}");
+        assert!(
+            !adif.contains("TEMPOFAST"),
+            "must not collapse the two: {adif}"
+        );
+    }
+
+    #[test]
+    fn standard_modes_are_emitted_verbatim() {
+        // FT8/CW/SSB are real ADIF enumeration values — they must NOT be rewritten to MFSK.
+        for m in ["FT8", "CW", "SSB", "RTTY"] {
+            let mut r = rec("W1AW", "20m", 1_700_000_000);
+            r.mode = m.into();
+            let adif = adif_record(&r);
+            assert!(
+                adif.contains(&format!("<MODE:{}>{m}", m.len())),
+                "{m}: {adif}"
+            );
+            assert!(
+                !adif.contains("SUBMODE"),
+                "{m} must not gain a submode: {adif}"
+            );
         }
     }
 
@@ -1884,7 +1963,9 @@ mod tests {
             "Call,Grid,Band,Freq_MHz,Mode,RST_Sent,RST_Rcvd,Name,QTH,Comment,DateTimeUTC,Confirmed"
         );
         let row = lines.next().unwrap();
-        assert!(row.starts_with("W9XYZ,EN37,20m,14.090500,TempoFast,-10,-12,,,,2023-11-14T22:13:20Z,N"));
+        assert!(
+            row.starts_with("W9XYZ,EN37,20m,14.090500,TempoFast,-10,-12,,,,2023-11-14T22:13:20Z,N")
+        );
     }
 
     #[test]
