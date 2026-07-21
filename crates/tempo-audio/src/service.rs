@@ -400,6 +400,9 @@ pub fn run_radio(engine: Arc<Mutex<Engine>>, cfg: RadioConfig) -> Result<(), Str
     // it in tests). The wrapper owns only the device edges (sound card + rigctld)
     // and injects their re-open side-effects.
     let mut state = RadioLoop::new(applied, rigctld_proc, &cfg);
+    // Station-wide sinks live OUTSIDE the per-radio loop (multi-radio Phase 1 boundary):
+    // one PSK buffer and one Field Day / club-board cursor for the whole station.
+    let mut station = StationSinks::new();
     // Seed last_dial from the READ dial when present: seed_rig_dial moved
     // settings.dial_hz() to the same value, so `dial != last_dial` must not fire a
     // command on tick 1. last_mode deliberately stays cfg.mode (the app's BELIEF) —
@@ -511,6 +514,7 @@ pub fn run_radio(engine: Arc<Mutex<Engine>>, cfg: RadioConfig) -> Result<(), Str
                 })
             },
             &mut |t: &Transport, allow_coexist: bool| open_rig(t, allow_coexist),
+            &mut station,
         )?;
         std::thread::sleep(Duration::from_millis(20));
     }
@@ -1117,6 +1121,52 @@ struct KeyedBoundary {
     dial_hz: u64,
 }
 
+/// Station-wide loop state — the fields that must exist **once per station**, never
+/// once per radio.
+///
+/// Extracted from `RadioLoop` ahead of multi-radio (Phase 1): everything else in that
+/// struct is genuinely per-radio and becomes a `RadioChain`, but duplicating THESE
+/// across chains would double-report. Concretely:
+/// * `psk_spots`/`last_psk_flush` — one PSK Reporter identity and one flush cadence for
+///   the station; every chain fans its spots into this one buffer (each spot already
+///   carries its own dial via `emit_rx_decodes`).
+/// * the Field Day cursor + N3FJP band-board state — a per-chain copy would push every
+///   FD QSO to the club network (and the WSJT-X sink) once per radio.
+///
+/// Threaded into `step` by reference so the boundary is enforced by the compiler rather
+/// than by discipline.
+struct StationSinks {
+    /// PSK Reporter spot buffer, flushed on `PSK_FLUSH_SECS`.
+    psk_spots: Vec<Spot>,
+    last_psk_flush: f64,
+    /// Field Day log cursor — how many FD QSOs have already been pushed to the club
+    /// network / WSJT-X sinks.
+    last_fd_qsos: usize,
+    /// Last time (loop ms) we reported our band to the N3FJP club board, so the
+    /// no-CAT band report fires on a coarse heartbeat, not every slot boundary.
+    last_reported_band: f64,
+    /// The last "band|mode" reported to N3FJP, so a band/mode change reports
+    /// immediately (between heartbeats). Empty until the first report.
+    last_reported_bm: String,
+    /// Whether the previous boundary saw a live FD session — the None→Some
+    /// edge seeds `last_fd_qsos` past the restored journal rows so they are
+    /// never re-pushed to the club network / WSJT-X sinks as newly logged.
+    fd_was_active: bool,
+}
+
+impl StationSinks {
+    fn new() -> Self {
+        Self {
+            psk_spots: Vec::new(),
+            last_psk_flush: now_unix_ms(),
+            last_fd_qsos: 0,
+            last_reported_band: now_unix_ms(),
+            last_reported_bm: String::new(),
+            fd_was_active: false,
+        }
+    }
+}
+
 struct RadioLoop {
     cur_tier: Tier,
     clock: SlotClock,
@@ -1232,8 +1282,6 @@ struct RadioLoop {
     /// different native-scope rig tears down + restarts it, and same-radio ticks are a no-op.
     spectrum_src_key: Option<(u32, bool)>,
     /// We wrote the current audio-error line with a voice-mic open failure, so we clear
-    psk_spots: Vec<Spot>,
-    last_psk_flush: f64,
     /// Slot index whose WSJT-X-style EARLY decode pass already ran (once per
     /// RX slot; the boundary decode then ingests only the stragglers).
     early_done_slot: Option<u64>,
@@ -1320,17 +1368,6 @@ struct RadioLoop {
     /// Monitor/VoiceMic may write only over None or themselves, and clear only
     /// what they own.
     err_owner: ErrOwner,
-    last_fd_qsos: usize,
-    /// Last time (loop ms) we reported our band to the N3FJP club board, so the
-    /// no-CAT band report fires on a coarse heartbeat, not every slot boundary.
-    last_reported_band: f64,
-    /// The last "band|mode" reported to N3FJP, so a band/mode change reports
-    /// immediately (between heartbeats). Empty until the first report.
-    last_reported_bm: String,
-    /// Whether the previous boundary saw a live FD session — the None→Some
-    /// edge seeds `last_fd_qsos` past the restored journal rows so they are
-    /// never re-pushed to the club network / WSJT-X sinks as newly logged.
-    fd_was_active: bool,
     /// Latest measured PC-clock-vs-UTC offset (ms, `local − UTC`), read from the
     /// engine each loop and SUBTRACTED from the system clock so TX/RX slots land
     /// on the true UTC grid even when the OS clock is skewed. 0 until measured.
@@ -1389,7 +1426,6 @@ impl RadioLoop {
             spectrum_src: None,
             spectrum_src_key: None,
             err_owner: ErrOwner::None,
-            psk_spots: Vec::new(),
             early_done_slot: None,
             boundary_keyed: None,
             rig_asserted: false, // read-only launch: nothing asserted until a real command
@@ -1397,7 +1433,6 @@ impl RadioLoop {
             cur_md: String::new(),
             fake_it_restore: None,
             audio_rig_split: false,
-            last_psk_flush: now_unix_ms(),
             last_rig_poll: now_unix_ms(),
             last_tx_meter_poll: 0.0,
             tx_meter_idx: 0,
@@ -1414,10 +1449,6 @@ impl RadioLoop {
             level_supported: [None; 4],
             level_misses: [0; 4],
 
-            last_fd_qsos: 0,
-            last_reported_band: now_unix_ms(),
-            last_reported_bm: String::new(),
-            fd_was_active: false,
             clock_offset_ms: 0,
             decode: DecodeWorker::spawn(),
             decode_in_flight: false,
@@ -1604,6 +1635,9 @@ impl RadioLoop {
         reopen_audio: &mut dyn FnMut(&Transport) -> Result<B, String>,
         // `allow_coexist`: may reuse a rigctld already on the port (external share) vs must spawn fresh.
         reopen_rig: &mut dyn FnMut(&Transport, bool) -> RigOpen,
+        // Station-wide sinks (PSK buffer + Field Day/club cursor) — shared by every
+        // radio chain, so they live outside this per-radio loop state.
+        station: &mut StationSinks,
     ) -> Result<(), String> {
         // Steer the slot clock to TRUE UTC: subtract the measured PC-clock-vs-UTC
         // offset (local − UTC) from the system clock, so TX keys and RX decode
@@ -3533,6 +3567,7 @@ impl RadioLoop {
                         rig,
                         backend,
                         sinks,
+                        station,
                         now,
                         bslot,
                         true,
@@ -3542,7 +3577,7 @@ impl RadioLoop {
                 DecodeApplied::Early { n } => {
                     if n > 0 {
                         let cur_dial = eng.settings().dial_hz();
-                        emit_rx_decodes(sinks, &eng, &mut self.psk_spots, now, cur_dial);
+                        emit_rx_decodes(sinks, &eng, &mut station.psk_spots, now, cur_dial);
                     }
                 }
                 DecodeApplied::Stale => {}
@@ -3646,22 +3681,26 @@ impl RadioLoop {
                     self.rx.clear();
                 }
                 // Nothing to decode -> run the TX decision + emission immediately.
-                self.finish_boundary(&mut eng, rig, backend, sinks, now, slot, false, None)?;
+                self.finish_boundary(
+                    &mut eng, rig, backend, sinks, station, now, slot, false, None,
+                )?;
             }
         }
         drop(eng); // release before the PSK flush re-locks the engine
 
         // PSK Reporter: flush accumulated spots periodically (outside the lock).
         if let Some(reporter) = sinks.psk {
-            if !self.psk_spots.is_empty() && now - self.last_psk_flush >= PSK_FLUSH_SECS * 1000.0 {
+            if !station.psk_spots.is_empty()
+                && now - station.last_psk_flush >= PSK_FLUSH_SECS * 1000.0
+            {
                 let (rx_call, rx_grid) = {
                     let eng = engine.lock().map_err(|e| e.to_string())?;
                     let s = eng.snapshot();
                     (s.mycall.clone(), s.mygrid.clone())
                 };
-                let _ = reporter.send_spots(&rx_call, &rx_grid, "Tempo", &self.psk_spots);
-                self.psk_spots.clear();
-                self.last_psk_flush = now;
+                let _ = reporter.send_spots(&rx_call, &rx_grid, "Tempo", &station.psk_spots);
+                station.psk_spots.clear();
+                station.last_psk_flush = now;
             }
         }
 
@@ -3680,6 +3719,7 @@ impl RadioLoop {
         rig: &mut Rig,
         backend: &mut B,
         sinks: &Sinks,
+        station: &mut StationSinks,
         now: f64,
         slot: u64,
         did_rx: bool,
@@ -3694,6 +3734,7 @@ impl RadioLoop {
                 return self.emit_boundary_housekeeping(
                     eng,
                     sinks,
+                    station,
                     now,
                     k.dial_hz,
                     did_rx,
@@ -3712,6 +3753,7 @@ impl RadioLoop {
         self.emit_boundary_housekeeping(
             eng,
             sinks,
+            station,
             now,
             cur_dial,
             did_rx,
@@ -3794,6 +3836,7 @@ impl RadioLoop {
         &mut self,
         eng: &mut Engine,
         sinks: &Sinks,
+        station: &mut StationSinks,
         now: f64,
         cur_dial: u64,
         did_rx: bool,
@@ -3852,19 +3895,19 @@ impl RadioLoop {
         // An FD session just (re)started: the journal restore repopulates
         // qso_count from 0 in one jump — seed the cursor so restored rows are
         // never re-pushed to the club network / WSJT-X sinks as newly logged.
-        if !self.fd_was_active {
+        if !station.fd_was_active {
             if let Some(fd) = snap.field_day.as_ref() {
-                self.last_fd_qsos = fd.qso_count;
+                station.last_fd_qsos = fd.qso_count;
             }
         }
-        self.fd_was_active = snap.field_day.is_some();
+        station.fd_was_active = snap.field_day.is_some();
         // --- network emission (WSJT-X UDP API + PSK Reporter) ---
         if sinks.wsjtx.is_some() || sinks.psk.is_some() || snap.field_day.is_some() {
             let tier = tier_mode(snap.link.tier);
             let _ms_mid = (now as u64 % 86_400_000) as u32;
             let now_secs = (now / 1000.0) as i64;
             if did_rx {
-                emit_rx_decodes(sinks, &*eng, &mut self.psk_spots, now, cur_dial);
+                emit_rx_decodes(sinks, &*eng, &mut station.psk_spots, now, cur_dial);
             }
             if let Some(server) = sinks.wsjtx {
                 let dx = snap
@@ -3917,9 +3960,9 @@ impl RadioLoop {
                     tx_message: "",
                 });
                 if let Some(fd) = snap.field_day.as_ref() {
-                    if fd.qso_count > self.last_fd_qsos {
+                    if fd.qso_count > station.last_fd_qsos {
                         let sent = format!("{} {}", fd.my_class, fd.my_section);
-                        for q in &fd.log[self.last_fd_qsos.min(fd.log.len())..] {
+                        for q in &fd.log[station.last_fd_qsos.min(fd.log.len())..] {
                             let recvd = format!("{} {}", q.class, q.section);
                             let _ = server.send_qso_logged(&WsjtxQso {
                                 time_off: now_secs,
@@ -3949,7 +3992,7 @@ impl RadioLoop {
             // an N1MM-network dashboard (UDP <contactinfo>) when configured.
             // Spawned: a parked N3FJP box must never stall the slot loop.
             if let Some(fd) = snap.field_day.as_ref() {
-                if fd.qso_count > self.last_fd_qsos {
+                if fd.qso_count > station.last_fd_qsos {
                     let st = eng.settings();
                     let n3_host = st.n3fjp_host.trim().to_string();
                     let n3_port = st.n3fjp_port;
@@ -3959,7 +4002,7 @@ impl RadioLoop {
                     let n1_addr = st.n1mm_addr.trim().to_string();
                     if !n3_host.is_empty() || !n1_addr.is_empty() {
                         let new_qsos: Vec<_> =
-                            fd.log[self.last_fd_qsos.min(fd.log.len())..].to_vec();
+                            fd.log[station.last_fd_qsos.min(fd.log.len())..].to_vec();
                         let mycall = snap.mycall.clone();
                         // The operator at the key (FD rotates ops) — the settable
                         // fd_operator when set, else the station call.
@@ -4052,7 +4095,7 @@ impl RadioLoop {
         // Advance the FD cursor on EVERY boundary (independent of the sinks
         // above) — so it also RESETS to 0 when a session ends, and a stale
         // count can never later flood the club log after FD is re-armed.
-        self.last_fd_qsos = snap.field_day.as_ref().map(|f| f.qso_count).unwrap_or(0);
+        station.last_fd_qsos = snap.field_day.as_ref().map(|f| f.qso_count).unwrap_or(0);
 
         // Club band board (N3FJP Network Status Display): report THIS
         // position's band without CAT so the club sees where we are. Fires
@@ -4064,11 +4107,11 @@ impl RadioLoop {
                 let band_meters = band_for_interop(&snap.radio.band);
                 let mode = snap.radio.sideband.clone();
                 let bm_key = format!("{band_meters}|{mode}");
-                if bm_key != self.last_reported_bm
-                    || now - self.last_reported_band >= N3FJP_BAND_REPORT_MS
+                if bm_key != station.last_reported_bm
+                    || now - station.last_reported_band >= N3FJP_BAND_REPORT_MS
                 {
-                    self.last_reported_band = now;
-                    self.last_reported_bm = bm_key;
+                    station.last_reported_band = now;
+                    station.last_reported_bm = bm_key;
                     let port = eng.settings().n3fjp_port;
                     let freq_mhz = snap.radio.dial_mhz;
                     std::thread::spawn(move || {
@@ -5494,6 +5537,7 @@ mod tests {
         let pending = std::sync::atomic::AtomicBool::new(false);
         let mut backend = MockBackend::new();
         let (sinks, mut ra) = (no_sinks(), mock_reopen_audio());
+        let mut station = StationSinks::new();
         let calls = std::cell::Cell::new(0u32);
         let captured_port = std::cell::Cell::new(0u16);
         let mut rr = |t: &Transport, _c: bool| {
@@ -5526,6 +5570,7 @@ mod tests {
                 1.0,
                 &mut ra,
                 &mut rr,
+                &mut station,
             )
             .unwrap();
         assert_eq!(
@@ -5560,6 +5605,7 @@ mod tests {
                 2.0,
                 &mut ra,
                 &mut rr,
+                &mut station,
             )
             .unwrap();
         assert_eq!(calls.get(), 1, "the fallback rebuild fired within one tick");
@@ -5725,6 +5771,7 @@ mod tests {
         let pending = std::sync::atomic::AtomicBool::new(false);
         let mut backend = MockBackend::new();
         let (sinks, mut ra, mut rr) = (no_sinks(), mock_reopen_audio(), mock_reopen_rig());
+        let mut station = StationSinks::new();
 
         // Five deferred retry ticks with the pool held.
         let guard = pool.lock().unwrap();
@@ -5748,6 +5795,7 @@ mod tests {
                     i as f64,
                     &mut ra,
                     &mut rr,
+                    &mut station,
                 )
                 .unwrap();
         }
@@ -6044,6 +6092,7 @@ mod tests {
         let mut rig = Rig::vox();
         let mut state = loop_state();
         let (sinks, mut ra, mut rr) = (no_sinks(), mock_reopen_audio(), mock_reopen_rig());
+        let mut station = StationSinks::new();
 
         // now = 0 → slot 0 (even); a tx_parity-0 engine transmits there.
         state
@@ -6055,6 +6104,7 @@ mod tests {
                 0.0,
                 &mut ra,
                 &mut rr,
+                &mut station,
             )
             .unwrap();
 
@@ -6079,6 +6129,7 @@ mod tests {
         let mut rig = Rig::vox();
         let mut state = loop_state();
         let (sinks, mut ra, mut rr) = (no_sinks(), mock_reopen_audio(), mock_reopen_rig());
+        let mut station = StationSinks::new();
 
         // Slot 0 boundary: nothing queued, empty ring — consumed with no TX.
         state
@@ -6090,6 +6141,7 @@ mod tests {
                 100.0,
                 &mut ra,
                 &mut rr,
+                &mut station,
             )
             .unwrap();
         assert!(!rig.keyed, "nothing to send yet");
@@ -6111,6 +6163,7 @@ mod tests {
                 15_020.0,
                 &mut ra,
                 &mut rr,
+                &mut station,
             )
             .unwrap();
         assert!(!rig.keyed, "odd slot: not our TX parity");
@@ -6127,6 +6180,7 @@ mod tests {
                 22_000.0,
                 &mut ra,
                 &mut rr,
+                &mut station,
             )
             .unwrap();
         assert!(!state.rx.is_empty(), "capture landed in the ring");
@@ -6143,6 +6197,7 @@ mod tests {
                 30_020.0,
                 &mut ra,
                 &mut rr,
+                &mut station,
             )
             .unwrap();
         assert!(
@@ -6173,6 +6228,7 @@ mod tests {
                     30_040.0 + f64::from(i),
                     &mut ra,
                     &mut rr,
+                    &mut station,
                 )
                 .unwrap();
             if !state.decode_in_flight {
@@ -6197,6 +6253,7 @@ mod tests {
         let mut state = loop_state();
         state.tx_until_ms = Some(500.0);
         let (sinks, mut ra, mut rr) = (no_sinks(), mock_reopen_audio(), mock_reopen_rig());
+        let mut station = StationSinks::new();
 
         // now past the hold deadline → PTT released.
         state
@@ -6208,6 +6265,7 @@ mod tests {
                 1000.0,
                 &mut ra,
                 &mut rr,
+                &mut station,
             )
             .unwrap();
 
@@ -6227,6 +6285,7 @@ mod tests {
             let mut rig = Rig::vox();
             let mut state = loop_state();
             let (sinks, mut ra, mut rr) = (no_sinks(), mock_reopen_audio(), mock_reopen_rig());
+            let mut station = StationSinks::new();
             // First step picks the offset up off the engine; second applies it.
             state
                 .step(
@@ -6237,6 +6296,7 @@ mod tests {
                     now,
                     &mut ra,
                     &mut rr,
+                    &mut station,
                 )
                 .unwrap();
             assert_eq!(state.clock_offset_ms, offset_ms, "offset read from engine");
@@ -6249,6 +6309,7 @@ mod tests {
                     now,
                     &mut ra,
                     &mut rr,
+                    &mut station,
                 )
                 .unwrap();
             // Bind out of the tail expression so the MutexGuard temporary drops
@@ -6278,6 +6339,7 @@ mod tests {
         state.tx_until_ms = Some(9_999_999.0); // long hold — would NOT expire on its own
         engine.lock().unwrap().halt_tx(); // operator hit Stop TX
         let (sinks, mut ra, mut rr) = (no_sinks(), mock_reopen_audio(), mock_reopen_rig());
+        let mut station = StationSinks::new();
 
         state
             .step(
@@ -6288,6 +6350,7 @@ mod tests {
                 100.0,
                 &mut ra,
                 &mut rr,
+                &mut station,
             )
             .unwrap();
 
@@ -6318,6 +6381,7 @@ mod tests {
         let mut rig = Rig::vox();
         let mut state = loop_state();
         let (sinks, mut ra, mut rr) = (no_sinks(), mock_reopen_audio(), mock_reopen_rig());
+        let mut station = StationSinks::new();
 
         // Tick 1: keys PTT for the precomputed duration and streams the image.
         state
@@ -6329,6 +6393,7 @@ mod tests {
                 1000.0,
                 &mut ra,
                 &mut rr,
+                &mut station,
             )
             .unwrap();
         assert!(rig.keyed, "PTT keyed for the image");
@@ -6363,6 +6428,7 @@ mod tests {
                 1500.0,
                 &mut ra,
                 &mut rr,
+                &mut station,
             )
             .unwrap();
         assert!(!rig.keyed, "PTT dropped immediately on Stop");
@@ -6386,6 +6452,7 @@ mod tests {
         let mut rig = Rig::vox();
         let mut state = loop_state();
         let (sinks, mut ra, mut rr) = (no_sinks(), mock_reopen_audio(), mock_reopen_rig());
+        let mut station = StationSinks::new();
 
         // Tick 1 keys + streams; the hold is exactly image duration + the TX tail.
         state
@@ -6397,6 +6464,7 @@ mod tests {
                 1000.0,
                 &mut ra,
                 &mut rr,
+                &mut station,
             )
             .unwrap();
         assert!(rig.keyed);
@@ -6416,6 +6484,7 @@ mod tests {
                 hold + 1.0,
                 &mut ra,
                 &mut rr,
+                &mut station,
             )
             .unwrap();
         assert!(!rig.keyed, "PTT dropped at the precomputed duration");
@@ -6436,6 +6505,7 @@ mod tests {
         let mut state = loop_state();
         assert_eq!(state.cur_tier, Tier::Ft1);
         let (sinks, mut ra, mut rr) = (no_sinks(), mock_reopen_audio(), mock_reopen_rig());
+        let mut station = StationSinks::new();
 
         state
             .step(
@@ -6446,6 +6516,7 @@ mod tests {
                 0.0,
                 &mut ra,
                 &mut rr,
+                &mut station,
             )
             .unwrap();
 
@@ -6464,6 +6535,7 @@ mod tests {
         let mut rig = Rig::vox();
         let mut state = loop_state();
         let (sinks, mut ra, mut rr) = (no_sinks(), mock_reopen_audio(), mock_reopen_rig());
+        let mut station = StationSinks::new();
 
         state
             .step(
@@ -6474,6 +6546,7 @@ mod tests {
                 0.0,
                 &mut ra,
                 &mut rr,
+                &mut station,
             )
             .unwrap();
 
@@ -6759,6 +6832,7 @@ mod tests {
         let mut rig = Rig::vox();
         let mut state = loop_state(); // applied = defaults (vox / model 0)
         let sinks = no_sinks();
+        let mut station = StationSinks::new();
         let reopened = std::cell::Cell::new(false);
         let mut ra = mock_reopen_audio();
         let mut rr = |_t: &Transport, _c: bool| {
@@ -6775,6 +6849,7 @@ mod tests {
                 0.0,
                 &mut ra,
                 &mut rr,
+                &mut station,
             )
             .unwrap();
 
@@ -6809,6 +6884,7 @@ mod tests {
         let mut rig = Rig::vox();
         let mut state = loop_state();
         let (sinks, mut ra, mut rr) = (no_sinks(), mock_reopen_audio(), mock_reopen_rig());
+        let mut station = StationSinks::new();
 
         state
             .step(
@@ -6819,6 +6895,7 @@ mod tests {
                 0.0,
                 &mut ra,
                 &mut rr,
+                &mut station,
             )
             .unwrap();
 
@@ -6849,6 +6926,7 @@ mod tests {
         let mut rig = Rig::vox();
         let mut state = loop_state();
         let (sinks, mut ra, mut rr) = (no_sinks(), mock_reopen_audio(), mock_reopen_rig());
+        let mut station = StationSinks::new();
         state
             .step(
                 &engine,
@@ -6858,6 +6936,7 @@ mod tests {
                 0.0,
                 &mut ra,
                 &mut rr,
+                &mut station,
             )
             .unwrap();
         assert!(state.voice_mic_open, "mic live on the first backend");
@@ -6886,6 +6965,7 @@ mod tests {
                 0.0,
                 &mut ra2,
                 &mut rr,
+                &mut station,
             )
             .unwrap();
         assert!(
@@ -6914,6 +6994,7 @@ mod tests {
         let mut rig = Rig::vox();
         let mut state = loop_state();
         let (sinks, mut ra, mut rr) = (no_sinks(), mock_reopen_audio(), mock_reopen_rig());
+        let mut station = StationSinks::new();
 
         state
             .step(
@@ -6924,6 +7005,7 @@ mod tests {
                 0.0,
                 &mut ra,
                 &mut rr,
+                &mut station,
             )
             .unwrap();
 
@@ -6945,6 +7027,7 @@ mod tests {
         let mut rig = Rig::vox();
         let mut state = loop_state();
         let (sinks, mut ra, mut rr) = (no_sinks(), mock_reopen_audio(), mock_reopen_rig());
+        let mut station = StationSinks::new();
 
         state
             .step(
@@ -6955,6 +7038,7 @@ mod tests {
                 0.0,
                 &mut ra,
                 &mut rr,
+                &mut station,
             )
             .unwrap();
 
@@ -6992,6 +7076,7 @@ mod tests {
         let mut rig = Rig::vox();
         let mut state = loop_state();
         let (sinks, mut ra, mut rr) = (no_sinks(), mock_reopen_audio(), mock_reopen_rig());
+        let mut station = StationSinks::new();
 
         // Step 1: recording in progress → the mic opens.
         state
@@ -7003,6 +7088,7 @@ mod tests {
                 0.0,
                 &mut ra,
                 &mut rr,
+                &mut station,
             )
             .unwrap();
         assert!(state.voice_mic_open);
@@ -7018,6 +7104,7 @@ mod tests {
                 20.0,
                 &mut ra,
                 &mut rr,
+                &mut station,
             )
             .unwrap();
 
@@ -7055,6 +7142,7 @@ mod tests {
             ..Settings::default()
         });
         let (sinks, mut ra, mut rr) = (no_sinks(), mock_reopen_audio(), mock_reopen_rig());
+        let mut station = StationSinks::new();
 
         state
             .step(
@@ -7065,6 +7153,7 @@ mod tests {
                 100.0,
                 &mut ra,
                 &mut rr,
+                &mut station,
             )
             .unwrap();
 
@@ -7102,10 +7191,20 @@ mod tests {
             "precondition: the breaker has not tripped yet"
         );
         let (sinks, mut ra, mut rr) = (no_sinks(), mock_reopen_audio(), mock_reopen_rig());
+        let mut station = StationSinks::new();
         let mut poll_once = |state: &mut RadioLoop, backend: &mut MockBackend, rig: &mut Rig| {
             state.last_rig_poll = -1000.0; // force the heavy read-back poll due (at now = 0)
             state
-                .step(&engine, backend, rig, &sinks, 0.0, &mut ra, &mut rr)
+                .step(
+                    &engine,
+                    backend,
+                    rig,
+                    &sinks,
+                    0.0,
+                    &mut ra,
+                    &mut rr,
+                    &mut station,
+                )
                 .unwrap();
         };
 
@@ -7145,6 +7244,7 @@ mod tests {
         // The default section mode is PKTUSB (Digital); make it pending vs last_mode.
         state.last_mode = String::new();
         let (sinks, mut ra, mut rr) = (no_sinks(), mock_reopen_audio(), mock_reopen_rig());
+        let mut station = StationSinks::new();
         for i in 0..MODE_SET_MAX_TRIES {
             state
                 .step(
@@ -7155,6 +7255,7 @@ mod tests {
                     f64::from(i),
                     &mut ra,
                     &mut rr,
+                    &mut station,
                 )
                 .unwrap();
         }
@@ -7222,6 +7323,7 @@ mod tests {
         let mut state = loop_state();
         // Sinks OFF — the pre-fix bug means the club push is never reached.
         let (sinks, mut ra, mut rr) = (no_sinks(), mock_reopen_audio(), mock_reopen_rig());
+        let mut station = StationSinks::new();
 
         // First boundary registers the live (empty) session — a contact already
         // present here would read as a restored journal row and never push.
@@ -7234,6 +7336,7 @@ mod tests {
                 0.0,
                 &mut ra,
                 &mut rr,
+                &mut station,
             )
             .unwrap();
         assert!(engine
@@ -7250,6 +7353,7 @@ mod tests {
                 16_000.0,
                 &mut ra,
                 &mut rr,
+                &mut station,
             )
             .unwrap();
 
@@ -7274,7 +7378,7 @@ mod tests {
             "the N3FJP club push fired with WSJT-X and PSK sinks both off"
         );
         assert_eq!(
-            state.last_fd_qsos, 1,
+            station.last_fd_qsos, 1,
             "the FD cursor advanced past the pushed QSO"
         );
     }
@@ -7314,6 +7418,7 @@ mod tests {
         let mut rig = Rig::vox();
         let mut state = loop_state();
         let (sinks, mut ra, mut rr) = (no_sinks(), mock_reopen_audio(), mock_reopen_rig());
+        let mut station = StationSinks::new();
 
         // First boundary: the restored row must NOT push.
         state
@@ -7325,6 +7430,7 @@ mod tests {
                 0.0,
                 &mut ra,
                 &mut rr,
+                &mut station,
             )
             .unwrap();
 
@@ -7343,6 +7449,7 @@ mod tests {
                 16_000.0,
                 &mut ra,
                 &mut rr,
+                &mut station,
             )
             .unwrap();
 
@@ -7381,7 +7488,7 @@ mod tests {
         );
         assert_eq!(connections, 1, "exactly one push fired (the new QSO only)");
         assert_eq!(
-            state.last_fd_qsos, 2,
+            station.last_fd_qsos, 2,
             "the FD cursor covers restored + new rows"
         );
     }
