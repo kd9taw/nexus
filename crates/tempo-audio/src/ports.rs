@@ -15,6 +15,10 @@ pub fn available_ports() -> Vec<String> {
     // setups (Flex/virtual COM ports). This runs when the Settings tab opens, so isolate it — a
     // panic yields an empty list (the operator can still type a COM port) instead of crashing.
     std::panic::catch_unwind(|| {
+        // `mut` is only exercised by the Linux virtual-port union below; on other
+        // targets that block compiles away (this was a warning in every Windows
+        // cross-build — noise that trains eyes to skip warnings).
+        #[cfg_attr(not(target_os = "linux"), allow(unused_mut))]
         let mut names: Vec<String> = match serialport::available_ports() {
             Ok(ports) => ports.into_iter().map(|p| p.port_name).collect(),
             Err(_) => Vec::new(),
