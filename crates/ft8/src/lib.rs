@@ -98,11 +98,24 @@ pub fn gen_wave(itone: &[i32], fsample: f32, f0: f32) -> Vec<f32> {
 /// the deep AP passes (MyCall+DxCall masks) only fire within ~75 Hz of it and
 /// sync prioritizes near it; pass 0 (or out of `nfa..=nfb`) for band-center.
 ///
-/// This is the a7-inert legacy entry: it delegates to [`decode_frame_a7`] with
-/// a constant `nutc = 0`, which is behavior-neutral — the slot key never
-/// changes, so the a7 prior-slot table never rolls over and the cross-cycle
-/// replay no-ops. Callers that thread real slot time (the engine) use
+/// This is the a7-inert legacy entry: it delegates to [`decode_frame_a7`] with a constant
+/// `nutc = 0` AND `a7_final = false`. Callers that thread real slot time (the engine) use
 /// [`decode_frame_a7`] to get WSJT-X's iaptype=7 recovery.
+///
+/// `a7_final = false` is load-bearing, not tidiness. A constant `nutc` alone is NOT inert:
+/// it stops the prior-slot table rolling over (so replay no-ops, as intended), but with
+/// `a7_final = true` `ft8_a7_save` still runs for every decode, and because `ndelta == 0`
+/// is neither "new slot" nor "stale" the per-slot reset never fires — so `ndec` grows
+/// without bound. Upstream's own guard against that case lives in `decoder.f90`
+/// (`nzhsym==41 .or. nutc.ne.nutc0`), which we deliberately do not vendor.
+///
+/// The consequence is not cosmetic: `ndec` is incremented BEFORE the `i.gt.MAXDEC` guard
+/// and never rolled back (`ft8_a7.f90:44-46`), and `msg0` is byte-adjacent to `jseq` in
+/// .bss (verified with `nm -S`), so an unbounded counter eventually writes past the array
+/// into the neighbouring symbol at `-O3` with no bounds checking. This path is currently
+/// unreachable in production — `NativeSource::decode` is only called under
+/// `DecodeBranch::Companion`, whose source is the UDP one — but that is an invariant three
+/// files away, not a property of this function.
 ///
 /// # Panics
 /// Panics if `iwave.len() < NMAX`.
