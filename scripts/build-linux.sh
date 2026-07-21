@@ -106,10 +106,16 @@ cargo tauri --version >/dev/null 2>&1 || { warn "installing tauri-cli…"; cargo
 # was gained by recreating it. Bit us for real on 2026-07-20.
 find "$REPO/src-tauri/resources/hamlib" -type f \
   \( -name '*.dll' -o -name '*.exe' -o -name '*.lib' -o -name '*.def' \) -delete
-git -C "$REPO" diff --quiet -- src-tauri/resources/hamlib || \
-  die "build-linux.sh modified TRACKED files under src-tauri/resources/hamlib — refusing to
+# Safety net for the delete above: if it ever touches a TRACKED file (the LGPL license
+# texts Hamlib requires us to ship), stop. Only meaningful inside a git work tree — the
+# Pi Docker build COPYs the source WITHOUT .git (.dockerignore excludes it), so skip the
+# check there rather than error on "not a git repository".
+if git -C "$REPO" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  git -C "$REPO" diff --quiet -- src-tauri/resources/hamlib || \
+    die "build-linux.sh modified TRACKED files under src-tauri/resources/hamlib — refusing to
   continue. Those are the LGPL license texts Hamlib requires us to distribute; restore with
   'git checkout -- src-tauri/resources/hamlib/'."
+fi
 ( cd "$REPO/src-tauri" && cargo tauri build --features radio,custom-protocol --bundles deb,appimage )
 ok "Nexus .deb + AppImage"
 
