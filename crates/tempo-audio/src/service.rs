@@ -357,10 +357,25 @@ pub fn run_radio(engine: Arc<Mutex<Engine>>, cfg: RadioConfig) -> Result<(), Str
     let applied = Transport::from_cfg(&cfg);
     // Initial open: allow coexisting onto a pre-existing EXTERNAL rigctld (e.g. WSJT-X already sharing
     // the rig). Mid-session rig SWITCHES pass `allow_coexist=false` when they reuse their own port.
-    let (mut rig, rigctld_proc, init_ok, init_detail) =
-        open_rig(&applied, cfg.dial_hz, &cfg.mode, true);
+    let (mut rig, rigctld_proc, init_probe) = open_rig(&applied, cfg.dial_hz, &cfg.mode, true);
+    let init_ok = init_probe.ok;
+    let init_freq = init_probe.freq_hz;
     if let Ok(mut eng) = engine.lock() {
-        eng.set_cat_status(init_ok, init_detail);
+        eng.set_cat_status(init_probe.ok, init_probe.detail);
+        // Read-only-launch seed: the rig's OWN dial/mode become the app's belief, under
+        // the same lock and BEFORE the loop starts — so the UI's first snapshot poll
+        // already shows the rig's reality, and the band-edge chime's first-value
+        // suppression sees one coherent value instead of a persisted→read flip.
+        // `freq_hz`/`mode` are Some only when a real read succeeded over a real control
+        // channel, which is precisely the `rig_confirmed` condition (a serial-PTT rig
+        // sharing the CAT port has ok==true but no read — stays unconfirmed).
+        if let Some(hz) = init_probe.freq_hz {
+            eng.seed_rig_dial(hz);
+            eng.set_rig_confirmed(true);
+        }
+        if let Some(m) = init_probe.mode {
+            eng.observe_rig_mode(m); // display-only; never adopted into operating_mode
+        }
     }
 
     // Background clock-offset probe (SNTP), on its own thread so a slow/failed
@@ -386,6 +401,14 @@ pub fn run_radio(engine: Arc<Mutex<Engine>>, cfg: RadioConfig) -> Result<(), Str
     // it in tests). The wrapper owns only the device edges (sound card + rigctld)
     // and injects their re-open side-effects.
     let mut state = RadioLoop::new(applied, rigctld_proc, &cfg);
+    // Seed last_dial from the READ dial when present: seed_rig_dial moved
+    // settings.dial_hz() to the same value, so `dial != last_dial` must not fire a
+    // command on tick 1. last_mode deliberately stays cfg.mode (the app's BELIEF) —
+    // seeding it from the read would make the steady-state retune command the mode
+    // ~20 ms after boot, defeating read-only launch (the documented trap).
+    if let Some(hz) = init_freq {
+        state.last_dial = hz;
+    }
 
     // --- Dual-radio: persistent per-radio CAT (true "both live"). The ACTIVE radio is `rig`/`state`
     // above (unchanged path). Every OTHER enabled radio gets its own persistent rigctld+Rig in the
@@ -587,7 +610,7 @@ fn open_monitor(t: &Transport) -> (Rig, Option<CatDaemon>, Option<bool>) {
                     || native_civ_addr(t).is_some()
                     || crate::rigmodels::is_slow_serial_link(t.rig_model, t.baud),
             );
-            let (ok, _d) = probe_cat(&mut rig, t.rigctld_port);
+            let ok = probe_cat(&mut rig, t.rigctld_port).ok;
             (rig, Some(proc), ok)
         }
         Err(_) => (Rig::vox(), None, Some(false)),
@@ -1634,7 +1657,8 @@ impl RadioLoop {
                     want.rigctld_port,
                 );
                 self.rigctld_proc = None; // drop kills + reaps the old daemon (frees its port)
-                let (new_rig, proc, ok, detail) = reopen_rig(&want, dial, &md, allow_coexist);
+                let (new_rig, proc, probe) = reopen_rig(&want, dial, &md, allow_coexist);
+                let (ok, detail) = (probe.ok, probe.detail);
                 *rig = new_rig;
                 self.rigctld_proc = proc;
                 // Do NOT claim last_dial/last_mode here: open_cat's set_freq/set_mode are best-effort
@@ -4459,7 +4483,32 @@ fn mode_command_failed(md: &str, e: &std::io::Error) -> String {
 /// The result of opening/probing a rig: `(rig, rigctld handle, cat_ok, detail)`.
 /// `cat_ok` is `Some(true/false)` for CAT/serial, `None` for VOX; the handle
 /// keeps the launched `rigctld` daemon alive (kill-on-drop).
-type RigOpen = (Rig, Option<CatDaemon>, Option<bool>, String);
+/// Result of opening/probing a CAT channel: health + detail for the status pill, plus
+/// the rig's OWN freq/mode read at open — the read-only-launch seed. `freq_hz`/`mode`
+/// are `Some` only when a real read succeeded over a real control channel, which is
+/// exactly the condition for `rig_confirmed` (NEVER derive that from `ok`: a serial-PTT
+/// rig sharing the CAT port reports `ok == Some(true)` while being structurally
+/// unreadable).
+struct CatProbe {
+    ok: Option<bool>,
+    detail: String,
+    freq_hz: Option<u64>,
+    mode: Option<String>,
+}
+
+impl CatProbe {
+    /// A status-only probe (VOX / serial PTT / error arms): no read happened.
+    fn status(ok: Option<bool>, detail: impl Into<String>) -> Self {
+        Self {
+            ok,
+            detail: detail.into(),
+            freq_hz: None,
+            mode: None,
+        }
+    }
+}
+
+type RigOpen = (Rig, Option<CatDaemon>, CatProbe);
 
 /// The [`PttMode`] a transport keys with — mirrors `open_rig`'s ptt_method dispatch. A monitor
 /// opens each background rig read-only (`PttMode::Vox`); when the handoff ADOPTS that rig as the
@@ -4492,8 +4541,10 @@ fn open_rig(t: &Transport, dial_hz: u64, mode: &str, allow_coexist: bool) -> Rig
         "cat" => (
             Rig::vox(),
             None,
-            Some(false),
-            "CAT selected but no rig model is set — pick your rig in Settings.".to_string(),
+            CatProbe::status(
+                Some(false),
+                "CAT selected but no rig model is set — pick your rig in Settings.",
+            ),
         ),
         // Serial-line PTT (RTS/DTR) — see `open_serial_ptt`. When keying is on a SEPARATE
         // port from CAT (an SO2R controller), we open CAT control too so freq/mode still
@@ -4512,8 +4563,7 @@ fn open_rig(t: &Transport, dial_hz: u64, mode: &str, allow_coexist: bool) -> Rig
         _ => (
             Rig::vox(),
             None,
-            None,
-            "VOX — no CAT; the rig is keyed by transmit audio.".to_string(),
+            CatProbe::status(None, "VOX — no CAT; the rig is keyed by transmit audio."),
         ),
     }
 }
@@ -4578,10 +4628,12 @@ fn open_cat(
         return (
             Rig::vox(),
             None,
-            Some(false),
-            format!(
-                "CAT broker and rigctld are both on :{} — give them different ports, or turn the broker off.",
-                t.rigctld_port
+            CatProbe::status(
+                Some(false),
+                format!(
+                    "CAT broker and rigctld are both on :{} — give them different ports, or turn the broker off.",
+                    t.rigctld_port
+                ),
             ),
         );
     }
@@ -4594,17 +4646,14 @@ fn open_cat(
         rig.set_slow_transport(
             t.is_network() || crate::rigmodels::is_slow_serial_link(t.rig_model, t.baud),
         ); // network chains + slow serial links (Xiegu / vintage Kenwood / any rig ≤ 19200 baud) get the long command deadline
-        let _ = rig.set_freq(dial_hz);
-        let _ = rig.set_mode(mode, passband_for(mode));
-        let (ok, detail) = probe_cat(&mut rig, t.rigctld_port);
+        let mut probe = finish_cat_open(&mut rig, t, dial_hz, mode);
+        probe.detail = format!(
+            "Sharing the rigctld already on :{} — {}",
+            t.rigctld_port, probe.detail
+        );
         return (
-            rig,
-            None, // we didn't spawn it — leave the existing daemon alone
-            ok,
-            format!(
-                "Sharing the rigctld already on :{} — {detail}",
-                t.rigctld_port
-            ),
+            rig, None, // we didn't spawn it — leave the existing daemon alone
+            probe,
         );
     }
     // A network rig (Flex/SmartSDR or a remote rig) → point rigctld at host:port over TCP
@@ -4624,33 +4673,49 @@ fn open_cat(
                     || native_civ_addr(t).is_some()
                     || crate::rigmodels::is_slow_serial_link(t.rig_model, t.baud),
             ); // network chains + the native daemon + slow serial links (Xiegu / vintage Kenwood / any rig ≤ 19200 baud) get the long deadline
-            let _ = rig.set_freq(dial_hz);
-            let _ = rig.set_mode(mode, passband_for(mode));
-            let (ok, detail) = probe_cat(&mut rig, t.rigctld_port);
-            (rig, Some(proc), ok, detail)
+            let probe = finish_cat_open(&mut rig, t, dial_hz, mode);
+            (rig, Some(proc), probe)
         }
         Err(e) => (
             Rig::vox(),
             None,
-            Some(false),
-            format!("Could not launch the bundled rigctld (Hamlib): {e}"),
+            CatProbe::status(
+                Some(false),
+                format!("Could not launch the bundled rigctld (Hamlib): {e}"),
+            ),
         ),
     }
 }
 
+/// The single shared tail of both `open_cat` branches (coexist + spawn): the open-time
+/// dial/mode commands and the health probe. ONE copy on purpose — the read-only-launch
+/// flip deletes the two commands here, and a duplicated tail is how a future edit
+/// silently resurrects one of them (the tests exercise the coexist branch; this shared
+/// seam is what makes them cover the spawn branch by construction).
+fn finish_cat_open(rig: &mut Rig, t: &Transport, dial_hz: u64, mode: &str) -> CatProbe {
+    let _ = rig.set_freq(dial_hz);
+    let _ = rig.set_mode(mode, passband_for(mode));
+    probe_cat(rig, t.rigctld_port)
+}
+
 /// Probe a CAT rig by reading its frequency, mapping failures to a concrete,
 /// operator-actionable message (rigctld unreachable vs. rig not answering).
-fn probe_cat(rig: &mut Rig, port: u16) -> (Option<bool>, String) {
+fn probe_cat(rig: &mut Rig, port: u16) -> CatProbe {
     match rig.read_freq() {
-        Ok(hz) => (
-            Some(true),
-            format!("Connected — {:.3} MHz", hz as f64 / 1e6),
-        ),
-        Err(e) if e.kind() == std::io::ErrorKind::ConnectionRefused => (
+        Ok(hz) => CatProbe {
+            ok: Some(true),
+            detail: format!("Connected — {:.3} MHz", hz as f64 / 1e6),
+            freq_hz: Some(hz),
+            // One mode read after a successful freq read — load-bearing now (the
+            // read-only-launch seed), not cosmetic. Display-only downstream; Hamlib's
+            // cached-mode caveat (rig.rs read_mode docs) is acceptable for display.
+            mode: rig.read_mode(),
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::ConnectionRefused => CatProbe::status(
             Some(false),
             format!("rigctld is not reachable on 127.0.0.1:{port}."),
         ),
-        Err(e) => (Some(false), format!("CAT error: {e}")),
+        Err(e) => CatProbe::status(Some(false), format!("CAT error: {e}")),
     }
 }
 
@@ -4669,7 +4734,7 @@ fn probe_serial(port: &str, line: SerialLine) -> RigOpen {
             format!("Could not open serial port {shown}: {e}"),
         ),
     };
-    (rig, None, ok, detail)
+    (rig, None, CatProbe::status(ok, detail))
 }
 
 /// Re-probe the *current* rig (the Test-CAT button) without rebuilding it, so it
@@ -4708,7 +4773,8 @@ fn reprobe(rig: &mut Rig, t: &Transport) -> (Option<bool>, String) {
 /// and explain the real cause instead.
 fn probe_cat_or_explain(rig: &mut Rig, port: u16) -> (Option<bool>, String) {
     if rig.has_control() {
-        probe_cat(rig, port)
+        let p = probe_cat(rig, port);
+        (p.ok, p.detail)
     } else {
         (
             Some(false),
@@ -5096,7 +5162,9 @@ mod tests {
         |_t: &Transport| Ok(MockBackend::new())
     }
     fn mock_reopen_rig() -> impl FnMut(&Transport, u64, &str, bool) -> RigOpen {
-        |_t: &Transport, _d: u64, _m: &str, _coexist: bool| (Rig::vox(), None, None, String::new())
+        |_t: &Transport, _d: u64, _m: &str, _coexist: bool| {
+            (Rig::vox(), None, CatProbe::status(None, ""))
+        }
     }
 
     /// A rigctld that REJECTS every DATA-mode set (`M PKT*` → `RPRT -1`) but accepts
@@ -5362,7 +5430,7 @@ mod tests {
         let mut rr = |t: &Transport, _d: u64, _m: &str, _c: bool| {
             calls.set(calls.get() + 1);
             captured_port.set(t.rigctld_port);
-            (Rig::vox(), None, None, String::new())
+            (Rig::vox(), None, CatProbe::status(None, ""))
         };
 
         // Act A: the switch lands while the monitor thread holds the pool → deferred.
@@ -6443,10 +6511,14 @@ mod tests {
         // CAT broker and the launched rigctld both on the same port → no self-connect,
         // no doomed spawn; a clear message instead. Pure (no I/O before the guard).
         let t = cat_transport(4532, Some(4532));
-        let (_rig, proc, ok, detail) = open_rig(&t, 14_074_000, "USB", true);
+        let (_rig, proc, probe) = open_rig(&t, 14_074_000, "USB", true);
         assert!(proc.is_none());
-        assert_eq!(ok, Some(false));
-        assert!(detail.contains("different ports"), "got: {detail}");
+        assert_eq!(probe.ok, Some(false));
+        assert!(
+            probe.detail.contains("different ports"),
+            "got: {}",
+            probe.detail
+        );
     }
 
     #[test]
@@ -6484,7 +6556,8 @@ mod tests {
 
         // open_rig must SHARE it (no spawn), not fight for the serial port.
         let t = cat_transport(port, None);
-        let (_rig, proc, ok, detail) = open_rig(&t, 14_074_000, "USB", true);
+        let (_rig, proc, probe) = open_rig(&t, 14_074_000, "USB", true);
+        let (ok, detail) = (probe.ok, probe.detail);
         assert!(
             proc.is_none(),
             "shared the existing rigctld — did not spawn one"
@@ -6509,7 +6582,7 @@ mod tests {
         let mut ra = mock_reopen_audio();
         let mut rr = |_t: &Transport, _d: u64, _m: &str, _c: bool| {
             reopened.set(true);
-            (Rig::vox(), None, None, "test".to_string())
+            (Rig::vox(), None, CatProbe::status(None, "test"))
         };
 
         state

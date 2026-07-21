@@ -224,6 +224,7 @@ impl AppState {
             slot: 0,
             active_peer: None,
             radio: RadioStatus {
+                rig_confirmed: false,
                 dial_mhz: 14.074, // FT8 20m (default mode)
                 band: "20m".to_string(),
                 sideband: "USB".to_string(),

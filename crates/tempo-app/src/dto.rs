@@ -482,6 +482,11 @@ pub struct RadioStatus {
     /// TX audio drive level (0.0–1.0) — the "Pwr" slider; trim until ALC is ~zero.
     #[serde(default = "default_txlevel")]
     pub tx_level: f32,
+    /// A CAT read from the rig succeeded this session — the dial/mode shown are the
+    /// rig's own values, not the persisted seed (read-only launch provenance). False
+    /// for VOX/serial-PTT rigs with no control channel, and after a CAT breaker trip.
+    #[serde(default)]
+    pub rig_confirmed: bool,
 }
 
 /// serde default helper: TX drive defaults to 0.9.

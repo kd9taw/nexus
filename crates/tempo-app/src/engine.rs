@@ -436,6 +436,9 @@ pub struct Engine {
     /// Journal path for the store-and-forward outbound queue (pending_msgs.json) —
     /// written on every queue mutation so held Tempo messages survive a restart.
     pending_msgs_path: Option<PathBuf>,
+    /// A rig read (freq) actually succeeded this session — the cockpit dial/mode are
+    /// rig-confirmed rather than the persisted seed (read-only launch provenance).
+    rig_confirmed: bool,
     /// Callsign → DXCC entity resolver, injected by the command layer (which owns
     /// the cty.dat table) so tempo-app stays DXCC-free. `None` in headless tests
     /// (new-DXCC highlighting simply stays off). See [`Engine::set_dxcc_resolver`].
@@ -1066,6 +1069,7 @@ impl Engine {
             fd_log_path: None,
             pending_qso_path: None,
             pending_msgs_path: None,
+            rig_confirmed: false,
             dxcc_resolve: None,
             grid_rarity_resolve: None,
             lotw_resolve: None,
@@ -1648,6 +1652,37 @@ impl Engine {
             &self.settings.sideband,
         );
         self.sync_fd_band();
+    }
+
+    /// Seed the dial from the rig's OWN frequency at CAT open (read-only launch): update
+    /// the app's belief — dial, derived band, snapshot radio state — and nothing else.
+    ///
+    /// Deliberately NOT `observe_rig_freq`: that models an operator knob-QSY and, on a
+    /// band delta, clears the decode context/roster, resets the a7 table, halts TX and
+    /// drops the sideband override. All no-ops on a fresh engine *today* — but a boot
+    /// seed that depends on that coincidence breaks the day launch order changes. A seed
+    /// must be provably side-effect-free.
+    pub fn seed_rig_dial(&mut self, hz: u64) {
+        let mhz = hz as f64 / 1_000_000.0;
+        self.settings.dial_mhz = mhz;
+        if let Some(band) = crate::bandplan::band_for_dial(mhz) {
+            self.settings.band = band.to_string();
+        }
+        self.app.set_radio(
+            self.settings.dial_mhz,
+            &self.settings.band,
+            &self.settings.sideband,
+        );
+        self.sync_fd_band();
+    }
+
+    /// A CAT read from the rig actually succeeded — the displayed dial/mode are the
+    /// RIG's values, not the persisted seed. Set only from `has_control() && read Ok`
+    /// (NEVER from `cat_ok`: a serial-PTT rig sharing the CAT port reports
+    /// `cat_ok == true` while being structurally unreadable). Cleared with the other
+    /// rig state when the CAT breaker trips.
+    pub fn set_rig_confirmed(&mut self, confirmed: bool) {
+        self.rig_confirmed = confirmed;
     }
 
     // --- Dual-radio: per-radio live read-back from the monitor thread (NON-active radios only) ---
@@ -6089,6 +6124,7 @@ impl Engine {
         s.radio.tx_allowed = self.tx_allowed();
         s.radio.tuning = self.tuning;
         s.radio.tx_watchdog = self.tx_watchdog;
+        s.radio.rig_confirmed = self.rig_confirmed;
         s.radio.time_sync_ok = self.time_sync_ok();
         s.radio.cat_ok = self.cat_status.0;
         s.radio.cat_detail = self.cat_status.1.clone();

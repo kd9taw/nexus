@@ -649,6 +649,8 @@ export interface RadioStatus {
   /** The rig's actual mode read back over CAT (e.g. "USB"/"LSB"/"FM"); display-only,
    * used to flag when the rig's mode knob disagrees with the commanded mode. */
   rigMode?: string | null
+  /** A CAT read succeeded — dial/mode are the rig's own values, not the persisted seed. */
+  rigConfirmed?: boolean
   /** Transient Phone mode override ("USB"/"LSB"/"FM"), or null/absent = AUTO (band-derived). */
   sidebandOverride?: string | null
   /** The operator's phone (SSB) sub-band on the current band as [lo, hi) MHz, per license class
