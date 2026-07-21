@@ -9150,6 +9150,28 @@ fn open_download_page(app: tauri::AppHandle) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// Stamp POTA/SOTA park refs from a pota.app hunter/activator ADIF export onto
+/// matching existing QSOs. Stamp-only by design (operator anti-abuse rule): no
+/// records are ever created and no existing ref is overwritten.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PotaStampResult {
+    stamped: usize,
+    already: usize,
+    unmatched: usize,
+}
+
+#[tauri::command]
+fn import_pota_log(state: State<'_, SharedEngine>, text: String) -> Result<PotaStampResult, String> {
+    let mut eng = state.lock().map_err(|e| e.to_string())?;
+    let (stamped, already, unmatched) = eng.import_pota_log(&text);
+    Ok(PotaStampResult {
+        stamped,
+        already,
+        unmatched,
+    })
+}
+
 /// Open a station's QRZ.com profile in the operator's default browser (the roster /
 /// logbook "who is this?" affordance). The call is sanitized to callsign characters
 /// so a crafted string can never smuggle a different URL through; a portable suffix
@@ -9664,6 +9686,7 @@ pub fn run() {
             all_txt_location,
             reveal_all_txt,
             open_qrz_page,
+            import_pota_log,
             set_skip_tx1,
             civ_diagnostic_status,
             broadcast,

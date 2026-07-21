@@ -25,7 +25,7 @@ import {
   uploadLotwReport,
 } from '../api'
 import { pushToast, withErrorToast } from '../toast'
-import { qrzPushQso, clublogPushQso, hrdlogPushQso, openQrzPage, syncQrz, downloadLotwReport } from '../api'
+import { qrzPushQso, clublogPushQso, hrdlogPushQso, openQrzPage, syncQrz, downloadLotwReport, importPotaLog } from '../api'
 
 interface Props {
   /** Default band / freq / mode for new manual entries (from the radio). */
@@ -159,6 +159,7 @@ export function Logbook({
   const [sortAsc, setSortAsc] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
   const syncRef = useRef<HTMLInputElement>(null)
+  const potaRef = useRef<HTMLInputElement>(null)
 
   // QRZ lookup for the QSO being logged: fills grid (subscriber-only) + shows the
   // operator name. On-demand (QRZ free tier is ~100/day), one lookup per click.
@@ -217,6 +218,23 @@ export function Logbook({
         `Synced: ${r.newlyConfirmed} newly confirmed, ${r.newlyCredited} credited${orphans}`,
         r.orphans.length ? 'info' : 'success',
       )
+      load()
+    }
+  }
+
+  // pota.app hunter/activator export → stamp park refs onto MATCHING logged QSOs.
+  // Stamp-only by design (the operator's anti-abuse rule): never creates records,
+  // never overwrites a ref. The reviewed-adds flow is a separate roadmap feature.
+  const onPotaFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0]
+    e.target.value = ''
+    if (!f) return
+    const text = await f.text()
+    const r = await withErrorToast(() => importPotaLog(text), 'POTA import failed')
+    if (r) {
+      const skipped = r.unmatched ? ` · ${r.unmatched} had no matching QSO (not added)` : ''
+      const had = r.already ? ` · ${r.already} already stamped` : ''
+      pushToast(`POTA: ${r.stamped} QSO${r.stamped === 1 ? '' : 's'} stamped with park refs${had}${skipped}`, 'success')
       load()
     }
   }
@@ -555,6 +573,21 @@ export function Logbook({
             title="Reconcile a LoTW ADIF export into the log — upgrades confirmations + credit on existing QSOs"
           >
             Sync confirmations
+          </button>
+          <input
+            ref={potaRef}
+            type="file"
+            accept=".adi,.adif,.txt"
+            style={{ display: 'none' }}
+            onChange={onPotaFile}
+          />
+          <button
+            type="button"
+            className="export-btn"
+            onClick={() => potaRef.current?.click()}
+            title="Import a pota.app hunter/activator ADIF export — stamps park references onto your matching logged QSOs. Never creates or overwrites records."
+          >
+            Import POTA
           </button>
           <button
             type="button"

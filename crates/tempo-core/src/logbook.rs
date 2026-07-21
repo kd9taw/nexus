@@ -385,6 +385,65 @@ impl Logbook {
         (added, skipped)
     }
 
+    /// Stamp park/summit references from an external OTA log (pota.app hunter or
+    /// activator ADIF) onto MATCHING existing QSOs — the safe half of OTA pull-back.
+    /// Never creates records (reviewed adds are a separate feature, per the
+    /// anti-abuse rule) and never overwrites a ref already present. A row matches a
+    /// local QSO on callsign + band + same UTC time within ±30 min (or the same UTC
+    /// day when either side lacks a real time — some exports carry date only).
+    /// Returns `(stamped, already_had, unmatched)`.
+    pub fn stamp_ota_refs(&mut self, text: &str) -> (usize, usize, usize) {
+        const WINDOW_SECS: u64 = 30 * 60;
+        let mut stamped = 0usize;
+        let mut already = 0usize;
+        let mut unmatched = 0usize;
+        for row in parse_adif(text) {
+            let has_refs = row.ota.their_ref.is_some() || row.ota.my_ref.is_some();
+            if !has_refs {
+                continue; // nothing to stamp from this row
+            }
+            let row_day = row.when_unix / 86_400;
+            let hit = self.records.iter_mut().find(|q| {
+                if !q.call.eq_ignore_ascii_case(&row.call) {
+                    return false;
+                }
+                if !q.band.eq_ignore_ascii_case(&row.band) {
+                    return false;
+                }
+                // Midnight-looking stamps (00:00:00) read as date-only exports.
+                let row_timed = row.when_unix % 86_400 != 0;
+                let q_timed = q.when_unix % 86_400 != 0;
+                if row_timed && q_timed {
+                    q.when_unix.abs_diff(row.when_unix) <= WINDOW_SECS
+                } else {
+                    q.when_unix / 86_400 == row_day
+                }
+            });
+            match hit {
+                Some(q) => {
+                    let mut did = false;
+                    if q.ota.their_ref.is_none() && row.ota.their_ref.is_some() {
+                        q.ota.their_program = row.ota.their_program.clone();
+                        q.ota.their_ref = row.ota.their_ref.clone();
+                        did = true;
+                    }
+                    if q.ota.my_ref.is_none() && row.ota.my_ref.is_some() {
+                        q.ota.my_program = row.ota.my_program.clone();
+                        q.ota.my_ref = row.ota.my_ref.clone();
+                        did = true;
+                    }
+                    if did {
+                        stamped += 1;
+                    } else {
+                        already += 1;
+                    }
+                }
+                None => unmatched += 1,
+            }
+        }
+        (stamped, already, unmatched)
+    }
+
     /// True if `call` appears anywhere in the log (worked on any band).
     /// The set of every worked callsign (uppercased), built in one O(n) pass. For a caller
     /// that tests MANY stations against the log at once — the roster snapshot — this turns an
@@ -962,17 +1021,22 @@ fn record_from(f: &std::collections::HashMap<String, String>) -> Option<QsoRecor
     };
     // Parks/Summits On The Air: a SOTA ref (dedicated field) takes precedence; else a
     // SIG=POTA/WWFF pair. `parse_ota` reads one side (my_* or their_*).
-    let parse_ota = |sig: &str, sig_info: &str, sota: &str| -> (Option<String>, Option<String>) {
-        if let Some(r) = f.get(sota).filter(|s| !s.is_empty()) {
-            (Some("SOTA".to_string()), Some(r.to_ascii_uppercase()))
-        } else if let (Some(p), Some(r)) = (f.get(sig), f.get(sig_info)) {
-            (Some(p.to_ascii_uppercase()), Some(r.to_ascii_uppercase()))
-        } else {
-            (None, None)
-        }
-    };
-    let (my_program, my_ref) = parse_ota("MY_SIG", "MY_SIG_INFO", "MY_SOTA_REF");
-    let (their_program, their_ref) = parse_ota("SIG", "SIG_INFO", "SOTA_REF");
+    let parse_ota =
+        |sig: &str, sig_info: &str, sota: &str, pota: &str| -> (Option<String>, Option<String>) {
+            if let Some(r) = f.get(sota).filter(|s| !s.is_empty()) {
+                (Some("SOTA".to_string()), Some(r.to_ascii_uppercase()))
+            } else if let (Some(p), Some(r)) = (f.get(sig), f.get(sig_info)) {
+                (Some(p.to_ascii_uppercase()), Some(r.to_ascii_uppercase()))
+            } else if let Some(r) = f.get(pota).filter(|s| !s.is_empty()) {
+                // ADIF 3.1.4 dedicated POTA_REF/MY_POTA_REF — what pota.app's hunter/
+                // activator exports carry (may hold a comma list; keep it verbatim).
+                (Some("POTA".to_string()), Some(r.to_ascii_uppercase()))
+            } else {
+                (None, None)
+            }
+        };
+    let (my_program, my_ref) = parse_ota("MY_SIG", "MY_SIG_INFO", "MY_SOTA_REF", "MY_POTA_REF");
+    let (their_program, their_ref) = parse_ota("SIG", "SIG_INFO", "SOTA_REF", "POTA_REF");
     let ota = Ota {
         my_program,
         my_ref,
@@ -1384,6 +1448,99 @@ mod tests {
     }
 
     #[test]
+    #[test]
+    fn stamp_ota_refs_stamps_matches_and_never_creates_or_overwrites() {
+        let mut lb = Logbook::new();
+        // Local log: a QSO with no park ref (14:03Z), one with a ref already, and a
+        // different band that must NOT match.
+        let day = 1_752_000_000u64 - (1_752_000_000 % 86_400); // some UTC midnight
+        lb.add(rec("K2DEF", "20m", day + 14 * 3600 + 3 * 60));
+        let mut has = rec("W9XYZ", "40m", day + 9 * 3600);
+        has.ota.their_program = Some("POTA".into());
+        has.ota.their_ref = Some("US-0001".into());
+        lb.add(has);
+        lb.add(rec("K2DEF", "40m", day + 14 * 3600 + 3 * 60));
+        let n_before = lb.len();
+
+        // pota.app hunter export: K2DEF at 14:10Z (within the ±30 min window) on 20m
+        // with a POTA_REF; W9XYZ row matches but the local already has the ref; a
+        // third row matches nothing local.
+        let d = {
+            let dt = day + 14 * 3600 + 10 * 60;
+            let days = dt / 86_400;
+            // civil date for the ADIF stamp
+            let (y, m, dd) = {
+                // 1970-01-01 + days — reuse a simple civil conversion for the test
+                let mut y = 1970i64;
+                let mut rem = days as i64;
+                loop {
+                    let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+                    let len = if leap { 366 } else { 365 };
+                    if rem < len {
+                        break;
+                    }
+                    rem -= len;
+                    y += 1;
+                }
+                let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+                let ml = [
+                    31,
+                    if leap { 29 } else { 28 },
+                    31,
+                    30,
+                    31,
+                    30,
+                    31,
+                    31,
+                    30,
+                    31,
+                    30,
+                    31,
+                ];
+                let mut m = 0usize;
+                while rem >= ml[m] {
+                    rem -= ml[m];
+                    m += 1;
+                }
+                (y, m + 1, rem + 1)
+            };
+            format!("{y:04}{m:02}{dd:02}")
+        };
+        let adif = format!(
+            "<CALL:5>K2DEF<QSO_DATE:8>{d}<TIME_ON:6>141000<BAND:3>20m<MODE:3>SSB<POTA_REF:7>US-4566<EOR>\n\
+             <CALL:5>W9XYZ<QSO_DATE:8>{d}<TIME_ON:6>090500<BAND:3>40m<MODE:3>SSB<POTA_REF:7>US-9999<EOR>\n\
+             <CALL:5>N0CAL<QSO_DATE:8>{d}<TIME_ON:6>120000<BAND:3>20m<MODE:3>SSB<POTA_REF:7>US-1111<EOR>\n"
+        );
+        let (stamped, already, unmatched) = lb.stamp_ota_refs(&adif);
+        assert_eq!(stamped, 1, "K2DEF 20m got the park stamped");
+        assert_eq!(
+            already, 1,
+            "W9XYZ kept its existing ref (never overwritten)"
+        );
+        assert_eq!(unmatched, 1, "N0CAL matched nothing");
+        assert_eq!(lb.len(), n_before, "stamp-only: no records created");
+        let k = lb
+            .records()
+            .iter()
+            .find(|q| q.call == "K2DEF" && q.band == "20m")
+            .unwrap();
+        assert_eq!(k.ota.their_ref.as_deref(), Some("US-4566"));
+        assert_eq!(k.ota.their_program.as_deref(), Some("POTA"));
+        let w = lb.records().iter().find(|q| q.call == "W9XYZ").unwrap();
+        assert_eq!(
+            w.ota.their_ref.as_deref(),
+            Some("US-0001"),
+            "existing ref untouched"
+        );
+        // And the 40 m K2DEF (same call, wrong band) stayed unstamped.
+        let k40 = lb
+            .records()
+            .iter()
+            .find(|q| q.call == "K2DEF" && q.band == "40m")
+            .unwrap();
+        assert!(k40.ota.their_ref.is_none(), "band mismatch never stamps");
+    }
+
     fn clear_purges_all_and_reports_count() {
         let mut lb = Logbook::new();
         lb.add(rec("A", "20m", 1));

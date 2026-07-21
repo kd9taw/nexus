@@ -660,6 +660,16 @@ export async function allTxtLocation(): Promise<string> {
 }
 
 /** Reveal ALL.TXT (or its folder) in the OS file manager. */
+/** Stamp POTA/SOTA park refs from a pota.app export onto matching logged QSOs. */
+export interface PotaStampResult {
+  stamped: number
+  already: number
+  unmatched: number
+}
+export async function importPotaLog(text: string): Promise<PotaStampResult> {
+  return invoke<PotaStampResult>('import_pota_log', { text })
+}
+
 /** Open a station's QRZ.com profile in the system browser (roster/logbook affordance). */
 export async function openQrzPage(call: string): Promise<void> {
   await invoke('open_qrz_page', { call })

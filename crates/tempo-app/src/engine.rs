@@ -3488,6 +3488,22 @@ impl Engine {
         summary
     }
 
+    /// Stamp POTA/SOTA park refs from a pota.app hunter/activator export onto matching
+    /// existing QSOs (stamp-only: never creates records, never overwrites a ref — the
+    /// reviewed-adds half is a separate feature). Returns (stamped, already, unmatched).
+    pub fn import_pota_log(&mut self, text: &str) -> (usize, usize, usize) {
+        self.recover_external_appends();
+        let out = self.logbook.stamp_ota_refs(text);
+        if out.0 > 0 {
+            if let Some(path) = &self.log_path {
+                if let Err(e) = self.logbook.save(path) {
+                    eprintln!("tempo: import_pota_log save failed: {e}");
+                }
+            }
+        }
+        out
+    }
+
     /// Merge a LoTW own-QSO report (`qso_qsl=no`) INTO the log: promote in-flight
     /// uploads (Pending / never-marked) to `Accepted` where LoTW confirms it holds
     /// your record — the step that turns a just-uploaded QSO into "waiting on the
