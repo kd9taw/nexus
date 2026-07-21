@@ -39,39 +39,117 @@ struct Chain {
     stalls: u32,
 }
 
+/// Build throwaway profiles straight from device indices, so the probe answers the
+/// hardware question WITHOUT the operator first having to configure a second radio in
+/// Settings. Format: `--devices IN:OUT,IN:OUT` using the indices this tool prints.
+fn profiles_from_indices(
+    spec: &str,
+    ins: &[String],
+    outs: &[String],
+) -> Result<Vec<tempo_app::settings::RadioProfile>, String> {
+    let mut out = Vec::new();
+    for (n, pair) in spec.split(',').enumerate() {
+        let (i, o) = pair
+            .split_once(':')
+            .ok_or_else(|| format!("bad pair {pair:?} — expected IN:OUT, e.g. 0:1"))?;
+        let i: usize = i
+            .trim()
+            .parse()
+            .map_err(|_| format!("bad input index {i:?}"))?;
+        let o: usize = o
+            .trim()
+            .parse()
+            .map_err(|_| format!("bad output index {o:?}"))?;
+        let ind = ins.get(i).ok_or_else(|| format!("no input device [{i}]"))?;
+        let outd = outs
+            .get(o)
+            .ok_or_else(|| format!("no output device [{o}]"))?;
+        out.push(tempo_app::settings::RadioProfile {
+            id: n as u32 + 1,
+            name: format!("probe{}", n + 1),
+            enabled: true,
+            audio_in: ind.clone(),
+            audio_out: outd.clone(),
+            ..Default::default()
+        });
+    }
+    Ok(out)
+}
+
 fn main() {
-    let path = std::env::args()
-        .nth(1)
+    let argv: Vec<String> = std::env::args().skip(1).collect();
+    let devices_spec = argv
+        .iter()
+        .position(|a| a == "--devices")
+        .and_then(|i| argv.get(i + 1))
+        .cloned();
+    let path = argv
+        .iter()
+        .find(|a| !a.starts_with("--"))
         .map(PathBuf::from)
         .unwrap_or_else(settings_path);
     println!("Nexus audio probe — multi-radio Phase 0");
     // Nexus (or WSJT-X) already holding a codec turns a working card into a failed open —
     // a false NEGATIVE on the one question this probe exists to answer.
     println!("CLOSE Nexus and any other radio software first, or the result is meaningless.");
-    println!("settings: {}", path.display());
-    if !path.exists() {
-        eprintln!("no settings file there — pass the path as the first argument");
-        std::process::exit(2);
+    if devices_spec.is_none() {
+        println!("settings: {}", path.display());
+        if !path.exists() {
+            eprintln!(
+                "no settings file there.\n\
+                 Either pass a settings.json path, or skip settings entirely with:\n\
+                 \n    audio_probe --devices IN:OUT,IN:OUT\n\n\
+                 (run with --devices 0:0 once to print the device list with indices)"
+            );
+            std::process::exit(2);
+        }
     }
     // Parse READ-ONLY. Settings::load() renames an unparseable file to .json.corrupt and
     // returns defaults (settings.rs:1648) — after which Nexus would save those defaults back
     // over the path, resetting license_class to Open and silently re-opening TX privileges.
     // A diagnostic must never be able to do that to a live station config.
-    let settings: Settings = match std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|t| serde_json::from_str(&t).ok())
-    {
-        Some(s) => s,
-        None => {
-            eprintln!(
-                "could not parse {} — leaving it untouched, nothing written",
-                path.display()
-            );
-            std::process::exit(2);
+    let mut settings: Settings = if devices_spec.is_some() {
+        Settings::default() // --devices mode never reads the operator's config at all
+    } else {
+        match std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|t| serde_json::from_str(&t).ok())
+        {
+            Some(s) => s,
+            None => {
+                eprintln!(
+                    "could not parse {} — leaving it untouched, nothing written",
+                    path.display()
+                );
+                std::process::exit(2);
+            }
         }
     };
-    let mut settings = settings;
-    settings.ensure_radio_profiles(); // the one normalization step load() would have done
+    if devices_spec.is_none() {
+        settings.ensure_radio_profiles(); // the one normalization step load() would have done
+    }
+    // The picker's view of the machine. `available_devices` disambiguates identical names —
+    // two rigs that both enumerate as "USB Audio CODEC" appear as that and "USB Audio CODEC #2",
+    // which is exactly the operator's hardware and exactly what must end up in settings.json.
+    let (ins, outs) = available_devices();
+    if let Some(spec) = &devices_spec {
+        match profiles_from_indices(spec, &ins, &outs) {
+            Ok(ps) => settings.radios = ps,
+            Err(e) => {
+                // Print the lists first so the operator can read off the right indices.
+                println!("\ninput devices:");
+                for (i, d) in ins.iter().enumerate() {
+                    println!("  [{i}] {d}");
+                }
+                println!("output devices:");
+                for (i, d) in outs.iter().enumerate() {
+                    println!("  [{i}] {d}");
+                }
+                eprintln!("\n--devices: {e}");
+                std::process::exit(2);
+            }
+        }
+    }
     let radios: Vec<_> = settings.radios.iter().filter(|p| p.enabled).collect();
     println!(
         "enabled radio profiles: {}",
@@ -83,17 +161,15 @@ fn main() {
     );
     if radios.len() < 2 {
         eprintln!(
-            "\nNOT A TEST: {} enabled radio profile(s). Configure and enable two radios \
-             (each with its OWN audio in/out device) in Settings first.",
+            "\nNOT A TEST: {} enabled radio profile(s). Either enable two radios (each with \
+             its OWN audio device) in Settings, or bypass Settings entirely with\n\
+             \n    audio_probe --devices IN:OUT,IN:OUT\n\n\
+             using the indices printed above.",
             radios.len()
         );
         std::process::exit(2);
     }
 
-    // The picker's view of the machine. `available_devices` disambiguates identical names —
-    // two rigs that both enumerate as "USB Audio CODEC" appear as that and "USB Audio CODEC #2",
-    // which is exactly the operator's hardware and exactly what must end up in settings.json.
-    let (ins, outs) = available_devices();
     println!("\ninput devices:");
     for (i, d) in ins.iter().enumerate() {
         println!("  [{i}] {d}");
