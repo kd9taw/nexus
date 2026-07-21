@@ -2,7 +2,7 @@
 // (no JSX) so it mirrors features/state.ts and can be unit-tested without React. The
 // id vocabulary + DEFAULT_SLOTS live here; components/connect/* build on top.
 import { useCallback, useState } from 'react'
-import { assignIn, coercePlacement, type PaneLayoutSpec } from './paneLayout'
+import { assignIn, coercePlacement, type PaneVocabulary } from './paneLayout'
 
 export type ConnectMode = 'basic' | 'expert'
 
@@ -62,13 +62,13 @@ function migrateLegacyMode(): ConnectMode {
 
 /** This view's pane-grid vocabulary. The placement RULES (defaults fill, unknown-id
  *  drop, permutation repair, swap-on-assign) live in features/paneLayout so Operate and
- *  later views share them; `storageKey` is unused here because Connect persists the
- *  placement inside its own config blob alongside mode/overlays. */
-const CONNECT_PANES: PaneLayoutSpec<SlotId, PaneId> = {
+ *  later views share them. Deliberately a PaneVocabulary and not a PaneLayoutSpec:
+ *  Connect stores its placement inside its own config blob alongside mode/overlays, so it
+ *  must not be able to reach load/savePlacement, which would overwrite that blob. */
+const CONNECT_PANES: PaneVocabulary<SlotId, PaneId> = {
   slotIds: SLOT_IDS,
   paneIds: PANE_IDS,
   defaults: DEFAULT_SLOTS,
-  storageKey: STORAGE_KEY,
 }
 
 function coerceSlots(raw: unknown): Record<SlotId, PaneId> {

@@ -46,8 +46,12 @@ function spotKey(s: OtaSpot): string {
  * (sortable-everywhere, 2026-07-21); this list is cards, not a grid, so the control is a
  * picker rather than clickable headers. */
 export type OtaSort = 'value' | 'activator' | 'reference' | 'band' | 'mode'
+const OTA_SORTS: readonly OtaSort[] = ['value', 'activator', 'reference', 'band', 'mode']
+function isOtaSort(v: unknown): v is OtaSort {
+  return typeof v === 'string' && (OTA_SORTS as readonly string[]).includes(v)
+}
 
-function sortSpots(spots: OtaSpot[], key: OtaSort, asc: boolean): OtaSpot[] {
+export function sortSpots(spots: OtaSpot[], key: OtaSort, asc: boolean): OtaSpot[] {
   const val = (s: OtaSpot): string | number => {
     switch (key) {
       case 'activator':
@@ -69,10 +73,10 @@ function sortSpots(spots: OtaSpot[], key: OtaSort, asc: boolean): OtaSpot[] {
       typeof va === 'number' && typeof vb === 'number'
         ? va - vb
         : String(va).localeCompare(String(vb))
-    // 'value' is inherently descending (best first); tiebreak always falls back to it so
-    // an equal column keeps the workable-now stations on top.
-    const dir = key === 'value' ? !asc : asc
-    const primary = dir ? c : -c
+    // Direction is uniform across keys so the arrow glyph never lies: asc -> ▲ (A→Z,
+    // low→high, worst-first), desc -> ▼. 'value' reads best-first at the shipped default
+    // because that default is DESCENDING (sortAsc=false), not because this key inverts.
+    const primary = asc ? c : -c
     if (primary !== 0) return primary
     const av = a.bandOpen ? 2 : a.newPark ? 1 : 0
     const bv = b.bandOpen ? 2 : b.newPark ? 1 : 0
@@ -122,8 +126,20 @@ export function PotaSotaView({ snap, onHunt, onSnap }: Props) {
   // hunters (the POTA majority) see every spot out of the box, and REMEMBERS the
   // operator's last choice across reloads — so a CW hunter sets 'CW' once and it
   // sticks, without hiding SSB activity from everyone else on first run.
-  const [sortKey, setSortKey] = useState<OtaSort>('value')
-  const [sortAsc, setSortAsc] = useState(false)
+  // Sort choice survives leaving the view — same remount-state-loss class the operator
+  // filed against the Spots panel. Stored raw like modeFilter below (no JSON) so a
+  // hand-edited or stale value simply falls back to the default.
+  const [sortKey, setSortKey] = useState<OtaSort>(() => {
+    const raw = localStorage.getItem('nexus.ota.sortKey')
+    return isOtaSort(raw) ? raw : 'value'
+  })
+  const [sortAsc, setSortAsc] = useState(() => localStorage.getItem('nexus.ota.sortAsc') === '1')
+  useEffect(() => {
+    localStorage.setItem('nexus.ota.sortKey', sortKey)
+  }, [sortKey])
+  useEffect(() => {
+    localStorage.setItem('nexus.ota.sortAsc', sortAsc ? '1' : '0')
+  }, [sortAsc])
   const [modeFilter, setModeFilter] = useState<string>(
     () => localStorage.getItem('nexus.ota.modeFilter') ?? 'All',
   )

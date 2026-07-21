@@ -2,8 +2,8 @@
 // so any view (Operate first) can have add/remove/reposition panes without copying the
 // placement rules. Pure (no JSX), mirrors features/state.ts so it unit-tests without React.
 //
-// A view supplies a PaneLayoutSpec (its own slot + pane vocabulary, defaults, storage
-// key); this module owns the RULES that must be identical everywhere:
+// A view supplies its own slot + pane vocabulary and defaults; this module owns the
+// RULES that must be identical everywhere:
 //   - the grid is a PERMUTATION — assigning a placed pane swaps, so nothing vanishes
 //   - a corrupted / hand-edited store is coerced back to a valid permutation
 //   - a slot or pane added in a later release auto-fills from defaults
@@ -11,15 +11,25 @@
 // one-time migrations stay view-local because no other view has them.
 import { useCallback, useState } from 'react'
 
-/** What a view must declare to get a pane grid. `S`/`P` are its own string unions. */
-export interface PaneLayoutSpec<S extends string, P extends string> {
+/**
+ * A view's pane VOCABULARY — everything the pure placement helpers need, and nothing
+ * about storage. Split from PaneLayoutSpec deliberately: Connect persists its placement
+ * inside a larger config blob of its own, so it must NOT be able to reach
+ * load/savePlacement — handing those a blob key would overwrite mode+overlays with bare
+ * slots. Omitting storageKey makes that a compile error rather than a latent landmine.
+ */
+export interface PaneVocabulary<S extends string, P extends string> {
   /** Slot ids in grid order. A SlotId === its CSS grid-area name. */
   readonly slotIds: readonly S[]
   /** Every assignable pane — the picker's vocabulary and the coercion whitelist. */
   readonly paneIds: readonly P[]
   /** Recommended first-run placement. Must be a complete record. */
   readonly defaults: Readonly<Record<S, P>>
-  /** localStorage key holding this view's placement. */
+}
+
+/** Vocabulary PLUS a dedicated key — for views whose placement is the whole stored value. */
+export interface PaneLayoutSpec<S extends string, P extends string> extends PaneVocabulary<S, P> {
+  /** localStorage key holding this view's placement, and nothing else. */
   readonly storageKey: string
 }
 
@@ -40,7 +50,7 @@ export function isPaneOf<P extends string>(spec: { paneIds: readonly P[] }, v: u
  * external corruption.
  */
 export function coercePlacement<S extends string, P extends string>(
-  spec: PaneLayoutSpec<S, P>,
+  spec: PaneVocabulary<S, P>,
   raw: unknown,
 ): Placement<S, P> {
   const out: Placement<S, P> = { ...spec.defaults }
@@ -67,7 +77,7 @@ export function coercePlacement<S extends string, P extends string>(
  * record, never mutates.
  */
 export function assignIn<S extends string, P extends string>(
-  spec: PaneLayoutSpec<S, P>,
+  spec: PaneVocabulary<S, P>,
   slots: Placement<S, P>,
   slotId: S,
   paneId: P,
