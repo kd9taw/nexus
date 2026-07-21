@@ -115,6 +115,13 @@ export function savePlacement<S extends string, P extends string>(
 export interface PaneLayoutApi<S extends string, P extends string> {
   slots: Placement<S, P>
   assignPane: (slotId: S, paneId: P) => void
+  /**
+   * Replace the whole board at once — for presets and "reset to defaults", which cannot
+   * be expressed as a sequence of assignPane calls (each swap would drag the previous
+   * occupant along). Takes `unknown` and coerces, so a preset constant, a restored
+   * backup, or junk all land on a valid permutation.
+   */
+  setPlacement: (next: unknown) => void
 }
 
 /**
@@ -135,5 +142,14 @@ export function usePaneLayout<S extends string, P extends string>(
       }),
     [spec],
   )
-  return { slots, assignPane }
+  const setPlacement = useCallback(
+    (next: unknown) =>
+      setSlots(() => {
+        const coerced = coercePlacement(spec, next)
+        savePlacement(spec, coerced)
+        return coerced
+      }),
+    [spec],
+  )
+  return { slots, assignPane, setPlacement }
 }

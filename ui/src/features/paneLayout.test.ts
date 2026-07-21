@@ -77,6 +77,33 @@ describe('assignIn', () => {
   })
 })
 
+// The regime Connect never exercises: MORE panes than slots, so one pane is always
+// off-screen. That is how a view gets add/remove without an "empty slot" that could
+// strand the operator on a blank board.
+describe('assignIn — more panes than slots (Operate\'s regime)', () => {
+  it('brings an unplaced pane in, pushing the previous occupant off-screen', () => {
+    // 'four' is off-screen in defaults; place it in slot a.
+    const out = assignIn(SPEC, SPEC.defaults, 'a', 'four')
+    expect(out.a).toBe('four')
+    expect(Object.values(out)).not.toContain('one') // displaced, now off-screen
+    expect(new Set(Object.values(out)).size).toBe(3)
+  })
+
+  it('is an involution when the picked pane was already placed — every pick is its own undo', () => {
+    const once = assignIn(SPEC, SPEC.defaults, 'a', 'three')
+    const back = assignIn(SPEC, once, 'a', 'one')
+    expect(back).toEqual(SPEC.defaults)
+  })
+
+  it('is an involution when the picked pane was OFF-SCREEN — the harder case', () => {
+    // Pick the hidden pane, then pick back what was there. No `prev` is found in either
+    // direction, so this only round-trips if the displaced pane is recoverable by name.
+    const once = assignIn(SPEC, SPEC.defaults, 'a', 'four')
+    const back = assignIn(SPEC, once, 'a', 'one')
+    expect(back).toEqual(SPEC.defaults)
+  })
+})
+
 describe('persistence', () => {
   beforeEach(() => localStorage.clear())
 
