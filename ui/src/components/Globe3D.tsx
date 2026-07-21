@@ -18,6 +18,7 @@ import { getAurora, getPca, getSatellites, getLog } from '../api'
 import cqzonesUrl from '../data/cqzones.geojson?url'
 import { spotTooltip } from '../propViz'
 import { MapInsightRail } from './prop/MapInsightRail'
+import { MapLegend, MufLegend } from './MapLegend'
 import type {
   PropagationSnapshot,
   PathPrediction,
@@ -67,6 +68,7 @@ function syncCloud(
   samples: CloudSample[],
   size: number,
   visible: boolean,
+  sprite?: THREE.Texture,
 ) {
   let pts = store[key]
   if (!visible || samples.length === 0) {
@@ -88,6 +90,7 @@ function syncCloud(
   if (!pts) {
     const mat = new THREE.PointsMaterial({
       size,
+      map: sprite ?? null,
       vertexColors: true,
       transparent: true,
       opacity: 0.9,
@@ -187,6 +190,51 @@ interface Props {
 
 const GETTING_OUT = '#3ddc6a' // a station that heard ME (matches the 2-D map)
 
+let glowTex: THREE.CanvasTexture | null = null
+/** Soft radial sprite for the heat layer — one blob per spot, additive, so overlapping
+ * spots build the same kernel-density aura the 2-D map paints (its radial-gradient
+ * splats). Built once. */
+function glowSprite(): THREE.CanvasTexture {
+  if (glowTex) return glowTex
+  const c = document.createElement('canvas')
+  c.width = 64
+  c.height = 64
+  const ctx = c.getContext('2d')
+  if (ctx) {
+    const g = ctx.createRadialGradient(32, 32, 0, 32, 32, 32)
+    g.addColorStop(0, 'rgba(255,255,255,0.9)')
+    g.addColorStop(0.35, 'rgba(255,255,255,0.4)')
+    g.addColorStop(1, 'rgba(255,255,255,0)')
+    ctx.fillStyle = g
+    ctx.fillRect(0, 0, 64, 64)
+  }
+  glowTex = new THREE.CanvasTexture(c)
+  return glowTex
+}
+
+/** Canvas-text sprite for the opening-sector labels ("6m Sporadic-E") — the 2-D map
+ * labels its sectors; the globe must too (2D↔3D parity). */
+function textSprite(text: string, color: string): THREE.Sprite {
+  const c = document.createElement('canvas')
+  c.width = 256
+  c.height = 48
+  const ctx = c.getContext('2d')
+  if (ctx) {
+    ctx.font = 'bold 26px system-ui'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.shadowColor = 'rgba(0,0,0,0.8)'
+    ctx.shadowBlur = 6
+    ctx.fillStyle = color
+    ctx.fillText(text, 128, 24)
+  }
+  const tex = new THREE.CanvasTexture(c)
+  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false })
+  const sp = new THREE.Sprite(mat)
+  sp.scale.set(22, 4.1, 1)
+  return sp
+}
+
 /** Is a WebGL context creatable? Guards against a low-end GPU that flipped the toggle. */
 function webglOk(): boolean {
   try {
@@ -216,6 +264,8 @@ export default function Globe3D({
   const globeRef = useRef<GlobeMethods | undefined>(undefined)
   const cloudsRef = useRef<Record<string, THREE.Points>>({})
   const linesRef = useRef<Record<string, THREE.Group>>({})
+  // Opening-sector label sprites, rebuilt with the openings (disposed each pass).
+  const openingLabelsRef = useRef<THREE.Sprite[]>([])
   const satGroupRef = useRef<THREE.Group | null>(null)
   const satMarkersRef = useRef<Record<string, THREE.Object3D>>({})
   const bloomRef = useRef<UnrealBloomPass | null>(null)
@@ -269,6 +319,29 @@ export default function Globe3D({
   }, [])
 
   const qth = useMemo(() => gridToLatLon(myGrid), [myGrid])
+
+  // Opening-sector FILLS (2D↔3D parity): the 2-D map fills each wedge at ~16% alpha;
+  // the globe's outline-only sectors read as stray arcs (operator report). Same wedge
+  // geometry as the syncLines outlines, rendered via globe.gl's native polygons layer.
+  const sectorPolys = useMemo(() => {
+    if (!qth) return [] as { geometry: { type: 'Polygon'; coordinates: number[][][] }; fill: string }[]
+    const polys: { geometry: { type: 'Polygon'; coordinates: number[][][] }; fill: string }[] = []
+    for (const o of prop?.openings ?? []) {
+      if (!(o.maxKm > 0)) continue
+      const ring: number[][] = [[qth.lon, qth.lat]]
+      for (let i = 0; i <= 16; i++) {
+        const d = destinationPoint(qth, o.bearingDeg - 22.5 + (45 * i) / 16, o.maxKm)
+        ring.push([d.lon, d.lat])
+      }
+      ring.push([qth.lon, qth.lat])
+      const c = new THREE.Color(openingModeColor(o.mode))
+      polys.push({
+        geometry: { type: 'Polygon', coordinates: [ring] },
+        fill: `rgba(${Math.round(c.r * 255)}, ${Math.round(c.g * 255)}, ${Math.round(c.b * 255)}, 0.16)`,
+      })
+    }
+    return polys
+  }, [qth, prop])
 
   // Spots → globe points (band-colored; green = heard me). `label` carries the SAME
   // hover-tooltip line the 2-D map shows (shared builder), so the two read identically.
@@ -531,19 +604,35 @@ export default function Globe3D({
       show.pca,
     )
     // Band-heat openings (live spots as an additive glow).
-    syncCloud(
-      g,
-      store,
-      'heat',
-      spots.map((s) => ({
-        lat: s.lat,
-        lng: s.lon,
-        rgb: hexRgb(s.heardMe ? GETTING_OUT : bandColor(s.band)),
-        alt: 0.003,
-      })),
-      7,
-      show.heat,
-    )
+    // Heat = the 2-D map's kernel-density aura, rebuilt for the GPU: one soft radial
+    // blob per spot, additive so overlaps sum into the glow; brightness carries the
+    // 2-D layer's age fade × open-band pulse (flat 7 px dots read as nothing — the
+    // operator's "heat missing on 3D" report).
+    {
+      const openBands = new Set((prop?.openings ?? []).map((o) => o.band))
+      const pulse = 0.7 + 0.3 * Math.sin(nowMs / 450)
+      syncCloud(
+        g,
+        store,
+        'heat',
+        spots.map((s) => {
+          const ageMin = s.ageSecs / 60
+          const fade = ageMin < 10 ? 1 : ageMin < 30 ? 0.55 : 0.25
+          const boost = openBands.has(s.band) ? pulse : 0.55
+          const k = 0.45 * fade * boost
+          const rgb = hexRgb(s.heardMe ? GETTING_OUT : bandColor(s.band))
+          return {
+            lat: s.lat,
+            lng: s.lon,
+            rgb: [rgb[0] * k, rgb[1] * k, rgb[2] * k] as RGB,
+            alt: 0.0025,
+          }
+        }),
+        30,
+        show.heat,
+        glowSprite(),
+      )
+    }
   }, [ready, nowMs, xrayLong, show.flare, show.aurora, show.muf, show.pca, show.heat, auroraPts, muf, pca, spots])
 
   // Self-fetch satellites while the layer is on (~30 s, like the 2-D map).
@@ -762,6 +851,29 @@ export default function Globe3D({
         0.006,
       )
     }
+    // Sector LABELS — the 2-D map tags each wedge "6m Sporadic-E"; without them the
+    // globe's outlines were unreadable (operator report). One text sprite at each
+    // sector's far edge; rebuilt (and disposed) with the openings.
+    {
+      const scene = g.scene()
+      for (const sp of openingLabelsRef.current) {
+        scene.remove(sp)
+        sp.material.map?.dispose()
+        sp.material.dispose()
+      }
+      openingLabelsRef.current = []
+      if (show.openings && qth) {
+        for (const o of prop?.openings ?? []) {
+          if (!(o.maxKm > 0)) continue
+          const tip = destinationPoint(qth, o.bearingDeg, o.maxKm)
+          const pos = g.getCoords(tip.lat, tip.lon, 0.03)
+          const sp = textSprite(`${o.band} ${o.mode}`, openingModeColor(o.mode))
+          sp.position.set(pos.x, pos.y, pos.z)
+          scene.add(sp)
+          openingLabelsRef.current.push(sp)
+        }
+      }
+    }
     syncCloud(
       g,
       cloudsRef.current,
@@ -884,6 +996,10 @@ export default function Globe3D({
           activeBand={activeBand}
         />
       )}
+      {/* The same legends the 2-D map shows (shared component) — the globe was
+          rendering the data with no key to read it by (2D↔3D parity). */}
+      <MapLegend />
+      {show.muf && <MufLegend />}
       {size.w > 0 && size.h > 0 && (
         <Globe
           ref={globeRef}
@@ -924,6 +1040,17 @@ export default function Globe3D({
           arcDashGap={0.25}
           arcDashAnimateTime={2200}
           arcAltitudeAutoScale={0.4}
+          polygonsData={show.openings ? sectorPolys : []}
+          polygonGeoJsonGeometry={(d: object) =>
+            // react-globe.gl declares coordinates as number[] — wrong for polygons
+            // (runtime accepts the standard nested GeoJSON rings) — so cast to its shape.
+            (d as { geometry: unknown }).geometry as { type: string; coordinates: number[] }
+          }
+          polygonCapColor={(d: object) => (d as { fill: string }).fill}
+          polygonSideColor={() => 'rgba(0,0,0,0)'}
+          polygonStrokeColor={() => 'rgba(0,0,0,0)'}
+          polygonAltitude={0.006}
+          polygonsTransitionDuration={0}
           pathsData={show.states ? statePaths : []}
           pathPointLat={(p: unknown) => (p as [number, number])[0]}
           pathPointLng={(p: unknown) => (p as [number, number])[1]}
