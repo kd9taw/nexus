@@ -46,8 +46,8 @@ interface Props {
   onThemeChange: (t: Theme) => void
 }
 
-// The robust tier is DX1 — a non-coherent, fading-resilient 15 s mode that
-// holds up where FT1 (and FT8) collapse under multipath/Doppler. FT8 itself is
+// The robust tier is TempoDeep — a non-coherent, fading-resilient 15 s mode that
+// holds up where TempoFast (and FT8) collapse under multipath/Doppler. FT8 itself is
 // a separate Phase-2 addition (its decode pipeline isn't wired yet).
 
 function dtLabel(dtSec: number): string {
@@ -226,7 +226,7 @@ export function TopBar({
             {radio.clockOffsetMs != null ? (
               <span
                 className={`timesync ${clockClass(radio.clockOffsetMs)}`}
-                title={`PC clock is ${clockLabel(radio.clockOffsetMs)} vs UTC (NTP). FT1/DX1 need it within ~0.5 s — sync via NTP / time.is (off-grid: GPS).`}
+                title={`PC clock is ${clockLabel(radio.clockOffsetMs)} vs UTC (NTP). TempoFast/TempoDeep need it within ~0.5 s — sync via NTP / time.is (off-grid: GPS).`}
               >
                 <span className="dot" />
                 clock {clockLabel(radio.clockOffsetMs)}
@@ -259,21 +259,21 @@ export function TopBar({
       <div className="topbar-group tier-toggle" role="group" aria-label="Link tier">
         <button
           type="button"
-          className={`tier-btn${tier === 'FT1' ? ' active' : ''}`}
-          aria-pressed={tier === 'FT1'}
-          onClick={() => onTierChange('FT1')}
+          className={`tier-btn${tier === 'TempoFast' ? ' active' : ''}`}
+          aria-pressed={tier === 'TempoFast'}
+          onClick={() => onTierChange('TempoFast')}
           title="Fast conversational tier"
         >
-          Fast <small>FT1</small>
+          <small>Tempo</small>Fast
         </button>
         <button
           type="button"
-          className={`tier-btn${tier === 'DX1' ? ' active' : ''}`}
-          aria-pressed={tier === 'DX1'}
-          onClick={() => onTierChange('DX1')}
+          className={`tier-btn${tier === 'TempoDeep' ? ' active' : ''}`}
+          aria-pressed={tier === 'TempoDeep'}
+          onClick={() => onTierChange('TempoDeep')}
           title="Robust non-coherent tier — fading-resilient (15 s)"
         >
-          Robust <small>DX1</small>
+          <small>Tempo</small>Deep
         </button>
         <button
           type="button"

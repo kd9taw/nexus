@@ -3258,7 +3258,7 @@ export function SettingsPanel({
                   </label>
                   <span className="settings-hint">
                     Periodically check your PC clock against an NTP server and show the offset in the
-                    top bar. FT1/DX1 are slot-timed to UTC — keep it within ~0.5 s (NTP / time.is;
+                    top bar. TempoFast/TempoDeep are slot-timed to UTC — keep it within ~0.5 s (NTP / time.is;
                     off-grid: GPS). Turn off for fully-offline operation (no network calls).
                   </span>
                 </div>

@@ -36,10 +36,10 @@ interface Props {
   /** Enabled-set from the feature system — disabled sections are hidden. */
   enabled: Record<FeatureId, boolean>
   onSelect: (view: View) => void
-  /** Live radio tier (FT1/DX1/FT8/FT4) — picks which Digital sub-item is active. */
+  /** Live radio tier (TempoFast/TempoDeep/FT8/FT4) — picks which Digital sub-item is active. */
   tier: Tier
   /** Choose a Digital sub-mode: 'digital' opens the weak-signal cockpit on its
-   * last FT8/FT4 tier; 'tempo' opens the FT1/DX1 free-text calling cockpit;
+   * last FT8/FT4 tier; 'tempo' opens the TempoFast/TempoDeep free-text calling cockpit;
    * 'rtty' / 'sstv' open their sections. */
   onDigitalMode: (m: DigitalMode) => void
 }
@@ -58,7 +58,7 @@ interface DigitalSub {
 
 // One "Digital" button for the weak-signal cockpit (the FT8/FT4 pick lives in
 // the top bar's tier pills — Fast · Robust · FT4 · FT8 — separate FT8/FT4 rail
-// icons were redundant, operator request) and Tempo for the FT1/DX1 free-text
+// icons were redundant, operator request) and Tempo for the TempoFast/TempoDeep free-text
 // cockpit. The active highlight is view-first so a global view (e.g. Map)
 // leaves none of them lit.
 const DIGITAL_SUBS: DigitalSub[] = [
@@ -73,7 +73,7 @@ const DIGITAL_SUBS: DigitalSub[] = [
     mode: 'tempo',
     label: 'Tempo',
     icon: MessageSquare,
-    title: 'Tempo — two-way free-text calling (FT1 / DX1), with Roam (coordinated QSY) inside',
+    title: 'Tempo — two-way free-text calling (TempoFast / TempoDeep), with Roam (coordinated QSY) inside',
     active: (v) => v === 'chat',
   },
   // RTTY + SSTV are opt-in sections (feature-gated like Phone/CW, on by default) —

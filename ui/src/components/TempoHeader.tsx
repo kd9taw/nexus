@@ -7,8 +7,8 @@ import { TuningStrip } from './TuningStrip'
 
 /** Tempo tiers for the header mode indicator (parallels FT8's FT8/FT4 tiles). */
 const TEMPO_TIERS = [
-  { tier: 'FT1' as Tier, label: 'FT1', slot: 'Fast', title: 'FT1 — fast Tempo tier' },
-  { tier: 'DX1' as Tier, label: 'DX1', slot: 'Robust', title: 'DX1 — robust weak-signal tier' },
+  { tier: 'TempoFast' as Tier, label: 'TempoFast', slot: 'Fast', title: 'TempoFast — fast conversational tier' },
+  { tier: 'TempoDeep' as Tier, label: 'TempoDeep', slot: 'Deep', title: 'TempoDeep — robust weak-signal tier (15 s)' },
 ]
 
 interface Props {
@@ -26,7 +26,7 @@ interface Props {
 }
 
 /**
- * Tempo (FT1/DX1 chat) cockpit header — the same shared CockpitHeader the CW /
+ * Tempo (TempoFast/TempoDeep chat) cockpit header — the same shared CockpitHeader the CW /
  * Phone / FT8 cockpits use, giving Tempo the base rig controls (tier · frequency
  * readout + the FT8-style frequency dropdown · drive power · CAT) in the
  * consistent position. Tune / Stop / Enable-Tx stay in the TopBar transmit

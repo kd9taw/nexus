@@ -122,7 +122,7 @@ interface Props {
 }
 
 /** Mode chips, in the order the cockpit presents them (popular modes first). */
-// The DX-area cockpit operates the structured WSJT-X modes only. FT1/DX1 live in
+// The DX-area cockpit operates the structured WSJT-X modes only. TempoFast/TempoDeep live in
 // the MSG (Chat) area — no mixed tier picker.
 const MODES: { tier: Tier; label: string; slot: string; title: string }[] = [
   { tier: 'FT8', label: 'FT8', slot: '15s', title: 'Standard WSJT-X FT8 — 15 s T/R' },
@@ -175,7 +175,7 @@ const SIDE_PANELS: Record<'classic' | 'roster', readonly OperatePanelId[]> = {
 /**
  * The Operate cockpit — the nerve center's primary operating surface. The
  * waterfall is the centerpiece (not a detached rail); a prominent mode selector
- * drives the live native decoder (FT8/FT4/FT1/DX1); the Band Activity table
+ * drives the live native decoder (FT8/FT4/TempoFast/TempoDeep); the Band Activity table
  * accumulates, freezes-on-hover, filters and sorts. Click the waterfall to tune
  * RX (or shift-click for TX); single-click a decode to select it into the Tx
  * panel; double-click to work the station (stock WSJT-X click model).

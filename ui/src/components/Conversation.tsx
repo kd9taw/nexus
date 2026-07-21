@@ -98,8 +98,8 @@ export function Conversation({
 }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null)
 
-  // Winter-Field-Day-only FD chrome. Tempo (FT1 chat) is a first-class Field Day
-  // contact surface for WFD only (operator: FT1 is relevant to Winter FD, not
+  // Winter-Field-Day-only FD chrome. Tempo (TempoFast chat) is a first-class Field Day
+  // contact surface for WFD only (operator: TempoFast is relevant to Winter FD, not
   // Summer). Under SFD (event 'arrlfd') or no active FD this is null, so no FD
   // chrome renders anywhere in the Tempo cockpit. The narrowing (assign the
   // status, not a boolean) keeps `wfdFd` typed non-null where used.
@@ -107,7 +107,7 @@ export function Conversation({
 
   // TODO(FD parity §3.4): full digital-cockpit parity ("call CQ FD" as a
   // structured Msg::FieldDay CQ, and a one-tap "work this peer for FD" that runs
-  // the FieldDayStation exchange over FT1 and logs the QSO) needs a backend seam
+  // the FieldDayStation exchange over TempoFast and logs the QSO) needs a backend seam
   // that does not exist yet — onCallCq sends a generic CQ and there is no command
   // to run/complete an FD exchange with a chat peer. This surface is chrome +
   // exchange-chip only until that command lands; do NOT fabricate the API here.

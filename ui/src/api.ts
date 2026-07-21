@@ -699,7 +699,7 @@ export async function setMode(mode: ModeRequest): Promise<AppSnapshot> {
 }
 
 /**
- * Switch the link tier (FT1 fast / DX1 robust). Returns the fresh snapshot so
+ * Switch the link tier (TempoFast fast / TempoDeep robust). Returns the fresh snapshot so
  * the UI reflects the authoritative `link.tier` rather than local state.
  */
 export async function setTier(tier: Tier): Promise<AppSnapshot> {

@@ -2,7 +2,7 @@
 // composer can show how many T/R frames ("overs") a message will take and stop
 // the operator before the backend silently truncates it.
 //
-// FT1 and DX1 both carry the same 77-bit payload, and longer chat is chunked
+// TempoFast and TempoDeep both carry the same 77-bit payload, and longer chat is chunked
 // into frames `<id><seq><tot><payload>`: 3-char header + up to PAYLOAD chars of
 // text, MAX_FRAMES frames max. Because chunks word-wrap (a word never spans two
 // frames), the real limit is the FRAME count, not a flat character count — so a
@@ -19,7 +19,7 @@ export const MAX_CHARS = PAYLOAD * MAX_FRAMES // 90
 
 const ALLOWED = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ +-./?'
 
-/** Uppercase and restrict to the FT1 free-text charset (unsupported → '?'). */
+/** Uppercase and restrict to the TempoFast free-text charset (unsupported → '?'). */
 export function sanitize(s: string): string {
   return Array.from(s.toUpperCase())
     .map((c) => (ALLOWED.includes(c) ? c : '?'))

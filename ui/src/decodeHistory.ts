@@ -28,8 +28,8 @@ const SLOT_MS = 15_000
 export const TIER_PERIOD_SECS: Record<Tier, number> = {
   FT8: 15,
   FT4: 7.5,
-  FT1: 4,
-  DX1: 15,
+  TempoFast: 4,
+  TempoDeep: 15,
 }
 
 /** UTC epoch-ms of a slot's period start (engine slots count from the Unix epoch). */

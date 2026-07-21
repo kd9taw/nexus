@@ -191,12 +191,12 @@ export const FEATURES: FeatureDef[] = [
     label: 'Chat',
     kind: 'section',
     category: 'Operate',
-    core: true, // the spine of the MSG area — the original Tempo FT1/DX1 chat, always available
+    core: true, // the spine of the MSG area — the original Tempo TempoFast/TempoDeep chat, always available
     dependsOn: [],
     intents: ['casual', 'dx', 'contest', 'pota', 'vhf'],
     view: 'chat',
     workspace: 'msg',
-    oneLine: 'Free-form QSO text (FT1/DX1).',
+    oneLine: 'Free-form QSO text (TempoFast/TempoDeep).',
   },
   {
     // NOTE: Field Day VISIBILITY is not driven by this persisted feature flag — it is

@@ -455,7 +455,7 @@ export default function App() {
   const dxpedWindowsRef = useRef<Map<string, DxpedWindow> | null>(null)
   const qsoPartnerRef = useRef<string | null>(null)
   const workDxpedRef = useRef<((c: WorkableCard) => void) | null>(null)
-  // Latest link tier (FT1/DX1/FT8/FT4) — the rail's Digital button preserves it.
+  // Latest link tier (TempoFast/TempoDeep/FT8/FT4) — the rail's Digital button preserves it.
   const tierRef = useRef<Tier>('FT8')
   useEffect(() => {
     let live = true
@@ -776,7 +776,7 @@ export default function App() {
   }, [])
 
   // Refetch the band plan when the tier changes: FT8/FT4 use the standard WSJT-X
-  // watering holes (14.074 …), FT1/DX1 the native off-cluster plan. So picking a
+  // watering holes (14.074 …), TempoFast/TempoDeep the native off-cluster plan. So picking a
   // band always lands you where that mode actually calls.
   const activeTier = snap?.link.tier
   useEffect(() => {
@@ -885,13 +885,13 @@ export default function App() {
         pushToast(`${call} is your own call`, 'info', 2500)
         return
       }
-      // Route by the CONTACT's protocol, not the current view: a Tempo/FT1 contact stays in
+      // Route by the CONTACT's protocol, not the current view: a Tempo/TempoFast contact stays in
       // Tempo. Working one means OPENING THE CONVERSATION with them (select_peer) in Chat —
       // NOT running the FT8 call sequence (apiCallStation) or bouncing to the Operate cockpit,
-      // which is what wrongly yanked an FT1 contact into FT8. `handleWorkspace('msg')` switches
+      // which is what wrongly yanked an TempoFast contact into FT8. `handleWorkspace('msg')` switches
       // area+view to Tempo the same way the mode picker does. (tier null/undefined = keep the
       // current FT8/digital behaviour below — the "tier: None = keep" convention.)
-      if (tier === 'FT1') {
+      if (tier === 'TempoFast') {
         handleWorkspace('msg')
         void withErrorToast(() => apiSelectPeer(call), `Could not open ${call}`).then((s) => {
           if (s) setSnap(s)
@@ -1519,7 +1519,7 @@ export default function App() {
     })
   }, [])
 
-  // Pick a Digital sub-mode from the rail. Tempo → the FT1/DX1 free-text cockpit
+  // Pick a Digital sub-mode from the rail. Tempo → the TempoFast/TempoDeep free-text cockpit
   // (reuse the workspace bind). Digital → the weak-signal cockpit, PRESERVING the
   // last FT8/FT4 tier (the top bar's pills own that choice now — the rail button
   // must not yank an FT4 operator back to FT8): bind the dx workspace (tier + QSO
@@ -1721,10 +1721,10 @@ export default function App() {
     snap.mycall.trim() === '' // fresh install (the default callsign is empty)
 
   // The Tempo (chat) roster represents who's on the TEMPO protocol — so it shows only
-  // stations last heard on FT1, not the FT8/FT4 stations that share the engine's single
+  // stations last heard on TempoFast, not the FT8/FT4 stations that share the engine's single
   // roster. Every other view (Operate, Field Day) shows the full roster.
   const rosterStations =
-    effectiveView === 'chat' ? snap.stations.filter((s) => s.tier === 'FT1') : snap.stations
+    effectiveView === 'chat' ? snap.stations.filter((s) => s.tier === 'TempoFast') : snap.stations
   const stationsPanel = (
     <StationList
       stations={rosterStations}

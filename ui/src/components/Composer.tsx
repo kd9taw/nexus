@@ -19,7 +19,7 @@ interface Props {
 // first chip is a dynamic exchange built from my class + section. Broadcasting
 // (the band feed) uses the open 'band' macros regardless of operating mode.
 //
-// Field Day chrome in Tempo is WINTER-Field-Day-only (operator: FT1 chat is
+// Field Day chrome in Tempo is WINTER-Field-Day-only (operator: TempoFast chat is
 // relevant to WFD, not Summer FD). Under SFD (event 'arrlfd') or no active FD,
 // the exchange chip is suppressed and we fall back to the plain chat chips.
 function quickRepliesFor(

@@ -55,7 +55,7 @@ const NEED_RANK: Record<NeedTag, number> = {
 // 3 cycles ≈ 45 s on FT8 / 22 s on FT4 — tight enough to read as "live now" while
 // still keeping anyone in an active QSO (a station is decoded every other slot, so
 // its age stays ≤ ~2 as long as it's transmitting).
-// (View-scoped — the backend roster is left intact so the Tempo/FT1 presence
+// (View-scoped — the backend roster is left intact so the Tempo/TempoFast presence
 // and store-and-forward paths keep their longer retention.)
 const ACTIVE_ROSTER_CYCLES = 3
 

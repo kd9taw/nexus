@@ -4,7 +4,7 @@
 
 export type Presence = 'active' | 'idle' | 'stale'
 
-export type Tier = 'FT1' | 'DX1' | 'FT8' | 'FT4'
+export type Tier = 'TempoFast' | 'TempoDeep' | 'FT8' | 'FT4'
 
 // ---- Propagation & opening intelligence (matches the `propagation` crate) ----
 export type ActivityTier = 'Active' | 'Moderate' | 'Quiet' | 'Closed'
@@ -562,8 +562,8 @@ export interface Station {
   worked: boolean
   /** DXCC entity name (country), resolved from the callsign. */
   country?: string | null
-  /** Tier/protocol last heard on — 'FT1' = Tempo, 'FT8'/'FT4' = digital ops. The Tempo
-   * roster shows only Tempo (FT1) stations; Operate shows all. */
+  /** Tier/protocol last heard on — 'TempoFast' = Tempo, 'FT8'/'FT4' = digital ops. The Tempo
+   * roster shows only Tempo (TempoFast) stations; Operate shows all. */
   tier?: Tier | null
   /** Geography-based rarity of the station's grid. */
   gridRarity?: GridRarity | null
@@ -707,7 +707,7 @@ export interface RadioStatus {
   /** Smart auto-cycle on: answering a heard station auto-picks the opposite cycle
    * (FT8-style). False = the operator fixed the cycle manually. */
   txCycleAuto?: boolean
-  /** Active T/R period (s) — FT1 4s, FT8 15s, FT4 7.5s — so the UI labels the cycle
+  /** Active T/R period (s) — TempoFast 4s, FT8 15s, FT4 7.5s — so the UI labels the cycle
    * with the real period. */
   trPeriodSecs?: number
   /** Presence heartbeat on — a periodic beacon so listening stations are deliverable
