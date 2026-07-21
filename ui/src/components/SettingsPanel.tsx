@@ -2558,6 +2558,29 @@ export function SettingsPanel({
                 )
               })()}
             </div>
+            {/* Band-edge tones live with the RIG, not with Digital: useBandEdgeTones is
+                called at App top level off snap.radio.txAllowed (App.tsx:739), so the cue
+                fires on phone and CW exactly as it does on FT8. It was only ever filed
+                under Digital by accident. */}
+            <div className="settings-field">
+              <label className="settings-toggle">
+                <span className="settings-label">Band-edge tones</span>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={form.bandEdgeTones !== false}
+                  className={`toggle${form.bandEdgeTones !== false ? ' on' : ''}`}
+                  onClick={() => updateBool('bandEdgeTones', form.bandEdgeTones === false)}
+                >
+                  <span className="toggle-knob" />
+                </button>
+              </label>
+              <span className="settings-hint">
+                A short audio cue when the dial crosses your license privileges — a rising
+                "ding" back in band, a falling "dong" past an edge. Applies on every mode.
+              </span>
+            </div>
+
             <p className="settings-note">
               Saving applies your rig settings live (no restart). <strong>Test CAT</strong> saves,
               launches the bundled <code>rigctld</code> (Hamlib ships with Nexus on Windows — no
@@ -2827,25 +2850,6 @@ export function SettingsPanel({
                   <span className="settings-hint">
                     After your final 73 goes out, Enable TX drops — working the next station is a
                     deliberate arm (WSJT-X default). A CQ run is unaffected: it returns to CQ.
-                  </span>
-                </div>
-
-                <div className="settings-field">
-                  <label className="settings-toggle">
-                    <span className="settings-label">Band-edge tones</span>
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-checked={form.bandEdgeTones !== false}
-                      className={`toggle${form.bandEdgeTones !== false ? ' on' : ''}`}
-                      onClick={() => updateBool('bandEdgeTones', form.bandEdgeTones === false)}
-                    >
-                      <span className="toggle-knob" />
-                    </button>
-                  </label>
-                  <span className="settings-hint">
-                    A short audio cue when the dial crosses your license privileges — a rising
-                    "ding" back in band, a falling "dong" past an edge.
                   </span>
                 </div>
 
