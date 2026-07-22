@@ -100,7 +100,16 @@ module ft8_cabi
   ! them lowercase: `mcq.34`, `apbits.5`, `hashmy10.13`, ...). No other
   ! compilation unit can name them, so they cannot be swapped without hoisting
   ! them into modules the way ft8/ft4/tempofast_downsample_state already were.
-  ! See the note at the end of this comment.
+  !
+  ! That leaves 43 of the manifest's 68 class-1 rows (26,598 B of 3,530,670)
+  ! OUT of this context, and they are NOT all harmless: ft4_decode.f90's
+  ! apbits/apmy_ru/aphis_fd/mycall0/hiscall0, tempofast_decode.f90's
+  ! apbits/mycall0/hiscall0 and packjt77 unpack77's mycall13_0/dxcall13_0 +
+  ! hashmy*/hashdx* are AP masks and hash memos latched on the live callsign
+  ! pair, so two chains working DIFFERENT stations still share them. Hoisting
+  ! those into modules is the next step, and until it happens two chains are
+  ! safe on the tables that fabricate callsigns from hashes and on the a7
+  ! replay, but not on the AP masks derived from hiscall.
   !
   ! LAYOUT. Bounds and character lengths are taken from the LIVE declarations
   ! (`size(...)` / `len(...)` of the use-associated symbol), never re-typed, so a
@@ -124,12 +133,21 @@ module ft8_cabi
   ! `a7_msg0 = ' '`, and getpfx1 tests `index(addpfx,' ')`), and neither is read
   ! before it is written in a fresh context.
   !
-  ! The type deliberately declares NO default initializers: gfortran materializes
-  ! a large derived type's default initializer as a STACK temporary at
-  ! `allocate`, which overflows a 2 MiB worker-thread stack for a 3.4 MiB
-  ! context (measured: SIGSEGV at any stack below ~4 MiB, fine at 256 KiB once
-  ! the initializers were removed). CTX_INIT does the same job with no stack cost.
+  ! The type deliberately declares NO default initialization, direct or inherited
+  ! from a component's type. gfortran materializes a large derived type's default
+  ! initializer as a STACK temporary at `allocate` - that overflowed a 2 MiB
+  ! worker-thread stack for a 3.4 MiB context (measured: SIGSEGV at any stack
+  ! below ~4 MiB; fine at 256 KiB once the initializers were gone) - and, if any
+  ! byte of the template is non-zero, puts 3.4 MiB in .rodata that every shipped
+  ! binary carries (measured with `size -A`: libtempo.so 6.30 MB -> 2.79 MB).
+  ! CTX_INIT does the same job with neither cost.
   !-------------------------------------------------------------------------
+
+  ! 8-byte words needed to hold ir_harq_combine_mod's whole slot pool, taken
+  ! from the live declaration (element size x count, rounded up).
+  integer, parameter :: CTX_HARQ_WORDS = &
+       (size(cxv_slots) * (storage_size(cxv_slots) / 8) + 7) / 8
+
   type :: tempo_ctx_t
      ! --- FT8 -------------------------------------------------------------
      ! ft8_downsample_state cx/x: this chain's whole 192000-point wideband
@@ -157,7 +175,17 @@ module ft8_cabi
      complex           :: ft1_spec(size(cxv_ft1_spec))
      ! IR-HARQ soft-combining pool - the single largest object here. Shared,
      ! chain A's RV0 frame combines with chain B's RV1.
-     type(harq_slot)   :: harq_slots(size(cxv_slots))
+     !
+     ! Held as OPAQUE 8-byte words rather than `type(harq_slot)` directly, for
+     ! one reason: harq_slot carries component initializers (rv_count = -1,
+     ! snr_est = -99.0, npts = HARQ_NDMAX), a derived-type component propagates
+     ! them into the compiler-generated default-initializer template for the
+     ! WHOLE of tempo_ctx_t, and a template with any non-zero byte lands in
+     ! .rodata - 3.4 MiB of it, in every shipped binary, referenced by nothing at
+     ! run time (measured with `size -A`; all-zero, it lands in .bss and costs
+     ! no file bytes). Sized from the live symbol, and ctx_xfer maps it straight
+     ! back to `type(harq_slot)` so the copy itself is still fully type-checked.
+     integer(c_int64_t) :: harq_pool(CTX_HARQ_WORDS)
      logical           :: harq_init
      ! --- shared 77-bit / callsign machinery -------------------------------
      ! packjt77's hash tables: how a hashed <...> token resolves to a full
@@ -556,7 +584,7 @@ contains
   !   tempo_ctx_restore(p) copy the buffer IN over the live statics.
   !
   ! The buffer is opaque to the caller: sized by tempo_ctx_size(), aligned for
-  ! 8-byte scalars, and only ever handed back to these three routines.
+  ! 8-byte scalars, and only ever handed back to these four routines.
   !
   ! NOT thread-safe, by construction. restore -> decode -> save must happen
   ! under the SAME lock that serializes every other modem FFI call
@@ -570,6 +598,8 @@ contains
   function tempo_ctx_size() result(nbytes) bind(C, name="tempo_ctx_size")
     integer(c_size_t) :: nbytes
     type(tempo_ctx_t), allocatable :: probe
+    ! tempo_ctx_t has no default initialization (deliberately - see the type),
+    ! so this is a plain malloc, not a 3.4 MiB initializer copy.
     allocate(probe)
     nbytes = int(storage_size(probe) / 8, c_size_t)
     deallocate(probe)
@@ -627,12 +657,18 @@ contains
   ! and nutc0_a7 = -1 means "no slot seen yet" (0 is a real slot key).
   !-------------------------------------------------------------------------
   subroutine ctx_xfer(p, mode)
-    type(tempo_ctx_t), intent(inout) :: p
-    integer,           intent(in)    :: mode
+    ! `target` so c_loc can take the address of the opaque harq_pool component.
+    type(tempo_ctx_t), intent(inout), target :: p
+    integer,           intent(in)            :: mode
     ! packjt.f90:753 getpfx1 - re-declared, not use-associated: it is a COMMON
     ! block, and the linker merges this declaration with that one.
     character(len=8) :: addpfx
     common /pfxcom/ addpfx
+    ! The opaque harq_pool, viewed as what it actually holds, so the copy below
+    ! is a type-checked harq_slot-to-harq_slot assignment. See tempo_ctx_t.
+    type(harq_slot), pointer :: ctx_slots(:)
+
+    call c_f_pointer(c_loc(p%harq_pool), ctx_slots, [size(cxv_slots)])
 
     !            context component     live symbol    mode   load-time value
     ! --- FT8 ---
@@ -647,7 +683,7 @@ contains
     call ctx_move(p%ft4_spec,      cxv_ft4_spec,  mode, (0.0, 0.0))
     ! --- FT1 / TempoFast ---
     call ctx_move(p%ft1_spec,      cxv_ft1_spec,  mode, (0.0, 0.0))
-    call ctx_move(p%harq_slots,    cxv_slots,     mode)
+    call ctx_move(ctx_slots,       cxv_slots,     mode)
     call ctx_move(p%harq_init,     cxv_harq_init, mode, .false.)
     ! --- shared 77-bit / callsign machinery ---
     call ctx_move(p%calls10,       cxv_calls10,   mode, ' ')
