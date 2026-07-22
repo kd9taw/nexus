@@ -3,6 +3,7 @@
 // id vocabulary + DEFAULT_SLOTS live here; components/connect/* build on top.
 import { useCallback, useState } from 'react'
 import { assignIn, coercePlacement, type PaneVocabulary } from './paneLayout'
+import { surfaceGet, surfaceSet } from './windowScope'
 
 export type ConnectMode = 'basic' | 'expert'
 
@@ -42,7 +43,10 @@ export interface ConnectConfig {
   overlays: Record<string, boolean> // reserved for B2/B3 map overlays; inert in B1
 }
 
+// PER-SURFACE: which pane sits in which slot is literally this window's board layout.
 const STORAGE_KEY = 'nexus.connect.config'
+// SHARED: read-only seed for the one-time migration below. Scoping it would re-migrate
+// once per window.
 const LEGACY_MODE_KEY = 'nexus.connect.mode' // old 'simple' | 'expert' single-key
 const MODES = ['basic', 'expert'] as const
 
@@ -117,7 +121,7 @@ function migrateChaseDefault(cfg: ConnectConfig): ConnectConfig {
 
 export function loadConnectConfig(): ConnectConfig {
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY)
+    const raw = surfaceGet(STORAGE_KEY)
     if (raw != null) return migrateChaseDefault(normalizeConfig(JSON.parse(raw)))
   } catch {
     /* malformed — fall through (matches useFeatures.readInitial) */
@@ -126,11 +130,7 @@ export function loadConnectConfig(): ConnectConfig {
 }
 
 export function saveConnectConfig(c: ConnectConfig): void {
-  try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(c))
-  } catch {
-    /* full/unavailable — in-memory state still applies this session */
-  }
+  surfaceSet(STORAGE_KEY, JSON.stringify(c))
 }
 
 export interface ConnectConfigApi extends ConnectConfig {

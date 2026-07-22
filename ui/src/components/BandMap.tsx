@@ -2,6 +2,7 @@ import { useCallback, useMemo, useRef, useState } from 'react'
 import type { SpotRow, NeedTag } from '../types'
 import { bandRangeForLabel } from '../band'
 import { NEED_CHIP } from '../features/needVisuals'
+import { surfaceGet, surfaceSet } from '../features/windowScope'
 import { SpotLegend, TYPE_BADGE } from './SpotLegend'
 
 /** Fallback track height (px) before the real one is measured — the track flex-fills its window. */
@@ -73,12 +74,14 @@ export function BandMap({
   workedCalls,
   onDock,
 }: Props) {
+  // PER-SURFACE (matching BandStrip, which writes the same key): a wide second-monitor
+  // board can afford the legend where the docked strip cannot.
   const [showLegend, setShowLegend] = useState(
-    () => (localStorage.getItem('nexus.spotlegend') ?? '1') === '1',
+    () => (surfaceGet('nexus.spotlegend') ?? '1') === '1',
   )
   const toggleLegend = () => {
     setShowLegend((v) => {
-      localStorage.setItem('nexus.spotlegend', v ? '0' : '1')
+      surfaceSet('nexus.spotlegend', v ? '0' : '1')
       return !v
     })
   }

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { surfaceGet, surfaceSet } from './features/windowScope'
 
 /** Global UI scale (percent). Applied as the `--ui-zoom` factor on <html>; CSS
  * `.app { zoom: var(--ui-zoom) }` scales the whole interface crisply. */
@@ -14,7 +15,11 @@ export type ScaleMode = 'auto' | Scale
 // New keys (the old numeric `tempo-ui-scale` was auto-derived on every change, so
 // reading it back would wrongly look like a deliberate pin — start clean so every
 // existing user gets the new auto-fit default).
+// PER-SURFACE: 'auto' vs a pinned step is a statement about THIS window's size — a pin
+// that fits a 4K main window is wrong on a 1080p second monitor.
 const MODE_KEY = 'nexus-ui-scale-mode'
+// SHARED (stays app-global): the cap is an eyesight preference set once in Settings
+// ("never shrink below this"), not a measurement of any one window.
 const CAP_KEY = 'nexus-ui-scale-cap'
 
 /**
@@ -80,14 +85,10 @@ export function pickInitialZoom(
 }
 
 function readMode(): ScaleMode {
-  try {
-    const raw = localStorage.getItem(MODE_KEY)
-    if (raw === 'auto' || raw == null) return 'auto'
-    const n = Number(raw)
-    return (SCALE_STEPS as number[]).includes(n) ? (n as Scale) : 'auto'
-  } catch {
-    return 'auto'
-  }
+  const raw = surfaceGet(MODE_KEY)
+  if (raw === 'auto' || raw == null) return 'auto'
+  const n = Number(raw)
+  return (SCALE_STEPS as number[]).includes(n) ? (n as Scale) : 'auto'
 }
 
 function readCap(): Scale {
@@ -155,11 +156,7 @@ export function useScale(): ScaleControl {
 
   const setMode = useCallback((m: ScaleMode) => {
     setModeState(m)
-    try {
-      localStorage.setItem(MODE_KEY, String(m))
-    } catch {
-      /* storage blocked — applies this session */
-    }
+    surfaceSet(MODE_KEY, String(m))
   }, [])
 
   const setCap = useCallback((c: Scale) => {

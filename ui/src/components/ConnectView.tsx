@@ -32,6 +32,7 @@ import { provLabel } from './connect/paneFormat'
 import { PaneFrame } from './connect/PaneFrame'
 import type { PaneContext } from './connect/paneContext'
 import { useConnectConfig, type SlotId } from '../features/connectConfig'
+import { surfaceGet, surfaceSet } from '../features/windowScope'
 
 /** Intent presets — beginner picks a goal once; map + prop configure themselves. */
 const INTENTS: { id: MapIntent; label: string; title: string }[] = [
@@ -41,13 +42,10 @@ const INTENTS: { id: MapIntent; label: string; title: string }[] = [
   { id: 'vhf', label: '6m/VHF', title: 'Openings front-and-center (Es / F2 / aurora)' },
 ]
 
+/** Read a PER-SURFACE enum preference: a board's own preset/mode, not a station setting. */
 function persisted<T extends string>(key: string, allow: readonly T[], fallback: T): T {
-  try {
-    const v = localStorage.getItem(key)
-    if (v && (allow as readonly string[]).includes(v)) return v as T
-  } catch {
-    /* unreadable */
-  }
+  const v = surfaceGet(key)
+  if (v && (allow as readonly string[]).includes(v)) return v as T
   return fallback
 }
 
@@ -92,34 +90,24 @@ export function ConnectView({
   )
   const pickIntent = (id: MapIntent) => {
     setIntent(id)
-    try {
-      localStorage.setItem('nexus.connect.intent', id)
-    } catch {
-      /* ignore */
-    }
+    surfaceSet('nexus.connect.intent', id)
   }
   // 2-D (universal) vs the 3-D WebGL globe. The operator's explicit choice is persisted and
   // always wins; on FIRST run (no saved choice) we default to 3-D only if this machine's GPU
   // can actually handle it (gpuCapableForGlobe) — capable PCs get the good globe out of the
   // box, low-end/software renderers stay on the everywhere-compatible 2-D map.
+  // PER-SURFACE: 2-D/3-D is per-window rendering AND per-window GPU cost — the good globe
+  // on the showpiece screen, the cheap map on the working board.
   const [map3d, setMap3d] = useState<boolean>(() => {
-    try {
-      const saved = localStorage.getItem('nexus.connect.map3d')
-      if (saved === '1') return true
-      if (saved === '0') return false
-      return gpuCapableForGlobe()
-    } catch {
-      return false
-    }
+    const saved = surfaceGet('nexus.connect.map3d')
+    if (saved === '1') return true
+    if (saved === '0') return false
+    return gpuCapableForGlobe()
   })
   const toggleMap3d = () =>
     setMap3d((v) => {
       const nv = !v
-      try {
-        localStorage.setItem('nexus.connect.map3d', nv ? '1' : '0')
-      } catch {
-        /* ignore */
-      }
+      surfaceSet('nexus.connect.map3d', nv ? '1' : '0')
       return nv
     })
   // Basic/Expert + the per-slot pane assignment (persisted; basic-default, remember-last).

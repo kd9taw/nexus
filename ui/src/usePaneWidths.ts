@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { surfaceGet, surfaceSet } from './features/windowScope'
 
 // Pane width bounds (px). Defaults match the original fixed grid columns.
 export const RIGHT_MIN = 260
@@ -41,8 +42,10 @@ function defaultRight(): number {
   return clampRight(Math.round(effWidth() * 0.22))
 }
 
+// PER-SURFACE: a width in px, clamped against THIS window's innerWidth. A narrow pop-out
+// sharing the key would overwrite the main window's rails with its own ceiling.
 function readNum(key: string, fallback: () => number): number {
-  const v = Number(localStorage.getItem(key))
+  const v = Number(surfaceGet(key))
   return Number.isFinite(v) && v > 0 ? v : fallback()
 }
 
@@ -58,11 +61,11 @@ export function usePaneWidths() {
 
   useEffect(() => {
     document.documentElement.style.setProperty('--right-rail-w', `${rightW}px`)
-    localStorage.setItem(KEY_RIGHT, String(rightW))
+    surfaceSet(KEY_RIGHT, String(rightW))
   }, [rightW])
   useEffect(() => {
     document.documentElement.style.setProperty('--left-rail-w', `${leftW}px`)
-    localStorage.setItem(KEY_LEFT, String(leftW))
+    surfaceSet(KEY_LEFT, String(leftW))
   }, [leftW])
 
   const commitRight = useCallback((px: number) => setRightW(clampRight(px)), [])

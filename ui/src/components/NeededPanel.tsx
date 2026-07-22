@@ -22,6 +22,7 @@ import { pointRotator, readRotator } from '../api'
 import { pushToast } from '../toast'
 import { RarityChip } from './RarityChip'
 import { NEED_CHIP } from '../features/needVisuals'
+import { surfaceGet, surfaceSet } from '../features/windowScope'
 
 /** Defensive chip lookup — an unknown future tag renders visibly, never throws. */
 function chipFor(t: NeedTag): { label: string; cls: string; title: string } {
@@ -96,12 +97,14 @@ function RotatorWidget() {
 
 type SortKey = 'priority' | 'call' | 'band' | 'entity' | 'mode' | 'zone'
 
-// Persisted filter state key.
+// Persisted filter state key. PER-SURFACE: what THIS board shows — an HF-DX board beside
+// a 2 m board wanting different filters is the whole point of a second window. (Note the
+// bare name: any cleanup written as a glob over `nexus.*` would miss it.)
 const FILTER_KEY = 'neededFilters'
 
 function loadFilters(): NeededFilters {
   try {
-    const raw = localStorage.getItem(FILTER_KEY)
+    const raw = surfaceGet(FILTER_KEY)
     if (!raw) return { ...DEFAULT_FILTERS }
     const parsed = JSON.parse(raw) as Partial<NeededFilters>
     // Sanitize against the KNOWN enum values — a stale bucket name from an
@@ -130,11 +133,7 @@ function loadFilters(): NeededFilters {
 }
 
 function saveFilters(f: NeededFilters): void {
-  try {
-    localStorage.setItem(FILTER_KEY, JSON.stringify(f))
-  } catch {
-    /* storage blocked — filters just won't persist */
-  }
+  surfaceSet(FILTER_KEY, JSON.stringify(f))
 }
 
 // Band list shown in the filter bar: common HF + VHF bands (always present).

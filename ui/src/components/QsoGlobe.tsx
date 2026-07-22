@@ -25,12 +25,15 @@ import earthNightUrl from '../assets/earth-night.webp'
 import { gridToLatLon } from '../grid'
 import { BAND_COLOR, bandColor } from '../bandColors'
 import { subsolarPoint } from '../mapGeo'
+import { surfaceGet, surfaceSet } from '../features/windowScope'
 import type { LoggedQso } from '../types'
 
 /** Low→high band order = BAND_COLOR's key order (the app's canonical band list). */
 const BAND_ORDER = Object.keys(BAND_COLOR)
 
-/** Spin preference; '0' = off. Default ON — the slow rotation is the point of the band. */
+/** Spin preference; '0' = off. Default ON — the slow rotation is the point of the band.
+ *  PER-SURFACE: it is per-window animation (and per-window CPU) — stopping it on the board
+ *  you are reading must not stop the showpiece globe on the other screen. */
 const SPIN_KEY = 'nexus.logbook.globespin'
 
 interface GridPoint {
@@ -69,13 +72,7 @@ export default function QsoGlobe({ qsos }: { qsos: LoggedQso[] }) {
   const cloudRef = useRef<THREE.Points | null>(null)
   const [size, setSize] = useState({ w: 0, h: 0 })
   const [ready, setReady] = useState(false)
-  const [spin, setSpin] = useState(() => {
-    try {
-      return localStorage.getItem(SPIN_KEY) !== '0'
-    } catch {
-      return true
-    }
-  })
+  const [spin, setSpin] = useState(() => surfaceGet(SPIN_KEY) !== '0')
   // Band filter — grids are a PER-BAND achievement (VUCC): a 2m square is its own
   // trophy and must never be pooled with the HF squares (operator, 2026-07-21).
   // 'all' = every band together (the overview); a specific band shows only ITS
@@ -251,11 +248,7 @@ export default function QsoGlobe({ qsos }: { qsos: LoggedQso[] }) {
     const controls = g.controls() as { autoRotate: boolean; autoRotateSpeed: number }
     controls.autoRotateSpeed = 0.3
     controls.autoRotate = spin
-    try {
-      localStorage.setItem(SPIN_KEY, spin ? '1' : '0')
-    } catch {
-      /* ignore */
-    }
+    surfaceSet(SPIN_KEY, spin ? '1' : '0')
   }, [ready, spin])
 
   // Scrolled out of view → pause the ENTIRE render loop (not just the spin): globe.gl

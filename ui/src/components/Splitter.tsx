@@ -9,6 +9,7 @@
 //   resizes and is naturally zoom-invariant (pointer position and container rect both
 //   scale with --ui-zoom, so the ratio needs no correction).
 import { useEffect } from 'react'
+import { surfaceGet, surfaceSet } from '../features/windowScope'
 
 interface Props {
   /** 'y' = the handle drags a HEIGHT (row-resize); 'x' drags a width. */
@@ -17,7 +18,9 @@ interface Props {
   varName: string
   /** The container the variable is scoped to and measured against. */
   target: React.RefObject<HTMLElement | null>
-  /** localStorage key (nexus.split.<section>.<id>). */
+  /** localStorage key (nexus.split.<section>.<id>). PER-SURFACE — scoped here rather
+   *  than at the three call sites, so a split fraction can never be shared between a
+   *  window and a pop-out with a different aspect. */
   storageKey: string
   /** Pixel clamps for the panel being sized. */
   minPx: number
@@ -29,13 +32,9 @@ interface Props {
 }
 
 /** Load a persisted split percentage (NaN-safe; null = never customized). */
-function loadPct(key: string): number | null {
-  try {
-    const v = parseFloat(localStorage.getItem(key) ?? '')
-    return Number.isFinite(v) && v > 0 && v < 100 ? v : null
-  } catch {
-    return null
-  }
+function loadPct(storageKey: string): number | null {
+  const v = parseFloat(surfaceGet(storageKey) ?? '')
+  return Number.isFinite(v) && v > 0 && v < 100 ? v : null
 }
 
 export function Splitter({ axis, varName, target, storageKey, minPx, maxPx, defaultPct, label }: Props) {
@@ -68,11 +67,7 @@ export function Splitter({ axis, varName, target, storageKey, minPx, maxPx, defa
     const up = (ev: PointerEvent) => {
       const pct = pctFor(ev)
       el.style.setProperty(varName, `${pct}%`)
-      try {
-        localStorage.setItem(storageKey, String(pct))
-      } catch {
-        /* storage blocked — the size still applies this session */
-      }
+      surfaceSet(storageKey, String(pct))
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', up)
       document.body.classList.remove('resizing')

@@ -10,7 +10,9 @@ import { BandConditionStrip } from './BandConditionStrip'
 import { InsightFeed } from './InsightFeed'
 import { LikelihoodHeatmap } from './LikelihoodHeatmap'
 import { mufCeilingBand, trendArrow, trendVar } from '../../propViz'
+import { surfaceGet, surfaceSet } from '../../features/windowScope'
 
+/** PER-SURFACE: a rail collapsed to reclaim space in THIS window is pure layout. */
 const COLLAPSE_KEY = 'nexus.connect.insights.collapsed'
 
 export function MapInsightRail({
@@ -28,11 +30,11 @@ export function MapInsightRail({
   onBandClick?: (band: string) => void
   activeBand?: string | null
 }) {
-  const [collapsed, setCollapsed] = useState(() => localStorage.getItem(COLLAPSE_KEY) === '1')
+  const [collapsed, setCollapsed] = useState(() => surfaceGet(COLLAPSE_KEY) === '1')
   const toggle = () =>
     setCollapsed((v) => {
       const nv = !v
-      localStorage.setItem(COLLAPSE_KEY, nv ? '1' : '0')
+      surfaceSet(COLLAPSE_KEY, nv ? '1' : '0')
       return nv
     })
 

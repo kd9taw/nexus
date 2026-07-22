@@ -26,6 +26,7 @@ import { getAurora, getDeclination, getPca, getSatellites, getLog, getLogStats }
 // as a raw asset and fetched lazily so the 2.7 MB never loads until toggled on.
 import cqzonesUrl from '../data/cqzones.geojson?url'
 import { satChasingSet, toggleSatChasing } from '../features/satChase'
+import { surfaceGet, surfaceSet } from '../features/windowScope'
 import { gridToLatLon, haversineKm, bearingDeg, magneticDeg, type LatLon } from '../grid'
 import { openingModeColor } from '../bandColors'
 import {
@@ -155,14 +156,13 @@ const INTENT_PRESETS: Record<
  * of snapping back to the intent preset. Without this the globe never carries over to a
  * detached window (the mount-time intent effect resets it, and pota's preset is the flat
  * world map). */
+// PER-SURFACE: the projection suits the WINDOW's aspect (a tall pop-out and a wide main
+// map want different ones). A brand-new surface still inherits the main window's pick —
+// that carry-over is the reason this key exists, and `surfaceGet` preserves it.
 const PROJECTION_KEY = 'nexus.connect.projection'
 function loadProjection(): Projection | null {
-  try {
-    const v = localStorage.getItem(PROJECTION_KEY)
-    return v === 'globe' || v === 'aeqd' || v === 'world' ? v : null
-  } catch {
-    return null
-  }
+  const v = surfaceGet(PROJECTION_KEY)
+  return v === 'globe' || v === 'aeqd' || v === 'world' ? v : null
 }
 
 /** Grid-rarity → the dashed halo color (matches the .rarity-gem palette), or
@@ -527,11 +527,7 @@ export function MapView({
   // detail globe is exempt — it force-locks 'globe' and must never clobber that pick.
   useEffect(() => {
     if (embedded) return
-    try {
-      localStorage.setItem(PROJECTION_KEY, kind)
-    } catch {
-      /* storage blocked — projection still applies this session */
-    }
+    surfaceSet(PROJECTION_KEY, kind)
   }, [kind, embedded])
 
   const me = useMemo(() => gridToLatLon(myGrid), [myGrid])

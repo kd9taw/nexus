@@ -10,6 +10,7 @@
 // Connect (features/connectConfig.ts) is the first consumer; its mode/overlays and
 // one-time migrations stay view-local because no other view has them.
 import { useCallback, useState } from 'react'
+import { surfaceGet, surfaceSet } from './windowScope'
 
 /**
  * A view's pane VOCABULARY — everything the pure placement helpers need, and nothing
@@ -89,11 +90,22 @@ export function assignIn<S extends string, P extends string>(
   return next
 }
 
+/**
+ * Pane placement is PER-SURFACE: which pane sits in which slot is a description of one
+ * window's board, exactly like `nexus.connect.config` (the one spec that exists today —
+ * Connect composes these helpers but persists through its own scoped key, so nothing
+ * currently reaches this function).
+ *
+ * Scoped anyway, precisely BECAUSE it is unreached. The module docs reserve it for future
+ * views, and the next view to adopt `usePaneLayout` would otherwise land an unscoped layout
+ * key that two windows fight over — with no test firing, since its key literal would not be
+ * in the classification either. Cheap now; a silent cross-talk bug later.
+ */
 export function loadPlacement<S extends string, P extends string>(
   spec: PaneLayoutSpec<S, P>,
 ): Placement<S, P> {
+  const raw = surfaceGet(spec.storageKey)
   try {
-    const raw = window.localStorage.getItem(spec.storageKey)
     if (raw != null) return coercePlacement(spec, JSON.parse(raw))
   } catch {
     /* malformed — fall through (matches useFeatures.readInitial) */
@@ -105,11 +117,7 @@ export function savePlacement<S extends string, P extends string>(
   spec: PaneLayoutSpec<S, P>,
   slots: Placement<S, P>,
 ): void {
-  try {
-    window.localStorage.setItem(spec.storageKey, JSON.stringify(slots))
-  } catch {
-    /* full/unavailable — in-memory state still applies this session */
-  }
+  surfaceSet(spec.storageKey, JSON.stringify(slots))
 }
 
 export interface PaneLayoutApi<S extends string, P extends string> {

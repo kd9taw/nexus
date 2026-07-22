@@ -13,12 +13,20 @@ import {
   MIN_SPAN,
 } from '../waterfall'
 import { useWaterfallPalette } from '../waterfallPalette'
+import { surfaceGet, surfaceSet } from '../features/windowScope'
 import { PalettePicker } from './PalettePicker'
 
 /** Persist the operator's manual waterfall contrast (gain/zero) in localStorage; 0 = auto.
- * The palette lives in the shared master store (see `waterfallPalette.ts`). */
+ * The palette lives in the shared master store (see `waterfallPalette.ts`).
+ *
+ * gain/zero stay SHARED (app-wide): they are a contrast calibration against the station's
+ * own noise floor, and re-calibrating per window is the surprise. Their true scope is the
+ * RADIO — when `r<id>` surfaces exist they should move to `scopedKey(_, 'radio')`, which
+ * leaves the key bare until then, NOT to per-surface. */
 const GAIN_KEY = 'nexus.waterfall.gain'
 const ZERO_KEY = 'nexus.waterfall.zero'
+/** PER-SURFACE: a wide overview docked plus a zoomed-in torn-off waterfall is the reason
+ *  to pop the waterfall out at all. */
 const ZOOM_KEY = 'nexus.waterfall.zoom'
 /** Load a persisted [-1,1] slider value (gain/zero); missing/blocked → 0 (= auto). */
 function loadKnob(key: string): number {
@@ -31,12 +39,8 @@ function loadKnob(key: string): number {
 }
 /** Load the persisted zoom span (Hz); missing/blocked → 0 (full band). */
 function loadZoom(): number {
-  try {
-    const v = parseFloat(localStorage.getItem(ZOOM_KEY) ?? '')
-    return Number.isFinite(v) && v > 0 ? v : 0
-  } catch {
-    return 0
-  }
+  const v = parseFloat(surfaceGet(ZOOM_KEY) ?? '')
+  return Number.isFinite(v) && v > 0 ? v : 0
 }
 
 interface Props {
@@ -549,11 +553,7 @@ export function Waterfall({
             const span = Number(e.target.value)
             setZoomSpan(span)
             setView(zoomRange(rxOffsetHz, span))
-            try {
-              localStorage.setItem(ZOOM_KEY, String(span))
-            } catch {
-              /* storage blocked — still applies this session */
-            }
+            surfaceSet(ZOOM_KEY, String(span))
           }}
         >
           {WATERFALL_ZOOMS.map((z) => (

@@ -21,6 +21,7 @@ import {
 } from '../api'
 import { pushToast, withErrorToast } from '../toast'
 import { bandFromKhz, spotModeClass } from '../otaHunt'
+import { surfaceGet, surfaceSet } from '../features/windowScope'
 
 type Program = 'POTA' | 'SOTA' | 'Both'
 
@@ -119,8 +120,10 @@ export function PotaSotaView({ snap, onHunt, onSnap }: Props) {
   // Program + band filter persist for the same reason the sort and mode do: the operator
   // filed "leaving and returning resets all filters" as a bug. A stale/hand-edited value
   // falls back to the default rather than throwing.
+  // PER-SURFACE, all of them: program, filters and sort describe what THIS board is
+  // showing. A POTA board beside a SOTA board is the multi-window payoff.
   const [program, setProgram] = useState<Program>(() => {
-    const raw = localStorage.getItem('nexus.ota.program')
+    const raw = surfaceGet('nexus.ota.program')
     return raw === 'POTA' || raw === 'SOTA' || raw === 'Both' ? raw : 'POTA'
   })
   const [spots, setSpots] = useState<OtaSpot[]>([])
@@ -129,7 +132,7 @@ export function PotaSotaView({ snap, onHunt, onSnap }: Props) {
   // Band filter — set of band strings; empty = All.
   const [bandFilter, setBandFilter] = useState<string[]>(() => {
     try {
-      const raw = localStorage.getItem('nexus.ota.bandFilter')
+      const raw = surfaceGet('nexus.ota.bandFilter')
       const v: unknown = raw == null ? null : JSON.parse(raw)
       return Array.isArray(v) && v.every((x) => typeof x === 'string') ? v : []
     } catch {
@@ -144,27 +147,27 @@ export function PotaSotaView({ snap, onHunt, onSnap }: Props) {
   // filed against the Spots panel. Stored raw like modeFilter below (no JSON) so a
   // hand-edited or stale value simply falls back to the default.
   const [sortKey, setSortKey] = useState<OtaSort>(() => {
-    const raw = localStorage.getItem('nexus.ota.sortKey')
+    const raw = surfaceGet('nexus.ota.sortKey')
     return isOtaSort(raw) ? raw : 'value'
   })
-  const [sortAsc, setSortAsc] = useState(() => localStorage.getItem('nexus.ota.sortAsc') === '1')
+  const [sortAsc, setSortAsc] = useState(() => surfaceGet('nexus.ota.sortAsc') === '1')
   useEffect(() => {
-    localStorage.setItem('nexus.ota.sortKey', sortKey)
+    surfaceSet('nexus.ota.sortKey', sortKey)
   }, [sortKey])
   useEffect(() => {
-    localStorage.setItem('nexus.ota.sortAsc', sortAsc ? '1' : '0')
+    surfaceSet('nexus.ota.sortAsc', sortAsc ? '1' : '0')
   }, [sortAsc])
   useEffect(() => {
-    localStorage.setItem('nexus.ota.program', program)
+    surfaceSet('nexus.ota.program', program)
   }, [program])
   useEffect(() => {
-    localStorage.setItem('nexus.ota.bandFilter', JSON.stringify(bandFilter))
+    surfaceSet('nexus.ota.bandFilter', JSON.stringify(bandFilter))
   }, [bandFilter])
   const [modeFilter, setModeFilter] = useState<string>(
-    () => localStorage.getItem('nexus.ota.modeFilter') ?? 'All',
+    () => surfaceGet('nexus.ota.modeFilter') ?? 'All',
   )
   useEffect(() => {
-    localStorage.setItem('nexus.ota.modeFilter', modeFilter)
+    surfaceSet('nexus.ota.modeFilter', modeFilter)
   }, [modeFilter])
 
   const loadSpots = useCallback(async (p: Program) => {

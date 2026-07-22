@@ -1,7 +1,9 @@
 import { useState } from 'react'
 import { AwardsView } from './AwardsView'
 import { JourneyView } from './JourneyView'
+import { surfaceGet, surfaceSet } from '../features/windowScope'
 
+/** PER-SURFACE: which tab this window is parked on is "where I am", not "what I like". */
 const TAB_KEY = 'nexus.awardsTab'
 type Tab = 'journey' | 'official'
 
@@ -14,20 +16,10 @@ type Tab = 'journey' | 'official'
  * Journey layer disappears entirely and this is just the plain official tracker.
  */
 export function AwardsJourney({ showGamification }: { showGamification: boolean }) {
-  const [tab, setTab] = useState<Tab>(() => {
-    try {
-      return (localStorage.getItem(TAB_KEY) as Tab) || 'journey'
-    } catch {
-      return 'journey'
-    }
-  })
+  const [tab, setTab] = useState<Tab>(() => (surfaceGet(TAB_KEY) as Tab) || 'journey')
   const choose = (t: Tab) => {
     setTab(t)
-    try {
-      localStorage.setItem(TAB_KEY, t)
-    } catch {
-      /* storage blocked — selection still holds for the session */
-    }
+    surfaceSet(TAB_KEY, t)
   }
 
   // Achievements off → no Journey, just the official tracker (no tab bar).

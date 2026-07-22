@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { SpotRow, NeedTag } from '../types'
 import { bandRangeForLabel, cwRangeForLabel } from '../band'
 import { NEED_CHIP } from '../features/needVisuals'
+import { surfaceGet, surfaceSet } from '../features/windowScope'
 import { SpotLegend, TYPE_BADGE } from './SpotLegend'
 
 interface Props {
@@ -60,11 +61,11 @@ export function BandStrip({
   // Legend is opt-in but remembered — it answers "what do the colours mean?" once, then
   // stays out of the way. Default ON the first time so the key is discoverable.
   const [showLegend, setShowLegend] = useState(
-    () => (localStorage.getItem('nexus.spotlegend') ?? '1') === '1',
+    () => (surfaceGet('nexus.spotlegend') ?? '1') === '1',
   )
   const toggleLegend = () => {
     setShowLegend((v) => {
-      localStorage.setItem('nexus.spotlegend', v ? '0' : '1')
+      surfaceSet('nexus.spotlegend', v ? '0' : '1')
       return !v
     })
   }

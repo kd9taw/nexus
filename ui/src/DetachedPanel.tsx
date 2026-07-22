@@ -65,6 +65,7 @@ import { Waterfall } from './components/Waterfall'
 import { StationList } from './components/StationList'
 import { visibleNeeds, modeClassOf, workTarget } from './features/needs'
 import { OPERATE_PANELS, usePanelLayout } from './features/panelState'
+import { surfaceGet, surfaceSet } from './features/windowScope'
 import { readEnabledModes } from './useFeatures'
 import { useTheme } from './useTheme'
 import { useScale } from './useScale'
@@ -75,13 +76,12 @@ import { useMotion } from './useMotion'
 type SpotTarget = { call: string; band: string; mode: string | null; freqMhz: number | null }
 type OperateLayout = 'classic' | 'roster'
 
+// PER-SURFACE, like App's 'nexus.operateLayout'. NB these are two differently-spelled keys
+// for one concept and already disagreed before this change — deliberately left as-is here,
+// because merging them would alter what the main window reads off disk.
 function loadOperateLayout(): OperateLayout {
-  try {
-    // Roster is the default; only an explicit 'classic' choice keeps Classic.
-    return localStorage.getItem('nexus.operate.layout') === 'classic' ? 'classic' : 'roster'
-  } catch {
-    return 'roster'
-  }
+  // Roster is the default; only an explicit 'classic' choice keeps Classic.
+  return surfaceGet('nexus.operate.layout') === 'classic' ? 'classic' : 'roster'
 }
 
 export function DetachedPanel({ panel }: { panel: string }) {
@@ -227,11 +227,7 @@ export function DetachedPanel({ panel }: { panel: string }) {
   }
   const changeLayout = (m: OperateLayout) => {
     setOperateLayout(m)
-    try {
-      localStorage.setItem('nexus.operate.layout', m)
-    } catch {
-      /* storage blocked */
-    }
+    surfaceSet('nexus.operate.layout', m)
   }
 
   // Connect's map colours stations by need the SAME way the docked map does — gated by the

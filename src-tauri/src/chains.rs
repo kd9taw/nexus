@@ -32,7 +32,7 @@
 //! (`crates/tempo-app/src/settings.rs` — *"Stable id, never reused"*), so [`Chains`] is keyed by
 //! the same ids. A migrated single-radio station is profile **0**, so chain ids start at 0 and
 //! there is no synthetic "chain 1" constant anywhere.
-
+//!
 //! ## Why this module denies warnings on its own
 //!
 //! `src-tauri` is its own workspace root, so it was never linted by CI and carries a
@@ -230,9 +230,13 @@ pub(crate) fn chain_of_label(label: &str) -> ChainRef {
 /// * `r<id>` — `subscribeSnapshot` returns one station-wide `AppSnapshot` with one `radio`
 ///   block, and no command takes a radio id. So the window would render the ACTIVE radio and
 ///   its Stop TX would halt the ACTIVE radio. That is a wrong-rig abort.
-/// * `w<n>` — browser storage is not surface-scoped: `ui/src/main.tsx` reads only `panel`, so a
-///   second surface shares every `nexus.panels.*` layout key, the `useScale` MODE_KEY/CAP_KEY
-///   and every pane width with the first, and the two overwrite each other.
+/// * `w<n>` — storage cross-talk is now FIXED (`ui/src/features/windowScope.ts` keys per-surface
+///   state by `(view, instance)`), so this is no longer the blocker it was. It stays refused for
+///   a narrower, still-real reason: `w<n>` ids are recycled — `Instance::persists_geometry`
+///   already refuses to save window geometry for exactly that reason — so a later `w3` of the
+///   same view would inherit a closed `w3`'s split fractions, zoom pin and filters. The storage
+///   side has no equivalent sweep yet. That sweep belongs beside `redockStalePopouts` in
+///   `ui/src/main.tsx`, in the same change that lifts this arm.
 ///
 /// This is a separate function purely so it is testable — the caller is a `#[tauri::command]`
 /// needing a live `AppHandle`, and a gate whose whole job is refusing is worth a test that
@@ -247,9 +251,9 @@ pub(crate) fn openable(inst: Instance) -> Result<(), String> {
              wrong-rig hazard."
         )),
         Instance::Window(n) => Err(format!(
-            "extra panel surfaces (w{n}) are not available yet: browser storage is not \
-             surface-scoped, so a second surface would share the first's saved layout, zoom and \
-             pane widths and the two would overwrite each other."
+            "extra panel surfaces (w{n}) are not available yet: surface ids are recycled and \
+             nothing sweeps a closed surface's saved layout, so this window would open with a \
+             previous one's splits, zoom and filters."
         )),
     }
 }

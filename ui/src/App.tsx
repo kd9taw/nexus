@@ -56,6 +56,7 @@ import { useReveals } from './useReveals'
 import { sectionFeatures, featureById, type FeatureId } from './features/registry'
 import { visibleNeeds, workTarget, modeClassOf } from './features/needs'
 import { OPERATE_PANELS, usePanelLayout } from './features/panelState'
+import { surfaceGet, surfaceSet } from './features/windowScope'
 import { usePaneWidths, clampLeft, clampRight } from './usePaneWidths'
 import { TopBar } from './components/TopBar'
 import { StationList } from './components/StationList'
@@ -235,13 +236,10 @@ export default function App() {
     // guard on the rig-mode effect below — without it, restoring to CW/Phone/RTTY would both
     // reconfigure the rig and ARM TRANSMIT at launch (engine.rs set_operating_mode arms TX for
     // the manual modes). Do not remove that guard.
-    try {
-      const last = localStorage.getItem('nexus.view')
-      if (last && sectionIds.includes(last) && features.enabled[last as FeatureId] !== false) {
-        return last as View
-      }
-    } catch {
-      /* unreadable storage — fall through to the landing */
+    // PER-SURFACE: "reopen where I left off" describes THIS window.
+    const last = surfaceGet('nexus.view')
+    if (last && sectionIds.includes(last) && features.enabled[last as FeatureId] !== false) {
+      return last as View
     }
     return features.landing
   })
@@ -270,11 +268,7 @@ export default function App() {
   // effect rather than 16 `setView` call sites — every navigation path, present and future,
   // is covered by construction. Writing the restored value again on mount is a harmless no-op.
   useEffect(() => {
-    try {
-      localStorage.setItem('nexus.view', view)
-    } catch {
-      /* ignore persist failure — a forgotten section is not worth surfacing */
-    }
+    surfaceSet('nexus.view', view)
   }, [view])
 
   useEffect(() => {
@@ -320,22 +314,14 @@ export default function App() {
   // (GridTracker — the Call Roster dominant). Persisted UI pref; Roster is the
   // default (the friendlier at-a-glance view), and die-hards can pick Classic —
   // an explicit 'classic' choice is kept, everyone else gets Roster.
+  // PER-SURFACE: which panel dominates the Operate grid is this window's layout.
   const [operateLayout, setOperateLayout] = useState<'classic' | 'roster'>(() => {
-    try {
-      const v = localStorage.getItem('nexus.operateLayout')
-      if (v === 'classic' || v === 'roster') return v
-    } catch {
-      /* unreadable storage — fall through to default */
-    }
-    return 'roster'
+    const v = surfaceGet('nexus.operateLayout')
+    return v === 'classic' || v === 'roster' ? v : 'roster'
   })
   const handleOperateLayout = useCallback((m: 'classic' | 'roster') => {
     setOperateLayout(m)
-    try {
-      localStorage.setItem('nexus.operateLayout', m)
-    } catch {
-      /* ignore persist failure */
-    }
+    surfaceSet('nexus.operateLayout', m)
   }, [])
   // Which Operate panels the operator keeps (⊞ Panels). Owned HERE, beside the
   // `.operate-host` keep-alive below — never inside the cockpit, which remounts and

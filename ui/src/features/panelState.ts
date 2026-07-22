@@ -15,7 +15,7 @@
 // that can reach them. That is strictly stronger than a `removable: false` flag, which
 // a bad code path or a hand-edited blob could bypass.
 import { useCallback, useMemo, useState } from 'react'
-import { scopedKey } from './windowScope'
+import { windowInstance } from './windowScope'
 
 export type PanelState = 'docked' | 'popped' | 'removed'
 
@@ -49,9 +49,15 @@ export function emptyPanelLayout<P extends string>(): PanelLayout<P> {
   return { v: 1, state: {}, share: {} }
 }
 
-/** `nexus.panels.<view>.<instance>` — one record per SURFACE (see windowScope). */
+/** `nexus.panels.<view>.<instance>` — one record per SURFACE (see windowScope).
+ *
+ *  Built here rather than via `surfaceKey`, and deliberately: this key shipped in 0.15.0
+ *  ALREADY suffixed on the main window (`nexus.panels.operate.main`), so for it the
+ *  byte-identical-across-upgrade string is the SUFFIXED one. Every other per-surface key
+ *  predates instances and must stay bare on `main`, which is the rule `surfaceKey`
+ *  encodes. Routing this key through it would rename it and lose saved layouts. */
 export function panelStorageKey(view: string, instance?: string): string {
-  return scopedKey(`nexus.panels.${view}`, 'surface', instance)
+  return `nexus.panels.${view}.${instance ?? windowInstance()}`
 }
 
 /**
