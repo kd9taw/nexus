@@ -270,7 +270,11 @@ pub fn score(
     let priority = tags[0].tier() + rarity_boost;
     let headline = match tags[0] {
         NeedTag::NewEntity => format!("New one — {}", info.entity),
-        NeedTag::NewZone => format!("New CQ zone {} — {}", info.cq_zone, info.entity),
+        // The band rides these three headlines because the need is now judged PER BAND
+        // (5BWAZ / VUCC / 5BWAS), matching NewBand and NewMode below, which always named
+        // it. Without the band "New grid — FN31" reads as all-time and overstates the
+        // catch: the operator may well have that square in the log from 20 m.
+        NeedTag::NewZone => format!("New CQ zone {} on {} — {}", info.cq_zone, band, info.entity),
         NeedTag::NewBand => format!("New band — {} {}", info.entity, band),
         // Name the mode class — with CW/Phone needs flowing, a NewMode CW row and a
         // NewMode Phone row for the same entity/band must read differently.
@@ -281,11 +285,17 @@ pub fn score(
             band
         ),
         NeedTag::NewGrid => format!(
-            "New grid — {} ({})",
+            "New grid — {} on {} ({})",
             g4.as_deref().unwrap_or("?"),
+            band,
             info.entity
         ),
-        NeedTag::NewState => format!("New state — {} ({})", st.unwrap_or("?"), info.entity),
+        NeedTag::NewState => format!(
+            "New state — {} on {} ({})",
+            st.unwrap_or("?"),
+            band,
+            info.entity
+        ),
         NeedTag::Confirm => format!("Confirm — {}", info.entity),
         // Dxped/Pota/Sota are appended post-scoring (command layer) — never the
         // headline tag; arms exist only for match exhaustiveness.
@@ -1584,6 +1594,73 @@ mod tests {
         assert!(
             twenty.is_none_or(|a| !a.tags.contains(&NeedTag::NewGrid)),
             "FN31 IS worked on 20m → no NewGrid there"
+        );
+    }
+
+    /// The headline is the only part of this the operator actually READS — it is the toast
+    /// text and the board row. When these needs became per-band, three headlines kept
+    /// all-time wording ("New grid — FN31") while NewBand and NewMode had always named the
+    /// band. I changed them and all 300 tests stayed green, so the operator-facing string
+    /// was unprotected. Pinned now, because a wrong headline is a wrong claim about the
+    /// log: it invites chasing a square already sitting there from 20 m.
+    #[test]
+    fn a_per_band_headline_names_the_band_it_is_judged_against() {
+        let mut n = LogNeeds::new();
+        // Satisfy the entity ON 2 M so the higher tiers (NewEntity 100, NewBand, NewZone 70)
+        // stay quiet and NewGrid actually reaches the headline. Confirmed, or Confirm tags.
+        n.add("W1AW", "2m", "FT8", Some("FN20xx"), None, true);
+
+        let a = score(
+            "K1ABC",
+            "2m",
+            "FT8",
+            Some("FN31"),
+            None,
+            &n,
+            n.worked_zones(),
+            n.worked_grids(),
+            &HashSet::new(),
+        )
+        .expect("FN31 has never been worked on 2m");
+        assert_eq!(
+            a.tags.first(),
+            Some(&NeedTag::NewGrid),
+            "test setup drifted — this must exercise the NewGrid headline: {:?}",
+            a.tags
+        );
+        assert!(
+            a.headline.contains("2m"),
+            "a per-band need must say WHICH band or it reads as all-time: {:?}",
+            a.headline
+        );
+
+        // The converse, and the more important half: NewEntity is genuinely all-time
+        // (NeedKind::Atno), so it must NOT acquire a band. Without this guard, a future
+        // "add the band everywhere" sweep would quietly demote an ATNO — the single most
+        // important row the board can show — into something that reads like a band-slot.
+        let empty = LogNeeds::new();
+        let atno = score(
+            "K1ABC",
+            "20m",
+            "FT8",
+            None,
+            None,
+            &empty,
+            empty.worked_zones(),
+            empty.worked_grids(),
+            &HashSet::new(),
+        )
+        .expect("an empty log needs everything");
+        assert_eq!(
+            atno.tags.first(),
+            Some(&NeedTag::NewEntity),
+            "{:?}",
+            atno.tags
+        );
+        assert!(
+            !atno.headline.contains("20m"),
+            "an ATNO is all-time and must not be band-qualified: {:?}",
+            atno.headline
         );
     }
 
