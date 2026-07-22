@@ -22,12 +22,16 @@ use std::env;
 use std::path::PathBuf;
 use std::process::Command;
 
+#[path = "manifest_gate.rs"]
+mod manifest_gate;
+
 fn main() {
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let libtempo_src = manifest
         .join("../../libtempo")
         .canonicalize()
         .expect("locate tempo/libtempo");
+    check_state_manifest(&libtempo_src);
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
 
     // Cross-compile branch: Linux (or any non-Windows) host -> Windows GNU target.
@@ -223,7 +227,7 @@ fn emit_rerun(libtempo_src: &std::path::Path) {
         Some(wx) => PathBuf::from(wx).join("lib"),
         None => libtempo_src.join("vendor/wsjtx/lib"),
     };
-    emit_rerun_glob(&wx_lib.join("ft1")); // FT1 modem (turbo, ldpc348, bcjr, sync, harq, ...)
+    emit_rerun_glob(&wx_lib.join("tempofast")); // TempoFast modem (turbo, ldpc348, bcjr, sync, harq, ...)
     emit_rerun_glob(&wx_lib.join("ft8")); // shared deps (osd174_91, ldpc_174_91 parity, ...)
     emit_rerun_glob(&wx_lib.join("tempofast_decode.f90")); // live decode + HARQ driver
 }
@@ -279,4 +283,47 @@ fn which(bin: &str) -> bool {
         .status()
         .map(|s| s.success())
         .unwrap_or(false)
+}
+
+/// Warn on any module-scope Fortran symbol the state manifest does not classify.
+///
+/// WARNING, not a hard failure — deliberately, for now. Wired up on 2026-07-21 it immediately
+/// reported 29 genuine omissions (subtractft8's camp/cfilt/cref/cw, four2a's FFTW planning
+/// state, twkfreq1.f90 which no audit group's file list even enumerated), so failing the build
+/// today would just break the build. That is the gate doing its job on day one: a green gate
+/// here would have told us nothing.
+///
+/// Flip to a hard error once the manifest reaches zero — the per-chain decoder context MUST
+/// NOT be built while symbols remain unclassified, because an unclassified symbol is a SHARED
+/// one, which is the exact bug the whole audit exists to prevent.
+fn check_state_manifest(libtempo_src: &std::path::Path) {
+    let manifest_path = libtempo_src.join("modem-state-manifest.toml");
+    let lib_root = match wx_override() {
+        Some(w) => PathBuf::from(w).join("lib"),
+        None => libtempo_src.join("vendor/wsjtx/lib"),
+    };
+    println!("cargo:rerun-if-changed={}", manifest_path.display());
+    let Ok(text) = std::fs::read_to_string(&manifest_path) else {
+        println!(
+            "cargo:warning=state manifest missing at {}",
+            manifest_path.display()
+        );
+        return;
+    };
+    let missing = manifest_gate::unclassified(&lib_root, &text);
+    if missing.is_empty() {
+        return;
+    }
+    println!(
+        "cargo:warning={} Fortran symbol(s) are NOT classified in modem-state-manifest.toml. \
+         An unclassified symbol is a SHARED one — it must be classified before per-chain \
+         decoder contexts are built, or two radios will silently corrupt each other's decodes.",
+        missing.len()
+    );
+    for k in missing.iter().take(10) {
+        println!("cargo:warning=  unclassified: {} :: {}", k.file, k.name);
+    }
+    if missing.len() > 10 {
+        println!("cargo:warning=  … and {} more", missing.len() - 10);
+    }
 }
