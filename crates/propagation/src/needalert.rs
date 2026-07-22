@@ -179,9 +179,9 @@ pub fn score(
     grid: Option<&str>,
     us_state: Option<&str>,
     needs: &dyn OperatorNeeds,
-    worked_zones: &HashSet<u8>,
-    worked_grids: &HashSet<String>,
-    worked_states: &HashSet<String>,
+    worked_zones: &HashSet<(u8, Band)>,
+    worked_grids: &HashSet<(String, Band)>,
+    worked_states: &HashSet<(String, Band)>,
 ) -> Option<NeedAlert> {
     let info = dxcc::resolve(call)?;
     let mut tags: Vec<NeedTag> = Vec::new();
@@ -191,11 +191,18 @@ pub fn score(
     // the NewState (WAS) need. Junk/territory codes canonicalize to None (never tag).
     let st = us_state.and_then(crate::awards::valid_state);
 
+    // The band this station is heard on. EVERY award below is credited per band —
+    // DXCC (Challenge slots), VUCC grids, WAS states, WAZ zones — so "worked" only
+    // silences a need when it was worked on THIS band: a grid worked on 20 m is
+    // genuinely new again on 2 m, where it is a far rarer achievement. A label
+    // [`Band`] doesn't model (70cm/23cm) resolves to `None`, and nothing can be
+    // proven worked on a band we can't name, so those needs fail OPEN and still
+    // alert — the same absence-means-needed rule [`crate::dxped::LogNeeds`] answers by.
+    let heard_on = Band::from_band_token(band);
+
     // DXCC need — ARRL DXCC entities only (WAE/CQ-only entities earn no DXCC tag).
-    // Strip an FM suffix ("2m-fm" → "2m") so VHF-FM channels still resolve a Band.
-    let band_label = band.strip_suffix("-fm").unwrap_or(band);
     if info.is_dxcc {
-        if let Some(b) = Band::from_label(band_label) {
+        if let Some(b) = heard_on {
             match needs.need(info.entity, b, ModeClass::from_adif(mode)) {
                 NeedKind::Atno => tags.push(NeedTag::NewEntity),
                 NeedKind::NewBand => tags.push(NeedTag::NewBand),
@@ -206,24 +213,34 @@ pub fn score(
         }
     }
     // WAZ need — valid even on a WAE entity (the CQ zone still counts).
-    if (1..=40).contains(&info.cq_zone) && !worked_zones.contains(&info.cq_zone) {
+    if (1..=40).contains(&info.cq_zone)
+        && !heard_on.is_some_and(|b| worked_zones.contains(&(info.cq_zone, b)))
+    {
         tags.push(NeedTag::NewZone);
     }
-    // Grid need — a never-worked 4-char Maidenhead square, independent of the entity
-    // (like a zone). Only when the source carried a grid (own decodes / PSK Reporter).
+    // Grid need — a 4-char Maidenhead square never worked ON THIS BAND, independent
+    // of the entity (like a zone). Only when the source carried a grid (own decodes
+    // / PSK Reporter).
+    //
+    // UNPARSEABLE BAND -> TREAT AS NEEDED. `heard_on` is None when `Band::from_band_token`
+    // does not recognise the string, and `is_some_and` then yields false, so the tag fires.
+    // That asymmetry is deliberate: an unknown band can produce a spurious alert the operator
+    // dismisses, or silently swallow a genuine new grid. The first is noise; the second loses
+    // the thing the Needed board exists for. Pinned by
+    // `an_unparseable_band_is_treated_as_needed_not_worked`.
     if let Some(g) = &g4 {
-        if !worked_grids.contains(g) {
+        if !heard_on.is_some_and(|b| worked_grids.contains(&(g.clone(), b))) {
             tags.push(NeedTag::NewGrid);
         }
     }
-    // State need — a never-worked US state (WAS). Gate on a US-family entity like
-    // the sibling paths (awards.rs / dxped.rs) do: non-US subdivision codes collide
-    // with US postal codes (Australian "WA", Brazilian "SC"/"PA", Canadian provinces),
-    // so a resolved state on a foreign entity must NOT count toward WAS. The
-    // worked-states set holds canonical (valid_state) codes.
+    // State need — a US state never worked on this band (WAS). Gate on a US-family
+    // entity like the sibling paths (awards.rs / dxped.rs) do: non-US subdivision
+    // codes collide with US postal codes (Australian "WA", Brazilian "SC"/"PA",
+    // Canadian provinces), so a resolved state on a foreign entity must NOT count
+    // toward WAS. The worked-states set holds canonical (valid_state) codes.
     if let Some(s) = st {
         if matches!(info.entity, "United States" | "Alaska" | "Hawaii")
-            && !worked_states.contains(s)
+            && !heard_on.is_some_and(|b| worked_states.contains(&(s.to_string(), b)))
         {
             tags.push(NeedTag::NewState);
         }
@@ -308,9 +325,9 @@ pub fn score(
 pub fn rank(
     spots: &[Heard],
     needs: &dyn OperatorNeeds,
-    worked_zones: &HashSet<u8>,
-    worked_grids: &HashSet<String>,
-    worked_states: &HashSet<String>,
+    worked_zones: &HashSet<(u8, Band)>,
+    worked_grids: &HashSet<(String, Band)>,
+    worked_states: &HashSet<(String, Band)>,
 ) -> Vec<NeedAlert> {
     let mut scored: Vec<NeedAlert> = spots
         .iter()
@@ -381,9 +398,9 @@ fn ota_mode_class(mode: &str, freq_mhz: f64) -> ModeClass {
 pub fn activation_alert(
     spot: &crate::pota::OtaSpot,
     needs: &dyn OperatorNeeds,
-    worked_zones: &HashSet<u8>,
-    worked_grids: &HashSet<String>,
-    worked_states: &HashSet<String>,
+    worked_zones: &HashSet<(u8, Band)>,
+    worked_grids: &HashSet<(String, Band)>,
+    worked_states: &HashSet<(String, Band)>,
 ) -> Option<NeedAlert> {
     let freq_mhz = spot.freq_khz / 1000.0;
     let band = Band::from_mhz(freq_mhz)?;
@@ -531,9 +548,9 @@ pub fn wanted_alert(
     snr: Option<i32>,
     cfg: &WantedConfig,
     needs: &dyn OperatorNeeds,
-    worked_zones: &HashSet<u8>,
-    worked_grids: &HashSet<String>,
-    worked_states: &HashSet<String>,
+    worked_zones: &HashSet<(u8, Band)>,
+    worked_grids: &HashSet<(String, Band)>,
+    worked_states: &HashSet<(String, Band)>,
 ) -> Option<NeedAlert> {
     if !wanted_match(call, is_cq, snr, cfg) {
         return None;
@@ -1110,8 +1127,16 @@ mod tests {
             &HashSet::new(),
         )
         .unwrap();
-        assert_eq!(a.tags, vec![NeedTag::NewBand]); // zone 25 already worked → no NewZone
-        assert_eq!(a.priority, 50);
+        assert!(
+            a.tags.contains(&NeedTag::NewBand),
+            "Japan not yet worked on 40m: {:?}",
+            a.tags
+        );
+        // …and CQ zone 25 is worked on 20 m ONLY, so 40 m is a new zone slot too —
+        // WAZ is credited per band (5BWAZ), so a zone does not carry across bands.
+        // NewZone (70) outranks the band slot (50) and leads the row.
+        assert_eq!(a.tags, vec![NeedTag::NewZone, NeedTag::NewBand]);
+        assert_eq!(a.priority, 70);
     }
 
     #[test]
@@ -1512,6 +1537,171 @@ mod tests {
         }
     }
 
+    /// The operator's ruling (2026-07-22): working a station on 20 m does NOT count
+    /// as worked for a 2 m chain — "Not on 2m it's a different band." Grids are
+    /// awarded per band (VUCC), and a 2 m grid is a far rarer achievement than the
+    /// same square on HF, so it must still light up the board.
+    #[test]
+    fn a_grid_worked_on_hf_is_new_again_on_2m() {
+        let mut n = LogNeeds::new();
+        n.add("W1AW", "20m", "FT8", Some("FN31pr"), None, false); // FN31 worked on 20m ONLY
+
+        // 2 m: FN31 has never been worked THERE → NewGrid must fire.
+        let two = score(
+            "K1ABC",
+            "2m",
+            "FT8",
+            Some("FN31"),
+            None,
+            &n,
+            n.worked_zones(),
+            n.worked_grids(),
+            &HashSet::new(),
+        )
+        .expect("a 2m grid never worked on 2m is a need");
+        assert!(
+            two.tags.contains(&NeedTag::NewGrid),
+            "FN31 worked on 20m only → still new on 2m: {:?}",
+            two.tags
+        );
+
+        // …and the converse, or this only proves half of it: back on 20 m, where
+        // FN31 IS worked, the same square must NOT tag.
+        let twenty = score(
+            "K1ABC",
+            "20m",
+            "FT8",
+            Some("FN31"),
+            None,
+            &n,
+            n.worked_zones(),
+            n.worked_grids(),
+            &HashSet::new(),
+        );
+        assert!(
+            twenty.is_none_or(|a| !a.tags.contains(&NeedTag::NewGrid)),
+            "FN31 IS worked on 20m → no NewGrid there"
+        );
+    }
+
+    /// Same rule beyond grids: a US state (WAS) is a per-band slot too, so a state
+    /// worked on 20 m is still needed on 2 m — and still satisfied on 20 m.
+    #[test]
+    fn an_unparseable_band_is_treated_as_needed_not_worked() {
+        // The band string comes from decodes and spot feeds, so a form Band::from_band_token
+        // does not know is reachable. When that happens the choice is between a spurious
+        // alert and a silently swallowed need; we take the alert.
+        let mut n = LogNeeds::new();
+        n.add("W1AW", "20m", "FT8", Some("FN31pr"), None, false);
+
+        let odd = score(
+            "K1ABC",
+            "banana", // not a band token
+            "FT8",
+            Some("FN31"),
+            None,
+            &n,
+            n.worked_zones(),
+            n.worked_grids(),
+            &HashSet::new(),
+        );
+        assert!(
+            odd.is_some_and(|a| a.tags.contains(&NeedTag::NewGrid)),
+            "an unrecognised band must fall to NEEDED — a swallowed need is worse than a \
+             dismissable alert"
+        );
+    }
+
+    #[test]
+    fn a_state_worked_on_hf_is_new_again_on_2m() {
+        let mut n = LogNeeds::new();
+        n.add("W1AW", "20m", "SSB", None, Some("CT"), true); // CT worked on 20m ONLY
+
+        let two = score(
+            "W1XZ",
+            "2m",
+            "SSB",
+            None,
+            Some("CT"),
+            &n,
+            n.worked_zones(),
+            n.worked_grids(),
+            n.worked_states(),
+        )
+        .expect("a state never worked on 2m is a need");
+        assert!(
+            two.tags.contains(&NeedTag::NewState),
+            "CT worked on 20m only → still new on 2m: {:?}",
+            two.tags
+        );
+
+        let twenty = score(
+            "W1XZ",
+            "20m",
+            "SSB",
+            None,
+            Some("CT"),
+            &n,
+            n.worked_zones(),
+            n.worked_grids(),
+            n.worked_states(),
+        );
+        assert!(
+            twenty.is_none_or(|a| !a.tags.contains(&NeedTag::NewState)),
+            "CT IS worked on 20m → no NewState there"
+        );
+    }
+
+    /// A band label [`Band`] doesn't model (70 cm, 23 cm) can't be proven worked, so
+    /// the per-band needs fail OPEN and still alert — the pre-existing behaviour, kept
+    /// deliberately: silencing an IC-9700 operator's UHF grids would be the opposite
+    /// of the fix.
+    #[test]
+    fn an_unmodelled_band_still_alerts_rather_than_going_silent() {
+        let mut n = LogNeeds::new();
+        n.add("W1AW", "20m", "FT8", Some("FN31"), None, true);
+        let a = score(
+            "K1ABC",
+            "70cm",
+            "FT8",
+            Some("FN31"),
+            None,
+            &n,
+            n.worked_zones(),
+            n.worked_grids(),
+            &HashSet::new(),
+        )
+        .expect("70cm is still a chase, not a silent band");
+        assert!(a.tags.contains(&NeedTag::NewGrid), "{:?}", a.tags);
+    }
+
+    /// The log and the air must canonicalize a band identically: a contact logged on
+    /// the band plan's FM channel token ("2m-fm") satisfies the same 2 m slot a
+    /// decode heard on that channel asks about. Without the shared
+    /// [`Band::from_band_token`] parse, every 2 m FM decode would alert forever.
+    #[test]
+    fn an_fm_channel_token_is_the_same_band_as_its_label() {
+        let mut n = LogNeeds::new();
+        n.add("W1AW", "2m-fm", "FM", Some("FN31"), None, false);
+        for heard_band in ["2m", "2m-fm", "2M"] {
+            let a = score(
+                "K1ABC",
+                heard_band,
+                "FM",
+                Some("FN31"),
+                None,
+                &n,
+                n.worked_zones(),
+                n.worked_grids(),
+                &HashSet::new(),
+            );
+            assert!(
+                a.is_none_or(|x| !x.tags.contains(&NeedTag::NewGrid)),
+                "FN31 worked on the 2m FM channel → not new when heard on {heard_band}"
+            );
+        }
+    }
+
     fn ota(
         program: &str,
         reference: &str,
@@ -1873,7 +2063,7 @@ mod tests {
         // state.
         let mut n = LogNeeds::new();
         n.add("W1AW", "20m", "SSB", None, None, true); // USA/20m/Phone confirmed, CQ zone 5 worked
-        let worked_states: HashSet<String> = HashSet::new(); // no states worked yet
+        let worked_states: HashSet<(String, Band)> = HashSet::new(); // no states worked yet
         let a = score(
             "W1XY", // also New England → CQ zone 5 (already worked)
             "20m",
@@ -1904,7 +2094,7 @@ mod tests {
     fn worked_us_state_produces_no_new_state_tag() {
         let mut n = LogNeeds::new();
         n.add("W1AW", "20m", "SSB", None, None, true); // USA/20m/Phone confirmed, CQ zone 5 worked
-        let worked_states: HashSet<String> = HashSet::from(["CT".to_string()]);
+        let worked_states: HashSet<(String, Band)> = HashSet::from([("CT".to_string(), Band::B20)]);
         // Satisfied entity + zone, and CT already worked → nothing left to alert.
         assert!(score(
             "W1XZ",
@@ -1937,7 +2127,7 @@ mod tests {
     fn invalid_or_absent_us_state_never_tags_new_state() {
         let mut n = LogNeeds::new();
         n.add("W1AW", "20m", "SSB", None, None, true); // entity + zone satisfied
-        let worked_states: HashSet<String> = HashSet::new();
+        let worked_states: HashSet<(String, Band)> = HashSet::new();
         // DC and territories/gibberish are not WAS states → never tag (so, no alert).
         for bad in ["DC", "PR", "ZZ", ""] {
             assert!(
@@ -1974,7 +2164,7 @@ mod tests {
     #[test]
     fn new_state_ranks_below_entity_and_zone_but_tags_alongside() {
         let n = LogNeeds::new(); // empty → USA is a new one, zone 5 new, VT new
-        let worked_states: HashSet<String> = HashSet::new();
+        let worked_states: HashSet<(String, Band)> = HashSet::new();
         let a = score(
             "W1XY",
             "20m",
@@ -2004,7 +2194,7 @@ mod tests {
         // The Heard.us_state field must flow through rank() into a NewState tag.
         let mut n = LogNeeds::new();
         n.add("W1AW", "20m", "SSB", None, None, true); // entity + zone satisfied → isolate the state
-        let worked_states: HashSet<String> = HashSet::new();
+        let worked_states: HashSet<(String, Band)> = HashSet::new();
         let spots = vec![Heard {
             call: "W1XY".into(),
             band: "20m".into(),

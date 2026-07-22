@@ -26,6 +26,22 @@ use crate::engine::{
     now_unix_secs, LotwResolver, PendingUpload, HUNT_TTL_SECS, MAX_UPLOAD_RETRIES, SSTV_GALLERY_CAP,
 };
 
+/// Canonical band key for the per-band worked indices.
+///
+/// Lower-cased, because the band spellings that actually reach the log differ by
+/// source (Nexus writes "20m", a LoTW export "20M", and `parse_adif` passes BAND
+/// through verbatim), and with the band-plan's FM channel suffix stripped
+/// ("2m-fm" → "2m") since FM on 2 m is still 2 m for award purposes. The result is
+/// byte-identical to `propagation::Band::label()` for every band that crate models,
+/// so this side and the awards/needs side agree on what "2 m" is without tempo-app
+/// having to depend on the propagation crate (it deliberately does not — see
+/// [`StationCore::set_dxcc_resolver`]). A record with no BAND keys as "", which
+/// matches no live band and so never suppresses a need.
+fn band_key(band: &str) -> String {
+    let b = band.trim().to_ascii_lowercase();
+    b.strip_suffix("-fm").unwrap_or(&b).to_string()
+}
+
 /// The operator's station: one log, one identity of record, one set of outbound
 /// connector queues — shared by every receive/transmit chain the app runs.
 pub struct StationCore {
@@ -74,11 +90,16 @@ pub struct StationCore {
     /// Injected "is this call an active LoTW uploader" check (the shell owns the
     /// ARRL user-activity file + recency window). Presentational only.
     pub(crate) lotw_resolve: Option<LotwResolver>,
-    /// DXCC entities already worked (from the logbook) — for new-entity decode
-    /// highlighting. Rebuilt on log load + each log mutation.
-    pub(crate) worked_entities: HashSet<String>,
-    /// Maidenhead grids already worked (uppercased) — for new-grid highlighting.
-    pub(crate) worked_grids: HashSet<String>,
+    /// DXCC entities already worked (from the logbook), keyed PER BAND —
+    /// `(entity, band_key)` — for new-entity decode highlighting. Rebuilt on log
+    /// load + each log mutation. Per band because DXCC is a per-band award
+    /// (Challenge slots, VHF DXCC): see [`worked_grids`](Self::worked_grids).
+    pub(crate) worked_entities: HashSet<(String, String)>,
+    /// Maidenhead grids already worked (uppercased), keyed PER BAND —
+    /// `(grid, band_key)` — for new-grid highlighting. A grid square is an award
+    /// slot on EACH band (VUCC is per band), so FN31 worked on 20 m is genuinely
+    /// new again on 2 m, where a grid is a far rarer achievement.
+    pub(crate) worked_grids: HashSet<(String, String)>,
     /// POTA/SOTA references already in the log (hunter side, `ota.their_ref`)
     /// — drives the NEW PARK badge like worked_entities drives new-DXCC.
     pub(crate) worked_parks: HashSet<String>,
@@ -336,24 +357,42 @@ impl StationCore {
         self.worked_entities.clear();
         self.worked_parks.clear();
         for r in self.logbook.records() {
+            // Parks are NOT per band: a POTA/SOTA reference is hunted once, on any
+            // band, so this one stays a flat set.
             if let Some(p) = &r.ota.their_ref {
                 let p = p.trim();
                 if !p.is_empty() {
                     self.worked_parks.insert(p.to_uppercase());
                 }
             }
+            let band = band_key(&r.band);
             if let Some(g) = &r.grid {
                 let g = g.trim();
                 if !g.is_empty() {
-                    self.worked_grids.insert(g.to_uppercase());
+                    self.worked_grids.insert((g.to_uppercase(), band.clone()));
                 }
             }
             if let Some(resolve) = &self.dxcc_resolve {
                 if let Some(entity) = resolve(&r.call) {
-                    self.worked_entities.insert(entity);
+                    self.worked_entities.insert((entity, band));
                 }
             }
         }
+    }
+
+    /// Is this grid already worked ON THIS BAND? (`band` is the raw band label —
+    /// canonicalized here.) A grid worked only on another band reads as NOT worked,
+    /// which is the point: per-band is how grids are awarded.
+    pub(crate) fn grid_worked_on(&self, grid: &str, band: &str) -> bool {
+        self.worked_grids
+            .contains(&(grid.trim().to_uppercase(), band_key(band)))
+    }
+
+    /// Is this DXCC entity already worked ON THIS BAND? Per band, like
+    /// [`grid_worked_on`](Self::grid_worked_on).
+    pub(crate) fn entity_worked_on(&self, entity: &str, band: &str) -> bool {
+        self.worked_entities
+            .contains(&(entity.to_string(), band_key(band)))
     }
 
     /// Drain the freshly-logged QSOs awaiting connector auto-upload (FIFO).

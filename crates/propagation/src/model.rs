@@ -104,6 +104,16 @@ impl Band {
         })
     }
 
+    /// Parse a band label the way the LOG and the AIR both spell it — as
+    /// [`from_label`](Self::from_label), but also accepting the band-plan's FM
+    /// channel token ("2m-fm" → 2 m). Both sides of a per-band award comparison
+    /// must canonicalize identically, or a contact worked on an FM channel would
+    /// never suppress the need it satisfies; this is the one parser they share.
+    pub fn from_band_token(s: &str) -> Option<Band> {
+        let t = s.trim().to_ascii_lowercase();
+        Band::from_label(t.strip_suffix("-fm").unwrap_or(&t))
+    }
+
     /// Map a frequency (MHz) to its band.
     pub fn from_mhz(f: f64) -> Option<Band> {
         let b = match f {
@@ -582,6 +592,19 @@ mod tests {
         }
         assert_eq!(Band::from_label("20M"), Some(Band::B20)); // case-insensitive
         assert_eq!(Band::from_label("70cm"), None);
+    }
+
+    #[test]
+    fn band_token_accepts_every_spelling_the_log_and_band_plan_use() {
+        // Per-band award comparisons hinge on both sides canonicalizing alike, so
+        // every form that reaches a BAND field must land on the same Band.
+        for s in ["2m", "2M", " 2m ", "2m-fm", "2M-FM"] {
+            assert_eq!(Band::from_band_token(s), Some(Band::B2), "{s}");
+        }
+        assert_eq!(Band::from_band_token("20m"), Some(Band::B20));
+        // Bands the model doesn't cover stay None (the caller fails open).
+        assert_eq!(Band::from_band_token("70cm"), None);
+        assert_eq!(Band::from_band_token(""), None);
     }
 
     #[test]

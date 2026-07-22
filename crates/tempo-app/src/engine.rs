@@ -5587,6 +5587,10 @@ impl Engine {
 
         // Project this slot's decodes into the live feed (alerts + coloring).
         let mycall = &self.settings.mycall;
+        // The band these decodes arrived on — new-grid / new-DXCC are per-band
+        // questions, and this chain's dial is the only honest answer to "on what
+        // band did I just hear this?".
+        let cur_band = self.settings.band.as_str();
         s.recent_decodes = self
             .last_decodes
             .iter()
@@ -5604,15 +5608,15 @@ impl Engine {
                     .map(|c| self.station.logbook.worked_before(c))
                     .unwrap_or(false);
                 // New-grid (B3): the decode carries a Maidenhead grid we've never
-                // worked. Grid is present on CQ/grid forms.
+                // worked ON THIS BAND. Grid is present on CQ/grid forms. Per band
+                // because that is how grids are awarded (VUCC) — a grid worked on
+                // 20 m is a genuinely new one on 2 m.
                 let grid = match &parsed {
                     Msg::Cq { grid, .. } | Msg::Grid { grid, .. } => Some(grid.as_str()),
                     _ => None,
                 };
                 let new_grid = grid
-                    .map(|g| {
-                        !g.is_empty() && !self.station.worked_grids.contains(&g.to_uppercase())
-                    })
+                    .map(|g| !g.is_empty() && !self.station.grid_worked_on(g, cur_band))
                     .unwrap_or(false);
                 // Country + New-DXCC (B3): resolve the sender's DXCC entity once.
                 // `country` rides every decode (DX chasers scan by country); the
@@ -5622,9 +5626,11 @@ impl Engine {
                     (Some(c), Some(resolve)) => resolve(c),
                     _ => None,
                 };
+                // …and likewise per band: DXCC is awarded per band (Challenge slots,
+                // VHF DXCC), so an entity worked only on HF is a new one on 2 m.
                 let new_dxcc = entity
                     .as_ref()
-                    .map(|e| !self.station.worked_entities.contains(e))
+                    .map(|e| !self.station.entity_worked_on(e, cur_band))
                     .unwrap_or(false);
                 // Rarity: prefer the grid on THIS frame, but on report/R/RR73/73
                 // frames (which carry no grid) fall back to the sender's grid
@@ -10709,6 +10715,76 @@ mod tests {
         assert!(
             row("DL1XYZ").new_grid && row("DL1XYZ").new_dxcc,
             "new grid + new entity"
+        );
+    }
+
+    /// The operator's ruling (2026-07-22) on whether a 20 m contact counts for a 2 m
+    /// chain: "Not on 2m it's a different band." Grids and DXCC are both awarded per
+    /// band, and a 2 m grid is worth far more than the same square on HF — so the
+    /// decode feed must light up again when the same grid/entity is heard on 2 m.
+    #[test]
+    fn worked_on_20m_is_new_again_on_2m_in_the_decode_feed() {
+        let mut e = Engine::new("K2DEF", "FN31", 0);
+        e.set_dxcc_resolver(|call| call.chars().next().map(|c| c.to_string()));
+        // W9XYZ / EN37 worked on 20 m ONLY.
+        e.log_qso(QsoRecord {
+            grid: Some("EN37".into()),
+            ..qrec("W9XYZ", "20m")
+        });
+
+        // Still on 20 m: nothing is new — the fix must not simply alert on everything.
+        e.set_frequency(14.074, "20m", "USB");
+        e.ingest_decodes_for_test(&[dec_snr("CQ W1AW EN37", -5)], 0);
+        let on_20 = e.snapshot().recent_decodes;
+        let r20 = on_20
+            .iter()
+            .find(|r| r.from.as_deref() == Some("W1AW"))
+            .unwrap();
+        assert!(
+            !r20.new_grid && !r20.new_dxcc,
+            "EN37 / entity W ARE worked on 20m → no badge there"
+        );
+
+        // Move to 2 m and hear the very same grid + entity → both are genuinely new.
+        e.set_frequency(144.174, "2m", "USB");
+        e.ingest_decodes_for_test(&[dec_snr("CQ W1AW EN37", -5)], 0);
+        let on_2 = e.snapshot().recent_decodes;
+        let r2 = on_2
+            .iter()
+            .find(|r| r.from.as_deref() == Some("W1AW"))
+            .unwrap();
+        assert!(
+            r2.new_grid,
+            "EN37 worked on 20m only → a NEW grid on 2m (VUCC is per band)"
+        );
+        assert!(
+            r2.new_dxcc,
+            "entity worked on 20m only → a new one on 2m (DXCC is per band)"
+        );
+    }
+
+    /// Per-band keying is only correct if both sides spell a band the same way, and
+    /// they don't: Nexus writes "20m" but a LoTW/QRZ export writes "20M", and
+    /// `parse_adif` passes BAND through verbatim. An imported log must still suppress
+    /// the badges it satisfies, or every HF decode would read as a new one.
+    #[test]
+    fn an_imported_logs_band_spelling_still_matches_the_live_band() {
+        let mut e = Engine::new("K2DEF", "FN31", 0);
+        e.set_dxcc_resolver(|call| call.chars().next().map(|c| c.to_string()));
+        e.log_qso(QsoRecord {
+            grid: Some("EN37".into()),
+            ..qrec("W9XYZ", "20M") // as a LoTW export spells it
+        });
+        e.set_frequency(14.074, "20m", "USB");
+        e.ingest_decodes_for_test(&[dec_snr("CQ W1AW EN37", -5)], 0);
+        let rows = e.snapshot().recent_decodes;
+        let r = rows
+            .iter()
+            .find(|x| x.from.as_deref() == Some("W1AW"))
+            .unwrap();
+        assert!(
+            !r.new_grid && !r.new_dxcc,
+            "\"20M\" in the log IS the \"20m\" we're tuned to"
         );
     }
 

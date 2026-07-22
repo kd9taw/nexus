@@ -139,13 +139,19 @@ pub struct LogNeeds {
     worked_band: HashSet<(String, Band)>,
     worked_mode: HashSet<(String, ModeClass)>,
     confirmed_band: HashSet<(String, Band)>,
-    /// CQ zones worked (for WAZ "new zone" need-aware spotting).
-    worked_zones: HashSet<u8>,
-    /// 4-char Maidenhead grids worked (for the "new grid" need). Call-independent.
-    worked_grids: HashSet<String>,
-    /// US states worked (for the WAS "new state" need), from the logged ADIF
-    /// STATE. Canonicalized to the 50 WAS codes; junk/territory states dropped.
-    worked_states: HashSet<String>,
+    /// CQ zones worked, PER BAND (for WAZ "new zone" need-aware spotting) —
+    /// `(zone, band)`, keyed like the awards engine's slots. See
+    /// [`worked_grids`](Self::worked_grids) for why these are per band.
+    worked_zones: HashSet<(u8, Band)>,
+    /// 4-char Maidenhead grids worked, PER BAND (for the "new grid" need) —
+    /// `(grid, band)`. Call-independent. Per band because a grid square is an
+    /// award slot on EACH band (VUCC is a per-band award): FN31 worked on 20 m
+    /// is genuinely new again on 2 m, where a grid is far harder to come by.
+    worked_grids: HashSet<(String, Band)>,
+    /// US states worked, PER BAND (for the WAS "new state" need) — `(state,
+    /// band)`, from the logged ADIF STATE. Canonicalized to the 50 WAS codes;
+    /// junk/territory states dropped.
+    worked_states: HashSet<(String, Band)>,
 }
 
 impl LogNeeds {
@@ -166,9 +172,15 @@ impl LogNeeds {
         state: Option<&str>,
         confirmed: bool,
     ) {
+        // The band this contact credits. EVERY need below is a per-band slot, so a
+        // contact whose band label doesn't resolve credits none of them — the same
+        // rule the awards engine applies ("a band label that doesn't parse counts
+        // the entity but no slot"). Resolved once, up front, so the grid/state/zone
+        // slots and the DXCC slot can never disagree about what band this was.
+        let worked_on = Band::from_band_token(band).or_else(|| Band::from_mhz(parse_mhz(band)));
         // A worked grid is independent of call resolution / DXCC — track it first.
-        if let Some(g) = grid.and_then(crate::needalert::grid4) {
-            self.worked_grids.insert(g);
+        if let (Some(g), Some(b)) = (grid.and_then(crate::needalert::grid4), worked_on) {
+            self.worked_grids.insert((g, b));
         }
         let Some(info) = dxcc::resolve(call) else {
             return;
@@ -179,14 +191,16 @@ impl LogNeeds {
         // "WA" = Western Australia, Brazilian "SC"/"PA"/etc.) would poison the
         // worked set and wrongly SUPPRESS a genuinely-needed US state.
         if matches!(info.entity, "United States" | "Alaska" | "Hawaii") {
-            if let Some(s) = state.and_then(crate::awards::valid_state) {
-                self.worked_states.insert(s.to_string());
+            if let (Some(s), Some(b)) = (state.and_then(crate::awards::valid_state), worked_on) {
+                self.worked_states.insert((s.to_string(), b));
             }
         }
         // WAZ zone is valid even on a WAE/CQ-only entity, so track it BEFORE the
         // DXCC gate (need-aware spotting flags a new CQ zone independently).
         if (1..=40).contains(&info.cq_zone) {
-            self.worked_zones.insert(info.cq_zone);
+            if let Some(b) = worked_on {
+                self.worked_zones.insert((info.cq_zone, b));
+            }
         }
         // The needs model is DXCC-oriented (a "new one" = a new DXCC entity), and
         // DXpeditions are never to WAE/CQ-only entities — skip them so this bucket
@@ -198,7 +212,7 @@ impl LogNeeds {
         self.worked_entity.insert(entity.clone());
         self.worked_mode
             .insert((entity.clone(), ModeClass::from_adif(mode)));
-        if let Some(b) = Band::from_label(band).or_else(|| Band::from_mhz(parse_mhz(band))) {
+        if let Some(b) = worked_on {
             self.worked_band.insert((entity.clone(), b));
             if confirmed {
                 self.confirmed_band.insert((entity, b));
@@ -211,18 +225,18 @@ impl LogNeeds {
         self.worked_entity.len()
     }
 
-    /// CQ zones the operator has worked (for need-aware spotting's "new zone").
-    pub fn worked_zones(&self) -> &HashSet<u8> {
+    /// CQ zones the operator has worked, per band (need-aware spotting's "new zone").
+    pub fn worked_zones(&self) -> &HashSet<(u8, Band)> {
         &self.worked_zones
     }
 
-    /// 4-char Maidenhead grids the operator has worked (for the "new grid" need).
-    pub fn worked_grids(&self) -> &HashSet<String> {
+    /// 4-char Maidenhead grids the operator has worked, per band ("new grid").
+    pub fn worked_grids(&self) -> &HashSet<(String, Band)> {
         &self.worked_grids
     }
 
-    /// US states the operator has worked (for the WAS "new state" need).
-    pub fn worked_states(&self) -> &HashSet<String> {
+    /// US states the operator has worked, per band (the WAS "new state" need).
+    pub fn worked_states(&self) -> &HashSet<(String, Band)> {
         &self.worked_states
     }
 }
@@ -695,13 +709,17 @@ mod tests {
         let mut n = LogNeeds::new();
         n.add("VK6XYZ", "20m", "FT8", Some("OF78"), Some("WA"), true); // Western Australia
         assert!(
-            !n.worked_states().contains("WA"),
+            !n.worked_states().contains(&("WA".to_string(), Band::B20)),
             "a non-US subdivision code must not poison worked_states"
         );
         n.add("W7ABC", "20m", "FT8", Some("CN87"), Some("WA"), true); // real Washington
         assert!(
-            n.worked_states().contains("WA"),
+            n.worked_states().contains(&("WA".to_string(), Band::B20)),
             "a genuine US-state QSO does count for WAS"
+        );
+        assert!(
+            !n.worked_states().contains(&("WA".to_string(), Band::B2)),
+            "…on 20 m only — WAS credit is per band"
         );
     }
 }
