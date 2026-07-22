@@ -5710,8 +5710,19 @@ select optgroup {
    Tune / Stop TX / CAT. Pin flex-shrink so the wrapped rows keep their space; the column
    already scrolls, and the scope below is operator-resizable (--cw-scope-h) to reclaim it.
    No-op when the header fits one row (its content height is then exactly the 44px floor),
-   so wide displays are unaffected. Guarded by cw-header-shrink.test.ts. */
-.cw-cockpit > .cockpit-header {
+   so wide displays are unaffected. Guarded by cw-header-shrink.test.ts.
+
+   Applied to every `overflow-y:auto` cockpit shell, not just CW: phone/rtty/sstv are the
+   identical flex-column-with-scroll structure and carry the same latent bug — CW only showed
+   it first because its header is the widest. DELIBERATELY EXCLUDES
+   `.layout.single.operate-cockpit`, which is `overflow:hidden` (styles.css ~10702): there the
+   squeeze CLIPS rather than covers, and pinning the header would push the bottom of a
+   NON-scrolling column out of view instead of fixing anything. Operate needs its own
+   treatment. */
+.cw-cockpit > .cockpit-header,
+.phone-cockpit > .cockpit-header,
+.rtty-cockpit > .cockpit-header,
+.sstv-view > .cockpit-header {
   flex-shrink: 0;
 }
 .cw-bar {

@@ -42,8 +42,14 @@ function rules(): Rule[] {
 
 /** Rules whose SUBJECT is the cockpit header and which can apply inside the CW cockpit. */
 function cwHeaderRules(): Rule[] {
-  // Scopes that mean "some other cockpit's header" — those may legitimately shrink.
-  const otherScopes = /\.grid-header|\.phone-cockpit|\.operate-cockpit|\.rtty-cockpit|\.sstv-view/
+  // Scopes whose headers are NOT covered by the shrink pin:
+  //  - .grid-header    the Tempo three-pane layout, a different shell entirely
+  //  - .operate-cockpit  DELIBERATELY excluded: it is `overflow:hidden`, so pinning the
+  //                      header would push the bottom of a NON-scrolling column out of view
+  //                      rather than fixing anything. It needs its own treatment.
+  // phone/rtty/sstv ARE covered — they are the identical overflow-y:auto flex column and
+  // carry the same latent bug; CW merely surfaced it first because its header is widest.
+  const otherScopes = /\.grid-header|\.operate-cockpit/
   return rules().filter(
     (r) => r.selector.endsWith('.cockpit-header') && !otherScopes.test(r.selector),
   )
@@ -80,7 +86,16 @@ describe('CW cockpit header keeps its wrapped rows (keyer Speed stays visible)',
     ).toBe(true)
   })
 
-  it('the CW cockpit header is pinned against shrinking below its content', () => {
+  it('every scrolling cockpit header is pinned against shrinking below its content', () => {
+    // All four share the overflow-y:auto flex column, so all four need the pin.
+    for (const scope of ['.cw-cockpit', '.phone-cockpit', '.rtty-cockpit', '.sstv-view']) {
+      const pinned = cwHeaderRules().some(
+        (r) => r.selector.includes(scope) && declaredShrink(r.body) === 0,
+      )
+      expect(pinned, `${scope} header is not pinned flex-shrink:0 — on a short window it ` +
+        'absorbs the column deficit, collapses to its 44px floor, and its wrapped rows ' +
+        '(keyer Speed, Tune, Stop TX, CAT) render under the opaque panel below.').toBe(true)
+    }
     const guards = cwHeaderRules().filter(
       (r) => r.selector.includes('.cw-cockpit') && declaredShrink(r.body) === 0,
     )
