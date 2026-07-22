@@ -146,7 +146,12 @@ pub fn scan_fortran(src: &str) -> Vec<String> {
             || low.starts_with("module procedure")
             || low.starts_with("import")
             || low.starts_with("implicit")
-            || low.starts_with("abstract");
+            || low.starts_with("abstract")
+            // Access-specifier statements (`public :: null_timer`) name procedures, not
+            // storage. The storage is whatever variable is declared elsewhere.
+            || low.starts_with("public")
+            || low.starts_with("private")
+            || low.starts_with("protected");
         // A module-scope declaration before `contains` is implicitly SAVEd.
         let module_decl = in_module && !past_contains && line.contains("::") && !is_decl_noise;
         if !(explicit || module_decl) {

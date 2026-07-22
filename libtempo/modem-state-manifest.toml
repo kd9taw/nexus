@@ -4856,6 +4856,257 @@ reason = "In-place shell sort on the a() dummy arg; i/j/inc/v are stack locals. 
 # SUMMARY
 # =============================================================================================
 
+# =============================================================================================
+# GATE CLOSURE 2026-07-21 — symbols the batched audit missed, found by the build gate
+# ---------------------------------------------------------------------------------------------
+# The audit ran in six FILE GROUPS whose file lists were enumerated by hand. That guaranteed no
+# directory coverage: ft8/twkfreq1.f90 was never audited at all, and several symbols inside
+# audited files fell through. The gate caught every one on its first run — which is the whole
+# argument for having the gate. Classified from source directly; where evidence was not
+# decisive the asymmetry rule applies and the symbol is class 1 (see addpfx).
+# =============================================================================================
+
+[[symbol]]
+name = "cref"
+file = "ft8/subtractft8.f90"
+line = 21
+class = 3
+size_bytes = 1213440
+reason = "common/heap8/. FULLY written every call before any read: gen_ft8wave(...,cref,...,1,NFRAME) at :45 fills 1..NFRAME and cref is dimensioned NFRAME exactly. Read at :87. Class 3 holds only because MODEM_LOCK serializes decode calls; under true concurrency it would be class 1."
+
+[[symbol]]
+name = "camp"
+file = "ft8/subtractft8.f90"
+line = 21
+class = 3
+size_bytes = 1440000
+reason = "common/heap8/. `camp=0.` at sqf() entry (:71) zeroes the WHOLE array before the 1..nframe fill, so no tail from another chain can survive into the read."
+
+[[symbol]]
+name = "cfilt"
+file = "ft8/subtractft8.f90"
+line = 21
+class = 3
+size_bytes = 1440000
+reason = "common/heap8/. cfilt(1:nframe) assigned at :76 and cfilt(nframe+1:) zeroed at :77 — together they cover the entire array before the FFT at :78."
+
+[[symbol]]
+name = "cw"
+file = "ft8/subtractft8.f90"
+line = 21
+class = 2
+size_bytes = 1440000
+reason = "common/heap8/. Built ONCE under `if(first)` (:24-40) from cos^2 window math and a fixed FFT. Content depends only on NFILT/NFFT parameters, NOT on band, audio or callsign, so every chain would build the identical filter. Never rewritten (first cleared at :37)."
+
+[[symbol]]
+name = "endcorrection"
+file = "ft8/subtractft8.f90"
+line = 23
+class = 2
+size_bytes = 8004
+reason = "SAVEd with /heap8/. Computed once in the same `if(first)` block from the window alone; chain-independent."
+
+[[symbol]]
+name = "first"
+file = "ft8/subtractft8.f90"
+line = 23
+class = 2
+size_bytes = 4
+reason = "Init-once gate for cw/endcorrection. Chain-independent by construction: whichever chain runs first builds the same filter every chain would have."
+
+[[symbol]]
+name = "npatience"
+file = "four2a.f90"
+line = 32
+class = 2
+size_bytes = 4
+reason = "common/patience/. FFTW plan patience level — configuration input to plan creation, identical for every chain. Read at :63-64."
+
+[[symbol]]
+name = "nthreads"
+file = "four2a.f90"
+line = 32
+class = 2
+size_bytes = 4
+reason = "common/patience/. FFTW thread count for plan creation; configuration, not per-chain data."
+
+[[symbol]]
+name = "twopi"
+file = "ft8/twkfreq1.f90"
+line = 7
+class = 4
+size_bytes = 4
+reason = "data twopi/6.283185307/ — mathematical constant, never written. NOTE: twkfreq1.f90 was in NO audit group file list, which is why it was missed; the build gate found it."
+
+[[symbol]]
+name = "addpfx"
+file = "packjt.f90"
+line = 753
+class = 1
+size_bytes = 8
+reason = "common/pfxcom/ character*8. CALLSIGN state — the add-on prefix used when packing/unpacking a compound call. Per-QSO and therefore per-chain, and a wrong prefix yields a well-formed WRONG callsign, exactly the failure this manifest exists to prevent. Class 1 under the asymmetry rule."
+
+[[symbol]]
+name = "p1"
+file = "ft8/ft8b.f90"
+line = 485
+class = 4
+size_bytes = 8
+reason = "double precision, `save` at :486 + `data` at :487. Bessel polynomial coefficient, DATA-initialized and never assigned."
+
+[[symbol]]
+name = "p2"
+file = "ft8/ft8b.f90"
+line = 485
+class = 4
+size_bytes = 8
+reason = "double precision, `save` at :486 + `data` at :487. Bessel polynomial coefficient, DATA-initialized and never assigned."
+
+[[symbol]]
+name = "p3"
+file = "ft8/ft8b.f90"
+line = 485
+class = 4
+size_bytes = 8
+reason = "double precision, `save` at :486 + `data` at :487. Bessel polynomial coefficient, DATA-initialized and never assigned."
+
+[[symbol]]
+name = "p4"
+file = "ft8/ft8b.f90"
+line = 485
+class = 4
+size_bytes = 8
+reason = "double precision, `save` at :486 + `data` at :487. Bessel polynomial coefficient, DATA-initialized and never assigned."
+
+[[symbol]]
+name = "p5"
+file = "ft8/ft8b.f90"
+line = 485
+class = 4
+size_bytes = 8
+reason = "double precision, `save` at :486 + `data` at :487. Bessel polynomial coefficient, DATA-initialized and never assigned."
+
+[[symbol]]
+name = "p6"
+file = "ft8/ft8b.f90"
+line = 485
+class = 4
+size_bytes = 8
+reason = "double precision, `save` at :486 + `data` at :487. Bessel polynomial coefficient, DATA-initialized and never assigned."
+
+[[symbol]]
+name = "p7"
+file = "ft8/ft8b.f90"
+line = 485
+class = 4
+size_bytes = 8
+reason = "double precision, `save` at :486 + `data` at :487. Bessel polynomial coefficient, DATA-initialized and never assigned."
+
+[[symbol]]
+name = "q1"
+file = "ft8/ft8b.f90"
+line = 485
+class = 4
+size_bytes = 8
+reason = "double precision, `save` at :486 + DATA-initialized. Bessel polynomial coefficient, never assigned."
+
+[[symbol]]
+name = "q2"
+file = "ft8/ft8b.f90"
+line = 485
+class = 4
+size_bytes = 8
+reason = "double precision, `save` at :486 + DATA-initialized. Bessel polynomial coefficient, never assigned."
+
+[[symbol]]
+name = "q3"
+file = "ft8/ft8b.f90"
+line = 485
+class = 4
+size_bytes = 8
+reason = "double precision, `save` at :486 + DATA-initialized. Bessel polynomial coefficient, never assigned."
+
+[[symbol]]
+name = "q4"
+file = "ft8/ft8b.f90"
+line = 485
+class = 4
+size_bytes = 8
+reason = "double precision, `save` at :486 + DATA-initialized. Bessel polynomial coefficient, never assigned."
+
+[[symbol]]
+name = "q5"
+file = "ft8/ft8b.f90"
+line = 485
+class = 4
+size_bytes = 8
+reason = "double precision, `save` at :486 + DATA-initialized. Bessel polynomial coefficient, never assigned."
+
+[[symbol]]
+name = "q6"
+file = "ft8/ft8b.f90"
+line = 485
+class = 4
+size_bytes = 8
+reason = "double precision, `save` at :486 + DATA-initialized. Bessel polynomial coefficient, never assigned."
+
+[[symbol]]
+name = "q7"
+file = "ft8/ft8b.f90"
+line = 485
+class = 4
+size_bytes = 8
+reason = "double precision, `save` at :486 + DATA-initialized. Bessel polynomial coefficient, never assigned."
+
+[[symbol]]
+name = "q8"
+file = "ft8/ft8b.f90"
+line = 485
+class = 4
+size_bytes = 8
+reason = "double precision, `save` at :486 + DATA-initialized. Bessel polynomial coefficient, never assigned."
+
+[[symbol]]
+name = "q9"
+file = "ft8/ft8b.f90"
+line = 485
+class = 4
+size_bytes = 8
+reason = "double precision, `save` at :486 + DATA-initialized. Bessel polynomial coefficient, never assigned."
+
+[[symbol]]
+name = "g"
+file = "ft8/ldpc_174_91_c_generator.f90"
+line = 1
+class = 4
+size_bytes = 2002
+reason = "DATA-initialized LDPC(174,91) generator matrix. Code definition, never written at runtime."
+
+[[symbol]]
+name = "Mn"
+file = "ft8/ldpc_174_91_c_parity.f90"
+line = 1
+class = 4
+size_bytes = 2088
+reason = "DATA-initialized LDPC(174,91) parity-check table. Code definition, never written at runtime."
+
+[[symbol]]
+name = "Nm"
+file = "ft8/ldpc_174_91_c_parity.f90"
+line = 1
+class = 4
+size_bytes = 2324
+reason = "DATA-initialized LDPC(174,91) parity-check table. Code definition, never written at runtime."
+
+[[symbol]]
+name = "nrw"
+file = "ft8/ldpc_174_91_c_parity.f90"
+line = 1
+class = 4
+size_bytes = 332
+reason = "DATA-initialized LDPC(174,91) parity-check table. Code definition, never written at runtime."
+
+
 [summary]
 status = "AUTHORITATIVE - build the per-chain context from this file"
 supersedes = "the PARTIAL first pass (425 symbols, name-keyed, 188 challenges never run)"

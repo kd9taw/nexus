@@ -287,15 +287,14 @@ fn which(bin: &str) -> bool {
 
 /// Warn on any module-scope Fortran symbol the state manifest does not classify.
 ///
-/// WARNING, not a hard failure — deliberately, for now. Wired up on 2026-07-21 it immediately
-/// reported 29 genuine omissions (subtractft8's camp/cfilt/cref/cw, four2a's FFTW planning
-/// state, twkfreq1.f90 which no audit group's file list even enumerated), so failing the build
-/// today would just break the build. That is the gate doing its job on day one: a green gate
-/// here would have told us nothing.
+/// HARD FAILURE. On its first run (2026-07-21) this reported 29 genuine omissions —
+/// subtractft8's camp/cfilt/cref/cw, four2a's FFTW planning state, and twkfreq1.f90 which no
+/// audit group's file list even enumerated. Those are now classified and the gate is clean, so
+/// it fails the build rather than warning: an unclassified symbol is a SHARED one, and the
+/// per-chain decoder context must never be built while any remain.
 ///
-/// Flip to a hard error once the manifest reaches zero — the per-chain decoder context MUST
-/// NOT be built while symbols remain unclassified, because an unclassified symbol is a SHARED
-/// one, which is the exact bug the whole audit exists to prevent.
+/// If this fires after a vendor refresh, classify the symbol in the manifest. Do NOT silence
+/// it by deleting rows or loosening the scanner.
 fn check_state_manifest(libtempo_src: &std::path::Path) {
     let manifest_path = libtempo_src.join("modem-state-manifest.toml");
     let lib_root = match wx_override() {
@@ -314,16 +313,19 @@ fn check_state_manifest(libtempo_src: &std::path::Path) {
     if missing.is_empty() {
         return;
     }
-    println!(
-        "cargo:warning={} Fortran symbol(s) are NOT classified in modem-state-manifest.toml. \
-         An unclassified symbol is a SHARED one — it must be classified before per-chain \
-         decoder contexts are built, or two radios will silently corrupt each other's decodes.",
-        missing.len()
+    let list = missing
+        .iter()
+        .map(|k| format!("    {} :: {}", k.file, k.name))
+        .collect::<Vec<_>>()
+        .join("\n");
+    panic!(
+        "{} Fortran symbol(s) are NOT classified in libtempo/modem-state-manifest.toml:\n{}\n\n\
+         An unclassified symbol is a SHARED one. With two radio chains in one process that \
+         produces CRC-valid, well-formed, WRONG decodes that get logged and uploaded — not a \
+         crash. Classify each symbol in the manifest (class 1 if the evidence is not decisive; \
+         a few bytes of memcpy is cheaper than a fabricated QSO). Do not silence this by \
+         deleting rows or loosening the scanner.",
+        missing.len(),
+        list
     );
-    for k in missing.iter().take(10) {
-        println!("cargo:warning=  unclassified: {} :: {}", k.file, k.name);
-    }
-    if missing.len() > 10 {
-        println!("cargo:warning=  … and {} more", missing.len() - 10);
-    }
 }
