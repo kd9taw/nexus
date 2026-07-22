@@ -4,7 +4,7 @@
 //! Use the safe wrapper in the `ft1` crate rather than these raw bindings.
 #![allow(non_camel_case_types)]
 
-use std::os::raw::{c_char, c_float, c_int};
+use std::os::raw::{c_char, c_float, c_int, c_void};
 use std::sync::Mutex;
 
 /// Serializes ALL access to the non-thread-safe `libtempo` modem.
@@ -351,6 +351,108 @@ extern "C" {
         out: *mut Ft4DecodeT,
         max_out: c_int,
     ) -> c_int;
+
+    // ---- Per-chain decoder context (see `DecoderCtx`) ------------------------
+
+    /// Bytes one per-chain decoder context needs. Sized by the library from its
+    /// OWN declarations, so a vendor refresh that resizes a modem table cannot
+    /// silently desync the buffer length here.
+    pub fn tempo_ctx_size() -> usize;
+
+    /// Write the modem's LOAD-TIME state into `ptr` (`tempo_ctx_size()` bytes).
+    /// A fresh context is NOT a zeroed one — `ihash22` starts at -1, the callsign
+    /// tables start space-filled — so this, not `memset`, is how one is made.
+    /// Touches only the caller's buffer; no modem state, no lock needed.
+    pub fn tempo_ctx_reset(ptr: *mut c_void);
+
+    /// Copy the live modem statics OUT into `ptr`. Caller must hold [`MODEM_LOCK`].
+    pub fn tempo_ctx_save(ptr: *mut c_void);
+
+    /// Copy `ptr` IN over the live modem statics. Caller must hold [`MODEM_LOCK`].
+    pub fn tempo_ctx_restore(ptr: *mut c_void);
+}
+
+/// One radio chain's private copy of the modem's process-global decode state.
+///
+/// Every statically-allocated Fortran symbol in `libtempo` is shared between
+/// chains. Chain A's a7 replay table / IR-HARQ slot pool / callsign hash table /
+/// cached wideband spectrum, consumed by chain B, does not crash — it yields a
+/// CRC-valid, syntactically perfect, WRONG decode, logged and uploaded and
+/// indistinguishable afterwards from a real QSO. Giving each chain a context and
+/// swapping it around the decode is what makes two radios in one process safe.
+///
+/// Which symbols are in here is decided by `libtempo/modem-state-manifest.toml`
+/// (the class-1 rows) and implemented in `libtempo/ft8_cabi.f90`; this type only
+/// owns the bytes.
+pub struct DecoderCtx {
+    /// Opaque context storage. `u64`, not `u8`: the Fortran side maps a derived
+    /// type containing `REAL`/`COMPLEX`/`INTEGER` onto this pointer, and a
+    /// `Vec<u8>` allocation carries only a 1-byte alignment guarantee.
+    buf: Vec<u64>,
+    /// Byte length the library asked for (`buf` is rounded up to whole `u64`s).
+    len: usize,
+}
+
+impl DecoderCtx {
+    /// Allocate a fresh context holding the modem's load-time state.
+    pub fn new() -> Self {
+        let len = unsafe { tempo_ctx_size() };
+        let mut ctx = Self {
+            buf: vec![0u64; len.div_ceil(8)],
+            len,
+        };
+        // MUTATION: zero-fill instead of the load-time image.
+        let _ = ctx.as_ptr();
+        ctx
+    }
+
+    /// Context size in bytes, as the library reported it.
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    /// Always false — a context is never empty. (Present for `clippy::len_without_is_empty`.)
+    pub fn is_empty(&self) -> bool {
+        false
+    }
+
+    fn as_ptr(&mut self) -> *mut c_void {
+        self.buf.as_mut_ptr().cast()
+    }
+
+    /// Install this context in the modem, run `f`, and capture the resulting
+    /// state back into this context.
+    ///
+    /// The caller MUST already hold the one lock that serializes modem FFI calls
+    /// for the whole of this call. A decode landing between the restore and the
+    /// save would be decoded against this chain's state and then have ITS state
+    /// captured here — exactly the corruption the context exists to prevent.
+    ///
+    /// If `f` panics the save is skipped, so the modem keeps whatever partial
+    /// state the panic left. That is deliberate: a panic inside the decoder means
+    /// the process is already unsound, and unwinding through the FFI to "tidy up"
+    /// would write half-decoded state into the chain's context.
+    pub fn scoped<R>(&mut self, f: impl FnOnce() -> R) -> R {
+        let p = self.as_ptr();
+        unsafe { tempo_ctx_restore(p) };
+        let out = f();
+        unsafe { tempo_ctx_save(p) };
+        out
+    }
+}
+
+impl Default for DecoderCtx {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl std::fmt::Debug for DecoderCtx {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DecoderCtx")
+            .field("len", &self.len)
+            .finish()
+    }
 }
 
 #[cfg(test)]

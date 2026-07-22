@@ -20,6 +20,12 @@
 
 pub use tempo_fast_sys::{FT1_MSG91 as MSG91, FT1_NMAX as NMAX, FT1_NN as NN};
 
+/// One radio chain's private copy of the modem's process-global decode state —
+/// what makes two radios decoding two bands in ONE process safe. Re-exported
+/// here (not just from `tempo-fast-sys`) so the engine can hold one per chain
+/// without depending on the raw FFI crate. See [`tempo_fast_sys::DecoderCtx`].
+pub use tempo_fast_sys::DecoderCtx;
+
 /// Default WSJT-X audio sample rate (Hz).
 pub const SAMPLE_RATE: f32 = 12_000.0;
 

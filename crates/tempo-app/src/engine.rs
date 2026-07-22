@@ -114,6 +114,28 @@ pub struct DecodeJob {
     /// result is stale and dropped — it belongs to a decode context that no longer
     /// exists (slot indices / AP context are meaningless across the switch).
     epoch: u64,
+    /// This radio chain's private copy of the modem's process-global decode state
+    /// (a7 replay table, packjt77 callsign hashes, IR-HARQ pool, cached wideband
+    /// spectrum), or `None` for the single-radio path.
+    ///
+    /// `None` is byte-for-byte the behavior that shipped: the decode runs against
+    /// the process-global statics, untouched. `Some` swaps this chain's state in
+    /// around the decode so a second chain on another band cannot feed it another
+    /// band's callsigns — see [`run_decode_job`].
+    ctx: Option<Arc<Mutex<tempo_fast::DecoderCtx>>>,
+}
+
+impl DecodeJob {
+    /// Attach the owning radio chain's [`DecoderCtx`] to this job.
+    ///
+    /// Without it the job decodes against the shared process-global modem state,
+    /// which is correct for one radio and silently wrong for two.
+    ///
+    /// [`DecoderCtx`]: tempo_fast::DecoderCtx
+    pub fn with_ctx(mut self, ctx: Arc<Mutex<tempo_fast::DecoderCtx>>) -> Self {
+        self.ctx = Some(ctx);
+        self
+    }
 }
 
 /// The worker's output for one [`DecodeJob`]: the decodes plus the round-tripped
@@ -127,6 +149,10 @@ pub struct DecodeResult {
 }
 
 impl DecodeResult {
+    /// The decodes this job produced, in decoder order.
+    pub fn decodes(&self) -> &[modes::Decode] {
+        &self.decodes
+    }
     /// Which pass produced this result (the loop routes Early vs Boundary).
     pub fn pass(&self) -> DecodePass {
         self.pass
@@ -211,12 +237,16 @@ pub fn run_decode_job(job: DecodeJob) -> DecodeResult {
         pass,
         slot,
         epoch,
+        ctx,
     } = job;
     // Hold the decoder lock across the ENTIRE decode: this is the single lock that
     // serializes the a7 table, the packjt77 hash table and the FT1 IR-HARQ buffers
     // against the engine thread's harq_reset / seed_hash_table / source swaps.
     let mut src = source.lock().unwrap();
-    let decodes = match branch {
+    // The decode itself. Run directly when the job carries no per-chain context
+    // (the single-radio path, unchanged), or inside `DecoderCtx::scoped` when it
+    // does — see the `match ctx` below.
+    let mut decode = || match branch {
         DecodeBranch::Companion => {
             // Decodes arrive over UDP; the captured audio is irrelevant.
             src.decode(&modes::DecodeRequest::full_band(&[]))
@@ -249,6 +279,16 @@ pub fn run_decode_job(job: DecodeJob) -> DecodeResult {
             };
             src.decode_a7(&req, pass.a7_final())
         }
+    };
+    let decodes = match ctx {
+        // Single radio: the process-global modem statics ARE this chain's state.
+        None => decode(),
+        // Two radios in one process: install this chain's modem state, decode,
+        // capture the result back — inside the ONE decoder-lock acquisition
+        // above, so no other decode can land between the restore and the save.
+        // Without this, chain A's a7 replay list / callsign hash table / IR-HARQ
+        // buffers feed chain B a CRC-valid, well-formed, WRONG decode.
+        Some(ctx) => ctx.lock().unwrap().scoped(decode),
     };
     drop(src);
     DecodeResult {
@@ -6750,6 +6790,7 @@ impl Engine {
                 pass,
                 slot,
                 epoch,
+                ctx: None,
             };
         }
         if self.app.tier() == Tier::TempoDeep {
@@ -6770,6 +6811,7 @@ impl Engine {
                 pass,
                 slot,
                 epoch,
+                ctx: None,
             };
         }
         // Native tiers (FT1/FT8/FT4) decode through the active SignalSource with
@@ -6825,6 +6867,9 @@ impl Engine {
             pass,
             slot,
             epoch,
+            // Single-radio today: the chain owner attaches its own context with
+            // `DecodeJob::with_ctx`. `None` keeps the shipped path byte-identical.
+            ctx: None,
         }
     }
 

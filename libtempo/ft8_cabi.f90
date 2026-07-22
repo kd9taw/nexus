@@ -39,6 +39,20 @@ module ft8_cabi
   ! use ft8_cabi, so no module cycle.
   use ft8_a7, only: a7_dt0 => dt0, a7_f0 => f0, a7_msg0 => msg0, &
        a7_jseq => jseq, a7_ndec => ndec, ft8_a7_save, ft8_a7d
+  ! Per-chain decoder context (tempo_ctx_size/reset/save/restore, below). Every
+  ! import is renamed so nothing shadows a dummy argument or local in this file;
+  ! these names appear ONLY in the ctx type and in ctx_xfer. See the block comment
+  ! above `tempo_ctx_t` for why each symbol is here.
+  use ft8_a7, only: cxv_a7_dt0 => dt0, cxv_a7_f0 => f0, cxv_a7_msg0 => msg0
+  use ft8_downsample_state,       only: cxv_ft8_spec => cx
+  use ft4_downsample_state,       only: cxv_ft4_spec => cx
+  use tempofast_downsample_state, only: cxv_ft1_spec => cx
+  use ir_harq_combine_mod,        only: harq_slot, cxv_slots => slots, &
+       cxv_harq_init => harq_initialized
+  use packjt77, only: cxv_calls10 => calls10, cxv_calls12 => calls12,   &
+       cxv_calls22 => calls22, cxv_recent => recent_calls,              &
+       cxv_mycall13 => mycall13, cxv_dxcall13 => dxcall13,              &
+       cxv_ihash22 => ihash22, cxv_nzhash => nzhash
   implicit none
 
   ! Last slot key (nutc) seen by ft8_decode_frame; -1 = virgin/reset. Drives the
@@ -65,6 +79,107 @@ module ft8_cabi
      integer(c_int)         :: nap          ! AP type used (iaptype; 0 = none)
      real(c_float)          :: qual         ! decode quality metric [0,1]
   end type ft8_decode_t
+
+  !-------------------------------------------------------------------------
+  ! PER-CHAIN DECODER CONTEXT
+  !
+  ! The modem's decode state is process-global Fortran SAVE storage, so two
+  ! radio chains decoding two bands in ONE process share every byte of it.
+  ! That does not crash: chain A's a7 replay list / callsign hash table /
+  ! IR-HARQ slot pool / cached wideband spectrum, consumed by chain B, yields a
+  ! CRC-valid, syntactically perfect, WRONG decode - logged and uploaded, and
+  ! indistinguishable afterwards from a real QSO. `tempo_ctx_t` is one chain's
+  ! private copy of that state; the C entry points below swap it in and out
+  ! around a decode() call.
+  !
+  ! WHICH SYMBOLS. libtempo/modem-state-manifest.toml is authoritative: its
+  ! class-1 rows ARE this set. The components below are the class-1 symbols that
+  ! are EXTERNALLY ADDRESSABLE - module variables (plus one COMMON block). The
+  ! remaining class-1 rows are subroutine-local SAVE/DATA variables inside
+  ! the vendored tree, which gfortran emits as FILE-LOCAL symbols (`nm` shows
+  ! them lowercase: `mcq.34`, `apbits.5`, `hashmy10.13`, ...). No other
+  ! compilation unit can name them, so they cannot be swapped without hoisting
+  ! them into modules the way ft8/ft4/tempofast_downsample_state already were.
+  ! See the note at the end of this comment.
+  !
+  ! LAYOUT. Bounds and character lengths are taken from the LIVE declarations
+  ! (`size(...)` / `len(...)` of the use-associated symbol), never re-typed, so a
+  ! vendor refresh that resizes a table resizes this context with it instead of
+  ! silently truncating a copy.
+  !
+  ! FRESH CONTEXTS ARE NOT ZERO. Several of these symbols are DATA/initialized
+  ! (.data, not .bss): ihash22 starts at -1 (0 means "hash slot 0 is occupied"),
+  ! every callsign table starts SPACE-filled (NULs would decode as a callsign of
+  ! NULs), and nutc0_a7 starts at -1 (0 is a valid slot key). Zero-filling a
+  ! context and restoring it would corrupt the modem, which is why
+  ! tempo_ctx_reset() exists and why every row of ctx_xfer's list carries its
+  ! own load-time value. The type itself deliberately declares NO default
+  ! initializers: gfortran materializes a large derived type's default
+  ! initializer as a STACK temporary at `allocate`, which overflows a 2 MiB
+  ! worker-thread stack for a 3.4 MiB context (measured: segfault at any stack
+  ! below ~4 MiB). CTX_INIT does the same job with no stack cost.
+  !-------------------------------------------------------------------------
+  type :: tempo_ctx_t
+     ! --- FT8 -------------------------------------------------------------
+     ! ft8_downsample_state cx/x: this chain's whole 192000-point wideband
+     ! spectrum, refreshed only under the caller-owned `newdat`. Both call
+     ! sites pass .false., so most calls CONSUME a spectrum they did not
+     ! compute - shared, that downsamples chain B's audio at chain A's
+     ! frequency. cx is the complex face of the EQUIVALENCE and is >= the real
+     ! face `x`, so copying cx carries the whole block.
+     complex           :: ft8_spec(size(cxv_ft8_spec))
+     ! ft8_a7 cross-cycle AP table: the prior same-parity slot's decoded call
+     ! pairs, replayed as ~206 QSO-continuation hypotheses. Shared, chain A's
+     ! call pairs are replayed against chain B's audio (iaptype 7). These five
+     ! move as ONE unit - the replay loop is bounded solely by ndec.
+     real              :: a7_dt0(size(cxv_a7_dt0,1), 0:1, 0:1)
+     real              :: a7_f0(size(cxv_a7_f0,1), 0:1, 0:1)
+     character(len=len(cxv_a7_msg0)) :: a7_msg0(size(cxv_a7_msg0,1), 0:1, 0:1)
+     integer           :: a7_ndec(0:1, 0:1)
+     integer           :: a7_jseq
+     ! ft8_cabi's own slot tracker. Splitting it from a7_jseq desynchronizes
+     ! the even/odd rollover, so it lives in the same context. -1 = virgin.
+     integer           :: cabi_nutc0_a7
+     ! --- FT4 -------------------------------------------------------------
+     complex           :: ft4_spec(size(cxv_ft4_spec))
+     ! --- FT1 / TempoFast --------------------------------------------------
+     complex           :: ft1_spec(size(cxv_ft1_spec))
+     ! IR-HARQ soft-combining pool - the single largest object here. Shared,
+     ! chain A's RV0 frame combines with chain B's RV1.
+     type(harq_slot)   :: harq_slots(size(cxv_slots))
+     logical           :: harq_init
+     ! --- shared 77-bit / callsign machinery -------------------------------
+     ! packjt77's hash tables: how a hashed <...> token resolves to a full
+     ! callsign. THE cross-contamination vector - shared, chain B prints chain
+     ! A's callsigns for hashes it never heard.
+     character(len=len(cxv_calls10)) :: calls10(size(cxv_calls10))
+     character(len=len(cxv_calls12)) :: calls12(size(cxv_calls12))
+     character(len=len(cxv_calls22)) :: calls22(size(cxv_calls22))
+     character(len=len(cxv_recent))  :: recent_calls(size(cxv_recent))
+     character(len=len(cxv_mycall13)) :: mycall13
+     character(len=len(cxv_dxcall13)) :: dxcall13
+     integer           :: ihash22(size(cxv_ihash22))
+     integer           :: nzhash
+     ! COMMON /pfxcom/ - the add-on prefix used when packing/unpacking a
+     ! compound call. Per-QSO; a wrong prefix is a well-formed WRONG callsign.
+     ! Declared character*8 at packjt.f90:753 (re-declared in ctx_xfer).
+     character(len=8)  :: addpfx
+  end type tempo_ctx_t
+
+  ! What ctx_xfer's single list is being walked FOR.
+  integer, parameter :: CTX_SAVE    = 1   ! live statics -> context
+  integer, parameter :: CTX_RESTORE = 2   ! context -> live statics
+  integer, parameter :: CTX_INIT    = 3   ! load-time value -> context
+
+  ! Mode-driven copy helpers, one per (type, rank) the context holds. They exist
+  ! so ctx_xfer can state the symbol list ONCE: save, restore and init all walk
+  ! the SAME list and cannot drift apart. The compiler resolves the generic by
+  ! type+rank, so a component that drifts from its symbol fails to compile.
+  interface ctx_move
+     module procedure ctx_move_c1, ctx_move_r3, ctx_move_a3, ctx_move_i2, &
+          ctx_move_i1, ctx_move_i0, ctx_move_l0, ctx_move_a1, ctx_move_a0, &
+          ctx_move_h1
+  end interface ctx_move
 
 contains
 
@@ -417,6 +532,246 @@ contains
     a7_msg0 = ' '
     nutc0_a7 = -1
   end subroutine ft8_a7_reset
+
+  !=========================================================================
+  ! PER-CHAIN DECODER CONTEXT - C entry points
+  !
+  !   tempo_ctx_size()     bytes one context needs. The caller allocates from
+  !                        THIS answer, so a vendor refresh that resizes a
+  !                        table cannot silently desync the buffer length.
+  !   tempo_ctx_reset(p)   write the load-time image into a caller buffer.
+  !                        A fresh context is NOT a zeroed one (see tempo_ctx_t).
+  !   tempo_ctx_save(p)    copy the live statics OUT into the buffer.
+  !   tempo_ctx_restore(p) copy the buffer IN over the live statics.
+  !
+  ! The buffer is opaque to the caller: sized by tempo_ctx_size(), aligned for
+  ! 8-byte scalars, and only ever handed back to these three routines.
+  !
+  ! NOT thread-safe, by construction. restore -> decode -> save must happen
+  ! under the SAME lock that serializes every other modem FFI call
+  ! (tempo_fast_sys::MODEM_LOCK); a decode landing between restore and save
+  ! is exactly the corruption this exists to prevent.
+  !=========================================================================
+
+  !-------------------------------------------------------------------------
+  ! tempo_ctx_size : size of one per-chain context, in bytes.
+  !-------------------------------------------------------------------------
+  function tempo_ctx_size() result(nbytes) bind(C, name="tempo_ctx_size")
+    integer(c_size_t) :: nbytes
+    type(tempo_ctx_t), allocatable :: probe
+    allocate(probe)
+    nbytes = int(storage_size(probe) / 8, c_size_t)
+    deallocate(probe)
+  end function tempo_ctx_size
+
+  !-------------------------------------------------------------------------
+  ! tempo_ctx_reset : write the modem's LOAD-TIME state into `ptr`.
+  !
+  ! Reads no modem state and writes none, so it needs no lock - only the
+  ! caller's buffer is touched.
+  !-------------------------------------------------------------------------
+  subroutine tempo_ctx_reset(ptr) bind(C, name="tempo_ctx_reset")
+    type(c_ptr), value, intent(in) :: ptr
+    type(tempo_ctx_t), pointer     :: p
+    if (.not. c_associated(ptr)) return
+    call c_f_pointer(ptr, p)
+    call ctx_xfer(p, CTX_INIT)
+  end subroutine tempo_ctx_reset
+
+  !-------------------------------------------------------------------------
+  ! tempo_ctx_save : live statics -> context buffer.
+  !-------------------------------------------------------------------------
+  subroutine tempo_ctx_save(ptr) bind(C, name="tempo_ctx_save")
+    type(c_ptr), value, intent(in) :: ptr
+    type(tempo_ctx_t), pointer     :: p
+    if (.not. c_associated(ptr)) return
+    call c_f_pointer(ptr, p)
+    call ctx_xfer(p, CTX_SAVE)
+  end subroutine tempo_ctx_save
+
+  !-------------------------------------------------------------------------
+  ! tempo_ctx_restore : context buffer -> live statics.
+  !-------------------------------------------------------------------------
+  subroutine tempo_ctx_restore(ptr) bind(C, name="tempo_ctx_restore")
+    type(c_ptr), value, intent(in) :: ptr
+    type(tempo_ctx_t), pointer     :: p
+    if (.not. c_associated(ptr)) return
+    call c_f_pointer(ptr, p)
+    call ctx_xfer(p, CTX_RESTORE)
+  end subroutine tempo_ctx_restore
+
+  !-------------------------------------------------------------------------
+  ! ctx_xfer : THE ORDERED LIST.
+  !
+  ! Every symbol in the context appears here exactly ONCE, paired with its live
+  ! symbol and its LOAD-TIME value; `mode` picks what the walk does. Save,
+  ! restore and reset therefore cannot disagree about the member set, because
+  ! there is only one member set to disagree with. To add a symbol: one
+  ! component on tempo_ctx_t, one row here. Nowhere else.
+  !
+  ! The load-time values are the third argument. They are not decoration:
+  ! ihash22 = -1 marks a hash slot EMPTY (0 means "slot 0 holds calls22(1)", so
+  ! a zero-filled table resolves unknown hashes to a blank callsign), the
+  ! callsign tables are blank-filled (NULs would print as a callsign of NULs),
+  ! and nutc0_a7 = -1 means "no slot seen yet" (0 is a real slot key).
+  !-------------------------------------------------------------------------
+  subroutine ctx_xfer(p, mode)
+    type(tempo_ctx_t), intent(inout) :: p
+    integer,           intent(in)    :: mode
+    ! packjt.f90:753 getpfx1 - re-declared, not use-associated: it is a COMMON
+    ! block, and the linker merges this declaration with that one.
+    character(len=8) :: addpfx
+    common /pfxcom/ addpfx
+
+    !            context component     live symbol    mode   load-time value
+    ! --- FT8 ---
+    call ctx_move(p%ft8_spec,      cxv_ft8_spec,  mode, (0.0, 0.0))
+    call ctx_move(p%a7_dt0,        a7_dt0,        mode, 0.0)
+    call ctx_move(p%a7_f0,         a7_f0,         mode, 0.0)
+    call ctx_move(p%a7_msg0,       a7_msg0,       mode, ' ')
+    call ctx_move(p%a7_ndec,       a7_ndec,       mode, 0)
+    call ctx_move(p%a7_jseq,       a7_jseq,       mode, 0)
+    call ctx_move(p%cabi_nutc0_a7, nutc0_a7,      mode, -1)
+    ! --- FT4 ---
+    call ctx_move(p%ft4_spec,      cxv_ft4_spec,  mode, (0.0, 0.0))
+    ! --- FT1 / TempoFast ---
+    call ctx_move(p%ft1_spec,      cxv_ft1_spec,  mode, (0.0, 0.0))
+    call ctx_move(p%harq_slots,    cxv_slots,     mode)
+    call ctx_move(p%harq_init,     cxv_harq_init, mode, .false.)
+    ! --- shared 77-bit / callsign machinery ---
+    call ctx_move(p%calls10,       cxv_calls10,   mode, ' ')
+    call ctx_move(p%calls12,       cxv_calls12,   mode, ' ')
+    call ctx_move(p%calls22,       cxv_calls22,   mode, ' ')
+    call ctx_move(p%recent_calls,  cxv_recent,    mode, ' ')
+    call ctx_move(p%mycall13,      cxv_mycall13,  mode, ' ')
+    call ctx_move(p%dxcall13,      cxv_dxcall13,  mode, ' ')
+    call ctx_move(p%ihash22,       cxv_ihash22,   mode, -1)
+    call ctx_move(p%nzhash,        cxv_nzhash,    mode, 0)
+    call ctx_move(p%addpfx,        addpfx,        mode, ' ')
+  end subroutine ctx_xfer
+
+  ! --- ctx_move specifics. `a` is always the context side, `b` the live symbol.
+  !     One per (type, rank) the context holds; the generic resolves by type and
+  !     rank, so a component that drifts from its symbol fails to compile.
+
+  subroutine ctx_move_c1(a, b, mode, init)      ! complex, rank 1
+    complex, intent(inout) :: a(:), b(:)
+    integer, intent(in)    :: mode
+    complex, intent(in)    :: init
+    select case (mode)
+    case (CTX_SAVE)    ; a = b
+    case (CTX_RESTORE) ; b = a
+    case (CTX_INIT)    ; a = init
+    end select
+  end subroutine ctx_move_c1
+
+  subroutine ctx_move_r3(a, b, mode, init)      ! real, rank 3
+    real,    intent(inout) :: a(:,:,:), b(:,:,:)
+    integer, intent(in)    :: mode
+    real,    intent(in)    :: init
+    select case (mode)
+    case (CTX_SAVE)    ; a = b
+    case (CTX_RESTORE) ; b = a
+    case (CTX_INIT)    ; a = init
+    end select
+  end subroutine ctx_move_r3
+
+  subroutine ctx_move_a3(a, b, mode, init)      ! character, rank 3
+    character(len=*), intent(inout) :: a(:,:,:), b(:,:,:)
+    integer,          intent(in)    :: mode
+    character(len=*), intent(in)    :: init
+    select case (mode)
+    case (CTX_SAVE)    ; a = b
+    case (CTX_RESTORE) ; b = a
+    case (CTX_INIT)    ; a = init
+    end select
+  end subroutine ctx_move_a3
+
+  subroutine ctx_move_i2(a, b, mode, init)      ! integer, rank 2
+    integer, intent(inout) :: a(:,:), b(:,:)
+    integer, intent(in)    :: mode, init
+    select case (mode)
+    case (CTX_SAVE)    ; a = b
+    case (CTX_RESTORE) ; b = a
+    case (CTX_INIT)    ; a = init
+    end select
+  end subroutine ctx_move_i2
+
+  subroutine ctx_move_i1(a, b, mode, init)      ! integer, rank 1
+    integer, intent(inout) :: a(:), b(:)
+    integer, intent(in)    :: mode, init
+    select case (mode)
+    case (CTX_SAVE)    ; a = b
+    case (CTX_RESTORE) ; b = a
+    case (CTX_INIT)    ; a = init
+    end select
+  end subroutine ctx_move_i1
+
+  subroutine ctx_move_i0(a, b, mode, init)      ! integer scalar
+    integer, intent(inout) :: a, b
+    integer, intent(in)    :: mode, init
+    select case (mode)
+    case (CTX_SAVE)    ; a = b
+    case (CTX_RESTORE) ; b = a
+    case (CTX_INIT)    ; a = init
+    end select
+  end subroutine ctx_move_i0
+
+  subroutine ctx_move_l0(a, b, mode, init)      ! logical scalar
+    logical, intent(inout) :: a, b
+    integer, intent(in)    :: mode
+    logical, intent(in)    :: init
+    select case (mode)
+    case (CTX_SAVE)    ; a = b
+    case (CTX_RESTORE) ; b = a
+    case (CTX_INIT)    ; a = init
+    end select
+  end subroutine ctx_move_l0
+
+  subroutine ctx_move_a1(a, b, mode, init)      ! character, rank 1
+    character(len=*), intent(inout) :: a(:), b(:)
+    integer,          intent(in)    :: mode
+    character(len=*), intent(in)    :: init
+    select case (mode)
+    case (CTX_SAVE)    ; a = b
+    case (CTX_RESTORE) ; b = a
+    case (CTX_INIT)    ; a = init
+    end select
+  end subroutine ctx_move_a1
+
+  subroutine ctx_move_a0(a, b, mode, init)      ! character scalar
+    character(len=*), intent(inout) :: a, b
+    integer,          intent(in)    :: mode
+    character(len=*), intent(in)    :: init
+    select case (mode)
+    case (CTX_SAVE)    ; a = b
+    case (CTX_RESTORE) ; b = a
+    case (CTX_INIT)    ; a = init
+    end select
+  end subroutine ctx_move_a0
+
+  ! type(harq_slot), rank 1. No `init` argument: an empty slot is not one value
+  ! but a whole record, and `empty` below IS that record - default-initialized
+  ! exactly as ir_harq_combine_mod declares it (active=.false., rv_count=-1,
+  ! snr_est=-99.0, npts=HARQ_NDMAX), with the sample buffers zeroed so a fresh
+  ! context is byte-deterministic. Mirrors the vendored harq_init().
+  subroutine ctx_move_h1(a, b, mode)
+    type(harq_slot), intent(inout) :: a(:), b(:)
+    integer,         intent(in)    :: mode
+    type(harq_slot) :: empty
+    integer :: i
+    select case (mode)
+    case (CTX_SAVE)    ; a = b
+    case (CTX_RESTORE) ; b = a
+    case (CTX_INIT)
+       empty%cd_rv0 = (0.0, 0.0)
+       empty%cd_rv1 = (0.0, 0.0)
+       empty%cd_rv2 = (0.0, 0.0)
+       do i = 1, size(a)
+          a(i) = empty
+       end do
+    end select
+  end subroutine ctx_move_h1
 
   !-------------------------------------------------------------------------
   ! c_to_fstr12 : marshal a NUL/space-terminated C string into character(12),
