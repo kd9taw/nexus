@@ -9,7 +9,7 @@
 use tempo_core::channel::{to_i16, VirtualAir, ON_TIME_OFFSET};
 use tempo_core::inbox::Inbox;
 use tempo_core::message::Msg;
-use tempo_core::{tempo_fast, modes, text, tx};
+use tempo_core::{modes, tempo_fast, text, tx};
 
 /// Transmit `text` once and return the decodes a receiver gets.
 fn transmit(air: &mut VirtualAir, text: &str) -> Vec<modes::Decode> {

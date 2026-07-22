@@ -3307,7 +3307,12 @@ impl RadioLoop {
                 self.tx_until_ms = None; // a tune supersedes any pending slot TX tail
             }
             let n = (tempo_fast::SAMPLE_RATE * (TUNE_CHUNK_MS / 1000.0)) as usize;
-            let chunk = tune_carrier(TUNE_FREQ_HZ, n, tempo_fast::SAMPLE_RATE, &mut self.tune_phase);
+            let chunk = tune_carrier(
+                TUNE_FREQ_HZ,
+                n,
+                tempo_fast::SAMPLE_RATE,
+                &mut self.tune_phase,
+            );
             backend.play(&chunk);
             self.rx.clear(); // don't decode our own carrier
             return Ok(());
@@ -3482,7 +3487,8 @@ impl RadioLoop {
                 let _ = eng.take_immediate_tx();
                 let waves = eng.poll_tx(slot_now);
                 if !waves.is_empty() {
-                    let trim_samples = ((deficit_ms / 1000.0) * tempo_fast::SAMPLE_RATE as f64) as usize;
+                    let trim_samples =
+                        ((deficit_ms / 1000.0) * tempo_fast::SAMPLE_RATE as f64) as usize;
                     // Must leave a transmittable remainder (always true within the
                     // per-tier budget — trimming ≤6 s of FT8's 12.6 s keeps ≥6.6 s).
                     let trimmable = waves

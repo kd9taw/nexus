@@ -23,9 +23,12 @@ use tempo_core::tempo_fast;
 fn harq_benefit_sweep() {
     let msg = "CQ W9XYZ EN37";
     let f0 = 1500.0;
-    let rv0_wave = tempo_fast::gen_wave(&tempo_fast::encode_rv(msg, 0), tempo_fast::SAMPLE_RATE, f0);
-    let rv1_wave = tempo_fast::gen_wave(&tempo_fast::encode_rv(msg, 1), tempo_fast::SAMPLE_RATE, f0);
-    let rv2_wave = tempo_fast::gen_wave(&tempo_fast::encode_rv(msg, 2), tempo_fast::SAMPLE_RATE, f0);
+    let rv0_wave =
+        tempo_fast::gen_wave(&tempo_fast::encode_rv(msg, 0), tempo_fast::SAMPLE_RATE, f0);
+    let rv1_wave =
+        tempo_fast::gen_wave(&tempo_fast::encode_rv(msg, 1), tempo_fast::SAMPLE_RATE, f0);
+    let rv2_wave =
+        tempo_fast::gen_wave(&tempo_fast::encode_rv(msg, 2), tempo_fast::SAMPLE_RATE, f0);
     let nseed = 40;
     println!("  SNR   HARQ-off(RV0)   HARQ-on(RV0..RV2)   (n={nseed})");
     for k in 0..11 {
@@ -78,8 +81,10 @@ fn harq_rv1_combines_after_rv0_fails() {
     let msg = "CQ W9XYZ EN37";
     let f0 = 1500.0;
     // RV0 (initial) and RV1 (first retransmission) waveforms via the production encoder.
-    let rv0_wave = tempo_fast::gen_wave(&tempo_fast::encode_rv(msg, 0), tempo_fast::SAMPLE_RATE, f0);
-    let rv1_wave = tempo_fast::gen_wave(&tempo_fast::encode_rv(msg, 1), tempo_fast::SAMPLE_RATE, f0);
+    let rv0_wave =
+        tempo_fast::gen_wave(&tempo_fast::encode_rv(msg, 0), tempo_fast::SAMPLE_RATE, f0);
+    let rv1_wave =
+        tempo_fast::gen_wave(&tempo_fast::encode_rv(msg, 1), tempo_fast::SAMPLE_RATE, f0);
 
     // Aggregate over the live HARQ window: SNRs low enough that RV0 often fails
     // standalone, but high enough that the coarse sync still acquires both frames

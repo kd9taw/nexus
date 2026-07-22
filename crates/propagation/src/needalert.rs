@@ -365,8 +365,8 @@ fn ota_mode_class(mode: &str, freq_mhz: f64) -> ModeClass {
     match mode.trim().to_ascii_uppercase().as_str() {
         "CW" => ModeClass::Cw,
         "SSB" | "USB" | "LSB" | "PHONE" | "AM" | "FM" | "DV" => ModeClass::Phone,
-        "FT8" | "FT4" | "TempoFast" | "RTTY" | "PSK" | "PSK31" | "PSK63" | "JT65" | "JT9" | "JS8"
-        | "MFSK" | "OLIVIA" | "DATA" | "DIGI" | "SSTV" => ModeClass::Digital,
+        "FT8" | "FT4" | "TempoFast" | "RTTY" | "PSK" | "PSK31" | "PSK63" | "JT65" | "JT9"
+        | "JS8" | "MFSK" | "OLIVIA" | "DATA" | "DIGI" | "SSTV" => ModeClass::Digital,
         _ => crate::model::classify_spot_mode(freq_mhz),
     }
 }

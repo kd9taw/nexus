@@ -22,7 +22,7 @@ use tempo_core::fieldday::{Exchange, FieldDayStation};
 use tempo_core::logbook::{Logbook, QsoRecord};
 use tempo_core::qso::{State as QsoState, Station as QsoStation};
 use tempo_core::qsy::{Directive, Roamer};
-use tempo_core::{channel, tempo_fast, spectrum, tx};
+use tempo_core::{channel, spectrum, tempo_fast, tx};
 
 use crate::dto::{
     AppSnapshot, DecodeRow, FieldDayQso, FieldDayStatus, OpMode, QsoStatus, QsyStatus,
@@ -4447,7 +4447,10 @@ impl Engine {
         self.clear_decode_context();
         match kind {
             SourceKind::Native => {
-                let mode_kind = self.tier().mode_kind().unwrap_or(modes::ModeKind::TempoFast);
+                let mode_kind = self
+                    .tier()
+                    .mode_kind()
+                    .unwrap_or(modes::ModeKind::TempoFast);
                 *self.source.lock().unwrap() = Box::new(NativeSource::from_kind(mode_kind));
             }
             SourceKind::Companion => {
@@ -6672,10 +6675,16 @@ impl Engine {
                 // Both place the signal at the operator's TX audio offset.
                 let wave = match self.app.tier() {
                     // Robust tier: 8-FSK non-coherent.
-                    Tier::TempoDeep => tempo_fast::deep::encode_wave(&t, self.tx_offset_hz, tempo_fast::SAMPLE_RATE),
+                    Tier::TempoDeep => tempo_fast::deep::encode_wave(
+                        &t,
+                        self.tx_offset_hz,
+                        tempo_fast::SAMPLE_RATE,
+                    ),
                     // FT1: 4-CPM. QSO mode escalates tx_rv for IR-HARQ
                     // retransmissions; Chat/Field Day keep tx_rv = 0 (RV0 = tx::build).
-                    Tier::TempoFast => tx::build_rv(&t, tempo_fast::SAMPLE_RATE, self.tx_offset_hz, tx_rv).wave,
+                    Tier::TempoFast => {
+                        tx::build_rv(&t, tempo_fast::SAMPLE_RATE, self.tx_offset_hz, tx_rv).wave
+                    }
                     // FT8 / FT4: encode + synthesize via the active mode (no IR-HARQ).
                     // Split Operation reduces the audio into 1500–2000 Hz and
                     // leaves the matching dial shift for the slot core to apply

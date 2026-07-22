@@ -41,5 +41,5 @@ pub mod timing;
 pub mod tx;
 pub mod wavfile;
 
-pub use tempo_fast;
 pub use modes;
+pub use tempo_fast;

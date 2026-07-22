@@ -38,7 +38,11 @@ impl Awgn {
 #[test]
 fn encode_decode_roundtrip_high_snr() {
     let tones = tempo_fast::encode(MSG);
-    assert_eq!(tones.len(), tempo_fast::NN, "FT1 frame should be 99 symbols");
+    assert_eq!(
+        tones.len(),
+        tempo_fast::NN,
+        "FT1 frame should be 99 symbols"
+    );
 
     let wave = tempo_fast::gen_wave(&tones, tempo_fast::SAMPLE_RATE, F0);
     assert!(!wave.is_empty(), "waveform should be generated");
