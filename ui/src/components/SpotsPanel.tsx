@@ -67,6 +67,11 @@ export function SpotsPanel({ spots, bandPlan, selectedCall, onSelect, onWork, on
   // `licensed` flag is computed backend-side from the SAME tables as the TX lockout;
   // an Open-class (non-US) operator has every spot licensed, so the toggle is a no-op.
   const [licensedOnly, setLicensedOnly] = useSessionState('nexus.spots.licensedOnly', false)
+  // Specific-mode filter (FT8/FT4/RTTY/CW/SSB…), from the RBN skimmer's submode where present —
+  // refines the 3-class filter so a digital op can watch only FT8, not all "Digital". Empty = all.
+  const [submodes, setSubmodes] = useSessionState<string[]>('nexus.spots.submodes', [])
+  // US-state (WAS) filter, from the roster-resolved state on each spot. Empty = all.
+  const [states, setStates] = useSessionState<string[]>('nexus.spots.states', [])
 
   const knownBands = useMemo(() => new Set(bandPlan.map((b) => b.band)), [bandPlan])
 
@@ -75,12 +80,33 @@ export function SpotsPanel({ spots, bandPlan, selectedCall, onSelect, onWork, on
     for (const s of spots) if (s.band && !result.includes(s.band)) result.push(s.band)
     return result
   }, [spots])
+  // Specific modes present in the firehose (skimmer submode, else the class label).
+  const availableSubmodes = useMemo(() => {
+    const set = new Set<string>()
+    for (const s of spots) set.add(s.submode ?? s.mode)
+    return [...set].sort()
+  }, [spots])
+  // US states present (resolved for stations heard before with a grid).
+  const availableStates = useMemo(() => {
+    const set = new Set<string>()
+    for (const s of spots) if (s.state) set.add(s.state)
+    return [...set].sort()
+  }, [spots])
 
   const toggleMode = (m: ModeClass) => setModes((prev) => ({ ...prev, [m]: !prev[m] }))
   const toggleBand = (b: string) =>
     setBands((prev) => (prev.includes(b) ? prev.filter((x) => x !== b) : [...prev, b]))
+  const toggleSubmode = (m: string) =>
+    setSubmodes((prev) => (prev.includes(m) ? prev.filter((x) => x !== m) : [...prev, m]))
+  const toggleState = (st: string) =>
+    setStates((prev) => (prev.includes(st) ? prev.filter((x) => x !== st) : [...prev, st]))
 
-  const hasActiveFilters = bands.length > 0 || MODE_CLASSES.some((c) => !modes[c]) || licensedOnly
+  const hasActiveFilters =
+    bands.length > 0 ||
+    MODE_CLASSES.some((c) => !modes[c]) ||
+    licensedOnly ||
+    submodes.length > 0 ||
+    states.length > 0
 
   const rows = useMemo(() => {
     const terms = query.toLowerCase().split(/\s+/).filter(Boolean)
@@ -89,6 +115,9 @@ export function SpotsPanel({ spots, bandPlan, selectedCall, onSelect, onWork, on
       const cls = s.mode as ModeClass
       if (MODE_CLASSES.includes(cls) && !modes[cls]) return false
       if (bands.length > 0 && !bands.includes(s.band)) return false
+      if (submodes.length > 0 && !submodes.includes(s.submode ?? s.mode)) return false
+      // A state filter hides spots whose state is unknown (cluster spots of unheard stations).
+      if (states.length > 0 && (!s.state || !states.includes(s.state))) return false
       if (terms.length > 0) {
         const hay = `${s.call} ${s.entity} ${s.spotter} ${s.mode} ${s.submode ?? ''} ${s.band} ${s.freqMhz.toFixed(4)}`.toLowerCase()
         for (const t of terms) if (!hay.includes(t)) return false
@@ -122,7 +151,7 @@ export function SpotsPanel({ spots, bandPlan, selectedCall, onSelect, onWork, on
       return c * dir
     })
     return filtered
-  }, [spots, modes, bands, sort, query, licensedOnly])
+  }, [spots, modes, bands, submodes, states, sort, query, licensedOnly])
 
   const th = (key: SortKey, label: string) => (
     <button
@@ -167,7 +196,7 @@ export function SpotsPanel({ spots, bandPlan, selectedCall, onSelect, onWork, on
           type="button"
           className={`np-filter-toggle${filtersOpen || hasActiveFilters ? ' active' : ''}`}
           onClick={() => setFiltersOpen((v) => !v)}
-          title="Filter spots by band or mode"
+          title="Filter spots by band, mode, submode, state, or privileges"
           aria-expanded={filtersOpen}
         >
           <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
@@ -211,6 +240,47 @@ export function SpotsPanel({ spots, bandPlan, selectedCall, onSelect, onWork, on
               </button>
             ))}
           </div>
+          {/* Specific-mode chips — only when the skimmer wire actually distinguished submodes
+              (FT8/FT4/RTTY/PSK), so a digital op can narrow to just FT8 within "Digital". */}
+          {availableSubmodes.some((m) => !MODE_CLASSES.includes(m as ModeClass)) && (
+            <>
+              <div className="np-filter-sep" aria-hidden="true" />
+              <div className="np-filter-group" role="group" aria-label="Specific modes shown">
+                {availableSubmodes.map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    className={`np-chip${submodes.includes(m) ? ' active' : ''}`}
+                    aria-pressed={submodes.includes(m)}
+                    onClick={() => toggleSubmode(m)}
+                    title={`Show only ${m} spots`}
+                  >
+                    {m}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+          {/* US-state chips — only states we could resolve (a station heard before with a grid). */}
+          {availableStates.length > 0 && (
+            <>
+              <div className="np-filter-sep" aria-hidden="true" />
+              <div className="np-filter-group" role="group" aria-label="US states shown">
+                {availableStates.map((st) => (
+                  <button
+                    key={st}
+                    type="button"
+                    className={`np-chip${states.includes(st) ? ' active' : ''}`}
+                    aria-pressed={states.includes(st)}
+                    onClick={() => toggleState(st)}
+                    title={`Show only ${st} spots (state resolved from stations you've heard before)`}
+                  >
+                    {st}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
           <div className="np-filter-sep" aria-hidden="true" />
           <button
             type="button"
@@ -228,6 +298,9 @@ export function SpotsPanel({ spots, bandPlan, selectedCall, onSelect, onWork, on
               onClick={() => {
                 setBands([])
                 setModes({ ...ALL_MODES_ON })
+                setSubmodes([])
+                setStates([])
+                setLicensedOnly(false)
               }}
               title="Clear all filters"
             >

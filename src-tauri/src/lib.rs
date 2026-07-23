@@ -5912,6 +5912,10 @@ struct SpotRow {
     entity: String,
     /// CQ zone, 0 if unknown.
     zone: u8,
+    /// US state (WAS code), best-effort from the roster's cached grid for a station heard before
+    /// (own decodes / PSK Reporter). `None` for a cluster/RBN spot of a station not yet heard with
+    /// a grid, or a non-US station — cluster spots carry no grid of their own.
+    state: Option<String>,
     /// Band label ("20m"), "" if off the band plan.
     band: String,
     freq_mhz: f64,
@@ -5942,12 +5946,6 @@ struct SpotRow {
 #[tauri::command]
 fn get_all_spots(spots: State<'_, SharedSpots>, state: State<'_, SharedEngine>) -> Vec<SpotRow> {
     use tempo_app::settings::{LicenseClass, OperatingMode};
-    // One class read for the whole batch; a poisoned lock degrades to Open (= no gate),
-    // never a wrongly-hidden spot.
-    let class = state
-        .lock()
-        .map(|e| e.settings().license_class)
-        .unwrap_or(LicenseClass::Open);
     let now = now_unix();
     let recent = match spots.lock() {
         Ok(buf) => buf.recent_within(
@@ -5956,6 +5954,14 @@ fn get_all_spots(spots: State<'_, SharedSpots>, state: State<'_, SharedEngine>) 
         ),
         Err(_) => return Vec::new(),
     };
+    // Hold the engine lock across row-building: read the license class once, and resolve each
+    // spot's US state from the roster's cached grid (a station heard before → its grid → state).
+    // A poisoned lock degrades to Open (no gate) + no state — never a wrongly-hidden spot.
+    let eng = state.lock().ok();
+    let class = eng
+        .as_ref()
+        .map(|e| e.settings().license_class)
+        .unwrap_or(LicenseClass::Open);
     let mut rows: Vec<SpotRow> = recent
         .into_iter()
         .map(|cs| {
@@ -5966,6 +5972,12 @@ fn get_all_spots(spots: State<'_, SharedSpots>, state: State<'_, SharedEngine>) 
             let (entity, zone) = propagation::dxcc::resolve(&cs.dx_call)
                 .map(|i| (i.entity.to_string(), i.cq_zone))
                 .unwrap_or_default();
+            // US state from the roster's cached grid, when this station was heard before with one.
+            let state = eng
+                .as_ref()
+                .and_then(|e| e.roster_grid(&cs.dx_call))
+                .and_then(propagation::state_for_grid)
+                .map(str::to_string);
             let age_secs = if cs.received_unix > 0 {
                 (now - cs.received_unix as i64).max(0)
             } else {
@@ -5985,6 +5997,7 @@ fn get_all_spots(spots: State<'_, SharedSpots>, state: State<'_, SharedEngine>) 
                 call: cs.dx_call.clone(),
                 entity,
                 zone,
+                state,
                 band,
                 freq_mhz: freq,
                 mode: mode_label.to_string(),

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // The Spots firehose — freeform search behavior (terms AND together, each term
 // matching any field), on top of the existing band/mode chip filters.
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { render, screen, fireEvent, cleanup } from '@testing-library/react'
 import { SpotsPanel } from './SpotsPanel'
 import type { SpotRow } from '../types'
@@ -72,5 +72,56 @@ describe('SpotsPanel freeform search', () => {
     fireEvent.keyDown(box, { key: 'Escape' })
     expect(screen.getByText('JA2DEF')).toBeTruthy()
     expect(screen.getByText('DL1ABC')).toBeTruthy()
+  })
+})
+
+describe('SpotsPanel submode + state filters', () => {
+  // Filters persist via sessionStorage (useSessionState), so clear it between tests or one
+  // test's chip selection leaks into the next.
+  beforeEach(() => sessionStorage.clear())
+  afterEach(cleanup)
+  const openFilters = () =>
+    fireEvent.click(screen.getByTitle('Filter spots by band, mode, submode, state, or privileges'))
+
+  it('narrows to a specific submode (FT8) within Digital', () => {
+    render(
+      <SpotsPanel
+        spots={[
+          spot({ call: 'K1FT8', mode: 'Digital', submode: 'FT8' }),
+          spot({ call: 'K1FT4', mode: 'Digital', submode: 'FT4' }),
+          spot({ call: 'W6SSB', mode: 'Phone' }), // no submode
+        ]}
+        bandPlan={[]}
+        selectedCall={null}
+        onSelect={() => {}}
+        onWork={() => {}}
+      />,
+    )
+    openFilters()
+    fireEvent.click(screen.getByTitle('Show only FT8 spots'))
+    expect(screen.getByText('K1FT8')).toBeTruthy()
+    expect(screen.queryByText('K1FT4')).toBeNull()
+    expect(screen.queryByText('W6SSB')).toBeNull() // effective mode "Phone" ≠ FT8
+  })
+
+  it('filters by US state and hides state-less spots', () => {
+    render(
+      <SpotsPanel
+        spots={[
+          spot({ call: 'K1CT', state: 'CT' }),
+          spot({ call: 'W6CA', state: 'CA' }),
+          spot({ call: 'NOGRID', state: null }), // unresolved state
+        ]}
+        bandPlan={[]}
+        selectedCall={null}
+        onSelect={() => {}}
+        onWork={() => {}}
+      />,
+    )
+    openFilters()
+    fireEvent.click(screen.getByTitle(/Show only CT spots/))
+    expect(screen.getByText('K1CT')).toBeTruthy()
+    expect(screen.queryByText('W6CA')).toBeNull()
+    expect(screen.queryByText('NOGRID')).toBeNull() // no resolved state → hidden by an active state filter
   })
 })

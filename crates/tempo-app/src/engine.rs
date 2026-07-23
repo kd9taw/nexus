@@ -2322,6 +2322,13 @@ impl Engine {
     pub fn mic_gain(&self) -> Option<f32> {
         self.mic_gain
     }
+
+    /// The roster's cached Maidenhead grid for a heard callsign (own decodes / PSK Reporter),
+    /// if any — the same backfill the decode feed uses. Lets a caller resolve the station's US
+    /// state or grid rarity for a cluster/RBN spot, which carries no grid of its own.
+    pub fn roster_grid(&self, call: &str) -> Option<&str> {
+        self.app.inbox.roster.get(call).and_then(|h| h.grid.as_deref())
+    }
     /// Adopt the rig's reported mic gain (radio-loop poll). Observed-only.
     pub fn observe_rig_mic_gain(&mut self, frac: f32) {
         if frac.is_finite() {

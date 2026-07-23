@@ -1235,6 +1235,9 @@ export interface SpotRow {
   entity: string
   /** CQ zone, 0 if unknown. */
   zone: number
+  /** US state (WAS code), best-effort from the roster's cached grid for a station heard before;
+   * null for a cluster/RBN spot of an unheard station or a non-US station. */
+  state?: string | null
   /** Band label ('20m'), '' if off the band plan. */
   band: string
   freqMhz: number
