@@ -67,6 +67,10 @@ pub struct StationCore {
     pub(crate) logbook: Logbook,
     /// ADIF file the logbook is persisted to, if the shell set one.
     pub(crate) log_path: Option<PathBuf>,
+    /// Last-seen mtime of the SHARED `log.adi`, for the two-instance freshness watcher
+    /// ([`sync_shared_log_if_changed`]): re-read + reconcile only when another instance has
+    /// touched the file, so a monitoring radio's worked-before/needs stay current cheaply.
+    pub(crate) last_log_mtime: Option<std::time::SystemTime>,
     /// ADIF journal for the Field Day contest log, if the shell set one — the
     /// in-memory FD log (which lives only inside `Mode::FieldDay`) is
     /// rewritten here on every logged contact and merged back in when a Field
@@ -152,6 +156,7 @@ impl StationCore {
             upload_tick: 0,
             logbook: Logbook::new(),
             log_path: None,
+            last_log_mtime: None,
             fd_log_path: None,
             pending_qso_path: None,
             pending_msgs_path: None,
@@ -509,6 +514,28 @@ impl StationCore {
             // instance's imminent full-file rewrite can't clobber what the other one wrote.
             self.logbook.reconcile_disk(&disk);
         }
+    }
+
+    /// Two-instance freshness watcher: if the SHARED `log.adi`'s mtime moved since we last
+    /// looked — i.e. the OTHER instance logged or confirmed something — fold its changes in and
+    /// rebuild the worked-before/needs index. When nothing changed this is a single `stat`, so
+    /// it is cheap to call on every Needed-board poll; that is what keeps a MONITORING radio
+    /// (parked, not logging, so it never hits the stamp/save recovery path) from showing a DXCC
+    /// as "needed" that the other radio just worked, with no save or restart required. Returns
+    /// true when it actually re-read (so the caller can refresh anything derived downstream).
+    pub fn sync_shared_log_if_changed(&mut self) -> bool {
+        let Some(path) = self.log_path.clone() else {
+            return false;
+        };
+        let mtime = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
+        // Only act on a real, CHANGED mtime (a missing file / stat error leaves us on last-good).
+        if mtime.is_none() || mtime == self.last_log_mtime {
+            return false;
+        }
+        self.last_log_mtime = mtime;
+        self.recover_external_appends();
+        self.refresh_worked_index();
+        true
     }
 
     /// Edit an existing logbook entry (a correction — busted call, wrong band, etc).
@@ -996,5 +1023,43 @@ mod grid_tests {
             !sc.grid_worked_on("FN", "20m"),
             "a 2-char fragment is not a square"
         );
+    }
+
+    #[test]
+    fn freshness_watcher_folds_in_another_instances_appends_and_no_ops_when_unchanged() {
+        use tempo_core::logbook::{adif_header, adif_record};
+        let path =
+            std::env::temp_dir().join(format!("nexus_sync_watcher_{}.adi", std::process::id()));
+        let write = |recs: &[QsoRecord]| {
+            let mut s = adif_header();
+            for r in recs {
+                s.push_str(&adif_record(r));
+            }
+            std::fs::write(&path, s).unwrap();
+        };
+        // The shared log starts with just QSO X.
+        let x = rec("DL1ABC", "20m", "JO31");
+        write(std::slice::from_ref(&x));
+        let mut sc = StationCore::new();
+        sc.log_path = Some(path.clone());
+
+        // First look (last mtime = None) folds X in and indexes it.
+        assert!(sc.sync_shared_log_if_changed(), "first look reads the shared log");
+        assert_eq!(sc.logbook.len(), 1);
+        assert!(sc.grid_worked_on("JO31", "20m"), "X is now worked-before");
+
+        // The OTHER instance appends QSO Y. Force the gate (mtime granularity is coarse in a
+        // fast test); the point under test is the reconcile+refresh, which the gate triggers.
+        let y = rec("JA1XYZ", "40m", "PM95");
+        write(&[x, y]);
+        sc.last_log_mtime = None;
+        assert!(sc.sync_shared_log_if_changed(), "a changed log is re-read");
+        assert_eq!(sc.logbook.len(), 2, "the other instance's new QSO is folded in");
+        assert!(sc.grid_worked_on("PM95", "40m"), "Y is now worked-before without a restart");
+
+        // Nothing changed → a cheap no-op (stat only), so it's safe on every Needed-board poll.
+        assert!(!sc.sync_shared_log_if_changed(), "unchanged mtime → no re-read");
+
+        let _ = std::fs::remove_file(&path);
     }
 }

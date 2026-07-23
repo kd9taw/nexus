@@ -7279,6 +7279,14 @@ impl Engine {
     pub fn export_logbook(&self, format: &str) -> String {
         self.station.export_logbook(format)
     }
+
+    /// Two-instance freshness: re-read + reconcile the shared log iff another instance touched
+    /// it (mtime-gated, so a no-op stat when unchanged). Call on the Needed-board poll so a
+    /// monitoring radio's needs never go stale relative to the other radio. Returns true if it
+    /// actually re-read. See [`StationCore::sync_shared_log_if_changed`].
+    pub fn sync_shared_log_if_changed(&mut self) -> bool {
+        self.station.sync_shared_log_if_changed()
+    }
 }
 
 /// The signal report carried by an outgoing `Report` / `RReport` message, if

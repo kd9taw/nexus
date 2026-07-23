@@ -6106,7 +6106,12 @@ async fn get_need_alerts(
     spots: State<'_, SharedSpots>,
     ota_cache: State<'_, SharedOtaSpots>,
 ) -> Result<Vec<propagation::NeedAlert>, String> {
-    let eng = state.lock().map_err(|e| e.to_string())?;
+    let mut eng = state.lock().map_err(|e| e.to_string())?;
+    // Two-instance freshness: if the OTHER radio just logged/confirmed something in the shared
+    // log, fold it in BEFORE computing needs — otherwise this (possibly monitoring) radio would
+    // flag a DXCC/state/grid as needed that the other one already worked. Mtime-gated, so this is
+    // a cheap `stat` whenever the file is unchanged.
+    eng.sync_shared_log_if_changed();
     let mut needs = propagation::LogNeeds::new();
     for q in eng.get_log() {
         needs.add(
