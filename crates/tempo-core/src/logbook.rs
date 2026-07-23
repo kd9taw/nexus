@@ -742,7 +742,15 @@ pub fn adif_record(r: &QsoRecord) -> String {
         out.push_str(&field("STATE", st));
     }
     out.push_str(&field("BAND", &r.band));
-    out.push_str(&field("FREQ", &format!("{:.6}", r.freq_mhz)));
+    // FREQ only when we actually have one. Imported QSOs (QRZ/LoTW give BAND, not frequency)
+    // carry freq_mhz = 0, and `<FREQ:8>0.000000` is not a valid amateur frequency — Swisslog,
+    // DXKeeper and other loggers REJECT a zero-frequency record on import, which is how an
+    // operator's oldest imported contacts silently fail to land in the destination logbook.
+    // BAND alone is valid ADIF (every logger derives the band from it), so omit FREQ rather
+    // than emit a zero that gets the whole record thrown away.
+    if r.freq_mhz.is_finite() && r.freq_mhz > 0.0 {
+        out.push_str(&field("FREQ", &format!("{:.6}", r.freq_mhz)));
+    }
     // Novel Tempo protocols ride as MFSK submodes. The ADIF Mode enumeration is CLOSED
     // (47 values; "DATA" is not among them — that exists only inside LoTW), so a bare
     // <MODE:9>TempoFast is rejected outright by TQSL: its cascade is MODE%SUBMODE ->
@@ -1817,6 +1825,35 @@ mod tests {
             "no QSO records remain in the ADIF"
         );
         assert_eq!(lb.clear(), 0, "purging an empty log removes nothing");
+    }
+
+    /// An imported QSO (QRZ/LoTW give BAND, not frequency) has `freq_mhz = 0`. Emitting
+    /// `<FREQ:8>0.000000` makes a downstream logger (Swisslog, DXKeeper) reject the whole
+    /// record — the mechanism behind an operator's oldest imported contacts silently failing to
+    /// land in the destination log. BAND alone is valid ADIF, so a zero freq must be OMITTED,
+    /// not written as zero.
+    #[test]
+    fn a_zero_frequency_is_omitted_so_downstream_loggers_do_not_reject_the_record() {
+        let mut r = rec("VO1KVT", "10m", 1_700_000_000);
+        r.freq_mhz = 0.0;
+        let adif = adif_record(&r);
+        assert!(
+            !adif.contains("<FREQ"),
+            "a zero FREQ must not be written: {adif}"
+        );
+        assert!(
+            adif.contains("<BAND:3>10m"),
+            "BAND still carries the band: {adif}"
+        );
+        // And it still round-trips — the band survives, freq stays absent (parses to 0).
+        let back = parse_adif(&(adif_header() + &adif));
+        assert_eq!(back.len(), 1);
+        assert_eq!(back[0].band, "10m");
+        assert_eq!(back[0].freq_mhz, 0.0);
+
+        // A real frequency is still written, unchanged (6-decimal format).
+        let good = rec("W1AW", "20m", 1_700_000_000);
+        assert!(adif_record(&good).contains("<FREQ:9>14.090500"));
     }
 
     #[test]
