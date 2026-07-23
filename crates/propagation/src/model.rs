@@ -263,7 +263,7 @@ fn hf_segment(freq_mhz: f64) -> Option<ModeClass> {
     let (cw_top, phone_bottom) = match freq_mhz {
         f if (1.8..2.0).contains(&f) => (1.810, 1.843), // CW < .810, data .810–.843 (FT8 1.840)
         f if (3.5..4.0).contains(&f) => (3.570, 3.600),
-        f if (7.0..7.3).contains(&f) => (7.040, 7.125),
+        f if (7.0..7.3).contains(&f) => (7.070, 7.125), // CW < .070 (DX window), data .070–.125 (FT4 7.0475 is a digital hole, matched first)
         f if (10.1..10.15).contains(&f) => (10.130, 10.151), // CW < .130, data .130–.150
         f if (14.0..14.35).contains(&f) => (14.070, 14.150),
         f if (18.06..18.17).contains(&f) => (18.095, 18.110),
@@ -637,6 +637,11 @@ mod tests {
         assert_eq!(classify_spot_mode(14.250), ModeClass::Phone); // 20m phone segment
         assert_eq!(classify_spot_mode(14.025), ModeClass::Cw); // 20m CW segment
         assert_eq!(classify_spot_mode(7.030), ModeClass::Cw); // 40m CW (below the data edge)
+        // 40m CW DX window (7.040–7.070) — classic split-CW DXpedition territory. cw_top is
+        // 7.070 (the x.070 pattern), so these are CW, not Digital. FT4 (7.0475) stays a hole.
+        assert_eq!(classify_spot_mode(7.055), ModeClass::Cw); // 40m CW DX window
+        assert_eq!(classify_spot_mode(7.045), ModeClass::Cw); // 40m CW DX window
+        assert_eq!(classify_spot_mode(7.0475), ModeClass::Digital); // FT4 hole stays Digital
     }
 
     #[test]

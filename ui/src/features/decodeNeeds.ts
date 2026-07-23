@@ -16,10 +16,11 @@ const TAG_TO_CAT: Record<NeedTag, NeedCat> = {
 }
 
 /** Tags that apply regardless of which band the alert was scored for (an all-time-new
- * entity/zone is new on every band; a DXpedition/POTA/SOTA flag is a property of the
- * station, not the band). Band-specific tags (NewBand/NewMode/Confirm) only count when
- * the alert's band matches the decode's band. */
-const BAND_AGNOSTIC: ReadonlySet<NeedCat> = new Set<NeedCat>(['entity', 'zone', 'dxped', 'pota', 'sota', 'wanted'])
+ * entity is new on every band; a DXpedition/POTA/SOTA flag is a property of the station,
+ * not the band). Band-specific tags (NewBand/NewMode/Confirm — and NewZone/NewGrid/NewState,
+ * all judged PER BAND by the backend: 5BWAZ/VUCC/5BWAS) only count when the alert's band
+ * matches the decode's band, or a cross-band alert would paint a false pill on this row. */
+const BAND_AGNOSTIC: ReadonlySet<NeedCat> = new Set<NeedCat>(['entity', 'dxped', 'pota', 'sota', 'wanted'])
 
 /** Tags that are also MODE-specific: a CW-only "new mode" or an unconfirmed CW QSO can
  * never be closed on the digital feed, so they must match the feed's mode class too.

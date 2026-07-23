@@ -12,14 +12,16 @@ export const TYPE_BADGE: Record<'Pota' | 'Sota' | 'Dxped', { ch: string; cls: st
 // The need tiers worth explaining in a compact key (award-grade first). `Confirm` last —
 // it's the "worked, needs a QSL" grey. Dxped/Pota/Sota are shown as TYPE badges below, not
 // here, since they ride as badges independent of the colour.
+// Key order mirrors the backend NeedTag::tier() descending (same as NEED_PRECEDENCE), so all
+// three surfaces — decode feed, Needed board, and this legend — read as one system.
 const LEGEND_NEEDS: NeedTag[] = [
+  'Wanted',
   'NewEntity',
   'NewZone',
-  'NewBand',
-  'NewMode',
   'NewGrid',
   'NewState',
-  'Wanted',
+  'NewBand',
+  'NewMode',
   'Confirm',
 ]
 

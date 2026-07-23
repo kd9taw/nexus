@@ -59,13 +59,17 @@ export const NEED_VISUALS: Record<NeedCat, NeedVisual> = {
 /** Canonical precedence (icon order left→right; also picks the row colour): the most
  * chase-worthy reason first. */
 export const NEED_PRECEDENCE: NeedCat[] = [
+  // MUST mirror the backend NeedTag::tier() descending (needalert.rs) so the decode feed's
+  // lead pill + row colour match the Needed board for every multi-need station: the board
+  // sorts by tier and colours from tags[0]. tier(): entity 100 > zone 70 > grid 60 > state
+  // 55 > band 50 > mode 30 > confirm 10 (wanted pinned top; dxped/pota/sota are icon-only).
   'wanted',
   'entity',
   'zone',
-  'band',
-  'mode',
   'grid',
   'state',
+  'band',
+  'mode',
   'dxped',
   'confirm',
   'pota',

@@ -53,9 +53,13 @@ describe('resolveDecodeNeeds', () => {
     expect(other.cats).not.toContain('band')
   })
 
-  it('treats NewEntity / NewZone / Dxped as band-agnostic', () => {
+  it('treats NewEntity / Dxped as band-agnostic, but NewZone as per-band', () => {
+    // entity is all-time (band-agnostic) and dxped is a station property, so a 40m alert
+    // still tags them on a 20m decode — but zones are judged PER BAND (5BWAZ), so a 40m
+    // NewZone must NOT paint a zone pill on the 20m row (the cross-band false-pill fix).
     const r = resolveDecodeNeeds(decode(), '20m', [alert(['NewEntity', 'NewZone', 'Dxped'], '40m')])
-    expect(r.cats).toEqual(expect.arrayContaining(['entity', 'zone', 'dxped']))
+    expect(r.cats).toEqual(expect.arrayContaining(['entity', 'dxped']))
+    expect(r.cats).not.toContain('zone')
   })
 
   it('orders cats by precedence and picks the top award for the row colour', () => {
