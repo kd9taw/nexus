@@ -85,8 +85,8 @@ pub use model::{
 };
 pub use needalert::{
     activation_alert, heard_from_freq, heard_near_me, near_me_radius_km, rank as rank_needs,
-    skimmer_grid, wanted_alert, wanted_match, workable_by_getting_out, Heard, NeedAlert, NeedTag,
-    WantedConfig, VHF_MIN_DX_KM,
+    skimmer_grid, vhf_max_terrestrial_km, wanted_alert, wanted_match, workable_by_getting_out,
+    Heard, NeedAlert, NeedTag, WantedConfig, VHF_MIN_DX_KM,
 };
 pub use opening::{
     classify as classify_opening, detect as detect_openings_v2, reciprocity, BandFeatures,

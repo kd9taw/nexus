@@ -6172,10 +6172,16 @@ async fn get_need_alerts(
                 // ~country centroid as the operator and correctly read "near").
                 let dx_far = match (propagation::dxcc::resolve(&cs.dx_call), me_ll) {
                     (Some(info), Some(me)) => {
+                        let d = propagation::geo::haversine_km(me, (info.lat, info.lon));
                         let my_entity = propagation::dxcc::resolve(&snap.mycall).map(|i| i.entity);
-                        my_entity != Some(info.entity)
-                            || propagation::geo::haversine_km(me, (info.lat, info.lon))
-                                >= propagation::VHF_MIN_DX_KM
+                        let far_enough =
+                            my_entity != Some(info.entity) || d >= propagation::VHF_MIN_DX_KM;
+                        // …and NOT past the terrestrial ceiling: on 2 m/4 m anything beyond
+                        // single-hop Es (~2400 km) reaches only via EME, which a nearby
+                        // big-gun's spot doesn't make workable from an ordinary station.
+                        let within_terrestrial = propagation::vhf_max_terrestrial_km(band)
+                            .is_none_or(|max| d <= max);
+                        far_enough && within_terrestrial
                     }
                     _ => false,
                 };

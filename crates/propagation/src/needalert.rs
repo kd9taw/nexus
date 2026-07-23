@@ -701,6 +701,20 @@ pub fn near_me_radius_km(band: Band) -> f64 {
 /// keeps strong short-skip while rejecting locals.
 pub const VHF_MIN_DX_KM: f64 = 400.0;
 
+/// The far edge of TERRESTRIAL VHF propagation, per band. Beyond it only EME
+/// (moonbounce) closes the path — and a moonbounce a big-gun station near the
+/// operator completes is NOT workable from an ordinary station, so those reception
+/// reports must not reach the Needed board (this is exactly why EU 2 m stations,
+/// ~7000 km off, were showing as "needed now"). Single-hop sporadic-E tops out
+/// ~2400 km on 2 m/4 m. `None` = no terrestrial ceiling: 6 m routinely spans the
+/// globe via F2 (solar max) and multi-hop Es, so its long-haul DX is real and stays.
+pub fn vhf_max_terrestrial_km(band: Band) -> Option<f64> {
+    match band {
+        Band::B2 | Band::B4 => Some(2400.0),
+        _ => None,
+    }
+}
+
 /// The stations a receiver NEAR the operator (`me` lat/lon) is hearing, drawn from
 /// reception reports (PSK Reporter / RBN). THIS is the needed board's real value:
 /// it surfaces what's workable from your region on bands you're NOT tuned to —
@@ -733,10 +747,22 @@ pub fn heard_near_me(reports: &[PathSpot], me: (f64, f64)) -> Vec<Heard> {
         }
         // VHF: the DX must be PROPAGATION-far, not a groundwave local — and it must
         // prove it with a grid (a 6 m FT8 spot virtually always carries one; no
-        // grid = no proof = no row, on VHF only).
+        // grid = no proof = no row, on VHF only). It must ALSO be within terrestrial
+        // range: beyond the Es ceiling (2 m/4 m ~2400 km) only EME reaches, and a
+        // moonbounce a nearby big-gun copies is not workable from an ordinary station.
         if p.band.is_vhf() {
             match p.tx_grid.as_deref().and_then(maidenhead_to_latlon) {
-                Some(tx) if haversine_km(me, tx) >= VHF_MIN_DX_KM => {}
+                Some(tx) => {
+                    let d = haversine_km(me, tx);
+                    if d < VHF_MIN_DX_KM {
+                        continue;
+                    }
+                    if let Some(max) = vhf_max_terrestrial_km(p.band) {
+                        if d > max {
+                            continue;
+                        }
+                    }
+                }
                 _ => continue,
             }
         }
@@ -1141,6 +1167,55 @@ mod tests {
         assert!(
             heard_near_me(&[nogrid, nogrid2], me).is_empty(),
             "grid-less VHF spots can't prove propagation"
+        );
+    }
+
+    #[test]
+    fn two_meter_dx_past_es_range_is_eme_only_and_rejected_but_six_meter_survives() {
+        // Operator report (2026-07-23): EU 2 m stations (Switzerland/Wales/Norway,
+        // ~7000 km) were showing as "needed now". A near-me receiver copies them only
+        // via EME — a moonbounce a big-gun neighbor completes is NOT workable from an
+        // ordinary station. 2 m/4 m have a terrestrial ceiling (~2400 km single-hop Es);
+        // 6 m does not (F2/multi-hop Es span the globe), so the same distance stays on 6 m.
+        let me = maidenhead_to_latlon("EN61").unwrap();
+        let mk = |tx: &str, txg: &str, rx: &str, rxg: &str, band: Band| PathSpot {
+            time: 0,
+            tx_call: tx.into(),
+            tx_grid: Some(txg.into()),
+            rx_call: rx.into(),
+            rx_grid: Some(rxg.into()),
+            band,
+            mode: Some("FT8".into()),
+            snr: None,
+            freq_mhz: None,
+        };
+        // EU DX (JN47, Switzerland ≈ 7000 km) copied by two near receivers.
+        let eu_2m = vec![
+            mk("HB9DX", "JN47", "RX1", "EN61", Band::B2),
+            mk("HB9DX", "JN47", "RX2", "EN62", Band::B2),
+        ];
+        assert!(
+            heard_near_me(&eu_2m, me).is_empty(),
+            "EU 2 m past the Es ceiling is EME-only, not a terrestrial need"
+        );
+        // Same station, same corroboration, on 6 m → the magic band works it for real.
+        let eu_6m = vec![
+            mk("HB9DX", "JN47", "RX1", "EN61", Band::B6),
+            mk("HB9DX", "JN47", "RX2", "EN62", Band::B6),
+        ];
+        assert!(
+            heard_near_me(&eu_6m, me).iter().any(|h| h.call == "HB9DX"),
+            "6 m long-haul DX is legitimate (F2/multi-hop) and must survive"
+        );
+        // In-range 2 m Es DX (EM12, Texas ≈ 1300 km) still surfaces — the ceiling
+        // rejects only the far, EME-distance stations.
+        let tx_2m = vec![
+            mk("K5ES", "EM12", "RX1", "EN61", Band::B2),
+            mk("K5ES", "EM12", "RX2", "EN62", Band::B2),
+        ];
+        assert!(
+            heard_near_me(&tx_2m, me).iter().any(|h| h.call == "K5ES"),
+            "genuine single-hop Es 2 m DX inside ~2400 km must still surface"
         );
     }
 
