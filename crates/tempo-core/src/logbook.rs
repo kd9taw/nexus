@@ -473,10 +473,48 @@ impl Logbook {
     }
 
     /// Load from an ADIF file. Missing/unreadable file → empty log.
+    ///
+    /// # Data-loss guard
+    ///
+    /// [`parse_adif`] drops any record it cannot assemble — a block with no `CALL`, and, more
+    /// dangerously, a run of records after a malformed `<NAME:len>` length prefix desyncs the
+    /// scan. Every [`save`](Self::save) then rewrites the WHOLE file from the parsed records, so
+    /// a lossy load followed by any save **permanently truncates the file on disk**. The parse
+    /// bug that drops the records is fixed at the source, but a parser can never promise it
+    /// understands every third-party ADIF dialect, so this is the backstop: the FIRST time this
+    /// build loads a non-empty log, the raw bytes are copied verbatim to a sibling `.bak` that
+    /// is never overwritten. Whatever the parser did, the original survives.
     pub fn load(path: &Path) -> Self {
         let text = std::fs::read_to_string(path).unwrap_or_default();
+        Self::backup_once(path, &text);
         Self {
             records: parse_adif(&text),
+        }
+    }
+
+    /// Preserve the raw log bytes verbatim, exactly once, before any save can rewrite the file.
+    /// Never overwrites an existing `.bak` (the earliest copy is the most complete — saves only
+    /// ever shrink the file), and never fails the load: a backup that can't be written is logged
+    /// and ignored, because refusing to open the logbook would be a worse failure than a missing
+    /// safety copy.
+    fn backup_once(path: &Path, text: &str) {
+        // Protect only a file that actually carries records. The body is whatever follows
+        // `<EOH>` (the whole text when there is no header) — the same split `parse_adif` uses,
+        // so "has something to lose" here means exactly "the parser has something to read". A
+        // missing file (read → "") and a header-only log both have an empty body and skip.
+        let body = match text.to_ascii_uppercase().find("<EOH>") {
+            Some(i) => &text[i + 5..],
+            None => text,
+        };
+        if body.trim().is_empty() {
+            return;
+        }
+        let bak = path.with_extension("adi.bak");
+        if bak.exists() {
+            return; // earliest = most complete; do not clobber with a later (possibly truncated) file
+        }
+        if let Err(e) = std::fs::write(&bak, text) {
+            eprintln!("tempo: could not back up logbook to {}: {e}", bak.display());
         }
     }
 
@@ -1668,6 +1706,101 @@ mod tests {
             .find(|q| q.call == "K2DEF" && q.band == "40m")
             .unwrap();
         assert!(k40.ota.their_ref.is_none(), "band mismatch never stamps");
+    }
+
+    /// A unique scratch path under the OS temp dir — no external tempfile crate, and no
+    /// `Date`/random (a static counter keeps runs from colliding).
+    fn scratch_adi() -> std::path::PathBuf {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        static N: AtomicU32 = AtomicU32::new(0);
+        let n = N.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!("tempo_logtest_{}_{n}.adi", std::process::id()))
+    }
+
+    /// THE DATA-LOSS REGRESSION. A file with a record `parse_adif` cannot assemble (no `CALL`)
+    /// loads lossily; a save then rewrites the file from the surviving records, which on the
+    /// real pipeline is how the operator's oldest QSOs vanished from disk. The `.bak` written at
+    /// load time must still hold the ORIGINAL bytes, so nothing is ever permanently destroyed.
+    #[test]
+    fn a_lossy_load_then_save_cannot_destroy_the_original() {
+        let path = scratch_adi();
+        let bak = path.with_extension("adi.bak");
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&bak);
+
+        // Two records; the second has no CALL, so record_from drops it.
+        let raw = format!(
+            "{}{}<QSO_DATE:8>20240101<TIME_ON:6>120000<BAND:3>20m<MODE:3>FT8<EOR>\n",
+            adif_header(),
+            adif_record(&rec("W1AW", "20m", 1_700_000_000)),
+        );
+        std::fs::write(&path, &raw).unwrap();
+
+        let lb = Logbook::load(&path);
+        assert_eq!(
+            lb.records().len(),
+            1,
+            "the CALL-less record was dropped on load"
+        );
+
+        // The save that would truncate the file on disk.
+        lb.save(&path).unwrap();
+        let on_disk = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !on_disk.contains("120000"),
+            "precondition: the save DID drop the unparseable record from log.adi"
+        );
+
+        // …but the backstop preserved the original verbatim.
+        let saved = std::fs::read_to_string(&bak).expect(".bak was written at load time");
+        assert_eq!(saved, raw, ".bak holds the original bytes, loss and all");
+
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&bak);
+    }
+
+    #[test]
+    fn the_backup_is_written_once_and_never_clobbered_by_a_shrinking_file() {
+        let path = scratch_adi();
+        let bak = path.with_extension("adi.bak");
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&bak);
+
+        let full = adif_header()
+            + &adif_record(&rec("W1AW", "20m", 1))
+            + &adif_record(&rec("K2DEF", "40m", 2));
+        std::fs::write(&path, &full).unwrap();
+        let _ = Logbook::load(&path); // first load → backup captures the full file
+        assert_eq!(std::fs::read_to_string(&bak).unwrap(), full);
+
+        // A later session loads a SHRUNKEN file (a truncating save already ran). The backup
+        // must NOT be overwritten — the earliest copy is the most complete.
+        let shrunk = adif_header() + &adif_record(&rec("W1AW", "20m", 1));
+        std::fs::write(&path, &shrunk).unwrap();
+        let _ = Logbook::load(&path);
+        assert_eq!(
+            std::fs::read_to_string(&bak).unwrap(),
+            full,
+            "the second load must not clobber the more-complete backup"
+        );
+
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&bak);
+    }
+
+    #[test]
+    fn an_empty_or_missing_file_writes_no_backup() {
+        let path = scratch_adi();
+        let bak = path.with_extension("adi.bak");
+        let _ = std::fs::remove_file(&bak);
+        // Missing file.
+        let _ = Logbook::load(&path);
+        assert!(!bak.exists(), "a missing log needs no backup");
+        // Header-only (no QSOs) file.
+        std::fs::write(&path, adif_header()).unwrap();
+        let _ = Logbook::load(&path);
+        assert!(!bak.exists(), "an empty log needs no backup");
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]
