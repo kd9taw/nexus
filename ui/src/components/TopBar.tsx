@@ -6,6 +6,7 @@ import { FrequencyControl } from './FrequencyControl'
 import { StatusLane } from './StatusLane'
 import { LevelMeter, rxLevelDb } from './LevelMeter'
 import { RadioSwitcher } from './RadioSwitcher'
+import { appVersion } from '../api'
 
 interface Props {
   /** Hide the TX-control cluster (the FT cockpit shows its own consolidated
@@ -111,10 +112,17 @@ export function TopBar({
   hideDigitalChrome,
 }: Props) {
   const countdown = (radio.nextSlotMs / 1000).toFixed(1)
+  const [version, setVersion] = useState('')
+  useEffect(() => {
+    appVersion().then(setVersion).catch(() => {})
+  }, [])
   return (
     <header className={`topbar${hideFrequencyControl ? ' topbar--no-readout' : ''}`}>
       <div className="topbar-group brand">
-        <span className="logo">Nexus</span>
+        <span className="logo-wrap">
+          <span className="logo">Nexus</span>
+          {version && <span className="app-version">v{version}</span>}
+        </span>
         <span className="mycall">
           {mycall}
           <span className="mygrid">{mygrid}</span>

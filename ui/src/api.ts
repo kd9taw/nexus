@@ -659,6 +659,11 @@ export async function allTxtLocation(): Promise<string> {
   return invoke<string>('all_txt_location')
 }
 
+/** The app version string (e.g. "0.15.8") from tauri.conf.json — shown under the wordmark. */
+export async function appVersion(): Promise<string> {
+  return invoke<string>('app_version')
+}
+
 /** One selectable radio in the launch picker. */
 export interface RadioLaunchOption {
   id: number

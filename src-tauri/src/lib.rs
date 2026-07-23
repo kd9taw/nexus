@@ -9491,6 +9491,13 @@ fn import_pota_log(state: State<'_, SharedEngine>, text: String) -> Result<PotaS
     })
 }
 
+/// The app version (from tauri.conf.json, e.g. "0.15.8") for display in the UI. NOTE: this is
+/// the authoritative product version — `CARGO_PKG_VERSION` is the stale crate version (0.8.0).
+#[tauri::command]
+fn app_version(app: tauri::AppHandle) -> String {
+    app.package_info().version.to_string()
+}
+
 /// Open a station's QRZ.com profile in the operator's default browser (the roster /
 /// logbook "who is this?" affordance). The call is sanitized to callsign characters
 /// so a crafted string can never smuggle a different URL through; a portable suffix
@@ -10087,6 +10094,7 @@ pub fn run() {
             all_txt_location,
             reveal_all_txt,
             open_qrz_page,
+            app_version,
             radio_launch_info,
             choose_radio,
             import_pota_log,
