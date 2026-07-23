@@ -196,6 +196,24 @@ mod tests {
     use crate::settings::LicenseClass::*;
     use crate::settings::OperatingMode::{Cw, Digital, Phone};
 
+    /// The exact case that leaked onto the Needed board: LU6HL spotted on 7.140 SSB. 7.140 sits
+    /// in the 40 m phone segment a GENERAL may not use (their phone starts at 7.175) but an EXTRA
+    /// may (Extra phone from 7.125). The board's privilege gate keys off precisely this.
+    #[test]
+    fn general_may_not_work_7140_phone_but_extra_may() {
+        assert!(
+            !tx_allowed(General, 7.140, Phone),
+            "7.140 is Extra-only 40m phone"
+        );
+        assert!(
+            tx_allowed(Extra, 7.140, Phone),
+            "Extra phone reaches down to 7.125"
+        );
+        // And the segment boundary the case turns on: 7.175 is where General phone begins.
+        assert!(!tx_allowed(General, 7.174, Phone));
+        assert!(tx_allowed(General, 7.175, Phone));
+    }
+
     #[test]
     fn open_allows_everything() {
         assert!(tx_allowed(Open, 14.000, Phone)); // even the Extra-only bottom, even phone there

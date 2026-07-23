@@ -6024,6 +6024,9 @@ async fn get_need_alerts(
     let snap = eng.snapshot();
     // Operator "wanted" watch list (W1.5) — captured before the lock drops.
     let wanted_calls = eng.settings().wanted_calls.clone();
+    // License class for the privilege gate below — a station on a frequency the operator may not
+    // transmit to is not a "need". Open (non-US) short-circuits tx_allowed to true, so no gate.
+    let license_class = eng.settings().license_class;
     drop(eng); // nothing below needs the engine — don't hold the hot lock
     let band = snap.radio.band.clone();
     // Your own radio's decodes on the CURRENT band (you are the receiver). These come
@@ -6138,6 +6141,19 @@ async fn get_need_alerts(
                 }
             }
             let class = propagation::classify_spot_mode(freq);
+            // PRIVILEGE GATE (operator 2026-07-22, "LU6HL on 7.140 shouldn't show"): a station
+            // on a frequency the operator may not TRANSMIT to is not a need — the Needed board is
+            // a "work these" list, and 7.140 SSB sits in the Extra-only 40 m phone segment a
+            // General may not use. SpotsPanel already gates its firehose on the same tables; the
+            // Needed board never did, which is the leak. Open (non-US) short-circuits to allowed.
+            let op_mode = match class {
+                propagation::ModeClass::Cw => tempo_app::settings::OperatingMode::Cw,
+                propagation::ModeClass::Phone => tempo_app::settings::OperatingMode::Phone,
+                _ => tempo_app::settings::OperatingMode::Digital,
+            };
+            if !tempo_app::privileges::tx_allowed(license_class, freq, op_mode) {
+                continue;
+            }
             // CW/Phone on any band; digital on HF only (the missing HF evidence path
             // for a digital op). The need-matcher is demand-driven, so a busy HF FT8
             // firehose only surfaces the stations the operator actually NEEDS.
