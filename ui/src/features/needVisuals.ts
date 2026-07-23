@@ -44,7 +44,7 @@ export interface NeedVisual {
 
 export const NEED_VISUALS: Record<NeedCat, NeedVisual> = {
   entity: { cls: 'need-entity', Icon: Globe2, label: 'NEW ONE', title: 'New DXCC entity — an all-time new one' },
-  zone: { cls: 'need-zone', Icon: Compass, label: 'ZONE', title: 'New CQ zone on this band (5BWAZ)' },
+  zone: { cls: 'need-zone', Icon: Compass, label: 'ZONE', title: 'New CQ zone (WAZ) — not yet worked on any band' },
   band: { cls: 'need-band', Icon: Layers, label: 'BAND', title: 'New band-slot for this entity' },
   mode: { cls: 'need-mode', Icon: Radio, label: 'MODE', title: 'New mode for this entity' },
   grid: { cls: 'need-grid', Icon: Grid3x3, label: 'GRID', title: 'New grid square on this band (VUCC is per band)' },
@@ -87,7 +87,7 @@ export const NEED_CHIP: Record<
     cls: 'entity',
     title: 'All-time-new DXCC entity (ATNO)',
   },
-  NewZone: { label: 'ZONE', short: 'ZONE', cls: 'zone', title: 'New CQ zone on this band' },
+  NewZone: { label: 'ZONE', short: 'ZONE', cls: 'zone', title: 'New CQ zone (WAZ) — not yet worked on any band' },
   NewBand: { label: 'BAND', short: 'BAND', cls: 'band', title: 'New band-slot for this entity' },
   NewMode: { label: 'MODE', short: 'MODE', cls: 'mode', title: 'New mode for this entity' },
   NewGrid: { label: 'GRID', short: 'GRID', cls: 'grid', title: 'New grid square on this band' },

@@ -191,13 +191,15 @@ pub fn score(
     // the NewState (WAS) need. Junk/territory codes canonicalize to None (never tag).
     let st = us_state.and_then(crate::awards::valid_state);
 
-    // The band this station is heard on. EVERY award below is credited per band —
-    // DXCC (Challenge slots), VUCC grids, WAS states, WAZ zones — so "worked" only
-    // silences a need when it was worked on THIS band: a grid worked on 20 m is
-    // genuinely new again on 2 m, where it is a far rarer achievement. A label
-    // [`Band`] doesn't model (70cm/23cm) resolves to `None`, and nothing can be
-    // proven worked on a band we can't name, so those needs fail OPEN and still
-    // alert — the same absence-means-needed rule [`crate::dxped::LogNeeds`] answers by.
+    // The band this station is heard on. The PER-BAND awards below — DXCC (Challenge
+    // slots), VUCC grids, and WAS states — silence a need only when worked on THIS band:
+    // a grid or state worked on 20 m is genuinely new again on 2 m, a far rarer
+    // achievement (2 m WAS / VUCC). WAZ zones are the exception: basic WAZ is a
+    // worked-anywhere award and there is no meaningful VHF zone chase, so a zone silences
+    // all-time and ignores the heard band. A label [`Band`] doesn't model (70cm/23cm)
+    // resolves to `None`, and a per-band need can't be proven worked on a band we can't
+    // name, so it fails OPEN and still alerts — the same absence-means-needed rule
+    // [`crate::dxped::LogNeeds`] answers by.
     let heard_on = Band::from_band_token(band);
 
     // DXCC need — ARRL DXCC entities only (WAE/CQ-only entities earn no DXCC tag).
@@ -212,10 +214,13 @@ pub fn score(
             }
         }
     }
-    // WAZ need — valid even on a WAE entity (the CQ zone still counts).
-    if (1..=40).contains(&info.cq_zone)
-        && !heard_on.is_some_and(|b| worked_zones.contains(&(info.cq_zone, b)))
-    {
+    // WAZ need — a CQ zone never worked ON ANY BAND. WAZ is a basic, worked-anywhere
+    // award; 5BWAZ (per band) is a separate and far harder one, so — unlike grids (VUCC)
+    // and DXCC (Challenge), which genuinely are per band — a zone already worked on another
+    // band is NOT flagged again here. (Operator 2026-07-23: "already have those zones
+    // covered, why am I getting zone alerts for 15m" — the per-band zone rule spammed a
+    // WAZ-complete op on every band they hadn't filled.) Valid even on a WAE/CQ-only entity.
+    if (1..=40).contains(&info.cq_zone) && !worked_zones.iter().any(|(z, _)| *z == info.cq_zone) {
         tags.push(NeedTag::NewZone);
     }
     // Grid need — a 4-char Maidenhead square never worked ON THIS BAND, independent
@@ -236,11 +241,13 @@ pub fn score(
             tags.push(NeedTag::NewGrid);
         }
     }
-    // State need — a US state never worked on this band (WAS). Gate on a US-family
-    // entity like the sibling paths (awards.rs / dxped.rs) do: non-US subdivision
-    // codes collide with US postal codes (Australian "WA", Brazilian "SC"/"PA",
-    // Canadian provinces), so a resolved state on a foreign entity must NOT count
-    // toward WAS. The worked-states set holds canonical (valid_state) codes.
+    // State need — a US state never worked on this band (WAS). UNLIKE zones (basic WAZ,
+    // above), states stay PER BAND: 2 m WAS is its own hard achievement, so a state worked
+    // on HF is genuinely new again on 2 m (pinned by `a_state_worked_on_hf_is_new_again_on_2m`).
+    // Gate on a US-family entity like the sibling paths (awards.rs / dxped.rs): non-US
+    // subdivision codes collide with US postal codes (Australian "WA", Brazilian "SC"/"PA",
+    // Canadian provinces), so a resolved state on a foreign entity must NOT count. The
+    // worked-states set holds canonical (valid_state) codes.
     if let Some(s) = st {
         if matches!(info.entity, "United States" | "Alaska" | "Hawaii")
             && !heard_on.is_some_and(|b| worked_states.contains(&(s.to_string(), b)))
@@ -1145,11 +1152,42 @@ mod tests {
             "Japan not yet worked on 40m: {:?}",
             a.tags
         );
-        // …and CQ zone 25 is worked on 20 m ONLY, so 40 m is a new zone slot too —
-        // WAZ is credited per band (5BWAZ), so a zone does not carry across bands.
-        // NewZone (70) outranks the band slot (50) and leads the row.
-        assert_eq!(a.tags, vec![NeedTag::NewZone, NeedTag::NewBand]);
-        assert_eq!(a.priority, 70);
+        // …but CQ zone 25 was already worked (on 20 m). WAZ is a basic worked-anywhere
+        // award (5BWAZ is a separate one), so a zone worked on another band is NOT a new
+        // zone — only the entity's new-band slot remains. (Operator ruling 2026-07-23.)
+        assert_eq!(a.tags, vec![NeedTag::NewBand]);
+        assert_eq!(a.priority, 50);
+    }
+
+    #[test]
+    fn a_zone_worked_on_another_band_is_not_a_new_zone() {
+        // Operator 2026-07-23: a WAZ-complete op kept getting zone alerts on 15 m for zones
+        // already worked on OTHER bands. WAZ is worked-anywhere, so a zone in the log is
+        // covered regardless of band — the entity may still be a new 15 m band-slot, but the
+        // zone itself must not re-alert.
+        let mut n = LogNeeds::new();
+        n.add("JA1XYZ", "20m", "FT8", None, None, true); // Japan / zone 25 worked+confirmed on 20 m
+        let a = score(
+            "JA1ABC",
+            "15m",
+            "FT8",
+            None,
+            None,
+            &n,
+            n.worked_zones(),
+            n.worked_grids(),
+            &HashSet::new(),
+        );
+        // Japan is a new band-slot on 15 m (Challenge IS per band), but zone 25 is NOT new.
+        let tags = a.map(|x| x.tags).unwrap_or_default();
+        assert!(
+            !tags.contains(&NeedTag::NewZone),
+            "zone 25 worked on 20 m must not re-alert on 15 m: {tags:?}"
+        );
+        assert!(
+            tags.contains(&NeedTag::NewBand),
+            "Japan is still a new 15 m band-slot: {tags:?}"
+        );
     }
 
     #[test]
