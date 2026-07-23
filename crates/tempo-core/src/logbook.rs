@@ -950,12 +950,20 @@ fn csv_cell(s: &str) -> String {
 /// Import dedup identity: call (upper) + band (lower) + mode (upper) + UTC day.
 /// Needs-grade (preserves distinct QSOs, ignores re-imports), not award-grade.
 type DedupKey = (String, String, String, u64);
+/// Import-dedup identity: call + band + mode + the EXACT contact time. It once keyed
+/// on the UTC *day* (`when_unix / 86_400`), which silently dropped genuinely distinct
+/// QSOs that share a day — a rover working the same station from two grids hours apart,
+/// or any second QSO after a band/opening change (measured: 35% of a real rover log,
+/// 511 of an 11k master log). Keying on the exact second still collapses a true
+/// re-import (identical timestamps) while preserving those distinct contacts. A
+/// same-QSO pair whose sources disagree by a few seconds is now kept twice — benign
+/// over-retention the operator can merge, versus the old silent data loss.
 fn dedup_key(r: &QsoRecord) -> DedupKey {
     (
         r.call.to_ascii_uppercase(),
         r.band.to_ascii_lowercase(),
         r.mode.to_ascii_uppercase(),
-        r.when_unix / 86_400,
+        r.when_unix,
     )
 }
 
@@ -1267,6 +1275,34 @@ fn unix_from_ymdhms(y: i32, m: u32, d: u32, h: u32, mi: u32, s: u32) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Regression for the operator's "export drops oldest QSOs" report (2026-07-23). Root
+    // cause was import dedup keying on the UTC DAY, which collapsed genuinely distinct QSOs
+    // sharing a day — measured 35% loss on a real rover log (same station worked from two
+    // grids hours apart). Two contacts an hour apart must BOTH survive; an exact re-import
+    // of the same second must still collapse to one.
+    #[test]
+    fn import_keeps_distinct_qsos_same_day_but_dedups_identical_timestamp() {
+        // Build an ADIF record for N7ABC on 6m FT8 at `secs`-past-midnight on 2025-07-19.
+        let mk = |secs: u64| {
+            let hhmmss = (secs / 3600) * 10_000 + ((secs % 3600) / 60) * 100 + (secs % 60);
+            format!(
+                "<CALL:5>N7ABC<BAND:2>6m<MODE:3>FT8<QSO_DATE:8>20250719<TIME_ON:6>{hhmmss:06}<EOR>\n"
+            )
+        };
+        // Same station/band/mode/day, but 14:00:00 and 15:00:00 — two distinct contacts.
+        let adif = format!("Nexus\n<EOH>\n{}{}", mk(14 * 3600), mk(15 * 3600));
+        let mut lb = Logbook::new();
+        let (added, skipped) = lb.import_adif(&adif);
+        assert_eq!(added.len(), 2, "two distinct-time QSOs must both import (was 1 — data loss)");
+        assert_eq!(skipped, 0);
+        // An identical second (a true re-import of the very same QSO) still collapses to one.
+        let same = format!("Nexus\n<EOH>\n{}{}", mk(14 * 3600), mk(14 * 3600));
+        let mut lb2 = Logbook::new();
+        let (added2, skipped2) = lb2.import_adif(&same);
+        assert_eq!(added2.len(), 1, "identical-timestamp duplicate must dedup to one");
+        assert_eq!(skipped2, 1);
+    }
 
     fn rec(call: &str, band: &str, when: u64) -> QsoRecord {
         QsoRecord {
