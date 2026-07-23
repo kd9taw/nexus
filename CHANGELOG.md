@@ -5,6 +5,61 @@ All notable changes to Nexus (formerly Tempo) are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.1] — 2026-07-22 — A nav rail you can reorder, per-mode power limits, a clearer decode feed, and a batch of quiet fixes
+
+### Added
+
+- **Reorder the left nav rail.** Drag the situational/logging section icons (Connect, Needed,
+  Spots, Logbook, Awards, Stats…) into whatever order you want; it sticks across restarts, and a
+  **Reset order** button appears once you've customized. The operating group (Phone/CW/Digital)
+  and Settings keep their fixed spots. *(Fixing this surfaced that drag-and-drop was dead
+  app-wide — see Fixed.)*
+- **Per-mode maximum-power ceiling.** Settings ▸ Rig now takes a separate power cap for Phone,
+  CW, and Digital. Set one and Nexus clamps commanded RF power to it — and re-clamps when you
+  switch *into* a capped mode from a hotter one. A safety rail for the duty-cycle-heavy modes so
+  a full-power SSB setting can't carry into an FT8 or RTTY session.
+- **US state borders on the Logbook globe.** The 3-D "world of contacts" globe now draws state
+  lines under your contact dots, so you can read which state a dot sits in — the same reference
+  layer Connect uses.
+- **DXCC vs BAND in the decode feed.** The old highlight tagged any entity new on the current
+  band as `DXCC`, so an entity you'd worked before on another band looked identical to a genuine
+  new country. Now a true all-time-new one shows **DXCC** (magenta, matching the Needed board's
+  NEW ONE) and a new band-slot shows a dimmer **BAND** (orange) — a band-slot never masquerades
+  as a new country again.
+- **Log a contact from another radio.** The "Log this QSO" form now has editable band, frequency,
+  mode, and UTC time, so a contact made on a rig Nexus isn't driving can be logged correctly.
+
+### Changed
+
+- **The Logbook map is the 3-D globe only.** The 2-D flat map was removed — the globe is the map.
+- **The Needed board is band- and privilege-aware.** A grid or entity worked on 20 m reads as new
+  again on 2 m (per-band, as awards are counted), and a spot you don't have TX privileges for is
+  no longer flagged as a "need."
+
+### Fixed
+
+- **FT8: the closing 73 now goes out before auto-CQ resumes.** When a caller answered your CQ
+  with a bare report, Nexus could jump straight back to calling CQ without sending the final 73.
+  Fixed and **confirmed on the air.**
+- **Drag-and-drop worked nowhere in the app.** Tauri's OS-level drag-drop handler was intercepting
+  every HTML5 drag before the page saw it; it's now disabled on the main window (the app uses no
+  OS file-drop, so nothing else is affected).
+- **A zero FREQ is omitted on export.** A `FREQ 0` in exported ADIF made downstream loggers
+  (Swisslog and others) reject the imported QSOs — the likely cause of contacts "missing" after
+  an import.
+- **The raw logbook is backed up on load.** A lossy ADIF parse could permanently truncate the
+  log; a `.bak` is now written before load so the original is always recoverable.
+- **FM stopped following the operator down to HF** — changing bands no longer commands FM on 20 m.
+- **Two windows no longer fight over layout.** Per-window (surface-scoped) browser storage, so a
+  popped-out window keeps its own arrangement instead of overwriting the main window's.
+- **Activity-by-hour** no longer piles time-less imported QSOs at midnight.
+- A caller's **grid is backfilled from the roster** when they answer your CQ with a bare report.
+
+### Under the hood
+
+- The per-chain decoder foundation for multi-radio (Phase 1a) landed but stays **inert** — no
+  behavior change; groundwork for simultaneous decode across radios in a later release.
+
 ## [0.15.0] — 2026-07-21 — TempoFast & TempoDeep, panels you can remove, DXKeeper, and two silent data-loss bugs found
 
 ### Fixed — two ways QSOs were quietly being lost
