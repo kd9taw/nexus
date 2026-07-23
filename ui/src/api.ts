@@ -210,6 +210,25 @@ export async function fetchLotwUsers(): Promise<LotwUsersStatus> {
   return invoke<LotwUsersStatus>('fetch_lotw_users')
 }
 
+export interface FccStatesStatus {
+  count: number
+  fetchedAt: number
+  generated: string
+}
+
+/** How many FCC callsign→state entries are loaded + when the index was fetched.
+ * Drives the WAS "New State" hint for grid-less cluster/CW/SSB spots. */
+export async function getFccStatesStatus(): Promise<FccStatesStatus> {
+  return invoke<FccStatesStatus>('get_fcc_states_status')
+}
+
+/** Download/refresh the FCC callsign→state index (hosted on hamradiotools.io,
+ * regenerated weekly from the FCC ULS file). Auto-refreshes on startup when stale;
+ * this is the manual button. Resolves with the new status (unchanged if already current). */
+export async function fetchFccStates(): Promise<FccStatesStatus> {
+  return invoke<FccStatesStatus>('fetch_fcc_states')
+}
+
 /** The 60 s X-ray fast lane — the freshest GOES long-band flux, so a flare's
  * onset reaches the map + alert in ~1 min instead of the 5-min prop cadence. */
 export async function getXrayNow(): Promise<import('./types').XrayNow> {

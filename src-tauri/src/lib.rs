@@ -2380,6 +2380,167 @@ async fn fetch_lotw_users() -> Result<LotwUsersStatus, String> {
     }
 }
 
+// --- FCC callsign→state index (downloaded to the SHARED data dir; the WAS New-State hint on
+// grid-less spots). Mirrors the LoTW-users pattern above. ---
+const FCC_STATES_BASE: &str = "https://hamradiotools.io/nexus";
+static FCC_STATES: std::sync::LazyLock<std::sync::RwLock<Option<propagation::FccStates>>> =
+    std::sync::LazyLock::new(|| std::sync::RwLock::new(None));
+
+#[derive(serde::Serialize, serde::Deserialize, Default, Clone)]
+struct FccStatesMeta {
+    /// The manifest's `generated` ISO timestamp of the index we hold — the freshness key.
+    generated: String,
+    count: usize,
+    fetched_at: i64,
+}
+
+fn fcc_states_path() -> PathBuf {
+    shared_data_dir().join("fcc-states.bin")
+}
+fn fcc_states_meta_path() -> PathBuf {
+    shared_data_dir().join("fcc-states.meta.json")
+}
+
+#[derive(serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct FccStatesStatus {
+    count: usize,
+    fetched_at: i64,
+    generated: String,
+}
+
+fn fcc_meta() -> FccStatesMeta {
+    std::fs::read_to_string(fcc_states_meta_path())
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+fn fcc_status() -> FccStatesStatus {
+    let m = fcc_meta();
+    FccStatesStatus {
+        count: FCC_STATES
+            .read()
+            .ok()
+            .and_then(|g| g.as_ref().map(|d| d.count()))
+            .unwrap_or(0),
+        fetched_at: m.fetched_at,
+        generated: m.generated,
+    }
+}
+
+/// Load the cached `fcc-states.bin` into the resolver (call at startup). A missing/corrupt file
+/// just leaves the resolver empty — the grid hint still works and a fetch can populate it.
+fn fcc_load_from_disk() {
+    if let Ok(bytes) = std::fs::read(fcc_states_path()) {
+        if let Some(db) = propagation::FccStates::load(bytes) {
+            if let Ok(mut g) = FCC_STATES.write() {
+                *g = Some(db);
+            }
+        }
+    }
+}
+
+/// Best-guess US state for a callsign from the loaded FCC index, or `None` (non-US / not loaded).
+fn fcc_state_for_call(call: &str) -> Option<&'static str> {
+    FCC_STATES.read().ok()?.as_ref()?.state_for_call(call)
+}
+
+/// Best US-state hint for the WAS "New State" cue, combining the two sources by reliability.
+/// The FCC callsign→state index is the baseline — the licensed/home state, precise and with no
+/// 4-char-grid border error, and it works with no grid at all (the whole cluster/CW/SSB firehose).
+/// A live decode grid REFINES it: when the grid is precise enough (6+ chars, no border ambiguity)
+/// and disagrees with the license, the op is operating away from home (rover/portable) → trust
+/// where they actually are. A coarse 4-char grid can straddle a state line, so it only fills in
+/// when FCC has nothing — it never overrides the FCC baseline. (Actual WAS credit still comes from
+/// the confirmed QSO's logged ADIF STATE; this only drives the "needed" hint.)
+fn us_state_hint(call: &str, grid: Option<&str>) -> Option<String> {
+    let fcc = fcc_state_for_call(call);
+    let grid = grid.map(str::trim).filter(|g| !g.is_empty());
+    let grid_state = grid.and_then(propagation::state_for_grid);
+    let precise_grid = grid.map_or(false, |g| g.len() >= 6);
+    match (fcc, grid_state) {
+        (Some(_), Some(gs)) if precise_grid => Some(gs.to_string()), // rover: trust the decode
+        (Some(f), _) => Some(f.to_string()),                         // FCC baseline
+        (None, Some(gs)) => Some(gs.to_string()),                    // non-FCC call, grid is all we have
+        (None, None) => None,
+    }
+}
+
+#[tauri::command]
+fn get_fcc_states_status() -> FccStatesStatus {
+    fcc_status()
+}
+
+/// BLOCKING: download the index if the hosted manifest is newer than what we hold (or we hold
+/// nothing), VALIDATE it (a corrupt download never replaces a good local copy), persist it to the
+/// shared data dir, and swap it into the live resolver. Returns Ok(true) when it installed a new
+/// index. Shared by the Settings button + the startup auto-refresh.
+fn fcc_download_if_newer() -> Result<bool, String> {
+    let local = fcc_meta();
+    let have = fcc_states_path().exists();
+    let c = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let manifest: serde_json::Value = c
+        .get(format!("{FCC_STATES_BASE}/fcc-states.json"))
+        .send()
+        .map_err(|e| e.to_string())?
+        .error_for_status()
+        .map_err(|e| e.to_string())?
+        .json()
+        .map_err(|e| e.to_string())?;
+    let generated = manifest
+        .get("generated")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string();
+    if !generated.is_empty() && generated == local.generated && have {
+        return Ok(false); // already current
+    }
+    let bytes = c
+        .get(format!("{FCC_STATES_BASE}/fcc-states.bin"))
+        .send()
+        .map_err(|e| e.to_string())?
+        .error_for_status()
+        .map_err(|e| e.to_string())?
+        .bytes()
+        .map_err(|e| e.to_string())?
+        .to_vec();
+    let count = propagation::FccStates::load(bytes.clone())
+        .ok_or("downloaded index is not a valid NEXFCCS1 file")?
+        .count();
+    if let Some(dir) = fcc_states_path().parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    std::fs::write(fcc_states_path(), &bytes).map_err(|e| e.to_string())?;
+    let _ = std::fs::write(
+        fcc_states_meta_path(),
+        serde_json::to_string(&FccStatesMeta {
+            generated,
+            count,
+            fetched_at: now_unix(),
+        })
+        .unwrap_or_default(),
+    );
+    if let Some(db) = propagation::FccStates::load(bytes) {
+        if let Ok(mut g) = FCC_STATES.write() {
+            *g = Some(db);
+        }
+    }
+    Ok(true)
+}
+
+/// The Settings "Update callsign database" button (and a manual refresh).
+#[tauri::command]
+async fn fetch_fcc_states() -> Result<FccStatesStatus, String> {
+    tauri::async_runtime::spawn_blocking(fcc_download_if_newer)
+        .await
+        .map_err(|e| e.to_string())??;
+    Ok(fcc_status())
+}
+
 /// Where fetched TLEs persist (beside settings.json): day-scale orbital elements,
 /// so surviving a restart matters more than freshness-to-the-minute.
 fn tles_path() -> PathBuf {
@@ -6157,12 +6318,11 @@ fn get_all_spots(spots: State<'_, SharedSpots>, state: State<'_, SharedEngine>) 
             let (entity, zone) = propagation::dxcc::resolve(&cs.dx_call)
                 .map(|i| (i.entity.to_string(), i.cq_zone))
                 .unwrap_or_default();
-            // US state from the roster's cached grid, when this station was heard before with one.
-            let state = eng
-                .as_ref()
-                .and_then(|e| e.roster_grid(&cs.dx_call))
-                .and_then(propagation::state_for_grid)
-                .map(str::to_string);
+            // US state hint (drives New-State): FCC callsign→state baseline (precise, no grid
+            // needed → covers this whole cluster/CW/SSB firehose), refined by the roster's cached
+            // decode grid for rovers. See us_state_hint.
+            let roster_grid = eng.as_ref().and_then(|e| e.roster_grid(&cs.dx_call));
+            let state = us_state_hint(&cs.dx_call, roster_grid.as_deref());
             let age_secs = if cs.received_unix > 0 {
                 (now - cs.received_unix as i64).max(0)
             } else {
@@ -6258,12 +6418,9 @@ async fn get_need_alerts(
             admitted_at: None,
             evidence: Some("decoded by YOUR radio on this band".to_string()),
             grid: s.grid.clone(), // own decode's Maidenhead grid → drives NewGrid
-            // Best-guess US state from the grid (drives the WAS NewState hint).
-            us_state: s
-                .grid
-                .as_deref()
-                .and_then(propagation::state_for_grid)
-                .map(|st| st.to_string()),
+            // US state hint (drives WAS NewState): FCC baseline refined by this live decode grid —
+            // a precise 6-char grid that disagrees with the license means a rover. See us_state_hint.
+            us_state: us_state_hint(&s.call, s.grid.as_deref()),
         })
         .collect();
     // The real value (empirical evidence, not a model): two complementary signals
@@ -9749,6 +9906,23 @@ pub fn run() {
             }
         }
         eng.set_grid_rarity_resolver(propagation::gridrarity::effective_tier_u8);
+        // FCC callsign→state index: load the cached copy into the resolver, then auto-refresh in
+        // the background when it's missing or > 7 days old (the FCC file refreshes weekly). The
+        // whole thing is optional — a station with no download just falls back to the grid hint.
+        fcc_load_from_disk();
+        {
+            let stale = {
+                let m = fcc_meta();
+                m.fetched_at == 0 || now_unix() - m.fetched_at > 7 * 86_400
+            };
+            if stale {
+                std::thread::spawn(|| {
+                    if let Err(e) = fcc_download_if_newer() {
+                        eprintln!("tempo: FCC callsign→state auto-refresh failed: {e}");
+                    }
+                });
+            }
+        }
         // LoTW-user marks: restore the persisted ARRL activity list (if the
         // operator ever fetched it) and wire the recency-windowed resolver.
         if let Ok(csv) = std::fs::read_to_string(lotw_users_path()) {
@@ -10300,6 +10474,8 @@ pub fn run() {
             post_spot,
             get_lotw_users_status,
             fetch_lotw_users,
+            get_fcc_states_status,
+            fetch_fcc_states,
             get_kc2g_muf,
             get_space_wx_scales,
             get_xray_now,

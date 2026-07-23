@@ -45,6 +45,7 @@ import { pushToast, withErrorToast } from '../toast'
 import { loadProfiles, saveProfile, deleteProfile, type Profile } from '../profiles'
 import { getConnectionLog, getCredentialsStatus } from '../api'
 import { fetchLotwUsers, getLotwUsersStatus, type LotwUsersStatus } from '../api'
+import { fetchFccStates, getFccStatesStatus, type FccStatesStatus } from '../api'
 import { discoverFlex } from '../api'
 import { civDiagnosticLog, civDiagnosticStatus } from '../api'
 import { allTxtLocation, revealAllTxt } from '../api'
@@ -345,6 +346,14 @@ export function SettingsPanel({
   useEffect(() => {
     getLotwUsersStatus()
       .then(setLotwUsers)
+      .catch(() => {})
+  }, [])
+  // FCC callsign→state index (drives New-State on grid-less cluster/CW/SSB spots).
+  const [fccStates, setFccStates] = useState<FccStatesStatus | null>(null)
+  const [fccFetching, setFccFetching] = useState(false)
+  useEffect(() => {
+    getFccStatesStatus()
+      .then(setFccStates)
       .catch(() => {})
   }, [])
   // "Saved" must not linger forever (it read as a stale artifact) — fade it out.
@@ -4810,6 +4819,50 @@ export function SettingsPanel({
               <span className="settings-hint">
                 ARRL's activity list updates weekly — refetching more often just returns
                 "unchanged". Manual fetch by design (WSJT-X convention).
+              </span>
+            </div>
+          </fieldset>
+
+          <fieldset className="settings-section">
+            <legend>Callsign → state database</legend>
+            <div className="settings-field">
+              <div className="lotw-users-row">
+                <button
+                  type="button"
+                  className="settings-test-btn"
+                  disabled={fccFetching}
+                  onClick={() => {
+                    setFccFetching(true)
+                    fetchFccStates()
+                      .then((st) => {
+                        setFccStates(st)
+                        pushToast(
+                          `Callsign→state database updated — ${st.count.toLocaleString()} US calls`,
+                          'success',
+                          5000,
+                        )
+                      })
+                      .catch((e) =>
+                        pushToast(
+                          `Callsign→state update failed: ${e instanceof Error ? e.message : e}`,
+                          'error',
+                        ),
+                      )
+                      .finally(() => setFccFetching(false))
+                  }}
+                >
+                  {fccFetching ? 'Updating…' : 'Update now'}
+                </button>
+                <span className="settings-hint">
+                  {fccStates && fccStates.count > 0
+                    ? `${fccStates.count.toLocaleString()} US calls · fetched ${new Date(fccStates.fetchedAt * 1000).toISOString().slice(0, 10)}`
+                    : 'Not loaded yet — downloads on first launch, then auto-refreshes weekly.'}
+                </span>
+              </div>
+              <span className="settings-hint">
+                A callsign→state index (from the FCC license file) so a New State lights up on
+                cluster / CW / SSB spots that carry no grid. Refreshed weekly from
+                hamradiotools.io; a live decode grid refines it for rovers.
               </span>
             </div>
           </fieldset>
