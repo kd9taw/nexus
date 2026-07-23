@@ -22,6 +22,8 @@ const WAZ_ZONES = 40
 const WAS_STATES = 50
 /** Grid squares for VUCC (6m/2m — the headline VHF grid award). */
 const VUCC_GRIDS = 100
+/** Island groups for basic IOTA (Islands On The Air). */
+const IOTA_ISLANDS = 100
 
 type NeedSort = 'entity' | 'bands'
 
@@ -488,6 +490,28 @@ export function AwardsView({ showGamification = true }: { showGamification?: boo
               ? 'VUCC ✓'
               : `${VUCC_GRIDS - aw.vucc.confirmed} grids to go`}{' '}
             · {aw.vucc.worked} worked (all bands)
+          </span>
+        </div>
+
+        <div className={`aw-card${aw.iota.confirmed >= IOTA_ISLANDS ? ' aw-card-elite' : ''}`}>
+          <span className="aw-k">
+            <Globe2 size={13} aria-hidden="true" /> IOTA
+          </span>
+          <span className="aw-v">
+            {aw.iota.confirmed}
+            <span className="aw-of"> / {IOTA_ISLANDS}</span>
+          </span>
+          <div className="aw-bar">
+            <div
+              className="aw-fill good"
+              style={{ width: `${Math.min(100, (aw.iota.confirmed / IOTA_ISLANDS) * 100)}%` }}
+            />
+          </div>
+          <span className="aw-note">
+            {aw.iota.confirmed >= IOTA_ISLANDS
+              ? 'IOTA ✓'
+              : `${IOTA_ISLANDS - aw.iota.confirmed} islands to go`}{' '}
+            · {aw.iota.worked} worked
           </span>
         </div>
       </div>

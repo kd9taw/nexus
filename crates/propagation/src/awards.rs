@@ -173,6 +173,15 @@ pub struct VuccProgress {
     pub bands: Vec<BandAward>,
 }
 
+/// IOTA (Islands On The Air) progress — distinct island-group references worked /
+/// confirmed. Basic IOTA = 100 confirmed groups.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct IotaProgress {
+    pub worked: usize,
+    pub confirmed: usize,
+}
+
 /// Worked All States progress (50 US states; LoTW/paper confirmed, eQSL excluded).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -232,6 +241,8 @@ pub struct AwardSummary {
     pub was: WasProgress,
     /// VUCC — Maidenhead grid squares worked / confirmed, overall and per band.
     pub vucc: VuccProgress,
+    /// IOTA — island-group references worked / confirmed.
+    pub iota: IotaProgress,
     /// The WORK chase (elite "every-band" tracker): entities already worked on
     /// most award bands but NOT yet on a few — the bands listed are ones to WORK
     /// (a new contact, not just a confirmation). Closest-to-complete first.
@@ -266,6 +277,9 @@ pub struct Awards {
     /// VUCC — distinct Maidenhead grid squares (4-char field) worked / confirmed per band.
     worked_grid_band: HashSet<(String, Band)>,
     confirmed_grid_band: HashSet<(String, Band)>,
+    /// IOTA — distinct island-group references ("NA-001") worked / confirmed.
+    worked_iota: HashSet<String>,
+    confirmed_iota: HashSet<String>,
     /// The operator's own DXCC entity (resolved from mycall), so DX-oriented
     /// achievements can count entities OTHER than home. None until set.
     home_entity: Option<&'static str>,
@@ -289,7 +303,7 @@ impl Awards {
     /// still counts toward total QSOs but not DXCC; a band label that doesn't
     /// parse counts the entity but no slot.
     pub fn add(&mut self, call: &str, band: &str, mode: &str, confirmed: bool) {
-        self.add_with_credit(call, band, mode, confirmed, false, None, None)
+        self.add_with_credit(call, band, mode, confirmed, false, None, None, None)
     }
 
     /// As [`add`](Self::add), plus `credited` — whether ARRL has **granted** DXCC
@@ -306,6 +320,7 @@ impl Awards {
         credited: bool,
         state: Option<&str>,
         grid: Option<&str>,
+        iota: Option<&str>,
     ) {
         self.qsos += 1;
         if confirmed {
@@ -317,6 +332,14 @@ impl Awards {
             self.worked_grid_band.insert((g.clone(), b));
             if confirmed {
                 self.confirmed_grid_band.insert((g, b));
+            }
+        }
+        // IOTA — island groups (independent of DXCC/band). The ref is validated at parse
+        // time; trim + uppercase for a canonical key.
+        if let Some(i) = iota.map(|s| s.trim().to_ascii_uppercase()).filter(|s| !s.is_empty()) {
+            self.worked_iota.insert(i.clone());
+            if confirmed {
+                self.confirmed_iota.insert(i);
             }
         }
         let resolved = dxcc::resolve(call);
@@ -504,6 +527,10 @@ impl Awards {
                 })
                 .collect(),
         };
+        let iota = IotaProgress {
+            worked: self.worked_iota.len(),
+            confirmed: self.confirmed_iota.len(),
+        };
 
         // 5-Band DXCC + the WORK chase: per-entity award-band completeness.
         let aw_set: std::collections::HashSet<Band> = AWARD_BANDS.iter().copied().collect();
@@ -661,6 +688,7 @@ impl Awards {
             honor_roll,
             was,
             vucc,
+            iota,
             band_targets,
         }
     }
@@ -797,9 +825,9 @@ mod tests {
     #[test]
     fn credited_tier_and_ready_to_submit() {
         let mut a = Awards::new();
-        a.add_with_credit("W1AW", "20m", "CW", true, true, None, None); // confirmed + DXCC credited
-        a.add_with_credit("JA1XYZ", "20m", "FT8", true, false, None, None); // confirmed, not credited
-        a.add_with_credit("DL1ABC", "20m", "CW", false, false, None, None); // worked only
+        a.add_with_credit("W1AW", "20m", "CW", true, true, None, None, None); // confirmed + DXCC credited
+        a.add_with_credit("JA1XYZ", "20m", "FT8", true, false, None, None, None); // confirmed, not credited
+        a.add_with_credit("DL1ABC", "20m", "CW", false, false, None, None, None); // worked only
         let s = a.summary();
         assert_eq!(s.dxcc_worked, 3);
         assert_eq!(s.dxcc_confirmed, 2, "USA + Japan confirmed");
@@ -814,7 +842,7 @@ mod tests {
         // credited without a confirmation must NOT inflate credited (credited ≤
         // confirmed always holds — a malformed credit-only report row).
         let mut c = Awards::new();
-        c.add_with_credit("W1AW", "20m", "CW", false, true, None, None);
+        c.add_with_credit("W1AW", "20m", "CW", false, true, None, None, None);
         let s = c.summary();
         assert_eq!(s.dxcc_confirmed, 0);
         assert_eq!(s.dxcc_credited, 0, "credit without confirmation is ignored");
@@ -825,14 +853,14 @@ mod tests {
         let mut a = Awards::new();
         // 3 states confirmed (incl. Hawaii/Alaska — separate DXCC entities), one
         // worked-but-unconfirmed, plus a junk STATE that must be ignored.
-        a.add_with_credit("KH6AA", "20m", "FT8", true, false, Some("HI"), None);
-        a.add_with_credit("KL7AA", "20m", "FT8", true, false, Some("ak"), None); // lowercase ok
-        a.add_with_credit("W1AW", "20m", "CW", true, false, Some("CT"), None);
-        a.add_with_credit("K5XYZ", "20m", "FT8", false, false, Some("TX"), None); // worked, unconf
-        a.add_with_credit("DL1ABC", "20m", "FT8", true, false, Some("ZZ"), None); // junk → ignored
+        a.add_with_credit("KH6AA", "20m", "FT8", true, false, Some("HI"), None, None);
+        a.add_with_credit("KL7AA", "20m", "FT8", true, false, Some("ak"), None, None); // lowercase ok
+        a.add_with_credit("W1AW", "20m", "CW", true, false, Some("CT"), None, None);
+        a.add_with_credit("K5XYZ", "20m", "FT8", false, false, Some("TX"), None, None); // worked, unconf
+        a.add_with_credit("DL1ABC", "20m", "FT8", true, false, Some("ZZ"), None, None); // junk → ignored
                                                                             // Australian "WA" (Western Australia) must NOT credit Washington — WAS is
                                                                             // gated on a US-family entity, so a VK6 contact never advances WA.
-        a.add_with_credit("VK6AA", "20m", "FT8", true, false, Some("WA"), None);
+        a.add_with_credit("VK6AA", "20m", "FT8", true, false, Some("WA"), None, None);
         let s = a.summary();
         assert_eq!(s.was.confirmed, 3, "HI, AK, CT confirmed (VK6/WA rejected)");
         assert_eq!(s.was.worked, 4, "+ TX worked");
@@ -847,7 +875,7 @@ mod tests {
         // 5BWAS: Rhode Island confirmed on all 5 award bands.
         let mut b = Awards::new();
         for band in ["80m", "40m", "20m", "15m", "10m"] {
-            b.add_with_credit("W1RI", band, "FT8", true, false, Some("RI"), None);
+            b.add_with_credit("W1RI", band, "FT8", true, false, Some("RI"), None, None);
         }
         let s = b.summary();
         assert_eq!(s.was.five_band_confirmed, 1, "RI on all 5 bands");
@@ -856,12 +884,12 @@ mod tests {
     #[test]
     fn vucc_counts_distinct_grids_per_band_and_rejects_junk() {
         let mut a = Awards::new();
-        a.add_with_credit("K1ABC", "6m", "FT8", true, false, None, Some("FN31")); // confirmed
-        a.add_with_credit("K1ABC", "6m", "FT8", false, false, None, Some("FN31")); // dup grid
-        a.add_with_credit("W2DEF", "6m", "FT8", false, false, None, Some("FN20"));
-        a.add_with_credit("K1ABC", "2m", "FT8", false, false, None, Some("FN31")); // same grid, new band
-        a.add_with_credit("W3GHI", "6m", "FT8", false, false, None, Some("FN31aa")); // 6-char → FN31 square
-        a.add_with_credit("W4JKL", "6m", "FT8", false, false, None, Some("garbage")); // rejected
+        a.add_with_credit("K1ABC", "6m", "FT8", true, false, None, Some("FN31"), None); // confirmed
+        a.add_with_credit("K1ABC", "6m", "FT8", false, false, None, Some("FN31"), None); // dup grid
+        a.add_with_credit("W2DEF", "6m", "FT8", false, false, None, Some("FN20"), None);
+        a.add_with_credit("K1ABC", "2m", "FT8", false, false, None, Some("FN31"), None); // same grid, new band
+        a.add_with_credit("W3GHI", "6m", "FT8", false, false, None, Some("FN31aa"), None); // 6-char → FN31 square
+        a.add_with_credit("W4JKL", "6m", "FT8", false, false, None, Some("garbage"), None); // rejected
         let s = a.summary();
         assert_eq!(s.vucc.worked, 2, "FN31 + FN20 = 2 distinct grids overall (FN31 not double-counted across bands)");
         assert_eq!(s.vucc.confirmed, 1, "only FN31 was confirmed");
@@ -869,6 +897,18 @@ mod tests {
         assert_eq!((six.worked, six.confirmed), (2, 1), "6m: FN31 + FN20, one confirmed");
         let two = s.vucc.bands.iter().find(|b| b.band == "2m").unwrap();
         assert_eq!(two.worked, 1, "2m: FN31 only");
+    }
+
+    #[test]
+    fn iota_counts_distinct_island_groups_worked_and_confirmed() {
+        let mut a = Awards::new();
+        a.add_with_credit("GM0ABC", "20m", "CW", true, false, None, None, Some("EU-008")); // confirmed
+        a.add_with_credit("GM1DEF", "40m", "FT8", false, false, None, None, Some("EU-008")); // same group
+        a.add_with_credit("KH6XYZ", "20m", "FT8", false, false, None, None, Some("OC-019"));
+        a.add_with_credit("W1AW", "20m", "CW", true, false, None, None, None); // no island
+        let s = a.summary();
+        assert_eq!(s.iota.worked, 2, "EU-008 + OC-019 distinct groups");
+        assert_eq!(s.iota.confirmed, 1, "only EU-008 was confirmed");
     }
 
     #[test]

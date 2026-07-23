@@ -5789,6 +5789,7 @@ fn get_awards(state: State<'_, SharedEngine>) -> Result<propagation::AwardSummar
             credited,
             q.state.as_deref(),
             q.grid.as_deref(),
+            q.ota.iota.as_deref(),
         );
     }
     Ok(awards.summary())

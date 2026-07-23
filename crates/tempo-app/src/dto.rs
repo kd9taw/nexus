@@ -790,6 +790,8 @@ pub struct OtaDto {
     pub their_program: Option<String>,
     /// The park/summit reference I hunted.
     pub their_ref: Option<String>,
+    /// The worked station's IOTA island-group reference ("NA-001").
+    pub iota: Option<String>,
 }
 
 impl From<tempo_core::logbook::Ota> for OtaDto {
@@ -799,6 +801,7 @@ impl From<tempo_core::logbook::Ota> for OtaDto {
             my_ref: o.my_ref,
             their_program: o.their_program,
             their_ref: o.their_ref,
+            iota: o.iota,
         }
     }
 }
@@ -810,6 +813,7 @@ impl From<OtaDto> for tempo_core::logbook::Ota {
             my_ref: o.my_ref,
             their_program: o.their_program,
             their_ref: o.their_ref,
+            iota: o.iota,
         }
     }
 }

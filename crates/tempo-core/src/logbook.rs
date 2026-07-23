@@ -175,12 +175,18 @@ pub struct QslSent {
 /// Parks/Summits On The Air tags on a contact: your activation (`my_*`) and/or the
 /// activator you worked (hunter side). `program` is "POTA"/"SOTA"; `reference` is the
 /// park/summit id (e.g. "K-1234" / "W7A/MN-001"). All-`None` = an ordinary contact.
+///
+/// Also carries the worked station's IOTA island-group ref — a separate award kept here
+/// as a sibling on-the-air location reference (IOTA is the original "On The Air" program),
+/// in its own field so a single QSO can be both a POTA park AND an island.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Ota {
     pub my_program: Option<String>,
     pub my_ref: Option<String>,
     pub their_program: Option<String>,
     pub their_ref: Option<String>,
+    /// IOTA island-group reference of the worked station (ADIF `IOTA`, e.g. "NA-001").
+    pub iota: Option<String>,
 }
 
 /// Outbound upload outcome for one source (e.g. LoTW via TQSL).
@@ -867,8 +873,24 @@ pub fn adif_record(r: &QsoRecord) -> String {
         &r.ota.their_program,
         &r.ota.their_ref,
     ));
+    // IOTA island-group reference — the standard ADIF `IOTA` field, so exports round-trip
+    // and upload cleanly (LoTW/QRZ/ClubLog all recognize it).
+    if let Some(iota) = r.ota.iota.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        out.push_str(&field("IOTA", iota));
+    }
     out.push_str("<EOR>\n");
     out
+}
+
+/// Normalize + validate an ADIF `IOTA` reference ("NA-001") — a two-letter continent
+/// (AN/AF/AS/EU/NA/OC/SA), a hyphen, then three digits. Returns the uppercased canonical
+/// form, or `None` for a malformed value (so junk never counts toward the award).
+fn valid_iota(raw: &str) -> Option<String> {
+    let s = raw.trim().to_ascii_uppercase();
+    let (cont, num) = s.split_once('-')?;
+    let cont_ok = matches!(cont, "AN" | "AF" | "AS" | "EU" | "NA" | "OC" | "SA");
+    let num_ok = num.len() == 3 && num.bytes().all(|b| b.is_ascii_digit());
+    (cont_ok && num_ok).then_some(s)
 }
 
 /// Like [`adif_record`] but with the operator's `STATION_CALLSIGN` + `MY_GRIDSQUARE` inserted —
@@ -1139,6 +1161,7 @@ fn record_from(f: &std::collections::HashMap<String, String>) -> Option<QsoRecor
         my_ref,
         their_program,
         their_ref,
+        iota: f.get("IOTA").and_then(|s| valid_iota(s)),
     };
     // TIME_OFF / QSO_DATE_OFF (optional contact end). Per ADIF, QSO_DATE_OFF falls back
     // to QSO_DATE when only TIME_OFF is present.
@@ -1535,12 +1558,14 @@ mod tests {
             my_ref: Some("W7A/MN-001".into()),
             their_program: Some("POTA".into()),
             their_ref: Some("K-1234".into()),
+            iota: Some("NA-001".into()),
         };
         let adif = adif_header() + &adif_record(&r);
         // Standard ADIF tags (so pota.app / SOTA DB accept the export), not APP_-fields.
         assert!(adif.contains("<MY_SOTA_REF:10>W7A/MN-001"));
         assert!(adif.contains("<SIG:4>POTA"));
         assert!(adif.contains("<SIG_INFO:6>K-1234"));
+        assert!(adif.contains("<IOTA:6>NA-001"));
         let back = &parse_adif(&adif)[0];
         assert_eq!(back.ota, r.ota, "OTA context survives the ADIF round-trip");
 

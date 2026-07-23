@@ -973,6 +973,8 @@ export interface Ota {
   myRef?: string | null
   theirProgram?: string | null
   theirRef?: string | null
+  /** The worked station's IOTA island-group reference ("NA-001"). */
+  iota?: string | null
 }
 
 /** Per-source upload status (mirror of the Rust UploadStatusDto). */
@@ -1363,6 +1365,13 @@ export interface VuccProgress {
   bands: BandAward[]
 }
 
+/** IOTA (Islands On The Air) progress — distinct island groups worked / confirmed
+ * (basic IOTA = 100 confirmed). */
+export interface IotaProgress {
+  worked: number
+  confirmed: number
+}
+
 /** DXCC Honor Roll standing — current-entity, confirmed. (ARRL: confirmed ≥
  * currentTotal − 9 = Honor Roll; all current entities = #1 Honor Roll.) */
 export interface HonorRollProgress {
@@ -1465,6 +1474,8 @@ export interface AwardSummary {
   was: WasProgress
   /** VUCC — Maidenhead grid squares worked / confirmed, overall and per band. */
   vucc: VuccProgress
+  /** IOTA — island groups worked / confirmed. */
+  iota: IotaProgress
   /** WORK chase: entities worked on most award bands but missing a few — the
    * listed bands are ones to WORK (a new contact). Closest-to-complete first. */
   bandTargets: EntityNeed[]
