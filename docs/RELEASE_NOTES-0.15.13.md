@@ -1,4 +1,4 @@
-# Nexus 0.15.12 — run two radios at once, a New-State hint on every spot, and a much richer Memories section
+# Nexus 0.15.13 — run two radios at once, a New-State hint on every spot, and a much richer Memories section
 
 *2026-07-23*
 
@@ -47,6 +47,8 @@ digital Operate cockpits too.
 ## Smaller things
 
 - **Click a callsign** in the Spots board, Needed board, or decode feed to open it on QRZ.
+- **CAT Auto-test now finds the IC-7610 and IC-9700** (each Icom answers CI-V only at its own
+  address), and the "couldn't identify the model" hint is no longer Yaesu-specific.
 - The **FT waterfall defaults to the familiar 0–3 kHz view** (the WSJT-X span); full-width is one
   click away.
 - The **app version** shows under the Nexus wordmark, top-left.

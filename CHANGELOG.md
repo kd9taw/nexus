@@ -5,7 +5,7 @@ All notable changes to Nexus (formerly Tempo) are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.15.12] — 2026-07-23 — Run two radios at once, a New-State hint on every spot, and a much richer Memories section
+## [0.15.13] — 2026-07-23 — Run two radios at once, a New-State hint on every spot, and a much richer Memories section
 
 _A batched release consolidating the work since 0.15.1 (0.15.2–0.15.11)._
 
@@ -32,6 +32,10 @@ _A batched release consolidating the work since 0.15.1 (0.15.2–0.15.11)._
 - **Live TX meters in the CW and Operate cockpits.** The power / SWR / ALC metering that was
   Phone-only now shows while you transmit in CW and the digital Operate cockpit too.
 - **Click a callsign to open QRZ.** In the Spots board, Needed board, and decode feed.
+- **CAT Auto-test now finds the IC-7610 and IC-9700.** Each Icom answers CI-V only at its own
+  address, so the auto-detect sweep now seeds those two models (not just the IC-7300) — and the
+  "found the port but not the model" hint no longer says "common on Yaesu" to Icom/Kenwood/Elecraft
+  operators.
 - **The app version shows under the Nexus wordmark** (top-left), so you can tell at a glance which
   build you're running.
 
