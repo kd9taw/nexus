@@ -2446,25 +2446,27 @@ fn fcc_state_for_call(call: &str) -> Option<&'static str> {
     FCC_STATES.read().ok()?.as_ref()?.state_for_call(call)
 }
 
-/// Best US-state hint for the WAS "New State" cue, combining the two sources by reliability.
-/// The FCC callsign→state index is the baseline — the licensed/home state, precise and with no
-/// 4-char-grid border error, and it works with no grid at all (the whole cluster/CW/SSB firehose).
-/// A live decode grid REFINES it: when the grid is precise enough (6+ chars, no border ambiguity)
-/// and disagrees with the license, the op is operating away from home (rover/portable) → trust
-/// where they actually are. A coarse 4-char grid can straddle a state line, so it only fills in
-/// when FCC has nothing — it never overrides the FCC baseline. (Actual WAS credit still comes from
-/// the confirmed QSO's logged ADIF STATE; this only drives the "needed" hint.)
+/// Best US-state hint for the WAS "New State" cue. The FCC callsign→state index is authoritative:
+/// it gives the licensed state precisely, needs no grid at all (so it covers the whole cluster /
+/// CW / SSB firehose), and carries no border ambiguity. A heard grid only FILLS IN when FCC has no
+/// record for the call (a non-US call that still carried a grid, or a licensee not in the file) —
+/// it never OVERRIDES FCC. That's deliberate: the grid we get is 4-char (`state_for_grid` resolves
+/// at 4-char granularity), and a 4-char cell straddles state lines, so trusting it over the license
+/// would reintroduce the exact border error this index exists to remove.
+///
+/// (Rover refinement — trusting a portable op's decode grid over their home license — was the
+/// original intent, but it needs subsquare 6-char grid→state resolution we don't have: at 4-char
+/// resolution a home op near a border is indistinguishable from a rover, so any grid override is a
+/// false New-State as often as a real one. Deferred until a 6-char grid→state resolver exists.
+/// Actual WAS credit still comes from the confirmed QSO's logged ADIF STATE; this only hints.)
 fn us_state_hint(call: &str, grid: Option<&str>) -> Option<String> {
-    let fcc = fcc_state_for_call(call);
-    let grid = grid.map(str::trim).filter(|g| !g.is_empty());
-    let grid_state = grid.and_then(propagation::state_for_grid);
-    let precise_grid = grid.map_or(false, |g| g.len() >= 6);
-    match (fcc, grid_state) {
-        (Some(_), Some(gs)) if precise_grid => Some(gs.to_string()), // rover: trust the decode
-        (Some(f), _) => Some(f.to_string()),                         // FCC baseline
-        (None, Some(gs)) => Some(gs.to_string()),                    // non-FCC call, grid is all we have
-        (None, None) => None,
+    if let Some(st) = fcc_state_for_call(call) {
+        return Some(st.to_string());
     }
+    grid.map(str::trim)
+        .filter(|g| !g.is_empty())
+        .and_then(propagation::state_for_grid)
+        .map(str::to_string)
 }
 
 #[tauri::command]
@@ -2497,7 +2499,19 @@ fn fcc_download_if_newer() -> Result<bool, String> {
         .unwrap_or_default()
         .to_string();
     if !generated.is_empty() && generated == local.generated && have {
-        return Ok(false); // already current
+        // Already current — refresh the fetched_at stamp so the 7-day staleness gate doesn't
+        // re-hit the manifest on every launch once the local copy ages past 7 days while the
+        // hosted file hasn't advanced.
+        let _ = std::fs::write(
+            fcc_states_meta_path(),
+            serde_json::to_string(&FccStatesMeta {
+                generated,
+                count: local.count,
+                fetched_at: now_unix(),
+            })
+            .unwrap_or_default(),
+        );
+        return Ok(false);
     }
     let bytes = c
         .get(format!("{FCC_STATES_BASE}/fcc-states.bin"))
@@ -2514,7 +2528,12 @@ fn fcc_download_if_newer() -> Result<bool, String> {
     if let Some(dir) = fcc_states_path().parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    std::fs::write(fcc_states_path(), &bytes).map_err(|e| e.to_string())?;
+    // Atomic install: write a per-process temp then rename, so two radio instances sharing this
+    // dir (shared_data_dir) can never read a half-written / torn index.
+    let final_path = fcc_states_path();
+    let tmp = final_path.with_extension(format!("bin.{}.tmp", std::process::id()));
+    std::fs::write(&tmp, &bytes).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, &final_path).map_err(|e| e.to_string())?;
     let _ = std::fs::write(
         fcc_states_meta_path(),
         serde_json::to_string(&FccStatesMeta {

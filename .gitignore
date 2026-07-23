@@ -52,3 +52,6 @@ pi-out/
 # not compile for two releases (2026-07-20). Keeping notes out of this repo means the
 # published tree IS the tree that gets built and tested — nothing to strip, no drift.
 tasks/
+# ops/ = internal runbooks (hosting, data-refresh cadences). Same rule as tasks/: kept
+# on disk for convenience, never published (they name the private hamtoolssite checkout).
+ops/

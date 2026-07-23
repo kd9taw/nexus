@@ -5,6 +5,47 @@ All notable changes to Nexus (formerly Tempo) are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.11] — 2026-07-23 — Run two radios at once, a New-State hint on every spot, and a much richer Memories section
+
+_A batched release consolidating the work since 0.15.1 (0.15.2–0.15.11)._
+
+### Added
+
+- **Run two radios at the same time.** Nexus can now launch a second full instance pointed at a
+  second rig, each with its own settings, while both share **one logbook**. A launch picker lets
+  you choose which radio a window drives — no shortcuts or command-line flags. The shared log
+  reconciles field-by-field (a contact edited in one window is merged, not clobbered, in the
+  other), and each window keeps its needs fresh as the shared log changes. Set a portable/NAS log
+  location with `NEXUS_DATA_DIR`.
+- **"New State" now lights up on cluster, CW, and SSB spots — not just FT8.** Those spots carry a
+  callsign but no grid, so a needed US state used to stay invisible. Nexus now ships a compact
+  **callsign→state index** (built from the FCC license file) that resolves the licensed state
+  precisely — no 4-character-grid border guessing. It downloads on first launch and refreshes
+  itself; Settings ▸ Confirmations has a manual **Update now** button.
+- **A much bigger Memories section — 11 curated packs, 172 channels.** One-click installable sets
+  for FT8/FT4, digital watering holes (JS8, PSK31, RTTY, SSTV, VarAC), CW & QRP, EmComm, HF nets,
+  VHF+ weak-signal, satellites, POTA/SOTA/WWFF, DX & contest, and reference (time signals,
+  beacons, WEFAX). Re-installing a pack refreshes its channels without touching ones you've edited.
+- **Per-band VUCC and IOTA awards.** VUCC grid-square progress is tracked per band with its own
+  Awards card and a grids-by-band panel; IOTA (Islands On The Air) is parsed, exported, and shown
+  as an award.
+- **Live TX meters in the CW and Operate cockpits.** The power / SWR / ALC metering that was
+  Phone-only now shows while you transmit in CW and the digital Operate cockpit too.
+- **Click a callsign to open QRZ.** In the Spots board, Needed board, and decode feed.
+- **The app version shows under the Nexus wordmark** (top-left), so you can tell at a glance which
+  build you're running.
+
+### Changed
+
+- **The FT waterfall defaults to the familiar 0–3 kHz view** (the WSJT-X span), with the full-width
+  view still one click away.
+
+### Fixed
+
+- **ADIF import no longer silently drops QSOs.** Imports deduplicated on the UTC *day*, so a second
+  contact with the same station on the same day could be discarded. Dedup is now on the exact time,
+  and the store-and-forward path keeps its journal — no more quiet log loss.
+
 ## [0.15.1] — 2026-07-22 — A nav rail you can reorder, per-mode power limits, a clearer decode feed, and a batch of quiet fixes
 
 ### Added
