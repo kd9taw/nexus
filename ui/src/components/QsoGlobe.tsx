@@ -22,7 +22,7 @@ import * as THREE from 'three'
 import Globe, { type GlobeMethods } from 'react-globe.gl'
 import earthUrl from '../assets/earth-relief.webp'
 import earthNightUrl from '../assets/earth-night.webp'
-import { gridToLatLon } from '../grid'
+import { qsoGridPoints } from '../features/qsoPoints'
 import { BAND_COLOR, bandColor } from '../bandColors'
 import { subsolarPoint } from '../mapGeo'
 import { surfaceGet, surfaceSet } from '../features/windowScope'
@@ -35,15 +35,6 @@ const BAND_ORDER = Object.keys(BAND_COLOR)
  *  PER-SURFACE: it is per-window animation (and per-window CPU) — stopping it on the board
  *  you are reading must not stop the showpiece globe on the other screen. */
 const SPIN_KEY = 'nexus.logbook.globespin'
-
-interface GridPoint {
-  lat: number
-  lng: number
-  /** QSOs logged in this 4-char square (drives dot brightness). */
-  n: number
-  /** Band of the square's most recent QSO — the dot's colour, same palette as the map. */
-  band: string
-}
 
 /** Soft round dot sprite (bright core, quick falloff) so the GPU points render as the
  * 2-D map's round dots instead of PointsMaterial's default squares. Built once. */
@@ -105,37 +96,10 @@ export default function QsoGlobe({ qsos }: { qsos: LoggedQso[] }) {
     return () => ro.disconnect()
   }, [])
 
-  // QSOs → unique 4-char grid squares → dots. The dedupe is what keeps a 50k-QSO FT8
-  // log at ~a thousand points instead of 50k (the proven Globe3D coverage pipeline).
-  // Each square carries its QSO count (brightness) and its most recent QSO's band
-  // (colour — the same band palette as the 2-D map's spots). Grid-less QSOs are
-  // skipped; the DXCC-centroid fallback is a planned fast-follow.
-  const points = useMemo<GridPoint[]>(() => {
-    const acc = new Map<string, { n: number; band: string; when: number }>()
-    for (const q of qsos) {
-      // Per-band counting (VUCC semantics): a selected band sees only its own squares.
-      if (band !== 'all' && q.band !== band) continue
-      const gr = (q.grid ?? '').trim().toUpperCase()
-      if (gr.length < 4) continue
-      const key = gr.slice(0, 4)
-      const cur = acc.get(key)
-      if (cur) {
-        cur.n += 1
-        if (q.whenUnix >= cur.when) {
-          cur.when = q.whenUnix
-          cur.band = q.band
-        }
-      } else {
-        acc.set(key, { n: 1, band: q.band, when: q.whenUnix })
-      }
-    }
-    const pts: GridPoint[] = []
-    acc.forEach((v, gr) => {
-      const ll = gridToLatLon(gr)
-      if (ll) pts.push({ lat: ll.lat, lng: ll.lon, n: v.n, band: v.band })
-    })
-    return pts
-  }, [qsos, band])
+  // QSOs → unique 4-char grid squares → dots (the shared reduction the 2-D map uses too, so the
+  // two views plot identical points). The dedupe is what keeps a 50k-QSO FT8 log at ~a thousand
+  // points instead of 50k.
+  const points = useMemo(() => qsoGridPoints(qsos, band), [qsos, band])
 
   // Same material recipe as the Connect globe (Globe3D) so the two read as one app:
   // day relief darkened to the cool blue-grey, city lights as a dim night-side glow.

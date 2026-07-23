@@ -8055,6 +8055,45 @@ input.cw-pitch::-webkit-inner-spin-button {
   color: var(--text-dim);
   pointer-events: none;
 }
+/* 2-D / 3-D map-view toggle — top-centre so it clears the band picker (top-left) and the
+   globe's spin button (top-right). */
+.log-map-toggle {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2;
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--bg-elev-2) 80%, transparent);
+  border: 1px solid var(--border);
+}
+.log-map-btn {
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 2px 10px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.log-map-btn:hover:not(:disabled) {
+  color: var(--text);
+}
+.log-map-btn.active {
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  color: var(--text);
+}
+.log-map-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.qso-map-canvas {
+  display: block;
+}
 /* Band picker on the QSO globe — grids are a per-band achievement (VUCC), so a 2m
    chaser can view 2m squares on their own. Text takes the band's colour. */
 .qso-globe-band-pick {

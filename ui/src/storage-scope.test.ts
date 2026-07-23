@@ -32,6 +32,7 @@ export const PER_SURFACE = [
   'nexus.connect.map3d',
   'nexus.connect.projection',
   'nexus.logbook.globespin',
+  'nexus.logbook.mapview', // 2-D/3-D map choice, per window like the globe's spin
   'nexus.operate.layout',
   'nexus.operateLayout',
   'nexus.ota.bandFilter',
@@ -52,6 +53,7 @@ export const PER_SURFACE = [
 /** Keys that describe the STATION or the PERSON and must never be scoped. Listed rather
  *  than inferred so a failure names the key that leaked. */
 const SHARED = [
+  'nexus.navOrder', // left-rail section order — a person/station preference, same in every window
   'nexus-density',
   'nexus-motion',
   'nexus-ui-scale-cap',
