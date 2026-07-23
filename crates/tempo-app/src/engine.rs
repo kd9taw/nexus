@@ -6618,7 +6618,18 @@ impl Engine {
             && self.qso_logged
             && match &self.mode {
                 Mode::Qso { station, .. } => {
-                    matches!(station.state, QsoState::Done)
+                    // `done()` is Done AND nothing left to send — NOT a bare `state == Done`.
+                    // CONFIRMED on air (KD9TAW ALL.TXT, 2026-07-23): when a caller answers our CQ
+                    // with a bare REPORT instead of a grid, we become the RESPONDER while still
+                    // running CQ (`cq_running` stays true — unlike a `call_station` click, which
+                    // clears it). On their RR73 we reach Done with the closing `73` still QUEUED
+                    // in `pending` (`after_tx` clears it only once it transmits). A bare-`Done`
+                    // check resumed CQ that same tick and discarded the un-sent 73 — the operator
+                    // rogered `KD2VRL R-11`, got `RR73`, and jumped straight to `CQ KD9TAW` with
+                    // no 73. `done()` waits the one cycle for the 73 to go out. The INITIATOR
+                    // (grid-reply caller) closes with its RR73 via the Confirming arm below, so it
+                    // still resumes without waiting on the DX's optional final 73.
+                    station.done()
                         || (matches!(station.state, QsoState::Confirming) && station.tx_count >= 1)
                 }
                 _ => false,
@@ -10081,6 +10092,57 @@ mod tests {
             log[0].grid.as_deref(),
             Some("JN47"),
             "grid backfilled from the roster (the caller's earlier CQ), not left blank"
+        );
+    }
+
+    /// CONFIRMED on-air bug (KD9TAW ALL.TXT, 2026-07-23): running CQ, a caller answers with a
+    /// BARE REPORT (no grid), so we become the responder WHILE cq_running stays true. On their
+    /// RR73 we must send the closing 73 before returning to CQ — the real log showed
+    /// `KD2VRL KD9TAW R-11` → `KD9TAW KD2VRL RR73` → `CQ KD9TAW` with the 73 skipped, because
+    /// `resume_cq` fired on a bare `Done` and clobbered the queued `Bye73`.
+    #[test]
+    fn a_cq_run_responder_sends_its_closing_73_before_resuming_cq() {
+        let mut e = Engine::new("K2DEF", "FN31", 0);
+        e.set_tier(Tier::TempoFast);
+        e.set_mode("qso-run").unwrap(); // calling CQ, cq_running = true
+        assert!(!e.poll_tx(0).is_empty(), "CQ goes out");
+
+        // A caller answers our CQ with a bare report — no grid → we become the RESPONDER, and
+        // (unlike a call_station click) cq_running stays true.
+        e.ingest_decodes_for_test(&[dec_snr("K2DEF KD2VRL -09", -7)], 1);
+        assert_eq!(
+            e.snapshot().qso.as_ref().and_then(|q| q.dxcall.as_deref()),
+            Some("KD2VRL"),
+            "locked onto the report-first caller"
+        );
+        // They confirm with RR73 → we owe them the final 73.
+        e.ingest_decodes_for_test(&[dec_snr("K2DEF KD2VRL RR73", -7)], 3);
+
+        // THE FIX: `resume_cq` must NOT have replaced the QSO with a fresh CQ — our next queued
+        // over is the 73 to KD2VRL. (Pre-fix, this was already `CQ K2DEF`.)
+        let owed = e
+            .snapshot()
+            .qso
+            .as_ref()
+            .and_then(|q| q.tx_now.clone())
+            .unwrap_or_default();
+        assert!(
+            owed.contains("KD2VRL") && !owed.to_uppercase().starts_with("CQ"),
+            "closing 73 to KD2VRL is still queued, not a CQ, got {owed:?}"
+        );
+        assert!(!e.poll_tx(4).is_empty(), "the closing 73 transmits");
+
+        // Only AFTER the 73 has gone out does the run resume calling CQ (one quiet slot later).
+        e.ingest_decodes_for_test(&[], 5);
+        let cq = e
+            .snapshot()
+            .qso
+            .as_ref()
+            .and_then(|q| q.tx_now.clone())
+            .unwrap_or_default();
+        assert!(
+            cq.to_uppercase().starts_with("CQ"),
+            "resumes CQ after the 73, got {cq:?}"
         );
     }
 
