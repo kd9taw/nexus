@@ -9537,6 +9537,17 @@ pub fn run() {
         std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
     }
 
+    // Windows/WebView2: two instances of the same app share ONE user-data folder (keyed on the
+    // app identifier), and the second instance's webview cannot initialize while the first holds
+    // it locked — the window shell + splash appear but the main webview never loads. Give each
+    // NAMED profile (a per-radio window) its own folder so both instances' webviews come up. The
+    // default profile keeps WebView2's default location, so a single instance is byte-identical.
+    // Must be set before the webview environment is created — hence here, first thing after DMABUF.
+    #[cfg(windows)]
+    if active_profile().is_some() && std::env::var_os("WEBVIEW2_USER_DATA_FOLDER").is_none() {
+        std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", config_dir().join("webview"));
+    }
+
     // Take this profile's advisory lock (named profiles only — the default single-instance is a
     // no-op). Lets the launch picker grey out a radio already open in another window, and marks
     // the same-profile double-launch. Non-fatal: a failure just means the picker can't grey it.
@@ -9566,12 +9577,17 @@ pub fn run() {
     let mut settings = Settings::load(&settings_path());
 
     // A radio profile keyed "r<id>" PINS its active radio, so this window always drives the radio
-    // the operator picked in the launcher, regardless of the persisted/seeded active_radio.
+    // the operator picked in the launcher, regardless of the persisted/seeded active_radio. CRUCIAL:
+    // re-mirror the flat rig/audio fields to THAT radio's profile — the seed copied the default's
+    // flat fields, so without this the window keeps the OTHER radio's serial port/model and tries to
+    // open the port the first window already holds (the "opposite radio won't load" hang). Also
+    // self-heals a profile that was seeded before this fix, since it runs every launch.
     if let Some(id) = active_profile()
         .and_then(|p| p.strip_prefix('r'))
         .and_then(|s| s.parse::<u32>().ok())
     {
         settings.active_radio = id;
+        settings.sync_flat_from_active();
     }
 
     // One-time migration: an older build kept the Cloudlog/Wavelog API key in
