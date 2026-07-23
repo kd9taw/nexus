@@ -120,6 +120,12 @@ export function StatsView() {
               </div>
             ))}
           </div>
+          {s.hourUnknown > 0 && (
+            <p className="stats-hour-note">
+              {s.hourUnknown.toLocaleString()} QSO{s.hourUnknown === 1 ? '' : 's'} not shown — imported
+              with a date but no time of day.
+            </p>
+          )}
         </div>
 
         <div className="stats-card">

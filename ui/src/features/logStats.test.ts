@@ -71,7 +71,22 @@ describe('computeLogStats', () => {
   it('hour-of-day (UTC) + QSL channels', () => {
     expect(s.hourUtc[14]).toBe(3) // three QSOs at 14:00 UTC
     expect(s.hourUtc[2]).toBe(1) // the 40m CW at 02:00 UTC
+    expect(s.hourUnknown).toBe(0) // none in this fixture is at exact midnight
     expect(s.qsl).toEqual({ card: 0, lotw: 1, eqsl: 1 })
+  })
+
+  it('excludes exact-midnight (imported, no time-of-day) QSOs from the hour histogram', () => {
+    // 99.7% of an operator's real log was imported from QRZ/LoTW with TIME_ON=000000, which
+    // buried the hour chart under a midnight spike. Those go to hourUnknown, not hour 0.
+    const s2 = computeLogStats([
+      qso({ whenUnix: Math.floor(Date.UTC(2024, 0, 1, 0, 0, 0) / 1000) }), // imported → midnight
+      qso({ whenUnix: Math.floor(Date.UTC(2024, 0, 2, 0, 0, 0) / 1000) }), // imported → midnight
+      qso({ whenUnix: Math.floor(Date.UTC(2024, 0, 3, 15, 30, 0) / 1000) }), // a real on-air time
+    ])
+    expect(s2.hourUnknown).toBe(2)
+    expect(s2.hourUtc[0]).toBe(0) // the midnight imports are NOT counted as hour 0
+    expect(s2.hourUtc[15]).toBe(1) // the genuine 15:30 QSO still lands in hour 15
+    expect(s2.hourUtc.reduce((a, b) => a + b, 0)).toBe(1) // only the timed QSO is in the chart
   })
 
   it('empty log → zeros, no throw', () => {

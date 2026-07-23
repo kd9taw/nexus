@@ -9256,6 +9256,11 @@ select.settings-input {
   color: var(--text-faint);
   font-style: italic;
 }
+.stats-hour-note {
+  margin: 8px 0 0;
+  font-size: 11px;
+  color: var(--text-faint);
+}
 /* Secondary count (distinct entities) trailing the QSO count on a continent bar. */
 .stats-bar-sub {
   color: var(--text-faint);

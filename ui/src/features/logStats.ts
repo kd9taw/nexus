@@ -32,8 +32,13 @@ export interface LogStats {
   byState: Tally[]
   /** Most-worked DXCC entities (top slice), most first. */
   topEntities: Tally[]
-  /** QSOs by UTC hour-of-day, index 0..23. */
+  /** QSOs by UTC hour-of-day, index 0..23 — counting only QSOs with a KNOWN time-of-day
+   * (see `hourUnknown`). */
   hourUtc: number[]
+  /** QSOs with no real time-of-day (logged at exactly 00:00:00 UTC — the hallmark of a QRZ/LoTW
+   * import, which carries the date but not the time). Excluded from `hourUtc` so the histogram
+   * shows the operator's actual on-air pattern instead of a spike at midnight. */
+  hourUnknown: number
   /** Confirmation channels — how many QSOs carry each QSL source. */
   qsl: { card: number; lotw: number; eqsl: number }
 }
@@ -102,6 +107,7 @@ function byCountDesc(m: Map<string, number>): Tally[] {
 /** Roll a logbook up into the descriptive-stats dashboard shape. Pure. */
 export function computeLogStats(log: LoggedQso[]): LogStats {
   const hourUtc = new Array(24).fill(0) as number[]
+  let hourUnknown = 0
   const calls = new Set<string>()
   const countries = new Set<string>()
   let confirmed = 0
@@ -118,8 +124,15 @@ export function computeLogStats(log: LoggedQso[]): LogStats {
     if (q.qslRcvd?.lotw) qsl.lotw++
     if (q.qslRcvd?.eqsl) qsl.eqsl++
     if (Number.isFinite(q.whenUnix)) {
-      const h = new Date(q.whenUnix * 1000).getUTCHours()
-      if (h >= 0 && h < 24) hourUtc[h]++
+      // A QSO stamped at exactly 00:00:00 UTC has no real time-of-day — that is what a QRZ/LoTW
+      // import writes (date, no time). Counting it as "midnight" buries the operator's genuine
+      // activity pattern under an import spike, so it goes to `hourUnknown` instead.
+      if (q.whenUnix % 86400 === 0) {
+        hourUnknown++
+      } else {
+        const h = new Date(q.whenUnix * 1000).getUTCHours()
+        if (h >= 0 && h < 24) hourUtc[h]++
+      }
     }
   }
 
@@ -145,6 +158,7 @@ export function computeLogStats(log: LoggedQso[]): LogStats {
     byState: byCountDesc(tallyBy(log, wasState)),
     topEntities: entities.slice(0, 12),
     hourUtc,
+    hourUnknown,
     qsl,
   }
 }
