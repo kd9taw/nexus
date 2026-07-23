@@ -362,7 +362,12 @@ impl SpotBuffer {
                 break;
             }
         }
-        // Count ceiling: a memory safety net only (cap is high; age trimming does the work).
+        // Count ceiling: a pure MEMORY safety net. The deque is ordered by ascending
+        // last-seen time (a re-spotted station moves to the back), so pop_front here would
+        // evict the OLDEST-last-seen rows — exactly the rare, single-spotted DX the board
+        // exists to surface. The cap is therefore sized (Default) above the worst-case
+        // distinct-in-window row count so this never bites while a spot is still in the read
+        // window; age trimming above is what actually bounds retention.
         while self.spots.len() > self.cap {
             self.spots.pop_front();
         }
@@ -390,9 +395,12 @@ impl SpotBuffer {
 
 impl Default for SpotBuffer {
     fn default() -> Self {
-        // High ceiling so the count-cap never evicts inside the read window even under a
-        // full RBN firehose (~300 calls/min × 20 min ≈ 6k); age trimming bounds memory.
-        Self::new(8000)
+        // Sized ABOVE the worst-case distinct (call, freq) rows in the read window so the
+        // count-cap never evicts inside it. A CQWW-weekend RBN aggregate (CW + digital
+        // skimmers + every human node into this ONE buffer) can far exceed the old ~300
+        // calls/min premise; at ~30k rows the cap is a pure memory net (~8 MB), and the
+        // 20-min age trim does the real retention work.
+        Self::new(30000)
     }
 }
 
