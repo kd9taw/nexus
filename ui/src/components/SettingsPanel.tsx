@@ -1999,10 +1999,11 @@ export function SettingsPanel({
                           </span>
                           {!r.suggestedModel && (
                             <span className="rig-detect-nomodel">
-                              ⚠ Found the port but not the exact model — common on Yaesu, whose USB
-                              bridge reports only its chip name. Pick your rig in <em>Rig Model</em>{' '}
-                              below, or click <em>Auto-test</em> (it now tries common rigs to find
-                              the right port + baud for you).
+                              ⚠ Found the port but not the exact model — normal when the rig sits
+                              behind a generic USB bridge chip that reports only its own name (common
+                              on Icom, Yaesu, Kenwood, Elecraft, and Xiegu). Pick your rig in{' '}
+                              <em>Rig Model</em> below, or click <em>Auto-test</em> (it tries the
+                              common rigs to find the right port + baud for you).
                             </span>
                           )}
                           {r.driverNote && !r.driverBundled && (

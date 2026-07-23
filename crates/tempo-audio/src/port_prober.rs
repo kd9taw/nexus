@@ -64,7 +64,11 @@ pub const COMMON_CAT_MODELS: &[(u32, &str, u32)] = &[
     (1035, "Yaesu FT-991 / FT-991A", 38400),
     (1049, "Yaesu FT-710", 38400),
     (1040, "Yaesu FTDX101D", 38400),
+    // Icom CI-V rigs each answer only at their OWN CI-V address, so the 7300 seed (0x94)
+    // can't find a 7610 (0x98) or 9700 (0xA2) — each popular Icom model needs its own seed.
     (3073, "Icom IC-7300", 115200),
+    (3078, "Icom IC-7610", 115200),
+    (3081, "Icom IC-9700", 115200),
     (2037, "Kenwood TS-590SG", 115200),
     (2029, "Elecraft K3", 38400),
 ];
