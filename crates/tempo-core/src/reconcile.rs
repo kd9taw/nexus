@@ -158,6 +158,11 @@ fn apply_match(rec: &mut QsoRecord, inc: &QsoRecord, sum: &mut ReconcileSummary)
             rec.country = Some(c.clone());
         }
     }
+    // Outbound state — merged so a two-instance shared log doesn't lose an upload stamp or a
+    // QSL-sent mark one instance wrote when the other rewrites the whole file. (A LoTW report
+    // carries neither, so this is inert for the report path; it matters for recover-from-disk.)
+    rec.upload.merge_recent(&inc.upload);
+    rec.qsl_sent.merge(&inc.qsl_sent);
 }
 
 /// Merge a confirmation/credit report into `local`, in place. Each incoming

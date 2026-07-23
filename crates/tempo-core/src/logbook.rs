@@ -172,6 +172,17 @@ pub struct QslSent {
     pub date_unix: Option<u64>,
 }
 
+impl QslSent {
+    /// Adopt another instance's outbound QSL-sent mark when we don't already hold one. The
+    /// operator declared "I sent a card" on the other instance; sharing one log, that truth
+    /// must survive this instance's full-file rewrite. Monotonic — never un-sends.
+    pub fn merge(&mut self, other: &QslSent) {
+        if !self.sent && other.sent {
+            *self = *other;
+        }
+    }
+}
+
 /// Parks/Summits On The Air tags on a contact: your activation (`my_*`) and/or the
 /// activator you worked (hunter side). `program` is "POTA"/"SOTA"; `reference` is the
 /// park/summit id (e.g. "K-1234" / "W7A/MN-001"). All-`None` = an ordinary contact.
@@ -251,6 +262,27 @@ pub struct UploadState {
     pub eqsl: Option<UploadStatus>,
     pub qrz: Option<UploadStatus>,
     pub clublog: Option<UploadStatus>,
+}
+
+impl UploadState {
+    /// Merge another copy of this record's upload state in, per source: keep whichever status
+    /// is more recent (higher `when_unix`); the latest attempt is the current truth. This is
+    /// what keeps two instances sharing one log from losing an upload stamp to the other's
+    /// full-file rewrite — and lets the second instance see "already sent" so it doesn't
+    /// re-upload the same QSO.
+    pub fn merge_recent(&mut self, other: &UploadState) {
+        fn pick(a: &mut Option<UploadStatus>, b: &Option<UploadStatus>) {
+            if let Some(bs) = b {
+                if a.as_ref().is_none_or(|as_| bs.when_unix > as_.when_unix) {
+                    *a = Some(bs.clone());
+                }
+            }
+        }
+        pick(&mut self.lotw, &other.lotw);
+        pick(&mut self.eqsl, &other.eqsl);
+        pick(&mut self.qrz, &other.qrz);
+        pick(&mut self.clublog, &other.clublog);
+    }
 }
 
 /// An in-memory logbook backed by an ADIF file.
@@ -389,6 +421,18 @@ impl Logbook {
             }
         }
         (added, skipped)
+    }
+
+    /// Reconcile the on-disk copy of this log back into memory — the two-instance-safe recovery.
+    /// Unlike [`import_adif`] (additive only: it ADDS unseen records but never touches an
+    /// existing one), this both ADDS the records disk has that memory lacks (another instance's
+    /// appends) AND monotonically UPGRADES shared records' confirmation / credit / upload /
+    /// QSL-sent state from disk. That makes the shared log a monotonic union: before this
+    /// instance rewrites the whole file, it has folded in whatever the other instance wrote, so
+    /// a confirmation or upload stamp is never clobbered. Call before any full-file `save`.
+    pub fn reconcile_disk(&mut self, text: &str) {
+        let incoming = parse_adif(text);
+        crate::reconcile::merge_and_add(&mut self.records, incoming);
     }
 
     /// Stamp park/summit references from an external OTA log (pota.app hunter or
@@ -551,7 +595,11 @@ impl Logbook {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
         }
-        let tmp = path.with_extension("adi.tmp");
+        // Per-PROCESS tmp name: two instances sharing one log.adi can each be mid-save at the
+        // same instant; a fixed "log.adi.tmp" would let them interleave writes into one tmp and
+        // publish a corrupted file on rename. `log.adi.<pid>.tmp` gives each its own scratch, and
+        // the rename onto the final path stays atomic (last writer wins the whole file, intact).
+        let tmp = path.with_extension(format!("adi.{}.tmp", std::process::id()));
         std::fs::write(&tmp, self.adif())?;
         std::fs::rename(&tmp, path)
     }
@@ -1354,6 +1402,65 @@ mod tests {
             upload: Default::default(),
             ota: Default::default(),
         }
+    }
+
+    #[test]
+    fn reconcile_disk_unions_both_instances_state_never_clobbers() {
+        // The two-instance shared-log invariant. This instance ("B") holds QSO X unconfirmed but
+        // with its OWN ClubLog upload stamp. "Disk" (written by instance A) has the SAME QSO X
+        // now award-confirmed + QRZ-uploaded, plus a NEW QSO Y that A logged.
+        let mut mem = Logbook::new();
+        mem.add(rec("DL1ABC", "20m", 1_700_000_000));
+        mem.records_mut()[0].upload.clublog = Some(UploadStatus {
+            outcome: UploadOutcome::Accepted,
+            when_unix: 1_700_000_050,
+            detail: None,
+        });
+
+        let mut x = rec("DL1ABC", "20m", 1_700_000_000);
+        x.award_confirmed = true;
+        x.confirmed = true;
+        x.qsl_rcvd.lotw = true;
+        x.upload.qrz = Some(UploadStatus {
+            outcome: UploadOutcome::Accepted,
+            when_unix: 1_700_000_100,
+            detail: None,
+        });
+        let y = rec("JA1XYZ", "40m", 1_700_000_500);
+        let disk = adif_header() + &adif_record(&x) + &adif_record(&y);
+
+        mem.reconcile_disk(&disk);
+
+        // Y appended; X upgraded IN PLACE (not skipped, not duplicated).
+        assert_eq!(mem.len(), 2, "the other instance's new QSO Y is added");
+        let gx = mem.records().iter().find(|r| r.call == "DL1ABC").unwrap();
+        // UNION: B's ClubLog stamp AND A's LoTW confirmation AND A's QRZ stamp all survive.
+        assert!(gx.award_confirmed && gx.qsl_rcvd.lotw, "A's LoTW confirmation folded in");
+        assert_eq!(
+            gx.upload.qrz.as_ref().map(|u| u.outcome),
+            Some(UploadOutcome::Accepted),
+            "A's QRZ upload stamp survives B's rewrite"
+        );
+        assert_eq!(
+            gx.upload.clublog.as_ref().map(|u| u.outcome),
+            Some(UploadOutcome::Accepted),
+            "B's own ClubLog stamp is NOT clobbered"
+        );
+    }
+
+    #[test]
+    fn upload_state_merge_keeps_the_more_recent_per_source() {
+        let older = UploadStatus { outcome: UploadOutcome::Pending, when_unix: 100, detail: None };
+        let newer = UploadStatus { outcome: UploadOutcome::Accepted, when_unix: 200, detail: None };
+        let mut a = UploadState { lotw: Some(older.clone()), ..Default::default() };
+        let b = UploadState { lotw: Some(newer.clone()), qrz: Some(newer.clone()), ..Default::default() };
+        a.merge_recent(&b);
+        assert_eq!(a.lotw, Some(newer.clone()), "newer LoTW status wins");
+        assert_eq!(a.qrz, Some(newer.clone()), "absent-locally qrz is adopted");
+        // A more-recent local status is NOT downgraded by an older incoming one.
+        let mut c = UploadState { lotw: Some(newer.clone()), ..Default::default() };
+        c.merge_recent(&UploadState { lotw: Some(older), ..Default::default() });
+        assert_eq!(c.lotw.map(|u| u.outcome), Some(UploadOutcome::Accepted));
     }
 
     #[test]

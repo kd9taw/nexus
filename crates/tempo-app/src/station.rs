@@ -504,7 +504,10 @@ impl StationCore {
         };
         let disk = std::fs::read_to_string(&path).unwrap_or_default();
         if !disk.is_empty() {
-            self.logbook.import_adif(&disk);
+            // Field-level MERGE, not an additive import: fold in another instance's appends AND
+            // upgrade shared records' confirmation/upload/QSL-sent state from disk, so this
+            // instance's imminent full-file rewrite can't clobber what the other one wrote.
+            self.logbook.reconcile_disk(&disk);
         }
     }
 
