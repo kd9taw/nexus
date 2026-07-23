@@ -393,6 +393,18 @@ pub struct Settings {
     /// + QRP feats. `None` until the operator sets it (those feats stay gated).
     #[serde(default)]
     pub station_power_w: Option<f64>,
+    /// Per-mode RF-power CEILING as a 0.0–1.0 fraction of the rig's max — a SAFETY cap, not a
+    /// convenience. A 100%-duty mode (FT8/FT4/RTTY) at a level that's fine for SSB's ~25% duty
+    /// can cook a finals stage or a linear. `None` = uncapped (full power, unchanged behavior).
+    /// Enforced at the single `set_rf_power` chokepoint AND re-applied on mode change
+    /// ([`Engine::set_operating_mode`]), so switching SSB→FT8 brings the rig DOWN to the cap
+    /// instead of waiting for the operator to touch the slider. See [`Settings::rf_power_ceiling`].
+    #[serde(default)]
+    pub max_power_phone: Option<f32>,
+    #[serde(default)]
+    pub max_power_cw: Option<f32>,
+    #[serde(default)]
+    pub max_power_digital: Option<f32>,
     /// Path-prediction engine: "heuristic" (physics-lite, the default) or
     /// "p533" (the native ITU-R P.533 engine). Unknown values fall back to
     /// the heuristic in the factory, so old configs can never break.
@@ -1309,6 +1321,9 @@ impl Default for Settings {
             monitor_device: String::new(),
             monitor_level: 0.5,
             station_power_w: None,
+            max_power_phone: None,
+            max_power_cw: None,
+            max_power_digital: None,
             prop_engine: default_prop_engine(),
             save_wav: default_save_wav(),
             lotw_max_age_days: default_lotw_max_age_days(),
@@ -1821,6 +1836,19 @@ impl Settings {
         } else {
             0
         }
+    }
+
+    /// The RF-power ceiling (0.0–1.0) for the CURRENT operating mode, or 1.0 (uncapped) when the
+    /// operator has set no per-mode cap. RTTY shares the digital cap (both are high-duty data
+    /// modes). The safety guarantee lives on top of this: `set_rf_power` clamps to it and a mode
+    /// change re-clamps to it.
+    pub fn rf_power_ceiling(&self) -> f32 {
+        let cap = match self.operating_mode {
+            OperatingMode::Phone => self.max_power_phone,
+            OperatingMode::Cw => self.max_power_cw,
+            OperatingMode::Digital | OperatingMode::Rtty => self.max_power_digital,
+        };
+        cap.map(|c| c.clamp(0.0, 1.0)).unwrap_or(1.0)
     }
 
     pub fn rig_mode(&self) -> String {

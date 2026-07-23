@@ -8314,6 +8314,24 @@ input.cw-pitch::-webkit-inner-spin-button {
   font-size: 11px;
   color: var(--text-faint);
 }
+/* Per-mode RF-power ceilings (Settings ▸ Rig) — three compact percent inputs in a row. */
+.settings-power-caps {
+  display: flex;
+  gap: var(--space-3);
+}
+.settings-power-cap {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--fs-label);
+  color: var(--text-dim);
+}
+.settings-power-cap input {
+  width: 56px;
+}
+.settings-power-cap-unit {
+  color: var(--text-faint);
+}
 /* ---- User watch list (Settings ▸ Alerts) ---- */
 .settings-watchlist-block {
   display: flex;

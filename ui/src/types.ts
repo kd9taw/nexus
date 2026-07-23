@@ -1716,6 +1716,12 @@ export interface Settings {
   /** Station transmit power in WATTS (RF out) — unlocks the Journey miles-per-watt
    * + QRP feats. `null` until set (those feats stay gated). */
   stationPowerW?: number | null
+  /** Per-mode RF-power CEILING (0.0–1.0 fraction of the rig's max) — a SAFETY cap for
+   * duty-cycle-heavy modes. `null`/absent = uncapped. Enforced backend-side at the set_rf_power
+   * chokepoint and re-applied on mode change. */
+  maxPowerPhone?: number | null
+  maxPowerCw?: number | null
+  maxPowerDigital?: number | null
   /** Opt-in: track a gentle weekly "on the air" streak on the Journey board. */
   journeyStreakEnabled?: boolean
   /** TX watchdog timeout in minutes (default 6, 0 = disabled). */

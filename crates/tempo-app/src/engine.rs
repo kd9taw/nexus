@@ -1813,6 +1813,15 @@ impl Engine {
             _ => OperatingMode::Digital,
         };
         self.settings.operating_mode = om;
+        // SAFETY re-clamp: entering a mode with a lower power ceiling (SSB → FT8) must bring the
+        // rig DOWN to the cap now, not wait for the operator to touch the power slider. If a cap
+        // exists for the new mode, command at most the cap — carrying the current level when it's
+        // already under it. No cap ⇒ leave the commanded power untouched.
+        let ceiling = self.settings.rf_power_ceiling();
+        if ceiling < 1.0 {
+            let cur = self.rf_power.or(self.rig_rf_power).unwrap_or(ceiling);
+            self.rf_power = Some(cur.min(ceiling));
+        }
         // Explicit operating-section entry → drop to that mode's home freq on the current
         // band. `mode_home` returns None when the operator has no privilege there (Tech on
         // 20 m phone, 60 m, a band with no FT8 channel) — then we leave the dial put and let
@@ -2264,7 +2273,11 @@ impl Engine {
 
     /// Set desired RF output power (0.0–1.0). The radio loop applies it via the rig.
     pub fn set_rf_power(&mut self, frac: f32) {
-        self.rf_power = Some(frac.clamp(0.0, 1.0));
+        // SAFETY CEILING: never command the rig above the current mode's per-mode cap (FT8/FT4/
+        // RTTY duty-cycle protection). The single chokepoint — every power set, from any UI path,
+        // passes through here — so the cap cannot be bypassed.
+        let ceiling = self.settings.rf_power_ceiling();
+        self.rf_power = Some(frac.clamp(0.0, ceiling));
     }
 
     /// Desired RF power, if the operator has set one (for the radio loop).
@@ -10024,6 +10037,41 @@ mod tests {
         let qso = snap.qso.expect("QSO status present after call_station");
         assert_eq!(qso.dxcall.as_deref(), Some("W9XYZ"));
         assert!(qso.running, "directed call runs the responder side");
+    }
+
+    #[test]
+    fn per_mode_power_ceiling_clamps_and_re_clamps_on_mode_change() {
+        // SAFETY feature: FT8/FT4/RTTY run ~100% duty and can cook finals at a level fine for
+        // SSB, so the operator caps power PER MODE. Two guarantees, both here.
+        let mut e = Engine::new("K2DEF", "FN31", 0);
+        e.settings.max_power_digital = Some(0.30); // 30% cap for the data modes
+        // No cap on phone/CW.
+
+        // (1) The set chokepoint clamps. In a digital mode, a 100% request is held to 30%.
+        e.set_operating_mode("digital", false);
+        e.set_rf_power(1.0);
+        assert_eq!(e.rf_power(), Some(0.30), "digital request clamped to the 30% cap");
+        // A request UNDER the cap is untouched.
+        e.set_rf_power(0.10);
+        assert_eq!(e.rf_power(), Some(0.10), "under-cap request passes through");
+
+        // Uncapped mode → full power allowed.
+        e.set_operating_mode("phone", false);
+        e.set_rf_power(1.0);
+        assert_eq!(e.rf_power(), Some(1.0), "phone is uncapped → full power");
+
+        // (2) The mode-change re-clamp: at full power in SSB, switching to FT8 must bring the rig
+        // DOWN to the cap immediately, not wait for a slider touch — the whole point of a
+        // duty-cycle safety cap.
+        e.set_operating_mode("digital", false);
+        assert_eq!(
+            e.rf_power(),
+            Some(0.30),
+            "SSB→FT8 re-clamped the commanded power down to the cap"
+        );
+        // And back to an uncapped mode leaves the (now-low) power put — it does not push it up.
+        e.set_operating_mode("cw", false);
+        assert_eq!(e.rf_power(), Some(0.30), "uncapped mode never RAISES power on its own");
     }
 
     #[test]

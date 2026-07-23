@@ -473,6 +473,20 @@ export function SettingsPanel({
     setForm((prev) => (prev ? { ...prev, [key]: value } : prev))
   }
 
+  // Per-mode RF-power ceiling: shown as a PERCENT (0–100), stored as a 0–1 fraction; empty = no
+  // cap (null). Clamped 0–100 so a fat-finger can't store a >100% "cap"; junk input is ignored.
+  const updatePowerCap = (key: 'maxPowerPhone' | 'maxPowerCw' | 'maxPowerDigital', pct: string) => {
+    markDirty()
+    const t = pct.trim()
+    const frac = t === '' ? null : Math.min(100, Math.max(0, Number(t))) / 100
+    setForm((prev) =>
+      prev
+        ? { ...prev, [key]: t !== '' && !Number.isFinite(frac as number) ? prev[key] : frac }
+        : prev,
+    )
+  }
+  const capPct = (v: number | null | undefined): string => (v == null ? '' : String(Math.round(v * 100)))
+
   // Apply RX capture gain to the LIVE audio stream (not just the form). Called on
   // release — `set_rx_gain` persists + returns a snapshot, so we commit once the
   // operator lets go of the slider rather than on every drag tick (which would
@@ -2578,6 +2592,39 @@ export function SettingsPanel({
               <span className="settings-hint">
                 A short audio cue when the dial crosses your license privileges — a rising
                 "ding" back in band, a falling "dong" past an edge. Applies on every mode.
+              </span>
+            </div>
+
+            <div className="settings-field">
+              <span className="settings-label">Max power by mode (safety)</span>
+              <div className="settings-power-caps">
+                {(
+                  [
+                    ['Phone', 'maxPowerPhone'],
+                    ['CW', 'maxPowerCw'],
+                    ['Digital', 'maxPowerDigital'],
+                  ] as const
+                ).map(([label, key]) => (
+                  <label key={key} className="settings-power-cap">
+                    <span>{label}</span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      inputMode="numeric"
+                      placeholder="—"
+                      value={capPct(form[key])}
+                      onChange={(e) => updatePowerCap(key, e.target.value)}
+                    />
+                    <span className="settings-power-cap-unit">%</span>
+                  </label>
+                ))}
+              </div>
+              <span className="settings-hint">
+                A ceiling on RF output per mode — leave blank for full power. FT8/FT4/RTTY run
+                ~100% duty cycle, so capping the Digital modes (e.g. 30%) protects your finals and
+                any amplifier. The rig is brought down to the cap the moment you enter a capped
+                mode, not only when you touch the power slider.
               </span>
             </div>
 
