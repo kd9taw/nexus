@@ -5928,6 +5928,31 @@ impl Engine {
                 let is_broadcast = tempo_core::inbox::parse_broadcast(&t).is_some();
                 if !is_chunk && !is_broadcast {
                     self.record_own_tx(t.clone());
+                    // ALL.TXT parity with WSJT-X: log OUR over as a `Tx` line too. The RX-only
+                    // ALL.TXT left the operator's own CQ / reports / RR73 invisible — to tailing
+                    // loggers and GridTracker, AND to us when a sequencing question comes up (an
+                    // RX-only trace can't show whether WE sent the RR73). Pure logging, no on-air
+                    // effect. Same clean-frame filter as record_own_tx; SNR/DT are 0 for our TX,
+                    // audio = our TX offset.
+                    if self.settings.write_all_txt {
+                        let mode = format!("{:?}", self.app.tier()).to_uppercase();
+                        self.station
+                            .all_txt_pending
+                            .push(crate::alltxt::all_txt_line(
+                                now_unix_secs(),
+                                self.settings.dial_mhz,
+                                true,
+                                &mode,
+                                0,
+                                0.0,
+                                self.tx_offset_hz,
+                                &t,
+                            ));
+                        let len = self.station.all_txt_pending.len();
+                        if len > 5000 {
+                            self.station.all_txt_pending.drain(0..len - 5000);
+                        }
+                    }
                 }
                 // Robust tier (DX1) modulates 8-FSK; fast tier (FT1) uses 4-CPM.
                 // Both place the signal at the operator's TX audio offset.
@@ -6682,9 +6707,24 @@ impl Engine {
         } else {
             self.settings.dial_mhz + off_mhz
         };
+        // Grid backfill (operator report, 2026-07-23): a caller who answers our CQ with a bare
+        // report — `KD9TAW K0SSD +17`, the common FT8 form — carries NO grid in the QSO, so the
+        // contact logged with a blank GRIDSQUARE. But we almost always decoded that station's
+        // grid this session from their own CQ (`CQ HB9XBY JN47`) or a grid message, and the
+        // roster remembers it (the same source the rarity badge backfills from, above). Fill it
+        // in when the QSO itself gave us nothing — exactly as WSJT-X pre-fills its Log dialog
+        // from decode history. An empty/whitespace grid counts as nothing.
+        let grid = dxgrid.filter(|g| !g.trim().is_empty()).or_else(|| {
+            self.app
+                .inbox
+                .roster
+                .get(&dxcall)
+                .and_then(|h| h.grid.clone())
+                .filter(|g| !g.trim().is_empty())
+        });
         QsoRecord {
             call: dxcall,
-            grid: dxgrid,
+            grid,
             country,
             state: None,
             band: self.settings.band.clone(),
@@ -10014,6 +10054,53 @@ mod tests {
         // Idempotent: re-observing in the Done state does not double-log.
         e.ingest_decodes_for_test(&[dec_snr("K2DEF W9XYZ RR73", -7)], 5);
         assert_eq!(e.get_log().len(), 1, "auto-log fires exactly once per QSO");
+    }
+
+    /// Operator report (2026-07-23): a caller who answers our CQ with a bare report — the common
+    /// FT8 form, `KD9TAW K0SSD +17`, no grid — logged with a BLANK grid. But we'd decoded that
+    /// station's grid from its own CQ, and the roster remembers it. The logged record must
+    /// backfill the grid from the roster, exactly as WSJT-X fills its Log dialog from history.
+    #[test]
+    fn a_gridless_report_answer_backfills_the_grid_from_the_roster() {
+        let mut e = Engine::new("K2DEF", "FN31", 0);
+        e.set_tier(Tier::TempoFast);
+        e.set_mode("qso-run").unwrap(); // we are CALLING CQ
+
+        // We first hear W9XYZ's own CQ, carrying their grid — the roster records it. It is not
+        // addressed to us, so it does not touch the sequencer; we keep calling CQ.
+        e.ingest_decodes_for_test(&[dec_snr("CQ W9XYZ JN47", -6)], 1);
+
+        // W9XYZ then answers OUR CQ with a bare report — no grid in this message at all.
+        e.ingest_decodes_for_test(&[dec_snr("K2DEF W9XYZ -10", -7)], 3);
+        // They roger → we send 73 → the QSO completes and auto-logs.
+        e.ingest_decodes_for_test(&[dec_snr("K2DEF W9XYZ RR73", -7)], 5);
+
+        let log = e.get_log();
+        assert_eq!(log.len(), 1, "the QSO auto-logged");
+        assert_eq!(
+            log[0].grid.as_deref(),
+            Some("JN47"),
+            "grid backfilled from the roster (the caller's earlier CQ), not left blank"
+        );
+    }
+
+    /// The control: with NO grid ever heard for the caller, the record is honestly blank — the
+    /// backfill invents nothing, it only recovers a grid we actually decoded.
+    #[test]
+    fn a_gridless_answer_with_no_known_grid_logs_blank_not_fabricated() {
+        let mut e = Engine::new("K2DEF", "FN31", 0);
+        e.set_tier(Tier::TempoFast);
+        e.set_mode("qso-run").unwrap();
+        // No prior CQ from W9XYZ → the roster has no grid for them.
+        e.ingest_decodes_for_test(&[dec_snr("K2DEF W9XYZ -10", -7)], 3);
+        e.ingest_decodes_for_test(&[dec_snr("K2DEF W9XYZ RR73", -7)], 5);
+        let log = e.get_log();
+        assert_eq!(log.len(), 1);
+        assert_eq!(
+            log[0].grid.as_deref(),
+            None,
+            "no known grid → blank, not fabricated"
+        );
     }
 
     /// THE connector-upload funnel: every log_qso path — the engine auto-log
