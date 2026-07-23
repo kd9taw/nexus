@@ -15,6 +15,7 @@ import {
 import { gridFromMessage, isIgnored } from '../txMessages'
 import { StateBlock } from './StateBlock'
 import { RarityChip } from './RarityChip'
+import { openQrzPage } from '../api'
 
 /** JTAlert UDP highlight entry — bg/fg may be null/missing. */
 export interface HighlightEntry {
@@ -457,6 +458,16 @@ export function OperateDecodes({
                   )}
                   {d.country && <span className="decode-country">{d.country}</span>}
                 </span>
+                {d.from && (
+                  <button
+                    type="button"
+                    className="qrz-link-call decode-qrz"
+                    onClick={(e) => { e.stopPropagation(); void openQrzPage(d.from as string) }}
+                    title={`${d.from} on QRZ.com (opens your browser)`}
+                  >
+                    QRZ
+                  </button>
+                )}
                 {d.from && (
                   <button
                     type="button"

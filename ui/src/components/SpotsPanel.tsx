@@ -5,6 +5,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { BandChannel, SpotRow } from '../types'
 import { MODE_CLASSES, type ModeClass, type ModeSet, ALL_MODES_ON } from '../neededFilters'
+import { openQrzPage } from '../api'
 
 type SortKey = 'age' | 'call' | 'entity' | 'band' | 'freq' | 'mode'
 
@@ -346,7 +347,16 @@ export function SpotsPanel({ spots, bandPlan, selectedCall, onSelect, onWork, on
                 }}
               >
                 <span className="np-age">{ageLabel(s.ageSecs)}</span>
-                <span className="np-call">{s.call}</span>
+                <span className="np-call">
+                  <button
+                    type="button"
+                    className="qrz-link-call"
+                    onClick={(e) => { e.stopPropagation(); void openQrzPage(s.call) }}
+                    title={`${s.call} on QRZ.com (opens your browser)`}
+                  >
+                    {s.call}
+                  </button>
+                </span>
                 <span className="np-entity">{s.entity || '—'}</span>
                 <span className="np-band">{s.band || '—'}</span>
                 <span className="sp-freq">{s.freqMhz.toFixed(3)}</span>

@@ -18,7 +18,7 @@ import {
   type ModeSet,
   NEED_TYPE_VALUES,
 } from '../neededFilters'
-import { pointRotator, readRotator } from '../api'
+import { pointRotator, readRotator, openQrzPage } from '../api'
 import { pushToast } from '../toast'
 import { RarityChip } from './RarityChip'
 import { NEED_CHIP } from '../features/needVisuals'
@@ -590,7 +590,14 @@ export function NeededPanel({
                   ))}
                 </span>
                 <span className="np-call">
-                  {a.call}
+                  <button
+                    type="button"
+                    className="qrz-link-call"
+                    onClick={(e) => { e.stopPropagation(); void openQrzPage(a.call) }}
+                    title={`${a.call} on QRZ.com (opens your browser)`}
+                  >
+                    {a.call}
+                  </button>
                   <RarityChip rarity={a.gridRarity} />
                   {onPoint && (
                     <button

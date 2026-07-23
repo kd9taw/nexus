@@ -10008,6 +10008,24 @@ select.settings-input {
   border-color: var(--accent);
   color: var(--accent-ink);
 }
+/* Secondary "QRZ" affordance next to Work — compact, muted, so it never competes
+   with the primary Work/Call action but is there when you want to look a call up. */
+.decode-qrz {
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  min-height: 28px;
+}
+.decode-qrz:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  text-decoration: none;
+}
 
 /* WSJT-X AP / low-confidence decode markers — trailing dim annotations.
    Rendered as a muted group immediately after the message text: '?' then 'a'.
