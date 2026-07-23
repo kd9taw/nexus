@@ -34,7 +34,7 @@ mod chains;
 
 use chains::{panel_key, panel_label, Instance};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use tauri::Manager;
 use tauri::State;
 use tempo_app::dto::{
@@ -722,9 +722,9 @@ static LAST_SSN: Mutex<Option<f32>> = Mutex::new(None);
 /// much fresher than the 5-min snapshot TTL — and serves last-good on failure.
 static LAST_XRAY: Mutex<Option<(std::time::Instant, f32, i64)>> = Mutex::new(None);
 
-/// Where settings are persisted: `%APPDATA%\tempo\settings.json` on Windows,
-/// `$XDG_CONFIG_HOME`/`~/.config/tempo/settings.json` on Unix, else CWD.
-fn settings_path() -> PathBuf {
+/// The base config root: `%APPDATA%` on Windows, `$XDG_CONFIG_HOME`/`~/.config` on Unix,
+/// else the CWD. The `tempo[-<profile>]` app directory hangs off this.
+fn config_base() -> PathBuf {
     let base = if cfg!(windows) {
         std::env::var_os("APPDATA").map(PathBuf::from)
     } else {
@@ -733,8 +733,81 @@ fn settings_path() -> PathBuf {
             .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
     };
     base.unwrap_or_else(|| PathBuf::from("."))
-        .join("tempo")
-        .join("settings.json")
+}
+
+/// Accept only a filesystem-safe profile name — `[A-Za-z0-9_-]`, 1..=32 chars. Anything
+/// else (empty, path separators, junk) → `None` = the default profile, so a bad value can
+/// never escape the config root or silently split the config into a garbage directory.
+fn sanitize_profile(s: &str) -> Option<String> {
+    let t = s.trim();
+    let ok = !t.is_empty()
+        && t.len() <= 32
+        && t.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
+    ok.then(|| t.to_string())
+}
+
+/// The active instance profile, resolved once: `--profile <name>` (or `--profile=<name>`) on
+/// the command line wins, else the `NEXUS_PROFILE` env var. `None` = the DEFAULT profile,
+/// whose config dir is plain `tempo` — byte-identical to the pre-profile layout, so a single
+/// instance is unaffected. Two instances get separate config by launching with distinct
+/// profiles; that is what keeps them from clobbering each other's settings/journals.
+fn active_profile() -> Option<&'static str> {
+    static PROFILE: OnceLock<Option<String>> = OnceLock::new();
+    PROFILE
+        .get_or_init(|| {
+            let from_arg = {
+                let mut found = None;
+                let mut args = std::env::args().skip(1);
+                while let Some(a) = args.next() {
+                    if a == "--profile" {
+                        found = args.next();
+                        break;
+                    } else if let Some(v) = a.strip_prefix("--profile=") {
+                        found = Some(v.to_string());
+                        break;
+                    }
+                }
+                found
+            };
+            from_arg
+                .or_else(|| std::env::var("NEXUS_PROFILE").ok())
+                .and_then(|s| sanitize_profile(&s))
+        })
+        .as_deref()
+}
+
+/// The app-directory name for a profile: `tempo` (default) or `tempo-<profile>`. Pure, so the
+/// naming is testable without touching env/args.
+fn profile_dir_name(profile: Option<&str>) -> String {
+    match profile {
+        Some(p) => format!("tempo-{p}"),
+        None => "tempo".to_string(),
+    }
+}
+
+/// The per-instance config directory: `<base>/tempo` for the default profile, or
+/// `<base>/tempo-<profile>` for a named one. Holds settings.json + the journals beside it
+/// (window geometry, Field Day, pending-QSO/msgs queues) — all correctly per-instance, since
+/// each of those derives from [`settings_path`]'s parent.
+fn config_dir() -> PathBuf {
+    config_base().join(profile_dir_name(active_profile()))
+}
+
+/// The SHARED data directory that holds the ONE unified logbook across all instances.
+/// Default = `<base>/tempo` (the default profile's dir — i.e. the pre-profile location, so an
+/// existing `log.adi` stays put and simply becomes the shared one, no migration). Override
+/// with `NEXUS_DATA_DIR` to place the shared log on a NAS/Drive-synced folder (a multi-PC shack).
+fn shared_data_dir() -> PathBuf {
+    match std::env::var_os("NEXUS_DATA_DIR").filter(|s| !s.is_empty()) {
+        Some(d) => PathBuf::from(d),
+        None => config_base().join("tempo"),
+    }
+}
+
+/// Where settings are persisted: `<config_dir>/settings.json` — per-instance (profile-suffixed).
+fn settings_path() -> PathBuf {
+    config_dir().join("settings.json")
 }
 
 /// Persisted geometry (logical px) + side-dock of the torn-off band-map window, so the
@@ -868,14 +941,12 @@ fn snap_bandmap_to_edge(
     Ok(g)
 }
 
-/// Where the ADIF logbook is persisted: the same base dir as [`settings_path`],
-/// i.e. `%APPDATA%\tempo\log.adi` on Windows / `~/.config/tempo/log.adi` on Unix.
+/// Where the ADIF logbook is persisted: the SHARED data dir (NOT the per-profile config
+/// dir), so every instance reads and writes the ONE unified log. Default
+/// `%APPDATA%\tempo\log.adi` / `~/.config/tempo/log.adi` (unchanged for a single instance);
+/// `NEXUS_DATA_DIR` relocates it (multi-PC shack). See [`shared_data_dir`].
 fn logbook_path() -> PathBuf {
-    settings_path()
-        .parent()
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("log.adi")
+    shared_data_dir().join("log.adi")
 }
 
 /// Where the Field Day contest log's durable ADIF journal lives (beside
@@ -10214,7 +10285,34 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{b64_decode, b64_encode, is_complete_lotw_body, iss_pass_from_tles, parse_sstv_mode};
+    use super::{
+        b64_decode, b64_encode, is_complete_lotw_body, iss_pass_from_tles, parse_sstv_mode,
+        profile_dir_name, sanitize_profile,
+    };
+
+    #[test]
+    fn profile_names_are_sanitized_to_safe_dirs() {
+        // Good names pass through untouched.
+        assert_eq!(sanitize_profile("radio-a").as_deref(), Some("radio-a"));
+        assert_eq!(sanitize_profile("K9_2m").as_deref(), Some("K9_2m"));
+        assert_eq!(sanitize_profile("  hf  ").as_deref(), Some("hf")); // trimmed
+        // Anything that could escape the config root or split it into junk → None (default).
+        assert_eq!(sanitize_profile(""), None);
+        assert_eq!(sanitize_profile("../evil"), None); // path escape
+        assert_eq!(sanitize_profile("a/b"), None);
+        assert_eq!(sanitize_profile("space bar"), None);
+        assert_eq!(sanitize_profile(&"x".repeat(33)), None); // too long
+    }
+
+    #[test]
+    fn profile_dir_name_default_matches_the_shared_root() {
+        // Default profile's config dir == the shared "tempo" dir → single instance is unchanged
+        // and shares the log with itself (no migration). A named profile is isolated but the
+        // shared log dir stays "tempo", so the two never share config yet always share the log.
+        assert_eq!(profile_dir_name(None), "tempo");
+        assert_eq!(profile_dir_name(Some("radio-a")), "tempo-radio-a");
+        assert_ne!(profile_dir_name(Some("radio-a")), profile_dir_name(None));
+    }
 
     // Well-known 2008 ISS element set (NORAD 25544) — the same vectors the
     // propagation sat tests use. Pure geometry, so a fixed epoch is deterministic.
