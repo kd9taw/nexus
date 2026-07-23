@@ -90,7 +90,7 @@ export function SpotsPanel({ spots, bandPlan, selectedCall, onSelect, onWork, on
       if (MODE_CLASSES.includes(cls) && !modes[cls]) return false
       if (bands.length > 0 && !bands.includes(s.band)) return false
       if (terms.length > 0) {
-        const hay = `${s.call} ${s.entity} ${s.spotter} ${s.mode} ${s.band} ${s.freqMhz.toFixed(4)}`.toLowerCase()
+        const hay = `${s.call} ${s.entity} ${s.spotter} ${s.mode} ${s.submode ?? ''} ${s.band} ${s.freqMhz.toFixed(4)}`.toLowerCase()
         for (const t of terms) if (!hay.includes(t)) return false
       }
       return true
@@ -277,8 +277,11 @@ export function SpotsPanel({ spots, bandPlan, selectedCall, onSelect, onWork, on
                 <span className="np-entity">{s.entity || '—'}</span>
                 <span className="np-band">{s.band || '—'}</span>
                 <span className="sp-freq">{s.freqMhz.toFixed(3)}</span>
-                <span className={`np-mode-col np-mode-${s.mode.toLowerCase()}`} title={`${s.mode} spot`}>
-                  {s.mode}
+                <span
+                  className={`np-mode-col np-mode-${s.mode.toLowerCase()}`}
+                  title={s.submode ? `${s.submode} spot (${s.mode})` : `${s.mode} spot`}
+                >
+                  {s.submode ?? s.mode}
                 </span>
                 <span className="sp-spotter">{s.spotter}</span>
                 <span className="np-why">{s.comment || '—'}</span>

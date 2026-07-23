@@ -1238,8 +1238,11 @@ export interface SpotRow {
   /** Band label ('20m'), '' if off the band plan. */
   band: string
   freqMhz: number
-  /** 'CW' | 'Phone' | 'Digital'. */
+  /** Frequency-derived class: 'CW' | 'Phone' | 'Digital' (drives the filter chips + privilege). */
   mode: string
+  /** Specific mode from the RBN skimmer wire ('FT8'/'FT4'/'RTTY'/'PSK'/'CW'), when carried;
+   * null for human-node spots. Shown as `submode ?? mode` so digital modes don't all read 'Digital'. */
+  submode?: string | null
   spotter: string
   /** Other spotters of the same DX (multi-endpoint evidence). */
   corroborators: string[]

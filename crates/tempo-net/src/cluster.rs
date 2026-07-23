@@ -48,22 +48,31 @@ impl ClusterSpot {
         self.freq_khz / 1000.0
     }
 
-    /// Is this an RBN RTTY-skimmer spot? True ONLY when the spot came off the RBN
-    /// skimmer wire (`rbn`) AND its comment's LEADING token is exactly "RTTY". RBN RTTY
-    /// skimmers emit machine-generated lines that begin with the mode ("RTTY" / "CW" /
-    /// "FT8"), so reading that first token is trusted exactly like the OTA feed's
-    /// structured mode field — NOT a free-text parse. Deliberately narrow: this UPGRADES
-    /// the display label of a spot that is ALREADY Digital by frequency; it never
-    /// reclassifies the frequency-derived mode, and it is never consulted on the human
-    /// cluster wire (where `rbn` is false), preserving the anti-comment-classification
-    /// doctrine (the 21.074-CW bug).
+    /// The SPECIFIC mode a station was skimmed in, from the LEADING token of a
+    /// machine-generated RBN skimmer line ("CW" / "RTTY" / "FT8" / "FT4" / "PSK…"). Returns
+    /// the canonical upper-case mode, or `None` for a human cluster spot (`rbn` false) or a
+    /// leading token that isn't a recognised mode. Trusted ONLY on the skimmer wire — reading
+    /// that first token is like the OTA feed's structured mode field, NOT a free-text parse —
+    /// and NEVER on the human cluster wire (`rbn` false), preserving the
+    /// anti-comment-classification doctrine (the 21.074-CW bug). This is how the Needed board
+    /// can track a multiplier per SPECIFIC mode (FT8 vs FT4 vs RTTY), not just its frequency
+    /// class: RBN runs separate CW / RTTY / FT8 / FT4 skimmer networks that each name the mode.
+    pub fn skimmer_mode(&self) -> Option<&'static str> {
+        if !self.rbn {
+            return None;
+        }
+        // The modes RBN skimmer networks emit as the leading comment token.
+        const MODES: &[&str] = &[
+            "CW", "RTTY", "FT8", "FT4", "PSK", "PSK31", "PSK63", "JT65", "JT9", "JS8", "MFSK",
+        ];
+        let tok = self.comment.split_whitespace().next()?;
+        MODES.iter().copied().find(|m| tok.eq_ignore_ascii_case(m))
+    }
+
+    /// Is this an RBN RTTY-skimmer spot? A thin wrapper over [`skimmer_mode`], kept for the
+    /// display-upgrade call sites that only care about RTTY.
     pub fn is_rbn_rtty(&self) -> bool {
-        self.rbn
-            && self
-                .comment
-                .split_whitespace()
-                .next()
-                .is_some_and(|t| t.eq_ignore_ascii_case("RTTY"))
+        self.skimmer_mode() == Some("RTTY")
     }
 
     /// Split/QSX listening offset named in the spot comment, in kHz RELATIVE to
@@ -618,6 +627,27 @@ mod tests {
         let mut ft8 = parse_dx_spot("DX de KM3T-#: 14074.0 3Y0J FT8 -6 dB 0312Z").unwrap();
         ft8.rbn = true;
         assert!(!ft8.is_rbn_rtty(), "leading FT8 is not RTTY");
+    }
+
+    #[test]
+    fn skimmer_mode_reads_the_specific_mode_from_the_skimmer_wire_only() {
+        let ft8 = |rbn| {
+            let mut s = parse_dx_spot("DX de KM3T-#: 14074.0 3Y0J FT8 -6 dB 0312Z").unwrap();
+            s.rbn = rbn;
+            s
+        };
+        assert_eq!(ft8(true).skimmer_mode(), Some("FT8"), "rbn wire: leading FT8 → FT8");
+        assert_eq!(ft8(false).skimmer_mode(), None, "human free-text mode is untrusted");
+        let mut cw = parse_dx_spot("DX de W3LPL-#: 14025.0 UA9CDC CW 599 0312Z").unwrap();
+        cw.rbn = true;
+        assert_eq!(cw.skimmer_mode(), Some("CW"));
+        let mut rtty = parse_dx_spot("DX de W3LPL-#: 14085.0 DL1ABC RTTY 20 dB 0312Z").unwrap();
+        rtty.rbn = true;
+        assert_eq!(rtty.skimmer_mode(), Some("RTTY"));
+        // A leading token that isn't a known mode → None (never a false mode).
+        let mut noise = parse_dx_spot("DX de N4XX: 14200.0 EA8ABC UP 0312Z").unwrap();
+        noise.rbn = true;
+        assert_eq!(noise.skimmer_mode(), None);
     }
 
     #[test]

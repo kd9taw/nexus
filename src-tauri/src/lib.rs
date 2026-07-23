@@ -5901,7 +5901,9 @@ fn get_confirmation_diagnostics(
 
 /// One raw cluster/RBN spot for the Spots panel (the SpotCollector-style firehose view).
 /// UNLIKE the Needed board, this is NOT needs-gated — every recent spot is returned and
-/// the UI filters client-side. Mode is the same classification the need-matcher uses.
+/// the UI filters client-side. `mode` is the frequency-derived class (CW/Phone/Digital) that
+/// drives the filter chips + privilege gate; `submode` carries the RBN skimmer's specific mode
+/// (FT8/FT4/RTTY/PSK/CW) when present, so the panel can show it instead of a bare "Digital".
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SpotRow {
@@ -5913,8 +5915,14 @@ struct SpotRow {
     /// Band label ("20m"), "" if off the band plan.
     band: String,
     freq_mhz: f64,
-    /// "CW" | "Phone" | "Digital".
+    /// Frequency-derived mode CLASS: "CW" | "Phone" | "Digital". Drives the 3-class filter
+    /// chips and the privilege gate.
     mode: String,
+    /// The SPECIFIC mode a skimmer reported on the RBN wire ("FT8" / "FT4" / "RTTY" / "PSK" /
+    /// "CW"), when this spot carries one — so the firehose can distinguish FT8 from FT4 from
+    /// RTTY instead of lumping them all as "Digital". `None` for human-node spots (whose
+    /// free-text mode is untrusted, per the 21.074-CW doctrine). The UI shows `submode ?? mode`.
+    submode: Option<String>,
     spotter: String,
     /// Other spotters of the same DX (multi-endpoint evidence the buffer carries forward).
     corroborators: Vec<String>,
@@ -5980,6 +5988,9 @@ fn get_all_spots(spots: State<'_, SharedSpots>, state: State<'_, SharedEngine>) 
                 band,
                 freq_mhz: freq,
                 mode: mode_label.to_string(),
+                // Trusted specific mode from the RBN skimmer wire, when present (never human
+                // free-text). The class-level `mode` above still drives the filter + privilege.
+                submode: cs.skimmer_mode().map(str::to_string),
                 spotter: cs.spotter.clone(),
                 corroborators: cs.corroborators.clone(),
                 age_secs,
