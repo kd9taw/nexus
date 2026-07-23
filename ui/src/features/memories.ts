@@ -20,7 +20,17 @@ import type { View } from './registry'
 
 /** What a channel IS — drives which editor fields show and which cockpit a
  * recall switches to. 'other' is the safe default for hand-added rows. */
-export type MemoryKind = 'repeater' | 'simplex' | 'hfnet' | 'calling' | 'pota' | 'digital' | 'other'
+export type MemoryKind =
+  | 'repeater'
+  | 'simplex'
+  | 'hfnet'
+  | 'calling'
+  | 'pota'
+  | 'digital'
+  | 'satellite'
+  | 'emcomm'
+  | 'reference'
+  | 'other'
 
 export type OffsetDir = 'simplex' | 'plus' | 'minus' | 'split'
 
@@ -126,7 +136,7 @@ export function emptyBank(): MemoriesBank {
 // Coercion + migration ("repair, don't trust" — the connectConfig idiom)
 // ---------------------------------------------------------------------------
 
-const KINDS: MemoryKind[] = ['repeater', 'simplex', 'hfnet', 'calling', 'pota', 'digital', 'other']
+const KINDS: MemoryKind[] = ['repeater', 'simplex', 'hfnet', 'calling', 'pota', 'digital', 'satellite', 'emcomm', 'reference', 'other']
 const TONE_MODES: ToneMode[] = ['none', 'tone', 'tsql', 'dtcs', 'cross']
 const OFFSET_DIRS: OffsetDir[] = ['simplex', 'plus', 'minus', 'split']
 

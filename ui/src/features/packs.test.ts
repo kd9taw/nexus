@@ -56,7 +56,7 @@ describe('starter packs', () => {
 
   it('adds a channel shared by two packs to BOTH packs’ groups', () => {
     const digital = STARTER_PACKS.find((p) => p.id === 'na-digital')!
-    const pota = STARTER_PACKS.find((p) => p.id === 'na-pota')!
+    const pota = STARTER_PACKS.find((p) => p.id === 'na-pota-sota')!
     let bank = importPack(emptyBank(), digital).bank
     bank = importPack(bank, pota).bank
     const potaGid = bank.groups.find((g) => g.name === pota.name)!.id
@@ -66,12 +66,14 @@ describe('starter packs', () => {
     expect(shared?.groups).toContain(potaGid)
   })
 
-  it('carries a scheduled net through with its reminder schedule (default off)', () => {
-    const nets = STARTER_PACKS.find((p) => p.id === 'na-nets')!
-    const { bank } = importPack(emptyBank(), nets)
-    const mmsn = bank.memories.find((m) => m.name.startsWith('Maritime'))
-    expect(mmsn?.net?.days).toHaveLength(7)
-    expect(mmsn?.net?.alertEnabled).toBe(false)
+  it('installs a scheduled net with its reminder default off', () => {
+    // The bundled packs ship no net schedules today (net times are volatile), so this
+    // exercises the machinery with the fixture — an installed net keeps its schedule and
+    // does NOT pre-arm reminders.
+    const { bank } = importPack(emptyBank(), netPack({ utcTime: '01:00' }))
+    const net = bank.memories.find((m) => m.name === 'Test Net')
+    expect(net?.net?.utcTime).toBe('01:00')
+    expect(net?.net?.alertEnabled).toBe(false)
   })
 })
 

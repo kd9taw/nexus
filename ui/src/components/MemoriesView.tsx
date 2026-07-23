@@ -49,6 +49,9 @@ const KIND_LABEL: Record<MemoryKind, string> = {
   calling: 'Calling',
   pota: 'POTA/SOTA',
   digital: 'Digital',
+  satellite: 'Satellite',
+  emcomm: 'EmComm',
+  reference: 'Reference',
   other: 'Other',
 }
 
