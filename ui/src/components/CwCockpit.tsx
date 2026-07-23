@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { AppSnapshot, FieldDayStatus, NeedTag, Settings, SpotRow } from '../types'
 import { PhoneScope } from './PhoneScope'
+import { TxMeters } from './TxMeters'
 import { PalettePicker } from './PalettePicker'
 import { BandPicker } from './BandPicker'
 import { BandStrip } from './BandStrip'
@@ -906,6 +907,10 @@ export function CwCockpit({
           </div>
         )
       })()}
+
+      {/* Live transmit meters (SWR / ALC / Po / COMP) — self-gating: shown only while keyed,
+          and only the meters the rig reports. A CW op wants SWR + Po as they send. */}
+      <TxMeters radio={snap.radio} />
 
       {/* RX DSP levels — NR depth + AGC speed, each shown only when the rig reports it. Parity
           with the Phone cockpit; a CW op leans on AGC speed and NR depth heavily. */}

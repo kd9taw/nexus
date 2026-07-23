@@ -28,6 +28,7 @@ import { Splitter } from './Splitter'
 import { buildHighlightMap, OperateDecodes } from './OperateDecodes'
 import { DecodeHistory } from '../decodeHistory'
 import { OperateQsoStrip } from './OperateQsoStrip'
+import { TxMeters } from './TxMeters'
 import { SpotDialog } from './SpotDialog'
 import { OperateRoster } from './OperateRoster'
 import { TxPanel } from './TxPanel'
@@ -877,6 +878,11 @@ export function OperateCockpit({
           onFreetext={onFreetext}
           onLog={onLog}
         />
+
+        {/* Live transmit meters (SWR / ALC / Po / COMP) — self-gating, so they appear under
+            the operating bar only while keyed (e.g. an FT8 slot) and only for meters the rig
+            reports. Useful for catching high SWR on a VHF rover session before a long run. */}
+        <TxMeters radio={snap.radio} />
 
         {/* data-cols collapses the grid to ONE column once the main cell or the whole
             side rail is gone — otherwise the survivor keeps its 2fr/1fr track and the
