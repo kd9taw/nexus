@@ -17,6 +17,23 @@ use crate::achievements::{self, Achievement, AchievementStats};
 use crate::dxcc;
 use crate::model::{Band, ModeClass};
 
+/// The ARRL DXCC Challenge bands — exactly 160/80/40/30/20/17/15/12/10/6 m. Challenge
+/// EXCLUDES 60 m, and 4 m / 2 m are above 6 m and not Challenge bands at all. A DXCC
+/// contact on those bands still counts toward basic/Mixed DXCC and the per-band breakdown,
+/// but NOT toward the 1000-slot Challenge total — so the Challenge count filters to these.
+const CHALLENGE_BANDS: &[Band] = &[
+    Band::B160,
+    Band::B80,
+    Band::B40,
+    Band::B30,
+    Band::B20,
+    Band::B17,
+    Band::B15,
+    Band::B12,
+    Band::B10,
+    Band::B6,
+];
+
 /// DXCC mode classes, in display order (separate CW/Phone/Digital DXCC awards).
 const MODE_CLASSES: [ModeClass; 3] = [ModeClass::Cw, ModeClass::Phone, ModeClass::Digital];
 
@@ -365,6 +382,9 @@ impl Awards {
         // each adds a Challenge slot.
         let mut slot_map: HashMap<&'static str, BTreeSet<String>> = HashMap::new();
         for (entity, band) in &self.worked_slot {
+            if !CHALLENGE_BANDS.contains(band) {
+                continue; // 60m/2m/4m are not Challenge slots to fill
+            }
             if !self.confirmed_entity.contains(entity) {
                 continue; // brand-new entity → the `needed` chase, not here
             }
@@ -546,8 +566,18 @@ impl Awards {
             dxcc_confirmed: self.confirmed_entity.len(),
             dxcc_credited,
             ready_to_submit,
-            slots_worked: self.worked_slot.len(),
-            slots_confirmed: self.confirmed_slot.len(),
+            // Challenge counts ONLY the 10 Challenge bands (worked_slot itself keeps every
+            // band so a 60m-only new entity still counts for basic DXCC and the per-band view).
+            slots_worked: self
+                .worked_slot
+                .iter()
+                .filter(|(_, b)| CHALLENGE_BANDS.contains(b))
+                .count(),
+            slots_confirmed: self
+                .confirmed_slot
+                .iter()
+                .filter(|(_, b)| CHALLENGE_BANDS.contains(b))
+                .count(),
             bands,
             modes,
             needed,
@@ -623,6 +653,23 @@ mod tests {
         assert_eq!((cw.worked, cw.confirmed), (2, 2));
         let phone = s.modes.iter().find(|m| m.mode == "Phone").unwrap();
         assert_eq!((phone.worked, phone.confirmed), (1, 0));
+    }
+
+    #[test]
+    fn challenge_slots_exclude_60m_2m_4m_but_dxcc_still_counts_them() {
+        let mut a = Awards::new();
+        a.add("W1AW", "20m", "CW", true); // USA / 20m — a Challenge band
+        a.add("JA1XYZ", "60m", "FT8", true); // Japan / 60m — DXCC yes, Challenge NO
+        a.add("DL1ABC", "2m", "SSB", true); // Germany / 2m — DXCC yes, Challenge NO
+        let s = a.summary();
+        // Every entity counts toward basic/Mixed DXCC and the per-band breakdown…
+        assert_eq!(s.dxcc_worked, 3);
+        assert_eq!(s.dxcc_confirmed, 3);
+        assert!(s.bands.iter().any(|b| b.band == "60m" && b.worked == 1));
+        assert!(s.bands.iter().any(|b| b.band == "2m" && b.worked == 1));
+        // …but ONLY the 20m slot counts toward the 1000-slot Challenge total.
+        assert_eq!(s.slots_worked, 1, "only (USA,20m) is a Challenge slot");
+        assert_eq!(s.slots_confirmed, 1);
     }
 
     #[test]
