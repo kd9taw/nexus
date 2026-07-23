@@ -22,7 +22,7 @@ import {
   Image as ImageIcon,
   RotateCcw,
 } from 'lucide-react'
-import { useState, type DragEvent } from 'react'
+import { useState, type ButtonHTMLAttributes } from 'react'
 import { Tooltip, TooltipProvider } from './ui/Tooltip'
 import { type FeatureId, type View } from '../features/registry'
 import { orderNav, moveNav, loadNavOrder, saveNavOrder, resetNavOrder } from '../navOrder'
@@ -181,13 +181,17 @@ export function ModeNav({ view, mode, enabled, onSelect, tier, onDigitalMode }: 
     resetNavOrder()
     setOrder([])
   }
-  // A plain view button (used for Phone, CW, and the global sections).
-  const navBtn = (it: Item) => {
+  // A plain view button (used for Phone, CW, and the global sections). `dragProps` are spread
+  // onto the button itself — the drag SOURCE must be the button, not a wrapping div: a form
+  // control (button) inside a `draggable` ancestor swallows the press gesture, so the ancestor
+  // drag never starts. Placed before the fixed props so `onClick`/`className` can't be clobbered.
+  const navBtn = (it: Item, dragProps?: ButtonHTMLAttributes<HTMLButtonElement>) => {
     const Icon = it.icon
     return (
       <Tooltip key={it.id} content={it.title}>
         <button
           type="button"
+          {...dragProps}
           className={`mode-btn${view === it.id ? ' active' : ''}`}
           aria-current={view === it.id ? 'page' : undefined}
           aria-label={it.title}
@@ -243,28 +247,32 @@ export function ModeNav({ view, mode, enabled, onSelect, tier, onDigitalMode }: 
               className={`mode-nav-drag${dragId === it.id ? ' dragging' : ''}${
                 overId === it.id ? ' dragover' : ''
               }`}
-              draggable
-              onDragStart={(e: DragEvent) => {
-                setDragId(it.id)
-                e.dataTransfer.effectAllowed = 'move'
-              }}
-              onDragOver={(e: DragEvent) => {
-                if (dragId && dragId !== it.id) {
-                  e.preventDefault()
-                  setOverId(it.id)
-                }
-              }}
-              onDragLeave={() => setOverId((o) => (o === it.id ? null : o))}
-              onDrop={(e: DragEvent) => {
-                e.preventDefault()
-                dropOn(it.id)
-              }}
-              onDragEnd={() => {
-                setDragId(null)
-                setOverId(null)
-              }}
             >
-              {navBtn(it)}
+              {navBtn(it, {
+                draggable: true,
+                onDragStart: (e) => {
+                  setDragId(it.id)
+                  e.dataTransfer.effectAllowed = 'move'
+                  // Required by some engines (and harmless elsewhere) for the drag to begin.
+                  e.dataTransfer.setData('text/plain', it.id)
+                },
+                onDragOver: (e) => {
+                  if (dragId && dragId !== it.id) {
+                    e.preventDefault()
+                    e.dataTransfer.dropEffect = 'move'
+                    setOverId(it.id)
+                  }
+                },
+                onDragLeave: () => setOverId((o) => (o === it.id ? null : o)),
+                onDrop: (e) => {
+                  e.preventDefault()
+                  dropOn(it.id)
+                },
+                onDragEnd: () => {
+                  setDragId(null)
+                  setOverId(null)
+                },
+              })}
             </div>
           ))}
           {customized && (
