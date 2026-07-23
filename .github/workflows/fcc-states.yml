@@ -1,0 +1,80 @@
+# Weekly regeneration of the FCC callsign→state index that Nexus downloads for the
+# WAS "New State" hint on grid-less cluster / CW / SSB spots (see
+# scripts/gen-fcc-states.mjs + crates/propagation/src/fccstate.rs).
+#
+# The FCC refreshes the complete ULS amateur file weekly on Sundays; this runs Monday
+# and publishes the ~6 MB index as a rolling GitHub Release asset (`fcc-states`), which
+# needs NO secrets — the built-in GITHUB_TOKEN is enough. That release is the automatic,
+# always-current source. Serving it under hamradiotools.io is a one-time site edit
+# (a `_redirects` line to the release asset) — see ops/fcc-states.md. An optional
+# Cloudflare R2 publish step is included for hosting it directly under the domain.
+name: FCC callsign→state index
+
+on:
+  schedule:
+    # Mondays 09:00 UTC — a day after the FCC's Sunday weekly refresh.
+    - cron: '0 9 * * 1'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write # publish the rolling Release asset
+
+concurrency:
+  group: fcc-states
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Generate the index (downloads the 194 MB FCC file, emits ~6 MB)
+        run: |
+          mkdir -p out
+          node scripts/gen-fcc-states.mjs --download out
+
+      - name: Sanity-check the output before publishing
+        run: |
+          node -e '
+            const fs = require("fs");
+            const buf = fs.readFileSync("out/fcc-states.bin");
+            if (buf.subarray(0, 8).toString("latin1") !== "NEXFCCS1") throw new Error("bad magic");
+            const count = buf.readUInt32LE(8);
+            if (buf.length !== 16 + count * 7) throw new Error("length/count mismatch");
+            // ~800k active US hams; a run that produced far fewer means an upstream/parse break.
+            if (count < 500000) throw new Error(`only ${count} calls — refusing to publish a short file`);
+            console.log(`ok: ${count.toLocaleString()} calls, ${(buf.length/1e6).toFixed(1)} MB`);
+          '
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fcc-states
+          path: out/*
+          retention-days: 14
+
+      - name: Publish to the rolling `fcc-states` Release (automatic source, no secrets)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view fcc-states >/dev/null 2>&1 \
+            || gh release create fcc-states \
+                 --title "FCC callsign→state index" \
+                 --notes "Auto-generated weekly from the FCC ULS complete amateur file. Nexus downloads this for the WAS New-State hint." \
+                 --latest=false
+          gh release upload fcc-states out/fcc-states.bin out/fcc-states.json --clobber
+
+      - name: (optional) Publish under hamradiotools.io via Cloudflare R2
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "No CLOUDFLARE_API_TOKEN secret — skipping R2 publish (the Release above is the source)."
+            exit 0
+          fi
+          npx --yes wrangler r2 object put nexus-data/fcc-states.bin  --file out/fcc-states.bin  --content-type application/octet-stream
+          npx --yes wrangler r2 object put nexus-data/fcc-states.json --file out/fcc-states.json --content-type application/json
