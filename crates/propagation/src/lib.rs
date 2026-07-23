@@ -80,8 +80,8 @@ pub use likelihood::{
 };
 pub use mapspots::{build_map_spots, MapSpot};
 pub use model::{
-    classify_spot_mode, classify_vhf_mode, ActivityTier, Band, Confidence, ModeClass, PathSpot,
-    PropMode, Region, Side, SpaceWx,
+    band_digital_mhz, classify_spot_mode, classify_vhf_mode, ActivityTier, Band, Confidence,
+    ModeClass, PathSpot, PropMode, Region, Side, SpaceWx,
 };
 pub use needalert::{
     activation_alert, heard_from_freq, heard_near_me, near_me_radius_km, rank as rank_needs,

@@ -6085,15 +6085,34 @@ async fn get_need_alerts(
             heard.extend(propagation::heard_near_me(&buf.recent(now, 900), me));
         }
     }
+    // Privilege-gate the DIGITAL evidence paths (own decodes + PSKR near-region / getting-out)
+    // the SAME way the cluster/RBN loop below gates each spot: a band the operator may not
+    // TRANSMIT digital on is not a "work these" need. Since the PSKR near-region census now
+    // covers HF F2 bands (40/20/17/15/12m), a Technician (no HF digital except 10m) would
+    // otherwise see 20/40m FT8 DX as workable needs. Everything in `heard` so far is
+    // digital-tier, so gate as Digital at the band's FT8 DIAL (band_digital_mhz — NOT band
+    // centre: 80m centre 3.600 sits in General's no-privilege gap). `Open` ⇒ tx_allowed true;
+    // General/Extra pass all HF digital, so only restricted classes change. Unparseable band ⇒
+    // keep (fail-open, matching get_all_spots' "never wrongly hide" posture).
+    heard.retain(|h| {
+        propagation::Band::from_label(&h.band).is_none_or(|b| {
+            tempo_app::privileges::tx_allowed(
+                license_class,
+                propagation::band_digital_mhz(b),
+                tempo_app::settings::OperatingMode::Digital,
+            )
+        })
+    });
     // CW / Phone (all bands) AND digital on HF come from the DX-cluster + RBN spot
     // firehose, which carries an EXACT frequency (→ click-to-work can QSY to the spot).
-    // Cluster spots have no structured mode, so classify each from its comment token /
-    // band segment. Digital is admitted on HF ONLY: a pure-digital operator's near-me
-    // PSKR census is hardcoded to 10m/6m/4m/2m (region_topics), so without this an HF
-    // FT8 new-one (20/40/15m) that's actively spotted has NO path to the Needed board —
-    // the "I have HF needs that never show" gap. VHF digital stays out (VHF locality is
-    // gated above and Es/MS digital adds noise); the frontend's mode gating still hides
-    // CW/Phone rows unless those features are on, so a digital board gains only HF digital.
+    // For a digital HF need the near-region PSKR census now also covers 40/20/17/15/12m
+    // (hf_region_topics), so the cluster path here is partly redundant with it — but the
+    // cluster still adds the EXACT freq (PSKR is band-level) and every human-node CW/Phone
+    // spot. Digital is admitted on HF ONLY here; VHF digital stays out (VHF locality is gated
+    // above and Es/MS digital adds noise). The frontend's mode gating still hides CW/Phone
+    // rows unless those features are on, so a digital board gains only HF digital. Both the
+    // PSKR paths (gated just above) and these cluster spots (gated per-spot below) honor
+    // tx_allowed, so a restricted class never sees an un-workable row.
     if let Ok(buf) = spots.lock() {
         let recent = buf.recent_within(
             std::time::Instant::now(),
