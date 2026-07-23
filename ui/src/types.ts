@@ -891,8 +891,10 @@ export interface DecodeRow {
   worked: boolean
   /** Sender's DXCC entity name (country), resolved from the callsign. */
   country?: string | null
-  /** Sender resolves to a DXCC entity never worked before (a "new one"). */
+  /** Sender resolves to a DXCC entity never worked on ANY band — a true all-time new one (ATNO). */
   newDxcc?: boolean
+  /** Entity worked before, but never on THIS band — a new band-slot (dimmer than newDxcc). */
+  newBand?: boolean
   /** Decode carries a Maidenhead grid never worked before. */
   newGrid?: boolean
   /** The grid the decode carried (CQ/grid messages) — for alert copy + rarity. */

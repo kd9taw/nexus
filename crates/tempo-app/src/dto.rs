@@ -115,10 +115,15 @@ pub struct DecodeRow {
     /// scan by country, so this rides on every decode + roster row.
     #[serde(default)]
     pub country: Option<String>,
-    /// True if the sender resolves to a DXCC entity never worked before — a "new
-    /// one". Off unless a DXCC resolver is wired (always off in headless tests).
+    /// True if the sender resolves to a DXCC entity never worked ON ANY BAND — a true all-time
+    /// "new one" (ATNO), matching the Needed board's NEW ONE. Off unless a DXCC resolver is wired
+    /// (always off in headless tests).
     #[serde(default)]
     pub new_dxcc: bool,
+    /// True if the sender's entity IS worked (somewhere) but NOT on the current band — a new
+    /// band-slot (DXCC is awarded per band). Mutually exclusive with `new_dxcc`.
+    #[serde(default)]
+    pub new_band: bool,
     /// True if the decode carries a Maidenhead grid never worked before.
     #[serde(default)]
     pub new_grid: bool,

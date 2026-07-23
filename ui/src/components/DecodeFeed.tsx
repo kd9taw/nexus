@@ -9,11 +9,12 @@ interface Props {
   onCall: (call: string, grid?: string, message?: string, snr?: number, freq?: number) => void
 }
 
-/** Priority class for color-coding (directedToMe > new-DXCC > new-grid > worked > CQ). */
+/** Priority class for color-coding (directedToMe > new-DXCC > new-band > new-grid > worked > CQ). */
 function rowClass(d: DecodeRow): string {
   if (d.mine) return 'mine'
   if (d.directedToMe) return 'directed'
   if (d.newDxcc) return 'newdxcc'
+  if (d.newBand) return 'newband'
   if (d.newGrid) return 'newgrid'
   if (d.worked) return 'worked'
   if (d.isCq) return 'cq'
@@ -71,7 +72,8 @@ export function DecodeFeed({ decodes, harqRescues, onCall }: Props) {
               <span className="decode-msg" title={d.country ? `${d.message} · ${d.country}` : d.message}>
                 {d.message}
                 {d.country && <span className="decode-country">{d.country}</span>}
-                {d.newDxcc && <span className="decode-tag newdxcc" title="New DXCC entity on this band">DXCC</span>}
+                {d.newDxcc && <span className="decode-tag newdxcc" title="New DXCC entity — an all-time new one (ATNO)">DXCC</span>}
+                {d.newBand && !d.newDxcc && <span className="decode-tag newband" title="Worked before — but a new band-slot for this entity">BAND</span>}
                 {d.newGrid && !d.newDxcc && <span className="decode-tag newgrid" title="New grid square on this band">GRID</span>}
                 {d.worked && <span className="b4-chip" title="Worked before">B4</span>}
                 {d.isCq && !d.directedToMe && <span className="decode-tag cq">CQ</span>}

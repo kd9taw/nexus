@@ -2953,6 +2953,9 @@ button.nb-chip:hover {
 [data-theme='light'] .decode-row.newdxcc .decode-msg {
   color: #b0004f;
 }
+[data-theme='light'] .decode-row.newband .decode-msg {
+  color: #a15c07;
+}
 [data-theme='light'] .decode-row.newgrid .decode-msg {
   color: #96660a;
 }
@@ -9850,6 +9853,15 @@ select.settings-input {
   color: #ff9bba;
   font-weight: 800;
 }
+/* New band-slot — orange, between new-DXCC and new-grid: worked the entity, new band. */
+.decode-row.newband {
+  border-left: 3px solid #f59e0b;
+  background: color-mix(in srgb, #f59e0b 18%, transparent);
+}
+.decode-row.newband .decode-msg {
+  color: #fbbf24;
+  font-weight: 700;
+}
 /* New grid — a softer amber highlight, a notch below new-DXCC. */
 .decode-row.newgrid {
   border-left: 3px solid #f5a524;
@@ -9995,6 +10007,12 @@ select.settings-input {
 .decode-tag.newgrid {
   color: #06281c;
   background: var(--need-grid);
+}
+/* Band-slot — worked this entity before, but not on this band. Uses the same
+   orange as the Needed board's BAND chip; dimmer than the ATNO magenta above. */
+.decode-tag.newband {
+  color: #fff;
+  background: var(--need-band);
 }
 /* DXCC entity (country) on a decode row — DX chasers scan by country. Pushed to
    the right edge of the message line so it fills the otherwise-empty space next

@@ -407,6 +407,13 @@ impl StationCore {
             .contains(&(entity.to_string(), band_key(band)))
     }
 
+    /// Whether the entity has been worked on ANY band — a true ATNO check (all-time), as opposed
+    /// to the per-band [`entity_worked_on`]. Distinguishes the decode feed's `DXCC` (all-time
+    /// new) tag from its `BAND` (worked elsewhere, new on this band) tag.
+    pub(crate) fn entity_worked_ever(&self, entity: &str) -> bool {
+        self.worked_entities.iter().any(|(e, _)| e == entity)
+    }
+
     /// Drain the freshly-logged QSOs awaiting connector auto-upload (FIFO).
     /// Called by the shell's upload worker; empty when nothing was logged.
     pub fn take_pending_uploads(&mut self) -> Vec<PendingUpload> {

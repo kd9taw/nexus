@@ -5639,12 +5639,19 @@ impl Engine {
                     (Some(c), Some(resolve)) => resolve(c),
                     _ => None,
                 };
-                // …and likewise per band: DXCC is awarded per band (Challenge slots,
-                // VHF DXCC), so an entity worked only on HF is a new one on 2 m.
-                let new_dxcc = entity
-                    .as_ref()
-                    .map(|e| !self.station.entity_worked_on(e, cur_band))
-                    .unwrap_or(false);
+                // Split the highlight (operator ruling, option 2): a TRUE all-time-new DXCC
+                // entity (never worked on any band) reads as `DXCC` — matching the Needed
+                // board's NEW ONE / ATNO — while an entity worked elsewhere but new on THIS band
+                // (DXCC is awarded per band: Challenge slots, VHF DXCC) reads as the dimmer
+                // `BAND`. The two are mutually exclusive by construction, so a chaser never
+                // mistakes a band-slot for a new country.
+                let (new_dxcc, new_band) = match &entity {
+                    Some(e) => {
+                        let ever = self.station.entity_worked_ever(e);
+                        (!ever, ever && !self.station.entity_worked_on(e, cur_band))
+                    }
+                    None => (false, false),
+                };
                 // Rarity: prefer the grid on THIS frame, but on report/R/RR73/73
                 // frames (which carry no grid) fall back to the sender's grid
                 // remembered in the roster — so an ULTRA-rare station keeps its
@@ -5667,6 +5674,7 @@ impl Engine {
                     worked,
                     country: entity,
                     new_dxcc,
+                    new_band,
                     new_grid,
                     grid: grid.filter(|g| !g.is_empty()).map(str::to_string),
                     grid_rarity,
@@ -5703,6 +5711,7 @@ impl Engine {
                 worked: false,
                 country: None,
                 new_dxcc: false,
+                new_band: false,
                 new_grid: false,
                 grid: None,
                 grid_rarity: None,
@@ -10904,14 +10913,17 @@ mod tests {
         let rows = e.snapshot().recent_decodes;
         let row = |c: &str| rows.iter().find(|r| r.from.as_deref() == Some(c)).unwrap();
 
-        assert!(!row("W1AW").new_grid && !row("W1AW").new_dxcc, "all worked");
         assert!(
-            row("W4ABC").new_grid && !row("W4ABC").new_dxcc,
-            "new grid only"
+            !row("W1AW").new_grid && !row("W1AW").new_dxcc && !row("W1AW").new_band,
+            "all worked"
         );
         assert!(
-            row("DL1XYZ").new_grid && row("DL1XYZ").new_dxcc,
-            "new grid + new entity"
+            row("W4ABC").new_grid && !row("W4ABC").new_dxcc && !row("W4ABC").new_band,
+            "new grid only (entity W already worked on this band)"
+        );
+        assert!(
+            row("DL1XYZ").new_grid && row("DL1XYZ").new_dxcc && !row("DL1XYZ").new_band,
+            "new grid + all-time-new entity (ATNO, so DXCC not BAND)"
         );
     }
 
@@ -10919,6 +10931,8 @@ mod tests {
     /// chain: "Not on 2m it's a different band." Grids and DXCC are both awarded per
     /// band, and a 2 m grid is worth far more than the same square on HF — so the
     /// decode feed must light up again when the same grid/entity is heard on 2 m.
+    /// The entity is not an ATNO though (it was worked on 20 m), so this is a `new_band`
+    /// band-slot (the dimmer BAND tag), NOT `new_dxcc` (the all-time-new-one DXCC tag).
     #[test]
     fn worked_on_20m_is_new_again_on_2m_in_the_decode_feed() {
         let mut e = Engine::new("K2DEF", "FN31", 0);
@@ -10938,11 +10952,12 @@ mod tests {
             .find(|r| r.from.as_deref() == Some("W1AW"))
             .unwrap();
         assert!(
-            !r20.new_grid && !r20.new_dxcc,
+            !r20.new_grid && !r20.new_dxcc && !r20.new_band,
             "EN37 / entity W ARE worked on 20m → no badge there"
         );
 
-        // Move to 2 m and hear the very same grid + entity → both are genuinely new.
+        // Move to 2 m and hear the very same grid + entity → the grid is genuinely new,
+        // and the entity is a new BAND-slot (worked on 20 m, never on 2 m) — not an ATNO.
         e.set_frequency(144.174, "2m", "USB");
         e.ingest_decodes_for_test(&[dec_snr("CQ W1AW EN37", -5)], 0);
         let on_2 = e.snapshot().recent_decodes;
@@ -10955,8 +10970,8 @@ mod tests {
             "EN37 worked on 20m only → a NEW grid on 2m (VUCC is per band)"
         );
         assert!(
-            r2.new_dxcc,
-            "entity worked on 20m only → a new one on 2m (DXCC is per band)"
+            r2.new_band && !r2.new_dxcc,
+            "entity worked on 20m only → a new BAND-slot on 2m, not an all-time new one"
         );
     }
 
