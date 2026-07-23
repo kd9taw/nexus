@@ -3107,8 +3107,9 @@ impl RadioLoop {
         // Phone section drives these (the FT8 TX path is idle there), so no PTT clash.
         {
             let (ptt, power) = {
-                let eng = engine.lock().map_err(|e| e.to_string())?;
-                (eng.manual_ptt(), eng.rf_power())
+                let mut eng = engine.lock().map_err(|e| e.to_string())?;
+                let ptt = eng.manual_ptt();
+                (ptt, eng.rf_power_to_command())
             };
             if ptt != self.manual_ptt_applied {
                 if ptt {
@@ -3121,8 +3122,10 @@ impl RadioLoop {
                 self.report_ptt(engine, ptt && ptt_failed);
                 self.manual_ptt_applied = ptt;
             }
-            if let Some(p) = power {
-                if Some(p) != self.last_rf_power && rig.set_power(p).is_ok() {
+            if let Some((p, force)) = power {
+                // Command on change OR when the cap must be re-asserted (`force`): a manual
+                // knob-up past the ceiling is pulled back down even though our target is unchanged.
+                if (force || Some(p) != self.last_rf_power) && rig.set_power(p).is_ok() {
                     self.last_rf_power = Some(p);
                 }
             }

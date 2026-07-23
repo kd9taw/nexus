@@ -2280,6 +2280,27 @@ impl Engine {
         self.rf_power = Some(frac.clamp(0.0, ceiling));
     }
 
+    /// The RF power the radio loop should COMMAND, plus whether to FORCE the command even if it
+    /// hasn't changed. The per-mode cap is a HARD, continuous ceiling — not a one-shot on mode
+    /// change: if the rig is observed running ABOVE the current mode's cap (the operator raised
+    /// power on the rig's own knob, or re-entered a higher-cap mode still hot from a manual
+    /// override), capture that as "run at the cap" — clamp `rf_power` down to the ceiling AND force
+    /// the loop to command it down now. This is why the earlier version "only worked once": it
+    /// clamped the commanded value but never re-asserted against the rig's actual level. Enforcement
+    /// only ever LOWERS power, so it is safe-direction. Called each radio-loop tick.
+    pub fn rf_power_to_command(&mut self) -> Option<(f32, bool)> {
+        let ceiling = self.settings.rf_power_ceiling();
+        let mut force = false;
+        if ceiling < 1.0 {
+            // 0.02 epsilon absorbs rig readback rounding so a settled cap doesn't re-command.
+            if self.rig_rf_power.is_some_and(|observed| observed > ceiling + 0.02) {
+                self.rf_power = Some(ceiling);
+                force = true;
+            }
+        }
+        self.rf_power.map(|p| (p, force))
+    }
+
     /// Desired RF power, if the operator has set one (for the radio loop).
     pub fn rf_power(&self) -> Option<f32> {
         self.rf_power
@@ -10081,6 +10102,43 @@ mod tests {
         // And back to an uncapped mode leaves the (now-low) power put — it does not push it up.
         e.set_operating_mode("cw", false);
         assert_eq!(e.rf_power(), Some(0.30), "uncapped mode never RAISES power on its own");
+    }
+
+    #[test]
+    fn power_cap_is_a_continuous_ceiling_not_a_one_shot() {
+        // Operator report (FTdx10, 2026-07-23): the cap "worked once", then a manual knob-up back
+        // to 100% stuck and re-entering a mode didn't re-clamp. The cap must be a HARD, continuous
+        // ceiling enforced against the rig's ACTUAL level, not just the commanded value.
+        let mut e = Engine::new("K2DEF", "FN31", 0);
+        e.settings.max_power_phone = Some(0.75);
+        e.set_operating_mode("phone", false);
+        e.set_rf_power(0.75); // commanded at the cap
+        assert_eq!(e.rf_power_to_command(), Some((0.75, false)), "settled at the cap → no force");
+
+        // The operator turns the RIG's own knob up to 100% (OBSERVED, not commanded). The old loop
+        // saw the commanded value unchanged and never re-commanded — the rig stayed hot. Now the
+        // cap pulls it back down and FORCES the command even though our target didn't change.
+        e.observe_rig_power(1.0);
+        assert_eq!(
+            e.rf_power_to_command(),
+            Some((0.75, true)),
+            "rig observed above the cap → clamp down and force"
+        );
+        assert_eq!(e.rf_power(), Some(0.75), "captured as run-at-the-cap");
+
+        // Once the rig settles at the cap, no more forcing (no oscillation on readback).
+        e.observe_rig_power(0.75);
+        assert_eq!(e.rf_power_to_command(), Some((0.75, false)));
+
+        // A knob-DOWN below the cap is the operator's choice — never forced back up.
+        e.set_rf_power(0.40);
+        e.observe_rig_power(0.40);
+        assert_eq!(e.rf_power_to_command(), Some((0.40, false)), "below the cap is left alone");
+
+        // No cap on CW → never forces, even with the rig at 100%.
+        e.set_operating_mode("cw", false);
+        e.observe_rig_power(1.0);
+        assert_eq!(e.rf_power_to_command().map(|(_, f)| f), Some(false), "uncapped mode never forces");
     }
 
     #[test]
