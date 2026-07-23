@@ -32,7 +32,6 @@ export const PER_SURFACE = [
   'nexus.connect.map3d',
   'nexus.connect.projection',
   'nexus.logbook.globespin',
-  'nexus.logbook.mapview', // 2-D/3-D map choice, per window like the globe's spin
   'nexus.operate.layout',
   'nexus.operateLayout',
   'nexus.ota.bandFilter',

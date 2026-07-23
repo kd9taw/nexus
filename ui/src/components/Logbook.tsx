@@ -8,10 +8,6 @@ import { SpotDialog } from './SpotDialog'
 // Logbook actually shows it (same pattern as ConnectView's Globe3D) — a weak-GPU
 // machine that fails `gpuCapableForGlobe` never pays for the chunk at all.
 const QsoGlobe = lazy(() => import('./QsoGlobe'))
-// The 2-D companion (flat equirectangular map). Canvas-only, no GPU — so it also serves the
-// weak-GPU machines the 3-D globe skips. Lazy to match the globe's code-splitting.
-const QsoMap = lazy(() => import('./QsoMap'))
-import { surfaceGet, surfaceSet } from '../features/windowScope'
 
 import {
   deleteQso,
@@ -443,18 +439,7 @@ export function Logbook({
   // 3-D globe band, gated on a real GPU (software renderers would make the whole
   // Logbook crawl — those machines just get the plain table). Probed once per mount.
   const [globeOk] = useState(gpuCapableForGlobe)
-  // The map band shows whenever there are QSOs — 2-D needs no GPU. `mapPref` is the operator's
-  // 2-D/3-D choice (per-surface, like the globe's spin); the EFFECTIVE view falls back to 2-D
-  // when 3-D is chosen on a machine without a capable GPU, so the choice can never blank the map.
-  const mapShown = log.length > 0
-  const [mapPref, setMapPref] = useState<'2d' | '3d'>(() =>
-    surfaceGet('nexus.logbook.mapview') === '2d' ? '2d' : '3d',
-  )
-  const mapView: '2d' | '3d' = mapPref === '3d' && globeOk ? '3d' : '2d'
-  const setMap = (v: '2d' | '3d') => {
-    setMapPref(v)
-    surfaceSet('nexus.logbook.mapview', v)
-  }
+  const globeShown = globeOk && log.length > 0
 
   // Virtualize the row list: at 10k QSOs the old render put ~150k DOM nodes on screen (heavy scroll
   // + a full reconcile every dial-poll re-render). Now only the visible window mounts.
@@ -800,31 +785,10 @@ export function Logbook({
 
       <div className="log-table logbook-table" role="table">
         <div className="log-scroll" ref={scrollRef}>
-          {mapShown && (
+          {globeShown && (
             <div className="log-globe-band">
-              <div className="log-map-toggle" role="group" aria-label="Map view">
-                <button
-                  type="button"
-                  className={`log-map-btn${mapView === '2d' ? ' active' : ''}`}
-                  aria-pressed={mapView === '2d'}
-                  onClick={() => setMap('2d')}
-                  title="Flat map"
-                >
-                  2D
-                </button>
-                <button
-                  type="button"
-                  className={`log-map-btn${mapView === '3d' ? ' active' : ''}`}
-                  aria-pressed={mapView === '3d'}
-                  onClick={() => setMap('3d')}
-                  disabled={!globeOk}
-                  title={globeOk ? '3-D globe' : '3-D globe needs a GPU-capable display'}
-                >
-                  3D
-                </button>
-              </div>
-              <Suspense fallback={<div className="log-globe-loading">Loading map…</div>}>
-                {mapView === '3d' ? <QsoGlobe qsos={log} /> : <QsoMap qsos={log} />}
+              <Suspense fallback={<div className="log-globe-loading">Loading globe…</div>}>
+                <QsoGlobe qsos={log} />
               </Suspense>
             </div>
           )}
