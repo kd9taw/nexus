@@ -1825,6 +1825,24 @@ export function SettingsPanel({
                   : 'Run two rigs at once — e.g. an HF radio plus a VHF/UHF radio on a different antenna? Add a second radio, then switch between them from the top bar. Newcomers can ignore this.'}
               </span>
             </div>
+            {(form.radios?.length ?? 1) > 1 && (
+              <label className="settings-field settings-simul-radios">
+                <span className="settings-input-row">
+                  <input
+                    type="checkbox"
+                    checked={!!form.simultaneousRadios}
+                    onChange={(e) => updateBool('simultaneousRadios', e.target.checked)}
+                    aria-label="Run both radios at the same time"
+                  />
+                  <span className="settings-hint">
+                    <strong>Run both radios at the same time</strong> — launch Nexus and it asks
+                    which radio this window drives; open a second window for the other. Both share
+                    one logbook. Leave off if you only ever use one radio at a time (you can still
+                    switch between them from the top bar).
+                  </span>
+                </span>
+              </label>
+            )}
           </fieldset>
           <fieldset className="settings-section">
             <legend>Profiles</legend>

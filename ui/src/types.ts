@@ -1983,6 +1983,9 @@ export interface Settings {
   activeRadio?: number
   /** Peg-lock: band selection won't auto-switch the active radio when true. */
   radioPegged?: boolean
+  /** Opt-in: run two radios at once (one per window). When on with ≥2 radios, launch shows a
+   *  "which radio?" picker. Off by default so single-radio stations are never bothered. */
+  simultaneousRadios?: boolean
 }
 
 /** One radio's complete connection profile (dual-radio). Mirrors the Rust `RadioProfile`; the flat

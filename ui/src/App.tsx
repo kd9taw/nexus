@@ -98,6 +98,9 @@ import {
   stopQsoRecording,
   pointRotatorAtCall,
   qsySetEnabled as apiQsySetEnabled,
+  radioLaunchInfo,
+  chooseRadio,
+  type RadioLaunchInfo,
 } from './api'
 import {
   hotkeyRecallTarget,
@@ -128,6 +131,7 @@ import { Toasts } from './components/Toasts'
 import { OnboardingBanner } from './components/OnboardingBanner'
 import { RevealNudge } from './components/RevealNudge'
 import { SetupWizard, type WizardDraft } from './components/SetupWizard'
+import { RadioPicker } from './components/RadioPicker'
 import { PROFILES, type ProfileId } from './features/profiles'
 import { maybeCheckForUpdate } from './features/updateCheck'
 
@@ -195,6 +199,21 @@ export default function App() {
   const { commitLeft, commitRight, resetWidths } = usePaneWidths()
   const layoutRef = useRef<HTMLElement>(null)
   const [snap, setSnap] = useState<AppSnapshot | null>(null)
+  // Two-radio launch picker: shown only when simultaneous-radios is on, ≥2 radios are configured,
+  // and this window launched without a profile. `null` = not a picker launch (the common case),
+  // so a single-radio station never sees any of this.
+  const [radioPicker, setRadioPicker] = useState<RadioLaunchInfo | null>(null)
+  useEffect(() => {
+    let live = true
+    radioLaunchInfo()
+      .then((i) => {
+        if (live && i.showPicker) setRadioPicker(i)
+      })
+      .catch(() => {}) // no picker on error — fall through to normal operation
+    return () => {
+      live = false
+    }
+  }, [])
   // Live mirror of our callsign for callbacks with empty dep lists (handleCall
   // guards against working yourself without re-creating the callback per snap).
   const mycallRef = useRef('')
@@ -2305,6 +2324,12 @@ export default function App() {
 
       <Toasts />
       <Announcer />
+
+      {radioPicker?.showPicker && (
+        // First screen for a two-radio setup — pick which radio this window drives. Choosing
+        // relaunches the window bound to that radio (no shortcuts/env for the operator).
+        <RadioPicker info={radioPicker} onChoose={(id) => void chooseRadio(id)} />
+      )}
 
       {showWizard && settings && (
         // Gated on settings: the prefills are one-shot useState initializers,

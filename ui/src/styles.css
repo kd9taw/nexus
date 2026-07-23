@@ -10027,6 +10027,73 @@ select.settings-input {
   text-decoration: none;
 }
 
+/* Two-radio launch picker — a full-screen first-screen overlay ("which radio?"). */
+.radio-picker-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--bg) 92%, black);
+  backdrop-filter: blur(3px);
+}
+.radio-picker {
+  width: min(520px, 92vw);
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 28px;
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.45);
+}
+.radio-picker-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--accent);
+}
+.radio-picker-head h1 {
+  font-size: 22px;
+  margin: 0;
+}
+.radio-picker-sub {
+  color: var(--text-dim);
+  margin: 10px 0 20px;
+  line-height: 1.5;
+}
+.radio-picker-list {
+  display: grid;
+  gap: 12px;
+}
+.radio-picker-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 20px;
+  font-size: 18px;
+  font-weight: 700;
+  background: var(--bg-elev-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: var(--transition);
+}
+.radio-picker-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-elev-2));
+}
+.radio-picker-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.radio-picker-tag {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
 /* WSJT-X AP / low-confidence decode markers — trailing dim annotations.
    Rendered as a muted group immediately after the message text: '?' then 'a'.
    Uses no layout space on rows that have neither marker. */

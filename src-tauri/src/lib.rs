@@ -786,12 +786,124 @@ fn profile_dir_name(profile: Option<&str>) -> String {
     }
 }
 
-/// The per-instance config directory: `<base>/tempo` for the default profile, or
-/// `<base>/tempo-<profile>` for a named one. Holds settings.json + the journals beside it
-/// (window geometry, Field Day, pending-QSO/msgs queues) — all correctly per-instance, since
-/// each of those derives from [`settings_path`]'s parent.
+/// The config directory for a GIVEN profile (`None` = default) — `<base>/tempo[-<profile>]`.
+/// Used to peek at another profile's lock without being that profile.
+fn config_dir_for(profile: Option<&str>) -> PathBuf {
+    config_base().join(profile_dir_name(profile))
+}
+
+/// The per-instance config directory for THIS instance's active profile: `<base>/tempo` for
+/// the default, or `<base>/tempo-<profile>` for a named one. Holds settings.json + the journals
+/// beside it (window geometry, Field Day, pending-QSO/msgs queues) — all correctly per-instance,
+/// since each of those derives from [`settings_path`]'s parent.
 fn config_dir() -> PathBuf {
-    config_base().join(profile_dir_name(active_profile()))
+    config_dir_for(active_profile())
+}
+
+/// The config-dir profile name that a radio drives, keyed on its STABLE `RadioProfile::id`
+/// (`"r0"`, `"r1"`, …) so renaming a radio never orphans its window's config/journals.
+fn radio_profile_key(radio_id: u32) -> String {
+    format!("r{radio_id}")
+}
+
+/// Is another running instance already holding `profile`'s config dir? Checked via a std
+/// advisory file lock: an instance holds an exclusive lock on `<config_dir>/.lock` for its whole
+/// life ([`hold_profile_lock`]), so a `try_lock` that WOULD BLOCK means that radio's window is
+/// already open. A missing dir / lock-unsupported filesystem reads as "free" (fail-open — the
+/// picker just won't grey it out; the real guard is the holder's exclusive lock).
+fn profile_in_use(profile: &str) -> bool {
+    use std::fs::File;
+    let lock = config_dir_for(Some(profile)).join(".lock");
+    let Ok(f) = File::open(&lock) else {
+        return false; // no lock file yet → never launched → free
+    };
+    match f.try_lock() {
+        Ok(()) => {
+            let _ = f.unlock(); // we only peeked — release immediately
+            false
+        }
+        Err(std::fs::TryLockError::WouldBlock) => true, // someone holds it → in use
+        Err(_) => false,                                // unsupported → fail-open
+    }
+}
+
+/// Take THIS instance's advisory lock on its active profile's config dir and hold it for the
+/// whole process lifetime (the `File` is leaked so it never drops/unlocks early). Returns false
+/// if the SAME profile is already open in another window — the footgun guard: two instances of
+/// one profile would clobber each other's per-instance journals. The default profile is never
+/// locked (a lone single-radio instance needs no guard and must stay zero-overhead).
+fn hold_profile_lock() -> bool {
+    use std::fs::File;
+    let Some(_p) = active_profile() else {
+        return true; // default profile: no guard needed
+    };
+    let dir = config_dir();
+    let _ = std::fs::create_dir_all(&dir);
+    let Ok(f) = File::create(dir.join(".lock")) else {
+        return true; // can't make a lock → fail-open rather than refuse to launch
+    };
+    match f.try_lock() {
+        Ok(()) => {
+            Box::leak(Box::new(f)); // hold for process lifetime
+            true
+        }
+        Err(_) => false, // same profile already running
+    }
+}
+
+/// One selectable radio in the launch picker.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RadioLaunchOption {
+    id: u32,
+    name: String,
+    /// Already open in another window (its profile lock is held) — the picker greys it out.
+    in_use: bool,
+}
+
+/// What the frontend needs to decide whether to show the "which radio?" launch picker.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RadioLaunchInfo {
+    /// Show the picker: simultaneous-radios is enabled, ≥2 radios are configured, and THIS window
+    /// launched without a profile (a fresh chooser launch, not an already-bound relaunch).
+    show_picker: bool,
+    radios: Vec<RadioLaunchOption>,
+}
+
+/// Tell the frontend whether to show the launch picker, and the radios to offer. Single-radio
+/// stations (or multi-radio-off) get `show_picker=false` → the UI proceeds straight to operating.
+#[tauri::command]
+fn radio_launch_info(state: State<'_, SharedEngine>) -> Result<RadioLaunchInfo, String> {
+    let eng = state.lock().map_err(|e| e.to_string())?;
+    let s = eng.settings();
+    let enabled: Vec<_> = s.radios.iter().filter(|r| r.enabled).collect();
+    let show_picker = s.simultaneous_radios && enabled.len() >= 2 && active_profile().is_none();
+    let radios = enabled
+        .iter()
+        .map(|r| RadioLaunchOption {
+            id: r.id,
+            name: r.name.clone(),
+            in_use: profile_in_use(&radio_profile_key(r.id)),
+        })
+        .collect();
+    Ok(RadioLaunchInfo { show_picker, radios })
+}
+
+/// The operator picked a radio in the launch picker: relaunch this same binary bound to that
+/// radio's profile, then exit. The heavy, delicate startup (log binding, journal restores, radio
+/// connect) then runs exactly ONCE with the profile already known from the arg — no shortcuts or
+/// env vars for the operator to manage.
+#[tauri::command]
+fn choose_radio(app: tauri::AppHandle, radio_id: u32) -> Result<(), String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    std::process::Command::new(exe)
+        .arg("--profile")
+        .arg(radio_profile_key(radio_id))
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    app.exit(0);
+    Ok(())
 }
 
 /// The SHARED data directory that holds the ONE unified logbook across all instances.
@@ -9418,7 +9530,42 @@ pub fn run() {
         std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
     }
 
+    // Take this profile's advisory lock (named profiles only — the default single-instance is a
+    // no-op). Lets the launch picker grey out a radio already open in another window, and marks
+    // the same-profile double-launch. Non-fatal: a failure just means the picker can't grey it.
+    if !hold_profile_lock() {
+        eprintln!(
+            "tempo: profile {:?} is already open in another window — its journals may collide",
+            active_profile()
+        );
+    }
+
+    // First launch of a radio profile: seed its per-instance settings from the default (shared)
+    // profile so the new window inherits the radios list + all prefs — otherwise it would boot on
+    // empty defaults and not know which radios exist. (The shared LOGBOOK is separate; see
+    // shared_data_dir.) One-time: once tempo-<profile>/settings.json exists it diverges freely.
+    if active_profile().is_some() {
+        let mine = settings_path();
+        if !mine.exists() {
+            if let Ok(text) = std::fs::read_to_string(config_dir_for(None).join("settings.json")) {
+                if let Some(dir) = mine.parent() {
+                    let _ = std::fs::create_dir_all(dir);
+                }
+                let _ = std::fs::write(&mine, text);
+            }
+        }
+    }
+
     let mut settings = Settings::load(&settings_path());
+
+    // A radio profile keyed "r<id>" PINS its active radio, so this window always drives the radio
+    // the operator picked in the launcher, regardless of the persisted/seeded active_radio.
+    if let Some(id) = active_profile()
+        .and_then(|p| p.strip_prefix('r'))
+        .and_then(|s| s.parse::<u32>().ok())
+    {
+        settings.active_radio = id;
+    }
 
     // One-time migration: an older build kept the Cloudlog/Wavelog API key in
     // plaintext in settings.json. Move any legacy key into the OS keychain and
@@ -9940,6 +10087,8 @@ pub fn run() {
             all_txt_location,
             reveal_all_txt,
             open_qrz_page,
+            radio_launch_info,
+            choose_radio,
             import_pota_log,
             set_skip_tx1,
             civ_diagnostic_status,

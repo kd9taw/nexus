@@ -659,6 +659,28 @@ export async function allTxtLocation(): Promise<string> {
   return invoke<string>('all_txt_location')
 }
 
+/** One selectable radio in the launch picker. */
+export interface RadioLaunchOption {
+  id: number
+  name: string
+  /** Already open in another window → the picker greys it out. */
+  inUse: boolean
+}
+/** Whether to show the "which radio?" launch picker, and the radios to offer. */
+export interface RadioLaunchInfo {
+  showPicker: boolean
+  radios: RadioLaunchOption[]
+}
+/** Ask the backend whether this window should show the radio picker (simultaneous-radios on,
+ *  ≥2 radios, launched without a profile). Single-radio stations get showPicker=false. */
+export async function radioLaunchInfo(): Promise<RadioLaunchInfo> {
+  return invoke<RadioLaunchInfo>('radio_launch_info')
+}
+/** Operator picked a radio: the backend relaunches this window bound to that radio and exits. */
+export async function chooseRadio(radioId: number): Promise<void> {
+  await invoke('choose_radio', { radioId })
+}
+
 /** Reveal ALL.TXT (or its folder) in the OS file manager. */
 /** Stamp POTA/SOTA park refs from a pota.app export onto matching logged QSOs. */
 export interface PotaStampResult {

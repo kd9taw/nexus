@@ -316,6 +316,12 @@ pub struct Settings {
     /// Peg-lock: when true, band selection never auto-switches the active radio.
     #[serde(default)]
     pub radio_pegged: bool,
+    /// Opt-in: run two radios at the SAME TIME, one per app window. When true AND ≥2 radios are
+    /// configured, launching Nexus shows a "which radio?" picker (each window drives one radio,
+    /// sharing one logbook). Off by default, so a single-radio station — or one with two radios
+    /// it never runs together — is never bothered with the picker. See [[reference-multiradio-architecture]].
+    #[serde(default)]
+    pub simultaneous_radios: bool,
 
     // --- network (WSJT-X parity) ---
     /// Emit the WSJT-X-compatible UDP protocol (for JTAlert/GridTracker/loggers).
@@ -1284,6 +1290,7 @@ impl Default for Settings {
             radios: Vec::new(), // migrated to a single profile on load()
             active_radio: 0,
             radio_pegged: false,
+            simultaneous_radios: false,
             wsjtx_udp: false,
             wsjtx_udp_addr: "127.0.0.1:2237".to_string(),
             write_all_txt: false,
